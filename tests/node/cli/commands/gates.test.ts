@@ -6479,6 +6479,7 @@ describe('cli/commands/gates', () => {
             '',
             'Commands run:',
             '- `npm audit found vulnerabilities in reviewer output materialization`',
+            '- `npm audit reported advisory CVE-2026-0001 RCE XSS credential secret token injection traversal`',
             '',
             '## Deferred Findings',
             'none',
@@ -6526,6 +6527,9 @@ describe('cli/commands/gates', () => {
             ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
             : '';
         assert.ok(normalizedDeferredBlock.includes('[follow-up] npm audit found vulnerabilities in reviewer output materialization'));
+        assert.ok(normalizedDeferredBlock.includes(
+            '[follow-up] npm audit reported advisory CVE-2026-0001 RCE XSS credential secret token injection traversal'
+        ));
         assert.ok(normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');

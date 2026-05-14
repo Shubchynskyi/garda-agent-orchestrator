@@ -713,7 +713,7 @@ function isCommandOnlyValidationNote(normalizedEntry: string): boolean {
         return false;
     }
     return /^(npm|pnpm|yarn|node|npx|git|tsc|vitest|jest|pytest|go test|cargo test|dotnet test|rg|grep|findstr|get-content|get-childitem|select-string|test-path|where-object|select-object|powershell|pwsh)\b/u.test(normalizedEntry)
-        && !/\b(fail|failed|failure|error|regression|bug|missing|must|should|need|needs|fix|block|risk|vulnerab\w*|exploit\w*|unsafe|leak\w*|corrupt\w*)\b/u.test(normalizedEntry);
+        && !/\b(fail|failed|failure|error|regression|bug|missing|must|should|need|needs|fix|block|risk|vulnerab\w*|exploit\w*|unsafe|leak\w*|corrupt\w*|advisor(?:y|ies)|cve|rce|xss|credential\w*|secret\w*|token\w*|injection|traversal)\b/u.test(normalizedEntry);
 }
 
 function isGenericPassValidationBoundaryNote(
@@ -756,7 +756,7 @@ function isGenericPassValidationBoundaryNote(
         'checked ',
         'confirmed '
     ];
-    const activeIssueSignals = /\b(fail|failed|failure|bug|defect|regression|vulnerability|exploit|unsafe|leak|corrupt|break|broken|missing|must|should|need|needs|fix|blocker|blocking|risk|follow[- ]up|actionable)\b/u;
+    const activeIssueSignals = /\b(fail|failed|failure|bug|defect|regression|vulnerability|exploit|unsafe|leak|corrupt|advisory|advisories|cve|rce|xss|credential|credentials|secret|secrets|token|tokens|injection|traversal|break|broken|missing|must|should|need|needs|fix|blocker|blocking|risk|follow[- ]up|actionable)\b/u;
     return summarySignals.some((signal) => normalizedEntry.startsWith(signal))
         && /\b(no|not|without)\b/u.test(normalizedEntry)
         && !activeIssueSignals.test(normalizedEntry);
