@@ -142,6 +142,12 @@ import {
     replaceTaskMdTableCell
 } from '../core/task-md-table';
 import {
+    TASK_ID_ALLOWED_PATTERN,
+    buildExactTaskIdReferencePattern,
+    isCanonicalTaskId,
+    isTaskIdReferenceBoundary
+} from '../core/task-ids';
+import {
     buildGateChainLaunchDecision,
     formatGateChainLaunchDecision
 } from '../core/dependent-validation-chains';
@@ -348,7 +354,7 @@ interface ChildTaskIdMention {
 const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks)\b/i;
 const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
     /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:/igu;
-const TASK_QUEUE_TASK_ID_PATTERN = /^[A-Za-z0-9._-]+$/u;
+const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
 const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
 
 function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
@@ -363,10 +369,6 @@ function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
 
 function isDecomposedParentTask(entry: TaskQueueEntry | null): boolean {
     return Boolean(entry && (isTaskQueueDecomposedStatus(entry.status) || isLegacySplitParentTask(entry)));
-}
-
-function escapeRegExpLiteral(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function appendTaskMentionIfMissing(taskMentions: ChildTaskIdMention[], taskId: string, index: number): void {
@@ -390,7 +392,7 @@ function isExplicitChildListMentionPosition(text: string, index: number): boolea
     }
     const listPrefix = text.slice(introEnd, index)
         .replace(/`[A-Za-z0-9._-]+`/gu, ' ')
-        .replace(/\b[Tt]-\d+\b/gu, ' ');
+        .replace(/(^|[^A-Za-z0-9._-])([Tt]-\d+)(?=$|[^A-Za-z0-9._-])/gu, '$1 ');
     return /^[\s,:()[\]\-–—]*(?:(?:and|or|through|to)[\s,:()[\]\-–—]*)*$/iu.test(listPrefix);
 }
 
@@ -427,20 +429,22 @@ function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<s
     let backtickedTaskIdMatch: RegExpExecArray | null;
     while ((backtickedTaskIdMatch = backtickedTaskIdPattern.exec(text)) !== null) {
         const taskId = String(backtickedTaskIdMatch[1] || '').trim();
-        if (TASK_QUEUE_TASK_ID_PATTERN.test(taskId)
+        if (isCanonicalTaskId(taskId)
             && isExplicitChildListMentionPosition(text, backtickedTaskIdMatch.index)) {
             appendTaskMentionIfMissing(taskMentions, taskId, backtickedTaskIdMatch.index + 1);
         }
     }
 
-    const conventionalTaskIdPattern = /\b[Tt]-\d+\b/gu;
+    const conventionalTaskIdPattern = /(^|[^A-Za-z0-9._-])([Tt]-\d+)(?=$|[^A-Za-z0-9._-])/gu;
     let conventionalTaskIdMatch: RegExpExecArray | null;
     while ((conventionalTaskIdMatch = conventionalTaskIdPattern.exec(text)) !== null) {
-        appendTaskMentionIfMissing(taskMentions, conventionalTaskIdMatch[0], conventionalTaskIdMatch.index);
+        const taskId = conventionalTaskIdMatch[2];
+        const mentionIndex = conventionalTaskIdMatch.index + conventionalTaskIdMatch[1].length;
+        appendTaskMentionIfMissing(taskMentions, taskId, mentionIndex);
     }
 
     for (const taskId of knownTaskIds) {
-        const taskIdPattern = new RegExp(`(^|[^A-Za-z0-9._-])${escapeRegExpLiteral(taskId)}(?=$|[^A-Za-z0-9._-])`, 'u');
+        const taskIdPattern = buildExactTaskIdReferencePattern(taskId);
         const taskIdMatch = taskIdPattern.exec(text);
         if (taskIdMatch) {
             const mentionIndex = taskIdMatch.index + taskIdMatch[1].length;
@@ -456,7 +460,7 @@ function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<s
 }
 
 function isTaskIdCharacter(value: string): boolean {
-    return /^[A-Za-z0-9._-]$/u.test(value);
+    return !isTaskIdReferenceBoundary(value);
 }
 
 function isExplicitChildContinuationBoundary(text: string, index: number): boolean {

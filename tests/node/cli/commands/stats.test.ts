@@ -969,15 +969,21 @@ test('buildAggregateStats aggregates across multiple tasks', () => {
             outcome: 'FAIL',
             timestamp_utc: '2026-04-06T09:02:00Z'
         });
+        writeEvent(eventsRoot, 'T-506-1', {
+            event_type: 'TASK_MODE_ENTERED',
+            outcome: 'PASS',
+            timestamp_utc: '2026-04-07T09:00:00Z'
+        });
 
         const agg = buildAggregateStats(tmpDir, eventsRoot, reviewsRoot);
-        assert.equal(agg.tasks_analyzed, 2);
-        assert.equal(agg.total_events, 6);
+        assert.equal(agg.tasks_analyzed, 3);
+        assert.equal(agg.total_events, 7);
         assert.equal(agg.total_gate_pass, 3);
         assert.equal(agg.total_gate_fail, 1);
-        assert.equal(agg.per_task.length, 2);
+        assert.equal(agg.per_task.length, 3);
         assert.equal(agg.per_task[0].task_id, 'T-001');
         assert.equal(agg.per_task[1].task_id, 'T-002');
+        assert.equal(agg.per_task[2].task_id, 'T-506-1');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

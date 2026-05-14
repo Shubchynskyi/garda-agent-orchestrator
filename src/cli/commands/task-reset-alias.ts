@@ -1,4 +1,5 @@
 import { PRIMARY_CLI_NAME } from '../../core/constants';
+import { isCanonicalTaskId } from '../../core/task-ids';
 
 export interface TaskResetAliasResolution {
     commandArgv: string[];
@@ -15,13 +16,22 @@ function compactToken(value: unknown): string {
     return normalizeToken(value).replace(/[_\-\s]+/g, '');
 }
 
+function normalizeTaskResetTaskIdHint(taskId: string): string {
+    return /^t-\d+(?:-\d+)*$/iu.test(taskId) ? taskId.toUpperCase() : taskId;
+}
+
+function isTaskResetPositionalTaskId(value: unknown): boolean {
+    const token = String(value || '').trim();
+    return token.length > 0 && !token.startsWith('-') && isCanonicalTaskId(token);
+}
+
 function normalizeAliasArgv(argv: string[]): string[] {
     if (argv.some((arg) => arg === '--task-id' || arg.startsWith('--task-id='))) {
         return argv;
     }
     const [first, ...rest] = argv;
-    if (first && /^T-\d+$/i.test(first.trim())) {
-        return ['--task-id', first.trim().toUpperCase(), ...rest];
+    if (isTaskResetPositionalTaskId(first)) {
+        return ['--task-id', normalizeTaskResetTaskIdHint(first.trim()), ...rest];
     }
     return argv;
 }
@@ -39,8 +49,8 @@ export function extractTaskResetTaskIdHint(argv: string[]): string {
         }
     }
 
-    const positionalTaskId = argv.find((arg) => /^T-\d+$/i.test(String(arg || '').trim()));
-    return positionalTaskId ? positionalTaskId.trim().toUpperCase() : TASK_RESET_PLACEHOLDER;
+    const positionalTaskId = argv.find((arg) => isTaskResetPositionalTaskId(arg));
+    return positionalTaskId ? normalizeTaskResetTaskIdHint(positionalTaskId.trim()) : TASK_RESET_PLACEHOLDER;
 }
 
 export function buildTaskResetGuardedCommandHelp(taskId: string = TASK_RESET_PLACEHOLDER): string {

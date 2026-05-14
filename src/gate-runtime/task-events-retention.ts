@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 import { writeFileAtomically } from '../core/filesystem';
+import { isCanonicalTaskId } from '../core/task-ids';
 import {
     withFilesystemLock,
     withFilesystemLockAsync,
@@ -32,7 +33,7 @@ function parseAggregateTaskId(line: string): string | null {
     try {
         const parsed = JSON.parse(line) as Record<string, unknown>;
         const taskId = String(parsed.task_id || '').trim();
-        return /^T-\d+$/i.test(taskId) ? taskId : null;
+        return isCanonicalTaskId(taskId) ? taskId : null;
     } catch {
         return null;
     }

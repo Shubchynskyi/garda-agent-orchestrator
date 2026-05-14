@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
+import { assertCanonicalTaskId } from '../core/task-ids';
 import { stringSha256 } from './hash';
 
 const JSONL_READ_CHUNK_SIZE = 64 * 1024;
@@ -14,17 +15,7 @@ export function toTrimmedLowerCaseString(value: unknown): string {
 }
 
 export function assertValidTaskId(value: unknown): string {
-    if (!value || !String(value).trim()) {
-        throw new Error('TaskId must not be empty.');
-    }
-    const taskId = String(value).trim();
-    if (taskId.length > 128) {
-        throw new Error('TaskId must be 128 characters or fewer.');
-    }
-    if (!/^[A-Za-z0-9._-]+$/.test(taskId)) {
-        throw new Error(`TaskId '${taskId}' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$`);
-    }
-    return taskId;
+    return assertCanonicalTaskId(value);
 }
 
 export function buildEventIntegrityHash(eventObj: Record<string, unknown>): string | null {

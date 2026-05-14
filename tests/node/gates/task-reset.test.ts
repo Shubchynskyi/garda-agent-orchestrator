@@ -192,6 +192,23 @@ describe('resolveTaskResetScope', () => {
         }
     });
 
+    it('detects suffixed task event and review artifacts', () => {
+        const taskId = 'T-506-1';
+        const { repoRoot, eventsRoot, reviewsRoot } = buildFakeRepo({
+            taskId,
+            hasEventsFile: true,
+            hasReviewArtifact: true
+        });
+        try {
+            const scope = resolveTaskResetScope({ taskId, repoRoot, eventsRoot, reviewsRoot });
+            assert.ok(scope.artifacts.some((a) => a.type === 'task-events' && a.path.endsWith(`${taskId}.jsonl`)));
+            assert.ok(scope.reviewArtifactNames.includes(`${taskId}-preflight.json`));
+            assert.equal(scope.hasAnyArtifacts, true);
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
     it('counts aggregate log lines for the task only', () => {
         const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({ hasAggregateLines: true });
         try {
@@ -236,17 +253,17 @@ describe('runTaskResetCommand — validation', () => {
         );
     });
 
-    it('throws for non-canonical task ID (no T- prefix)', () => {
+    it('throws for task ID with spaces', () => {
         assert.throws(
-            () => runTaskResetCommand({ taskId: 'TASK-001', repoRoot: '.', confirm: true }),
-            /canonical format T-NNN/
+            () => runTaskResetCommand({ taskId: 'T-001 child', repoRoot: '.', confirm: true }),
+            /contains invalid characters/
         );
     });
 
-    it('throws for task ID with letters after T-', () => {
+    it('throws for task ID with path separators', () => {
         assert.throws(
-            () => runTaskResetCommand({ taskId: 'T-001A', repoRoot: '.', confirm: true }),
-            /canonical format T-NNN/
+            () => runTaskResetCommand({ taskId: 'T-001/child', repoRoot: '.', confirm: true }),
+            /contains invalid characters/
         );
     });
 

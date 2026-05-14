@@ -2447,6 +2447,27 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('next-step "T-NEXT-1"'));
     });
 
+    it('routes suffixed child task IDs without partially matching their parent prefix', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-500 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: `T-500-1`. |',
+            '| T-500-1 | 🟦 TODO | P1 | workflow | Suffixed child | gpt-5.4 | 2026-05-05 | strict | Next. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-500', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-500-1"'));
+        assert.equal(result.reason.includes('could not be found'), false);
+    });
+
     it('routes decomposed parents to exact-case arbitrary valid child task IDs', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [

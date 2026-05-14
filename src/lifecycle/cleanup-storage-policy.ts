@@ -1,7 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as zlib from 'node:zlib';
-import { invalidateIndex as invalidateReviewsIndex } from '../gate-runtime/reviews-index';
+import { KNOWN_SUFFIXES, invalidateIndex as invalidateReviewsIndex } from '../gate-runtime/reviews-index';
+import {
+    parseActiveReviewArtifactTaskId,
+    parseConventionalReviewArtifactTaskId,
+    parseKnownReviewArtifactTaskId
+} from '../core/task-ids';
 import type {
     ReviewArtifactRetentionMode,
     ReviewArtifactStoragePolicy,
@@ -100,10 +105,10 @@ export function applyStoragePolicy(
         if (!entry.endsWith('.json') && !entry.endsWith('.md') && !entry.endsWith('.diff')) continue;
 
         const filePath = path.join(reviewsDir, entry);
-        const taskMatch = /^(T-\d+)-/.exec(entry);
-        if (!taskMatch) continue;
-
-        const taskId = taskMatch[1];
+        const taskId = parseActiveReviewArtifactTaskId(entry, activeTaskIds)
+            ?? parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES)
+            ?? parseConventionalReviewArtifactTaskId(entry);
+        if (!taskId) continue;
         if (activeTaskIds.has(taskId)) {
             result.preserved.push(entry);
             continue;

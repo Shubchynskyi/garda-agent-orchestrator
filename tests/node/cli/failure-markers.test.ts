@@ -139,6 +139,21 @@ test('task-reset alias without task id fails as CLI usage and does not bootstrap
     }
 });
 
+test('task-reset alias does not treat option flags as positional task ids', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-alias-flags-'));
+    try {
+        const { exitCode, stderr } = runCli(['task-reset', '--reopen', '--dry-run'], tmpDir);
+        assert.equal(exitCode, EXIT_USAGE_ERROR);
+        assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
+        assert.ok(stderr.includes('TaskId must not be empty.'));
+        assert.ok(stderr.includes('garda gate task-reset --task-id "<task-id>" --reopen --dry-run --repo-root "."'));
+        assert.ok(!stderr.includes("Task '--reopen' not found"), 'flag must not be consumed as task id');
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'task-reset')), 'task-reset alias must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('task reset alias without task id fails as CLI usage and does not bootstrap', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-alias-'));
     try {
@@ -147,6 +162,21 @@ test('task reset alias without task id fails as CLI usage and does not bootstrap
         assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
         assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
         assert.ok(stderr.includes('garda gate task-reset --task-id "<task-id>" --reopen --confirm --repo-root "."'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'task')), 'task reset alias must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('task reset alias does not treat confirm flag as positional task id', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-task-reset-alias-flags-'));
+    try {
+        const { exitCode, stderr } = runCli(['task', 'reset', '--confirm'], tmpDir);
+        assert.equal(exitCode, EXIT_USAGE_ERROR);
+        assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
+        assert.ok(stderr.includes('TaskId must not be empty.'));
+        assert.ok(stderr.includes('garda gate task-reset --task-id "<task-id>" --reopen --dry-run --repo-root "."'));
+        assert.ok(!stderr.includes("Task '--confirm' not found"), 'flag must not be consumed as task id');
         assert.ok(!fs.existsSync(path.join(tmpDir, 'task')), 'task reset alias must not create a bootstrap destination');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

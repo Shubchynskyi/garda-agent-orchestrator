@@ -313,6 +313,10 @@ function normalizeTargetStatus(value: unknown): TaskResetTargetStatus | null {
     throw new Error(`Invalid task-reset target status '${String(value)}'. Expected TODO or DONE.`);
 }
 
+function normalizeTaskResetTaskId(taskId: string): string {
+    return /^t-\d+(?:-\d+)*$/iu.test(taskId) ? taskId.toUpperCase() : taskId;
+}
+
 function resolveTaskResetTargetStatus(options: RunTaskResetOptions): TaskResetTargetStatus | null {
     const candidates: Array<{ source: string; status: TaskResetTargetStatus }> = [];
     if (options.reopen === true) {
@@ -461,13 +465,7 @@ export function runTaskResetCommand(options: RunTaskResetOptions): TaskResetComm
     const rawTaskId = String(options.taskId || '').trim();
 
     const validatedId = assertValidTaskId(rawTaskId);
-    if (!/^T-\d+$/i.test(validatedId)) {
-        throw new Error(
-            `Task ID '${validatedId}' does not match canonical format T-NNN. ` +
-            'Only T-<digits> task IDs are accepted by task-reset.'
-        );
-    }
-    const taskId = validatedId.toUpperCase();
+    const taskId = normalizeTaskResetTaskId(validatedId);
 
     const repoRoot = resolveRepoRoot(options.repoRoot);
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);

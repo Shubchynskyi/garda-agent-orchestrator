@@ -69,6 +69,24 @@ test('getWhyBlocked detects BLOCKED task', () => {
     }
 });
 
+test('getWhyBlocked includes suffixed task IDs from TASK.md rows', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-500-1 | 🟥 BLOCKED | P1 | area | Suffixed task | me | 2026-01-01 | default | blocked_reason_code=CHILD_BLOCKED |']),
+            'utf8'
+        );
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.has_blocked_tasks, true);
+        assert.equal(result.blocked_tasks.length, 1);
+        assert.equal(result.blocked_tasks[0].task.id, 'T-500-1');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getWhyBlocked extracts blocked_reason_code from notes column', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
     try {

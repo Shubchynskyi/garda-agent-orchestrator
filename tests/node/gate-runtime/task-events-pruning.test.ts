@@ -332,7 +332,7 @@ test('pruneAggregateLog prunes protected aggregate lines without full-file reads
         const lines = Array.from({ length: 1200 }, (_, i) =>
             JSON.stringify({
                 seq: i,
-                task_id: i % 100 === 0 ? 'T-999' : `T-${String(i).padStart(3, '0')}`,
+                task_id: i % 100 === 0 ? 'T-999-1' : `T-${String(i).padStart(3, '0')}`,
                 message: 'x'.repeat(80)
             })
         );
@@ -348,7 +348,7 @@ test('pruneAggregateLog prunes protected aggregate lines without full-file reads
                 return originalReadFileSync.apply(realFs, args);
             };
 
-            const result = pruneAggregateLog(allTasksPath, 50, undefined, new Set(['T-999']));
+            const result = pruneAggregateLog(allTasksPath, 50, undefined, new Set(['T-999-1']));
             assert.equal(result.pruned, true);
             assert.equal(result.lines_before, 1200);
             assert.ok(result.lines_after >= 50, 'protected lines can make retained output exceed maxLines');
@@ -361,7 +361,7 @@ test('pruneAggregateLog prunes protected aggregate lines without full-file reads
             .filter(l => l.trim())
             .map((line) => JSON.parse(line) as { seq: number; task_id: string });
         assert.ok(
-            remaining.filter((entry) => entry.task_id === 'T-999').length >= 12,
+            remaining.filter((entry) => entry.task_id === 'T-999-1').length >= 12,
             'all protected task lines should remain'
         );
         assert.ok(

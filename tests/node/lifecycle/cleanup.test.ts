@@ -200,6 +200,8 @@ describe('runCleanup', () => {
 
         const activeReviewPaths = createReviewArtifacts(reviewsDir, 'T-001');
         const inactiveReviewPaths = createReviewArtifacts(reviewsDir, 'T-002');
+        const lowercaseActiveReviewPath = path.join(reviewsDir, 't-001-preflight.json');
+        fs.writeFileSync(lowercaseActiveReviewPath, JSON.stringify({ task_id: 't-001' }), 'utf8');
         const activeEventPath = createTaskEventFile(eventsDir, 'T-001');
         const inactiveEventPath = createTaskEventFile(eventsDir, 'T-002');
         const activeCachePath = path.join(eventsDir, 'T-001.completeness.json');
@@ -210,6 +212,7 @@ describe('runCleanup', () => {
         const past = daysAgo(45);
         for (const entryPath of [
             ...activeReviewPaths,
+            lowercaseActiveReviewPath,
             ...inactiveReviewPaths,
             activeEventPath,
             inactiveEventPath,
@@ -232,6 +235,7 @@ describe('runCleanup', () => {
         assert.equal(fs.existsSync(activeEventPath), true, 'active task timeline should be preserved');
         assert.equal(fs.existsSync(activeCachePath), true, 'active task completeness cache should be preserved');
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-001-task-mode.json')), true, 'active task review artifacts should be preserved');
+        assert.equal(fs.existsSync(lowercaseActiveReviewPath), true, 'active task lowercase review artifacts should be preserved');
         assert.equal(fs.existsSync(inactiveEventPath), false, 'inactive task timeline should be removed');
         assert.equal(fs.existsSync(inactiveCachePath), false, 'inactive task completeness cache should be removed');
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'inactive task review artifacts should be removed');
@@ -815,6 +819,37 @@ describe('runCleanup', () => {
                 'T-002 (stale) should be evicted');
             assert.ok(removedNames.some(p => p.startsWith('T-003-')),
                 'T-003 (stale) should be evicted');
+        });
+
+        it('groups suffixed review artifacts by the full task id', () => {
+            const reviewsDir = path.join(runtimeDir, 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            createReviewArtifacts(reviewsDir, 'T-506-1');
+            createReviewArtifacts(reviewsDir, 'T-506-2');
+
+            const now = new Date();
+            const past = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
+            for (const file of fs.readdirSync(reviewsDir)) {
+                const filePath = path.join(reviewsDir, file);
+                if (file.startsWith('T-506-1-')) {
+                    fs.utimesSync(filePath, past, past);
+                } else {
+                    fs.utimesSync(filePath, now, now);
+                }
+            }
+
+            const result = runCleanup({
+                targetRoot: tmpDir,
+                bundleRoot,
+                retentionPolicy: { maxReviews: 1, maxAgeDays: 365 }
+            });
+
+            const reviewItems = result.removed.filter(i => i.category === 'reviews');
+            const removedNames = reviewItems.map(i => path.basename(i.path));
+            assert.equal(reviewItems.length, 3);
+            assert.ok(removedNames.every(p => p.startsWith('T-506-1-')));
+            assert.ok(fs.readdirSync(reviewsDir).every(p => p.startsWith('T-506-2-')));
         });
     });
 
@@ -1561,6 +1596,7 @@ describe('applyStoragePolicy', () => {
     it('never touches artifacts for active tasks', () => {
         createArtifact('T-006-task-mode.json');
         createArtifact('T-006-code-review-context.json');
+        createArtifact('t-006-preflight.json');
 
         const policy: ReviewArtifactStoragePolicy = {
             retentionMode: 'none',
@@ -1574,6 +1610,7 @@ describe('applyStoragePolicy', () => {
         assert.equal(result.removed.length, 0);
         assert.ok(result.preserved.includes('T-006-task-mode.json'));
         assert.ok(result.preserved.includes('T-006-code-review-context.json'));
+        assert.ok(result.preserved.includes('t-006-preflight.json'));
     });
 
     it('returns empty result for non-existent directory', () => {

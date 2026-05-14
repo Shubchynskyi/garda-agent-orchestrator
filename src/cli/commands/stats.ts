@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-events';
+import { parseTaskIdJsonlFileName } from '../../core/task-ids';
 import { coerceIntLike } from '../../gate-runtime/token-telemetry';
 import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult } from '../../gate-runtime/budget-preflight';
 import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
@@ -571,9 +572,8 @@ export function buildAggregateStats(
     const taskIds: string[] = [];
     if (fs.existsSync(resolvedEventsRoot) && fs.statSync(resolvedEventsRoot).isDirectory()) {
         for (const entry of fs.readdirSync(resolvedEventsRoot)) {
-            if (entry === 'all-tasks.jsonl') continue;
-            const match = entry.match(/^(T-\d+)\.jsonl$/);
-            if (match) taskIds.push(match[1]);
+            const taskId = parseTaskIdJsonlFileName(entry);
+            if (taskId) taskIds.push(taskId);
         }
     }
     taskIds.sort();

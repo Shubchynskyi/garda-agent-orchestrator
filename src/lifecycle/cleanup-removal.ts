@@ -1,6 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { cleanupStaleTaskEventLocks, scanTaskEventLocks } from '../gate-runtime/task-events';
+import { KNOWN_SUFFIXES } from '../gate-runtime/reviews-index';
+import {
+    parseActiveReviewArtifactTaskId,
+    parseConventionalReviewArtifactTaskId,
+    parseKnownReviewArtifactTaskId
+} from '../core/task-ids';
 import { LIFECYCLE_OPERATION_LOCK_DIR_NAME } from './lifecycle-lock';
 import { removePathRecursive } from './generic-utils';
 import type { CleanupItem, RetentionPolicy } from './cleanup-types';
@@ -204,16 +210,18 @@ function collectReviewArtifacts(
 
     const taskGroups = new Map<string, string[]>();
     for (const entry of entries) {
-        const match = /^(T-\d+)-/.exec(entry);
-        if (match) {
-            const taskId = match[1];
-            if (activeTaskIds.has(taskId)) {
-                continue;
-            }
-            const group = taskGroups.get(taskId) || [];
-            group.push(entry);
-            taskGroups.set(taskId, group);
+        const activeTaskId = parseActiveReviewArtifactTaskId(entry, activeTaskIds);
+        if (activeTaskId) {
+            continue;
         }
+        const taskId = parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES)
+            ?? parseConventionalReviewArtifactTaskId(entry);
+        if (!taskId) {
+            continue;
+        }
+        const group = taskGroups.get(taskId) || [];
+        group.push(entry);
+        taskGroups.set(taskId, group);
     }
 
     const sortedTaskIds = Array.from(taskGroups.keys()).sort((a, b) => {
