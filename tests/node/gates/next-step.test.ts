@@ -2707,7 +2707,7 @@ describe('gates/next-step', () => {
         assert.equal(text.includes('next-step "T-611"'), false);
     });
 
-    it('short-circuits DONE task rows before stale lifecycle recovery', () => {
+    it('blocks false DONE task rows instead of hiding stale lifecycle blockers', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
             '# TASK.md',
@@ -2726,18 +2726,49 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: 'T-620', repoRoot });
         const text = formatNextStepText(result);
 
-        assert.equal(result.status, 'DONE');
-        assert.equal(result.next_gate, null);
-        assert.equal(result.commands.length, 0);
-        assert.deepEqual(result.missing_artifacts, []);
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'task-reset');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('gate task-reset --task-id "T-620" --reopen --dry-run'));
         assert.match(result.reason, /TASK\.md marks "T-620" as DONE/);
-        assert.match(result.reason, /do not run stale lifecycle recovery/);
-        assert.match(result.reason, /do not hand-edit active TASK\.md lifecycle statuses/);
+        assert.match(result.reason, /current lifecycle evidence is not terminal-clean/);
+        assert.match(result.reason, /completion-gate: missing or not passed/);
+        assert.match(result.reason, /Completion-gate remains the only normal owner of DONE/);
+        assert.match(result.reason, /Do not hand-edit TASK\.md or run stale lifecycle gates/);
         assert.equal(result.task_queue_status_contract.authority, 'gate_owned_status_sync');
         assert.deepEqual(result.task_queue_status_contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED', 'SPLIT_REQUIRED']);
         assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/SPLIT_REQUIRED/DONE'));
         assert.equal(text.includes('classify-change'), false);
         assert.equal(text.includes('compile-gate'), false);
+    });
+
+    it('blocks false DONE task rows when full-suite evidence failed before completion', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-621 | 🟩 DONE | P1 | workflow | False done | gpt-5.4 | 2026-05-05 | strict | Queue status was edited despite failed validation. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, 'T-621');
+        writePreflight(repoRoot, 'T-621', { ...ALL_REVIEW_FLAGS, code: false, test: false });
+        seedCompilePass(repoRoot, 'T-621');
+        seedReviewGatePass(repoRoot, 'T-621');
+        seedFullSuiteValidation(repoRoot, 'T-621', 'FAILED');
+
+        const result = resolveNextStep({ taskId: 'T-621', repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'task-reset');
+        assert.ok(result.commands[0].command.includes('gate task-reset --task-id "T-621" --reopen --dry-run'));
+        assert.match(result.reason, /TASK\.md marks "T-621" as DONE/);
+        assert.match(result.reason, /completion-gate: missing or not passed/);
+        assert.match(result.reason, /full-suite-validation/i);
+        assert.equal(text.includes('gate full-suite-validation'), false);
+        assert.equal(text.includes('gate completion-gate'), false);
     });
 
     it('does not short-circuit reopened TODO rows with stale lifecycle evidence', () => {

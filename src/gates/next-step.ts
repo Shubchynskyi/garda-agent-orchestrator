@@ -6368,6 +6368,42 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (isTaskQueueDoneStatus(taskEntry?.status || null)) {
+        const doneConflictBlockers = summary.blockers.map((blocker) => `${blocker.gate}: ${blocker.reason}`);
+        if (!isGatePassed(summary, 'completion-gate')) {
+            doneConflictBlockers.unshift('completion-gate: missing or not passed');
+        } else if (!isLatestCompletionCurrent(eventsRoot, taskId)) {
+            doneConflictBlockers.unshift('completion-gate: pass exists but is stale for the current task cycle');
+        }
+        if (summary.final_report_contract.status !== 'READY') {
+            doneConflictBlockers.push(
+                `final-closeout: ${summary.final_report_contract.blocker || 'canonical final closeout is not ready'}`
+            );
+        }
+        if (doneConflictBlockers.length > 0 && !doneStatusHasCompletedClearedLatchEvidence) {
+            const blockerSummary = doneConflictBlockers.slice(0, 4).join('; ');
+            const extraBlockerCount = doneConflictBlockers.length > 4
+                ? ` (+${doneConflictBlockers.length - 4} more blocker(s))`
+                : '';
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'task-reset',
+                title: 'TASK.md DONE conflicts with lifecycle evidence.',
+                reason:
+                    `TASK.md marks ${formatNextStepInlineValue(taskId)} as DONE, but current lifecycle evidence is not terminal-clean: ` +
+                    `${blockerSummary}${extraBlockerCount}. ` +
+                    'Completion-gate remains the only normal owner of DONE. Do not hand-edit TASK.md or run stale lifecycle gates while this false-DONE conflict exists; use explicit operator task-reset/reopen recovery first.',
+                commands: [
+                    buildCommand(
+                        'Preview explicit operator reopen',
+                        `${cliPrefix} gate task-reset --task-id "${taskId}" --reopen --dry-run --repo-root "."`
+                    )
+                ],
+                missingArtifacts: coreArtifacts.missing,
+                presentArtifacts: coreArtifacts.present,
+                finalReport: null
+            });
+        }
         return buildResult({
             ...resultBase,
             status: 'DONE',
