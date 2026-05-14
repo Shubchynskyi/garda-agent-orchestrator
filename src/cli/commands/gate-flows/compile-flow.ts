@@ -35,6 +35,7 @@ import { auditGateCommand } from '../../../gates/task-events-summary';
 import type { CommandCompactnessAudit } from '../../../gates/task-events-summary';
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../gates/classify-change';
+import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../gates/generated-runtime-artifacts';
 import { loadReviewExecutionPolicyConfig } from '../../../core/review-execution-policy';
 import {
     resolveTaskProfileSelection
@@ -558,6 +559,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     (result.metrics as Record<string, unknown>).changed_files_sha256 = workspaceSnapshot.changed_files_sha256;
     (result.metrics as Record<string, unknown>).scope_content_sha256 = workspaceSnapshot.scope_content_sha256;
     (result.metrics as Record<string, unknown>).scope_sha256 = workspaceSnapshot.scope_sha256;
+    const ignoredGeneratedRuntimeFiles = Array.isArray((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files)
+        ? ((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files as string[])
+        : [];
+    if (ignoredGeneratedRuntimeFiles.length > 0) {
+        (result.metrics as Record<string, unknown>).ignored_generated_runtime_files_count = ignoredGeneratedRuntimeFiles.length;
+        (result.triggers as Record<string, unknown>).ignored_generated_runtime_files = ignoredGeneratedRuntimeFiles;
+        (result as Record<string, unknown>).workspace_hygiene_warnings =
+            buildGeneratedRuntimeArtifactHygieneWarnings(ignoredGeneratedRuntimeFiles);
+    }
 
     const protectedFilesSnapshot = gateHelpers.scanProtectedPathHashes(
         repoRoot,

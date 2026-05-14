@@ -29,6 +29,10 @@ import {
     normalizeOrdinaryDocPathPatterns,
     type OrdinaryDocPathMatch
 } from '../core/ordinary-doc-paths';
+import {
+    buildGeneratedRuntimeArtifactHygieneWarnings,
+    splitGeneratedRuntimeControlPlaneArtifacts
+} from './generated-runtime-artifacts';
 
 interface TriggerConfig {
     db: string[];
@@ -770,7 +774,10 @@ function getSafeOrdinaryDocPathMatches(
  * Produces the canonical classify-change output shape.
  */
 export function classifyChange(options: ClassifyChangeOptions) {
-    const normalizedFiles = options.normalizedFiles || [];
+    const normalizedInputFiles = options.normalizedFiles || [];
+    const generatedRuntimeSplit = splitGeneratedRuntimeControlPlaneArtifacts(normalizedInputFiles);
+    const normalizedFiles = generatedRuntimeSplit.reviewableFiles;
+    const ignoredGeneratedRuntimeFiles = generatedRuntimeSplit.ignoredGeneratedRuntimeFiles;
     const taskIntent = options.taskIntent || '';
     const fastPathMaxFiles = options.fastPathMaxFiles || 2;
     const fastPathMaxChangedLines = options.fastPathMaxChangedLines || 40;
@@ -925,6 +932,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
             classification_config_source: classificationConfig.source,
             classification_config_path: classificationConfig.config_path,
             changed_files_count: normalizedFiles.length,
+            ignored_generated_runtime_files_count: ignoredGeneratedRuntimeFiles.length,
             changed_lines_total: changedLinesTotal,
             additions_total: additionsTotal,
             deletions_total: deletionsTotal,
@@ -965,7 +973,8 @@ export function classifyChange(options: ClassifyChangeOptions) {
             performance_cache_suppressed_files: performanceCacheSuppressedFiles,
             performance_heuristic: performanceHeuristicTriggered,
             fast_path_eligible: fastPathEligible,
-            fast_path_sensitive_match: hasFastSensitiveMatch
+            fast_path_sensitive_match: hasFastSensitiveMatch,
+            ignored_generated_runtime_files: ignoredGeneratedRuntimeFiles
         },
         required_reviews: {
             code: requiredCodeReview,
@@ -993,6 +1002,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
                 ? 'Preflight on a clean workspace is baseline-only. Task completion requires a produced diff or an audited no-op artifact.'
                 : 'Workspace diff detected.'
         },
+        workspace_hygiene_warnings: buildGeneratedRuntimeArtifactHygieneWarnings(ignoredGeneratedRuntimeFiles),
         changed_files: normalizedFiles
     };
 }

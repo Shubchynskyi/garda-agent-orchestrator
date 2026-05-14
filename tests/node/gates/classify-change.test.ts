@@ -920,6 +920,86 @@ describe('gates/classify-change', () => {
             assert.equal(result.detection_source, 'explicit_changed_files');
         });
 
+        it('ignores generated runtime artifacts while keeping test-only review routing', () => {
+            const result = classifyChange({
+                normalizedFiles: [
+                    'tests/node/cli/commands/gates-preflight.test.ts',
+                    'garda-agent-orchestrator/runtime/task-events/T-504.jsonl',
+                    'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
+                    'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
+                ],
+                taskIntent: 'Keep generated task events out of review routing',
+                changedLinesTotal: 30,
+                additionsTotal: 25,
+                deletionsTotal: 5,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.deepEqual(result.changed_files, ['tests/node/cli/commands/gates-preflight.test.ts']);
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.required_reviews.code, false);
+            assert.equal(result.required_reviews.test, true);
+            assert.deepEqual(result.triggers.ignored_generated_runtime_files, [
+                'garda-agent-orchestrator/runtime/task-events/T-504.jsonl',
+                'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
+                'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
+            ]);
+            assert.equal(result.metrics.ignored_generated_runtime_files_count, 3);
+            assert.match(result.workspace_hygiene_warnings[0], /Ignored 3 generated runtime\/control-plane artifact/);
+        });
+
+        it('keeps real code changes as code review even with generated review artifacts', () => {
+            const result = classifyChange({
+                normalizedFiles: [
+                    'src/gates/classify-change.ts',
+                    'garda-agent-orchestrator/runtime/reviews/T-504-code.md'
+                ],
+                taskIntent: 'Patch classifier source',
+                changedLinesTotal: 45,
+                additionsTotal: 35,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.deepEqual(result.changed_files, ['src/gates/classify-change.ts']);
+            assert.equal(result.scope_category, 'code');
+            assert.equal(result.required_reviews.code, true);
+            assert.equal(result.required_reviews.test, false);
+        });
+
+        it('keeps real code plus test changes mixed after generated artifacts are ignored', () => {
+            const result = classifyChange({
+                normalizedFiles: [
+                    'src/gates/classify-change.ts',
+                    'tests/node/gates/classify-change.test.ts',
+                    'runtime/task-events/T-504-preflight.jsonl'
+                ],
+                taskIntent: 'Patch classifier source and tests',
+                changedLinesTotal: 55,
+                additionsTotal: 45,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, test: true }
+            });
+
+            assert.deepEqual(result.changed_files, [
+                'src/gates/classify-change.ts',
+                'tests/node/gates/classify-change.test.ts'
+            ]);
+            assert.equal(result.scope_category, 'mixed');
+            assert.equal(result.required_reviews.code, true);
+            assert.equal(result.required_reviews.test, true);
+        });
+
         it('does not treat ordinary project bin/dist/src-cli paths as protected control-plane in a normal workspace', () => {
             const result = classifyChange({
                 normalizedFiles: ['src/cli/app.ts', 'dist/app.js', 'bin/run.js'],

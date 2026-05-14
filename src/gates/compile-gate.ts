@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { stringSha256, normalizePath, joinOrchestratorPath } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 import { isGeneratedOrchestratorLockPath } from './generated-lock-paths';
+import { splitGeneratedRuntimeControlPlaneArtifacts } from './generated-runtime-artifacts';
 import { getSafeWorktreePathState } from './worktree-path-state';
 
 /**
@@ -269,11 +270,14 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         return (String(result.stdout || '')).split('\n').filter(l => l.trim());
     }
 
-    const normalizedExplicit = [...new Set(
+    const allNormalizedExplicit = [...new Set(
         (explicitChangedFiles || []).map((f: string) => normalizePath(f)).filter(Boolean)
     )]
         .filter((item: string) => !isIgnoredWorkspaceSnapshotPath(item))
         .sort();
+    const explicitSplit = splitGeneratedRuntimeControlPlaneArtifacts(allNormalizedExplicit);
+    const normalizedExplicit = explicitSplit.reviewableFiles;
+    const ignoredGeneratedRuntimeFiles = explicitSplit.ignoredGeneratedRuntimeFiles;
 
     if (source === 'explicit_changed_files') {
         const numstatRows: Record<string, { additions: string; deletions: string }> = {};
@@ -309,6 +313,8 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         return {
             detection_source: source, use_staged: false, include_untracked: !!includeUntracked,
             changed_files: normalizedExplicit, changed_files_count: normalizedExplicit.length,
+            ignored_generated_runtime_files: ignoredGeneratedRuntimeFiles,
+            ignored_generated_runtime_files_count: ignoredGeneratedRuntimeFiles.length,
             additions_total: additionsTotal, deletions_total: deletionsTotal,
             changed_lines_total: changedLinesTotal,
             changed_files_sha256: filesFingerprint,
@@ -330,6 +336,10 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         const filePath = extractNewPathFromNumstat(parts.slice(2).join('\t'));
         const normalizedFilePath = normalizePath(filePath);
         if (!normalizedFilePath || isIgnoredWorkspaceSnapshotPath(normalizedFilePath)) continue;
+        if (splitGeneratedRuntimeControlPlaneArtifacts([normalizedFilePath]).ignoredGeneratedRuntimeFiles.length > 0) {
+            ignoredGeneratedRuntimeFiles.push(normalizedFilePath);
+            continue;
+        }
         changedFromDiff.push(normalizedFilePath);
         if (/^\d+$/.test(parts[0])) additionsTotal += parseInt(parts[0], 10);
         if (/^\d+$/.test(parts[1])) deletionsTotal += parseInt(parts[1], 10);
@@ -340,6 +350,9 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         untracked = gitLines(['ls-files', '--others', '--exclude-standard'], 'Failed to collect untracked files snapshot.')
             .map((item: string) => normalizePath(item))
             .filter((item: string) => !!item && !isIgnoredWorkspaceSnapshotPath(item));
+        const untrackedSplit = splitGeneratedRuntimeControlPlaneArtifacts(untracked);
+        untracked = untrackedSplit.reviewableFiles;
+        ignoredGeneratedRuntimeFiles.push(...untrackedSplit.ignoredGeneratedRuntimeFiles);
     }
 
     const normalizedChanged = [...new Set(
@@ -364,6 +377,8 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     return {
         detection_source: source, use_staged: useStaged, include_untracked: !!includeUntracked,
         changed_files: normalizedChanged, changed_files_count: normalizedChanged.length,
+        ignored_generated_runtime_files: [...new Set(ignoredGeneratedRuntimeFiles)].sort(),
+        ignored_generated_runtime_files_count: new Set(ignoredGeneratedRuntimeFiles).size,
         additions_total: additionsTotal, deletions_total: deletionsTotal,
         changed_lines_total: changedLinesTotal,
         changed_files_sha256: filesFingerprint,

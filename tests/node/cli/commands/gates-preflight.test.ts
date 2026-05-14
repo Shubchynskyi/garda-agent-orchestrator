@@ -940,6 +940,58 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change ignores generated runtime artifacts for test-only review routing', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-generated-runtime-artifacts.json');
+        const taskId = 'T-930-generated-runtime-artifacts';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Ignore generated runtime artifacts during preflight scope classification'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: [
+                'tests/node/cli/commands/gates-preflight.test.ts',
+                'garda-agent-orchestrator/runtime/task-events/T-930-generated-runtime-artifacts.jsonl',
+                'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
+                'mnt/wsl/projects/missing/runtime/task-events/T-930-generated-runtime-artifacts.jsonl'
+            ],
+            taskId,
+            taskIntent: 'Ignore generated runtime artifacts during preflight scope classification',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.deepEqual(payload.changed_files, ['tests/node/cli/commands/gates-preflight.test.ts']);
+        assert.equal(payload.scope_category, 'test-only');
+        assert.equal(payload.metrics.changed_files_count, 1);
+        assert.equal(payload.metrics.ignored_generated_runtime_files_count, 3);
+        assert.deepEqual(payload.triggers.ignored_generated_runtime_files, [
+            'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
+            'garda-agent-orchestrator/runtime/task-events/T-930-generated-runtime-artifacts.jsonl',
+            'mnt/wsl/projects/missing/runtime/task-events/T-930-generated-runtime-artifacts.jsonl'
+        ]);
+        assert.equal(payload.required_reviews.code, false);
+        assert.equal(payload.required_reviews.security, false);
+        assert.equal(payload.required_reviews.refactor, false);
+        assert.equal(payload.required_reviews.test, true);
+        assert.deepEqual(payload.budget_forecast.required_reviews, ['test']);
+        assert.match(payload.workspace_hygiene_warnings[0], /Ignored 3 generated runtime\/control-plane artifact/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change strict profile suppresses reviews for audited zero-diff baseline-only closeout', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-strict-zero-diff.json');

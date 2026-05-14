@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- ignored generated Garda runtime/control-plane artifacts such as task-event JSONL, review scratch output, runtime caches, and lock/index files during `classify-change` and review routing, while reporting them as workspace hygiene warnings and preserving real source/test/config/doc scope
 - stopped skill telemetry from creating `runtime/task-events` artifacts for invalid or missing bundle roots while preserving non-blocking telemetry behavior for valid roots
 - made `next-step` fail closed when `TASK.md` says `DONE` but current lifecycle evidence is not terminal-clean, routing operators to audited task reset/reopen recovery instead of hiding failed gates or missing final closeout
 - reformatted the human `garda setup` agent-initialization handoff into scannable colored sections while preserving copy-paste-safe commands, prompts, machine-readable report content, and the existing `Give your agent:` anchor

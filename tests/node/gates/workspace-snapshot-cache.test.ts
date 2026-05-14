@@ -138,6 +138,8 @@ describe('gates/workspace-snapshot-cache', () => {
                     include_untracked: true,
                     changed_files: ['file.ts'],
                     changed_files_count: 1,
+                    ignored_generated_runtime_files: [],
+                    ignored_generated_runtime_files_count: 0,
                     additions_total: 1,
                     deletions_total: 0,
                     changed_lines_total: 1,
@@ -295,6 +297,31 @@ describe('gates/workspace-snapshot-cache', () => {
             assert.ok(result.changed_files.includes('untracked.ts'));
         });
 
+        it('ignores generated runtime artifacts from git-auto untracked scope', () => {
+            const generatedPath = path.join(
+                repoRoot,
+                'mnt',
+                'wsl',
+                'projects',
+                'missing',
+                'runtime',
+                'task-events',
+                'T-504.jsonl'
+            );
+            fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
+            fs.writeFileSync(generatedPath, '{"event_type":"GENERATED"}\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'untracked.ts'), 'export const u = 1;\n', 'utf8');
+
+            const result = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
+
+            assert.deepEqual(result.changed_files, ['untracked.ts']);
+            assert.equal(result.changed_files_count, 1);
+            assert.deepEqual(result.ignored_generated_runtime_files, [
+                'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
+            ]);
+            assert.equal(result.ignored_generated_runtime_files_count, 1);
+        });
+
         it('invalidates cache when untracked file content changes and includeUntracked=true', () => {
             fs.writeFileSync(path.join(repoRoot, 'untracked.ts'), 'line one\n', 'utf8');
             const first = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
@@ -450,6 +477,28 @@ describe('gates/workspace-snapshot-cache', () => {
 
             const cached = getWorkspaceSnapshotCached(repoRoot, 'git_staged_only', false, []);
             assert.equal(cached.cache_hit, true);
+        });
+
+        it('ignores generated runtime artifacts from staged snapshot scope', () => {
+            const generatedRelativePath = 'garda-agent-orchestrator/runtime/task-events/T-504.jsonl';
+            const generatedPath = path.join(repoRoot, ...generatedRelativePath.split('/'));
+            fs.mkdirSync(path.dirname(generatedPath), { recursive: true });
+            fs.writeFileSync(generatedPath, '{"event_type":"BASELINE"}\n', 'utf8');
+            execFileSync('git', ['-C', repoRoot, 'add', generatedRelativePath], { stdio: 'ignore' });
+            execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'track generated artifact fixture'], { stdio: 'ignore' });
+
+            fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
+            fs.writeFileSync(generatedPath, '{"event_type":"GENERATED"}\n', 'utf8');
+            execFileSync('git', ['-C', repoRoot, 'add', 'file.ts', generatedRelativePath], { stdio: 'ignore' });
+
+            const result = getWorkspaceSnapshotCached(repoRoot, 'git_staged_only', false, []);
+
+            assert.equal(result.detection_source, 'git_staged_only');
+            assert.equal(result.use_staged, true);
+            assert.deepEqual(result.changed_files, ['file.ts']);
+            assert.equal(result.changed_files_count, 1);
+            assert.deepEqual(result.ignored_generated_runtime_files, [generatedRelativePath]);
+            assert.equal(result.ignored_generated_runtime_files_count, 1);
         });
 
         it('invalidates staged-only cache for staged deletions when the path is recreated untracked', () => {
