@@ -19,6 +19,7 @@ import {
 import { computeReviewContextReuseHash } from '../../../src/gates/review-reuse';
 import { buildTaskModeArtifact, getTaskModeEvidence, resolveTaskModeArtifactPath } from '../../../src/gates/task-mode';
 import { resolveReviewerRoutingPolicy, resolveRuntimeReviewerIdentity } from '../../../src/gates/reviewer-routing';
+import { REVIEW_CONTRACTS } from '../../../src/gates/required-reviews-check';
 
 function runGit(repoRoot: string, args: string[]): void {
     const result = childProcess.spawnSync('git', args, {
@@ -983,11 +984,76 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifact.includes('## Deferred Findings'));
             assert.ok(promptArtifact.includes('## Residual Risks'));
             assert.ok(promptArtifact.includes('## Verdict'));
+            assert.ok(promptArtifact.includes('PASS verdict line must be exactly: `REVIEW PASSED`'));
+            assert.ok(promptArtifact.includes('FAIL verdict line must be exactly: `REVIEW FAILED`'));
             assert.ok(promptArtifact.includes('1-3 concise sentences naming the reviewed files and behavior checked'));
             assert.ok(promptArtifact.includes('Do not return only headings, `none`, and a PASS verdict'));
             assert.ok(promptArtifact.includes('record-review-result rejects trivial or obviously synthetic reports'));
+            assert.ok(promptArtifact.includes('Validation-boundary notes are not findings, deferred findings, or residual risks'));
             assert.deepEqual(result.task_scope.changed_files, ['src/app.ts']);
             assert.deepEqual(result.task_scope.required_reviews, ['code', 'security']);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('renders an explicit reviewer output contract for every supported review type', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-contracts-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const rulesRoot = path.join(orchestratorRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(rulesRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+            for (const [reviewType] of REVIEW_CONTRACTS) {
+                for (const ruleFile of getRulePack(reviewType).full) {
+                    fs.writeFileSync(path.join(rulesRoot, ruleFile), `# ${ruleFile}\n`, 'utf8');
+                }
+            }
+            const tokenConfigPath = path.join(orchestratorRoot, 'live', 'config', 'token-economy.json');
+            fs.writeFileSync(tokenConfigPath, JSON.stringify({ enabled: true, enabled_depths: [1, 2] }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-901-contracts', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: null,
+                executionProviderSource: 'explicit_provider',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const requiredReviews = Object.fromEntries(REVIEW_CONTRACTS.map(([reviewType]) => [reviewType, true]));
+            const preflightPath = path.join(reviewsRoot, 'T-901-contracts-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-901-contracts',
+                detection_source: 'explicit_changed_files',
+                mode: 'FULL_PATH',
+                scope_category: 'code',
+                changed_files: ['src/app.ts'],
+                required_reviews: requiredReviews,
+                triggers: { runtime_changed: true, runtime_code_changed: true }
+            }, null, 2), 'utf8');
+
+            for (const [reviewType, passToken] of REVIEW_CONTRACTS) {
+                const result = buildReviewContext({
+                    reviewType,
+                    depth: 2,
+                    preflightPath,
+                    tokenEconomyConfigPath: tokenConfigPath,
+                    scopedDiffMetadataPath: path.join(reviewsRoot, `T-901-contracts-${reviewType}-scoped.json`),
+                    outputPath: path.join(reviewsRoot, `T-901-contracts-${reviewType}-review-context.json`),
+                    repoRoot
+                });
+                const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
+                assert.ok(promptArtifact.includes(`Return a canonical ${reviewType} review report using exactly this section order and heading text`));
+                assert.ok(promptArtifact.includes(`PASS verdict line must be exactly: \`${passToken}\``));
+                assert.ok(promptArtifact.includes(`FAIL verdict line must be exactly: \`${passToken.replace(/\bPASSED\b/g, 'FAILED')}\``));
+                assert.ok(promptArtifact.includes('Deferred Findings` is only for actionable accepted follow-ups'));
+                assert.ok(promptArtifact.includes('Validation-boundary notes are not findings, deferred findings, or residual risks'));
+            }
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 

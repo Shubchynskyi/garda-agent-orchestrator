@@ -6045,6 +6045,190 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result does not convert PASS validation-boundary notes into deferred findings', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-496-validation-boundary-notes';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputContent = [
+            '# Review',
+            '',
+            'Reviewed `src/cli/commands/gate-review-handlers/index.ts` and `src/gates/build-review-context.ts` for PASS review normalization. I did not identify a blocking lifecycle, routing, review-trust, or test-adequacy regression.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            '- Full repository test suite was not run by this reviewer. Focused validation passed: `npm test -- tests/node/gates/build-review-context.test.ts`.',
+            '- Read-only review; full-suite validation was already covered by the mandatory gate.',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n');
+        fs.writeFileSync(reviewOutputPath, reviewOutputContent, 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleLog = console.log;
+        const capturedLogs: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.log = (...args: unknown[]) => {
+            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.log = originalConsoleLog;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
+        assert.equal(rawReviewContent, reviewOutputContent);
+        assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
+        assert.ok(artifactContent.includes('## Deferred Findings\n\nnone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
+        assert.ok(!artifactContent.includes('- [follow-up] Full repository test suite was not run by this reviewer'));
+        assert.ok(!artifactContent.includes('- [follow-up] Read-only review; full-suite validation was already covered'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+        assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
+        assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
+        assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result still preserves actionable PASS follow-ups as deferred findings', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-496-actionable-followup';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Reviewed `src/cli/commands/gate-review-handlers/index.ts` for PASS review normalization and confirmed the artifact remains auditable after moving actionable residual content into deferred findings.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            '- Add regression coverage for stale prompt artifact hash mismatch diagnostics.',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        assert.ok(artifactContent.includes('## Deferred Findings'));
+        assert.ok(artifactContent.includes('- [follow-up] Add regression coverage for stale prompt artifact hash mismatch diagnostics.'));
+        assert.ok(artifactContent.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
+        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result keeps canonical review record when aggregate telemetry index fails', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-aggregate-warning';

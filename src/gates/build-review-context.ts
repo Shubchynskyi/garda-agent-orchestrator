@@ -52,6 +52,7 @@ import {
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 import { getReviewSkillCandidates, hasSkillEntrypoint } from '../core/review-capabilities';
+import { REVIEW_CONTRACTS } from './required-reviews-check';
 
 /**
  * Rule pack configuration by review type.
@@ -156,6 +157,14 @@ function summarizeBooleanRecord(record: unknown): string[] {
 
 function buildReviewerOutputContractMarkdown(reviewType: string): string[] {
     const reviewLabel = reviewType ? `${reviewType} review` : 'review';
+    const passVerdictToken = REVIEW_CONTRACTS.find(([candidate]) => candidate === reviewType)?.[1] || null;
+    if (!passVerdictToken) {
+        throw new Error(
+            `Reviewer output contract is missing a verdict template for supported review type '${reviewType}'. ` +
+            'Add the review type to REVIEW_CONTRACTS and update the reviewer output contract together.'
+        );
+    }
+    const failVerdictToken = passVerdictToken.replace(/\bPASSED\b/g, 'FAILED');
     return [
         '## Reviewer Output Contract',
         `- Return a canonical ${reviewLabel} report using exactly this section order and heading text:`,
@@ -170,11 +179,17 @@ function buildReviewerOutputContractMarkdown(reviewType: string): string[] {
         '<active open risks, or none>',
         '',
         '## Verdict',
-        '<recognized PASS or FAIL verdict token>',
+        `<${passVerdictToken} or ${failVerdictToken}>`,
         '```',
+        `- PASS verdict line must be exactly: \`${passVerdictToken}\`.`,
+        `- FAIL verdict line must be exactly: \`${failVerdictToken}\`.`,
         '- A no-findings PASS must still include 1-3 concise sentences naming the reviewed files and behavior checked.',
         '- Do not return only headings, `none`, and a PASS verdict; record-review-result rejects trivial or obviously synthetic reports.',
         '- Keep PASS analysis compact and concrete; put accepted non-blocking follow-ups only in Deferred Findings with `Justification:`.',
+        '- `Findings by Severity` is only for active defects that should block or be fixed.',
+        '- `Deferred Findings` is only for actionable accepted follow-ups with a concrete next step and `Justification:`.',
+        '- `Residual Risks` is only for concrete active risks that remain after the review.',
+        '- Validation-boundary notes are not findings, deferred findings, or residual risks. Mention read-only scope, tests not run by the reviewer, gate-owned full-suite validation, or commands already covered by gates only in the prose summary, then set the sections above to `none`.',
         ''
     ];
 }

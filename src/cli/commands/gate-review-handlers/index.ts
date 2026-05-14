@@ -699,6 +699,62 @@ function appendPreservedRawReviewerOutput(lines: string[], reviewContent: string
     lines.push('');
 }
 
+function normalizeReviewNoteText(entry: string): string {
+    return stripMarkdownListPrefix(entry)
+        .replace(/^\[[^\]]+\]\s*/, '')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+function isCommandOnlyValidationNote(normalizedEntry: string): boolean {
+    if (!normalizedEntry || normalizedEntry.length > 180) {
+        return false;
+    }
+    return /^(npm|pnpm|yarn|node|npx|git|tsc|vitest|jest|pytest|go test|cargo test|dotnet test)\b/u.test(normalizedEntry)
+        && !/\b(fail|failed|failure|error|regression|bug|missing|must|should|need|needs|fix|block|risk)\b/u.test(normalizedEntry);
+}
+
+function isGenericPassValidationBoundaryNote(entry: string): boolean {
+    const normalizedEntry = normalizeReviewNoteText(entry);
+    if (!normalizedEntry || normalizedEntry === 'none') {
+        return true;
+    }
+    if (isCommandOnlyValidationNote(normalizedEntry)) {
+        return true;
+    }
+
+    const boundaryPatterns = [
+        /\bfull (repository )?(test )?suite (was )?not run\b/u,
+        /\bdid not run (the )?(entire|full|repository) (test )?suite\b/u,
+        /\bdid not run tests?\b/u,
+        /\btests? (were|was) not run\b/u,
+        /\bread[- ]only review\b/u,
+        /\bfocused review only\b/u,
+        /\bfocused validation\b/u,
+        /\bfull[- ]suite validation (already )?(passed|ran|is gate[- ]owned|was covered)\b/u,
+        /\bgate[- ]owned (compile|full[- ]suite|validation)\b/u,
+        /\bcovered by (the )?(compile|full[- ]suite|mandatory) gate\b/u,
+        /\bi did not identify (a )?(blocking )?(lifecycle|routing|review|test|regression|issue|risk|defect)/u
+    ];
+    if (boundaryPatterns.some((pattern) => pattern.test(normalizedEntry))) {
+        return true;
+    }
+
+    const summarySignals = [
+        'reviewed ',
+        'validated ',
+        'verified ',
+        'checked ',
+        'confirmed '
+    ];
+    const activeIssueSignals = /\b(fail|failed|failure|bug|defect|regression|vulnerability|exploit|unsafe|leak|corrupt|break|broken|missing|must|should|need|needs|fix|blocker|blocking|risk|follow[- ]up|actionable)\b/u;
+    return summarySignals.some((signal) => normalizedEntry.startsWith(signal))
+        && /\b(no|not|without)\b/u.test(normalizedEntry)
+        && !activeIssueSignals.test(normalizedEntry);
+}
+
 function isLosslessPassNormalizationEligibleViolation(violation: string): boolean {
     const normalizedViolation = String(violation || '').toLowerCase();
     return normalizedViolation.includes('still contains active ')
@@ -720,15 +776,16 @@ function buildLosslessPassReviewNormalization(options: {
     const activeFindings = (['critical', 'high', 'medium', 'low'] as const)
         .flatMap((severity) => findingsEvidence.findings_by_severity[severity].map((entry) => `[${severity}] ${entry}`));
     const activeResidualRisks = findingsEvidence.residual_risks.map((entry) => `[follow-up] ${entry}`);
-    const pendingDeferredEntries = [
+    const rawPendingDeferredEntries = [
         ...findingsEvidence.deferred_findings,
         ...findingsEvidence.invalid_deferred_findings,
         ...activeFindings,
         ...activeResidualRisks
     ];
-    if (pendingDeferredEntries.length === 0) {
+    if (rawPendingDeferredEntries.length === 0) {
         return null;
     }
+    const pendingDeferredEntries = rawPendingDeferredEntries.filter((entry) => !isGenericPassValidationBoundaryNote(entry));
 
     const normalizedLines = [...extractReviewPreambleLines(reviewType, reviewContent)];
     if (normalizedLines.length === 0 || !normalizedLines[0].trim().startsWith('#')) {
@@ -743,11 +800,15 @@ function buildLosslessPassReviewNormalization(options: {
     normalizedLines.push('');
     normalizedLines.push('## Deferred Findings');
     normalizedLines.push('');
-    for (const entry of pendingDeferredEntries) {
-        appendDeferredFinding(normalizedLines, entry);
-    }
-    if (normalizedLines[normalizedLines.length - 1]?.trim().length === 0) {
-        normalizedLines.pop();
+    if (pendingDeferredEntries.length === 0) {
+        normalizedLines.push('none');
+    } else {
+        for (const entry of pendingDeferredEntries) {
+            appendDeferredFinding(normalizedLines, entry);
+        }
+        if (normalizedLines[normalizedLines.length - 1]?.trim().length === 0) {
+            normalizedLines.pop();
+        }
     }
     normalizedLines.push('');
     normalizedLines.push('## Residual Risks');
