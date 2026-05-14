@@ -190,6 +190,7 @@ function buildReviewerOutputContractMarkdown(reviewType: string): string[] {
         '- `Deferred Findings` is only for actionable accepted follow-ups with a concrete next step and `Justification:`.',
         '- `Residual Risks` is only for concrete active risks that remain after the review.',
         '- Validation-boundary notes are not findings, deferred findings, or residual risks. Mention read-only scope, tests not run by the reviewer, gate-owned full-suite validation, or commands already covered by gates only in the prose summary, then set the sections above to `none`.',
+        '- If you include command logs, put them in a separate `## Commands Run` section after `## Verdict`, or mention them in prose; never put command headings or command bullets under `Deferred Findings` or `Residual Risks`.',
         ''
     ];
 }

@@ -81,6 +81,24 @@ function normalizeCommitSubject(value: string): string {
     return normalized.charAt(0).toLowerCase() + normalized.slice(1);
 }
 
+function hasMultipleCommitSubjectWords(subject: string): boolean {
+    return String(subject || '')
+        .trim()
+        .split(/\s+/u)
+        .filter(Boolean)
+        .length >= 2;
+}
+
+function isLowQualityCommitSubject(subject: string, scope: string): boolean {
+    if (subject === '<summary>') {
+        return true;
+    }
+    if (!hasMultipleCommitSubjectWords(subject)) {
+        return true;
+    }
+    return normalizeCommitToken(subject) === normalizeCommitToken(scope);
+}
+
 function inferCommitType(taskMetadata: TaskQueueMetadata | null): 'feat' | 'fix' {
     const text = `${taskMetadata?.area || ''} ${taskMetadata?.title || ''}`.toLowerCase();
     const featureKeywords = ['add', 'introduce', 'support', 'enable', 'create', 'implement', 'allow', 'reuse', 'automate', 'generate', 'install'];
@@ -139,15 +157,20 @@ function inferCommitScope(changedFiles: string[], taskMetadata: TaskQueueMetadat
     return 'orchestration';
 }
 
-function inferCommitSubject(taskMetadata: TaskQueueMetadata | null): string {
+function inferCommitSubject(taskMetadata: TaskQueueMetadata | null, scope: string): string {
     const rawArea = String(taskMetadata?.area || '').trim();
     const areaSuffix = rawArea.includes('/') ? rawArea.split('/').pop() || '' : rawArea;
     const normalizedAreaSubject = normalizeCommitSubject(areaSuffix);
-    if (normalizedAreaSubject !== '<summary>' && normalizedAreaSubject.length >= 6) {
+    if (!isLowQualityCommitSubject(normalizedAreaSubject, scope)) {
         return normalizedAreaSubject;
     }
 
-    return normalizeCommitSubject(String(taskMetadata?.title || ''));
+    const normalizedTitleSubject = normalizeCommitSubject(String(taskMetadata?.title || ''));
+    if (!isLowQualityCommitSubject(normalizedTitleSubject, scope)) {
+        return normalizedTitleSubject;
+    }
+
+    return '<summary>';
 }
 
 export function buildCommitCommandSuggestion(
@@ -158,13 +181,13 @@ export function buildCommitCommandSuggestion(
     const template = commitGuardEnabled
         ? `${getNodeGateCommandPrefix()} human-commit --operator-confirmed yes --message "<type>(<scope>): <summary>"`
         : 'git commit -m "<type>(<scope>): <summary>"';
-    const subject = inferCommitSubject(taskMetadata);
+    const type = inferCommitType(taskMetadata);
+    const scope = inferCommitScope(changedFiles, taskMetadata);
+    const subject = inferCommitSubject(taskMetadata, scope);
     if (subject === '<summary>') {
         return { template, suggestion: template };
     }
 
-    const type = inferCommitType(taskMetadata);
-    const scope = inferCommitScope(changedFiles, taskMetadata);
     const message = `${type}(${scope}): ${subject}`;
     return {
         template,

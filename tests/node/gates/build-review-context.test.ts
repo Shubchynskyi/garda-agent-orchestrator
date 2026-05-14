@@ -990,6 +990,7 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifact.includes('Do not return only headings, `none`, and a PASS verdict'));
             assert.ok(promptArtifact.includes('record-review-result rejects trivial or obviously synthetic reports'));
             assert.ok(promptArtifact.includes('Validation-boundary notes are not findings, deferred findings, or residual risks'));
+            assert.ok(promptArtifact.includes('separate `## Commands Run` section after `## Verdict`'));
             assert.deepEqual(result.task_scope.changed_files, ['src/app.ts']);
             assert.deepEqual(result.task_scope.required_reviews, ['code', 'security']);
             fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1053,6 +1054,7 @@ describe('gates/build-review-context', () => {
                 assert.ok(promptArtifact.includes(`FAIL verdict line must be exactly: \`${passToken.replace(/\bPASSED\b/g, 'FAILED')}\``));
                 assert.ok(promptArtifact.includes('Deferred Findings` is only for actionable accepted follow-ups'));
                 assert.ok(promptArtifact.includes('Validation-boundary notes are not findings, deferred findings, or residual risks'));
+                assert.ok(promptArtifact.includes('never put command headings or command bullets under `Deferred Findings` or `Residual Risks`'));
             }
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });

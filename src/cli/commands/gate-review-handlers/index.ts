@@ -712,16 +712,23 @@ function isCommandOnlyValidationNote(normalizedEntry: string): boolean {
     if (!normalizedEntry || normalizedEntry.length > 180) {
         return false;
     }
-    return /^(npm|pnpm|yarn|node|npx|git|tsc|vitest|jest|pytest|go test|cargo test|dotnet test)\b/u.test(normalizedEntry)
-        && !/\b(fail|failed|failure|error|regression|bug|missing|must|should|need|needs|fix|block|risk)\b/u.test(normalizedEntry);
+    return /^(npm|pnpm|yarn|node|npx|git|tsc|vitest|jest|pytest|go test|cargo test|dotnet test|rg|grep|findstr|get-content|get-childitem|select-string|test-path|where-object|select-object|powershell|pwsh)\b/u.test(normalizedEntry)
+        && !/\b(fail|failed|failure|error|regression|bug|missing|must|should|need|needs|fix|block|risk|vulnerab\w*|exploit\w*|unsafe|leak\w*|corrupt\w*)\b/u.test(normalizedEntry);
 }
 
-function isGenericPassValidationBoundaryNote(entry: string): boolean {
+function isGenericPassValidationBoundaryNote(
+    entry: string,
+    options: { filterStandaloneCommandNotes?: boolean } = {}
+): boolean {
+    const filterStandaloneCommandNotes = options.filterStandaloneCommandNotes ?? true;
     const normalizedEntry = normalizeReviewNoteText(entry);
     if (!normalizedEntry || normalizedEntry === 'none') {
         return true;
     }
-    if (isCommandOnlyValidationNote(normalizedEntry)) {
+    if (/^commands?(?:\s+(?:run|ran|i ran))?\s*:/u.test(normalizedEntry)) {
+        return true;
+    }
+    if (filterStandaloneCommandNotes && isCommandOnlyValidationNote(normalizedEntry)) {
         return true;
     }
 
@@ -755,10 +762,48 @@ function isGenericPassValidationBoundaryNote(entry: string): boolean {
         && !activeIssueSignals.test(normalizedEntry);
 }
 
+function filterGenericPassValidationBoundaryEntries(
+    entries: readonly string[],
+    options: { filterStandaloneCommandNotes?: boolean } = {}
+): string[] {
+    const filteredEntries: string[] = [];
+    let commandBlockActive = false;
+    for (const entry of entries) {
+        const normalizedEntry = normalizeReviewNoteText(entry);
+        if (/^commands?(?:\s+(?:run|ran|i ran))?\s*:/u.test(normalizedEntry)) {
+            commandBlockActive = true;
+            continue;
+        }
+        if (commandBlockActive && isCommandOnlyValidationNote(normalizedEntry)) {
+            continue;
+        }
+        commandBlockActive = false;
+        if (isGenericPassValidationBoundaryNote(entry, options)) {
+            continue;
+        }
+        filteredEntries.push(entry);
+    }
+    return filteredEntries;
+}
+
 function isLosslessPassNormalizationEligibleViolation(violation: string): boolean {
     const normalizedViolation = String(violation || '').toLowerCase();
     return normalizedViolation.includes('still contains active ')
         || normalizedViolation.includes("deferred finding without usable 'justification:'");
+}
+
+function dedupeReviewFollowUpEntries(entries: readonly string[]): string[] {
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const entry of entries) {
+        const key = normalizeReviewNoteText(entry);
+        if (!key || seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        deduped.push(entry);
+    }
+    return deduped;
 }
 
 function buildLosslessPassReviewNormalization(options: {
@@ -775,17 +820,30 @@ function buildLosslessPassReviewNormalization(options: {
     } = options;
     const activeFindings = (['critical', 'high', 'medium', 'low'] as const)
         .flatMap((severity) => findingsEvidence.findings_by_severity[severity].map((entry) => `[${severity}] ${entry}`));
-    const activeResidualRisks = findingsEvidence.residual_risks.map((entry) => `[follow-up] ${entry}`);
-    const rawPendingDeferredEntries = [
+    const rawDeferredEntries = dedupeReviewFollowUpEntries([
         ...findingsEvidence.deferred_findings,
-        ...findingsEvidence.invalid_deferred_findings,
+        ...findingsEvidence.invalid_deferred_findings
+    ]);
+    const rawResidualRiskEntries = findingsEvidence.residual_risks.map((entry) => `[follow-up] ${entry}`);
+    const rawSourceEntries = dedupeReviewFollowUpEntries([
+        ...rawDeferredEntries,
+        ...activeFindings,
+        ...rawResidualRiskEntries
+    ]);
+    const activeResidualRisks = filterGenericPassValidationBoundaryEntries(
+        rawResidualRiskEntries,
+        { filterStandaloneCommandNotes: false }
+    );
+    const deferredEntries = filterGenericPassValidationBoundaryEntries(rawDeferredEntries);
+    const rawPendingDeferredEntries = dedupeReviewFollowUpEntries([
+        ...deferredEntries,
         ...activeFindings,
         ...activeResidualRisks
-    ];
-    if (rawPendingDeferredEntries.length === 0) {
+    ]);
+    if (rawSourceEntries.length === 0) {
         return null;
     }
-    const pendingDeferredEntries = rawPendingDeferredEntries.filter((entry) => !isGenericPassValidationBoundaryNote(entry));
+    const pendingDeferredEntries = rawPendingDeferredEntries;
 
     const normalizedLines = [...extractReviewPreambleLines(reviewType, reviewContent)];
     if (normalizedLines.length === 0 || !normalizedLines[0].trim().startsWith('#')) {

@@ -46,4 +46,45 @@ describe('buildCommitCommandSuggestion', () => {
         assert.ok(result.template.includes('git commit -m'), 'Template should use bare git commit');
         assert.ok(result.suggestion.includes('git commit -m'), 'Suggestion should use bare git commit');
     });
+
+    it('uses the task title instead of a one-word area suffix for informative suggestions', () => {
+        const changedFiles = ['src/example.ts'];
+        const metadata = {
+            id: 'T-546',
+            status: 'IN_PROGRESS',
+            priority: 'P2',
+            area: 'settings',
+            title: 'Improve settings validation feedback',
+            assignee: 'unassigned',
+            updated: '2026-05-14',
+            profile: 'balanced',
+            notes: 'fixture',
+            isPlaceholder: false
+        };
+
+        const result = buildCommitCommandSuggestion(changedFiles, metadata, false);
+
+        assert.equal(result.suggestion, 'git commit -m "fix(settings): improve settings validation feedback"');
+        assert.ok(!result.suggestion.includes('feat(settings): settings'));
+    });
+
+    it('falls back to the template when both area and title would be tautological', () => {
+        const changedFiles = ['src/example.ts'];
+        const metadata = {
+            id: 'T-547',
+            status: 'IN_PROGRESS',
+            priority: 'P2',
+            area: 'settings',
+            title: 'Settings',
+            assignee: 'unassigned',
+            updated: '2026-05-14',
+            profile: 'balanced',
+            notes: 'fixture',
+            isPlaceholder: false
+        };
+
+        const result = buildCommitCommandSuggestion(changedFiles, metadata, false);
+
+        assert.equal(result.suggestion, 'git commit -m "<type>(<scope>): <summary>"');
+    });
 });

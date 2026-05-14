@@ -6146,6 +6146,393 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result filters command log notes from PASS deferred follow-up obligations', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-545-command-log-notes';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputContent = [
+            '# Review',
+            '',
+            'Reviewed `src/cli/commands/gate-review-handlers/index.ts` and `src/gates/build-review-context.ts` for reviewer output normalization.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none.',
+            '',
+            'Commands run:',
+            '- `Get-Content TASK.md -TotalCount 260`',
+            '- `rg -n "Deferred Findings|Commands run" src/cli/commands/gate-review-handlers/index.ts`',
+            '- `npm test -- tests/node/cli/commands/gates.test.ts`',
+            '',
+            '## Deferred Findings',
+            'none.',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n');
+        fs.writeFileSync(reviewOutputPath, reviewOutputContent, 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        const originalConsoleLog = console.log;
+        const capturedLogs: string[] = [];
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.log = (...args: unknown[]) => {
+            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.log = originalConsoleLog;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
+        assert.equal(rawReviewContent, reviewOutputContent);
+        assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
+        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
+        assert.ok(artifactContent.includes('## Deferred Findings\n\nnone'));
+        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
+        const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
+        const normalizedDeferredBlock = normalizedDeferredStart >= 0
+            ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
+            : '';
+        assert.ok(!normalizedDeferredBlock.includes('Commands run:'));
+        assert.ok(!normalizedDeferredBlock.includes('Get-Content TASK.md'));
+        assert.ok(!normalizedDeferredBlock.includes('rg -n'));
+        assert.ok(!normalizedDeferredBlock.includes('npm test -- tests/node/cli/commands/gates.test.ts'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+        assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
+        assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
+        assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result deduplicates PASS deferred findings before strict follow-up enforcement', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-545-dedup-deferred';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-refactor.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-refactor-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'refactor'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'refactor'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'refactor');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Refactor Review',
+            '',
+            'Reviewed `src/cli/commands/gate-review-handlers/index.ts` for duplicate deferred finding handling.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Deferred Findings',
+            '- Add focused coverage for reviewer command-log normalization.',
+            '- Add focused coverage for reviewer command-log normalization.',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REFACTOR REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'refactor',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:refactor-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'refactor',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:refactor-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
+        const normalizedDeferredBlock = normalizedDeferredStart >= 0
+            ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
+            : '';
+        assert.equal(
+            (normalizedDeferredBlock.match(/Add focused coverage for reviewer command-log normalization\./g) || []).length,
+            1
+        );
+        assert.ok(normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result preserves command-like active findings during PASS normalization', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-545-command-like-finding';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-security.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-security-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'security'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'security'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'security');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Security Review',
+            '',
+            'Reviewed reviewer output normalization for command-like active findings.',
+            '',
+            '## Findings by Severity',
+            '- High: npm install can pull attacker-controlled packages when reviewer output parsing trusts command-looking findings as validation notes.',
+            '',
+            '## Deferred Findings',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'SECURITY REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'security',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:security-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'security',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:security-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
+        const normalizedDeferredBlock = normalizedDeferredStart >= 0
+            ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
+            : '';
+        assert.ok(normalizedDeferredBlock.includes(
+            '[high] npm install can pull attacker-controlled packages when reviewer output parsing trusts command-looking findings as validation notes.'
+        ));
+        assert.ok(normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result preserves command-prefixed risk signals from command blocks', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-545-command-risk-signal';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Antigravity');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Antigravity');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Antigravity', {
+                capability_level: 'delegation_capable'
+            })
+        }, null, 2) + '\n', 'utf8');
+
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        fs.writeFileSync(reviewOutputPath, [
+            '# Code Review',
+            '',
+            'Reviewed command-block preservation for security-relevant validation output.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            'Commands run:',
+            '- `npm audit found vulnerabilities in reviewer output materialization`',
+            '',
+            '## Deferred Findings',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await recordReviewRoutingViaCli({
+                taskId,
+                reviewType: 'code',
+                repoRoot,
+                reviewerExecutionMode: 'delegated_subagent',
+                reviewerIdentity: 'agent:code-reviewer'
+            });
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
+        const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
+        const normalizedDeferredBlock = normalizedDeferredStart >= 0
+            ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
+            : '';
+        assert.ok(normalizedDeferredBlock.includes('[follow-up] npm audit found vulnerabilities in reviewer output materialization'));
+        assert.ok(normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result does not convert PASS residual-risk summaries into deferred findings', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-514-residual-risk-summary';
