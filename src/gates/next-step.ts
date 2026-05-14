@@ -3292,11 +3292,45 @@ function getReviewLaunchPlan(
     return launchPlan;
 }
 
+function applyFullSuiteReadinessToReviewLaunchPlan(
+    launchPlan: ReviewLaunchPlan,
+    fullSuiteEnabled: boolean,
+    fullSuiteGateStatus: GateOutcome['status'] | null
+): ReviewLaunchPlan {
+    if (
+        !fullSuiteEnabled
+        || fullSuiteGateStatus === 'PASS'
+        || launchPlan.failed_review_type
+        || !launchPlan.launchable_review_types.includes('test')
+    ) {
+        return launchPlan;
+    }
+
+    const launchableReviewTypes = launchPlan.launchable_review_types.filter((reviewType) => reviewType !== 'test');
+    const blockedReviewLanes = [
+        ...launchPlan.blocked_review_lanes.filter((lane) => lane.review_type !== 'test'),
+        { review_type: 'test', blocked_by: ['full-suite-validation'] }
+    ];
+    const [nextLaunchableReviewType] = launchableReviewTypes;
+
+    return {
+        ...launchPlan,
+        launchable_review_types: launchableReviewTypes,
+        blocked_review_lanes: blockedReviewLanes,
+        next_review_type: nextLaunchableReviewType || 'test',
+        blocked_review_dependencies: nextLaunchableReviewType
+            ? []
+            : ['full-suite-validation']
+    };
+}
+
 function toNextStepBlockedReviewLanes(launchPlan: ReviewLaunchPlan): NextStepBlockedReviewLane[] {
     return launchPlan.blocked_review_lanes.map((lane) => ({
         review_type: lane.review_type,
         blocked_by: lane.blocked_by,
-        reason: lane.blocked_by.length > 0
+        reason: lane.blocked_by.includes('full-suite-validation')
+            ? 'Waiting for current full-suite validation evidence before launching test review.'
+            : lane.blocked_by.length > 0
             ? `Waiting for current-cycle ${lane.blocked_by.join(', ')} review artifacts and receipts to pass.`
             : 'Waiting for review launch dependencies to clear.'
     }));
@@ -6039,14 +6073,19 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
     ));
-    const reviewLaunchPlan = getReviewLaunchPlan(
-        repoRoot,
-        requiredReviewTypes,
-        reviewPolicy.mode,
-        summary.required_reviews,
-        reviewStates,
-        eventsRoot,
-        taskId
+    const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
+    const reviewLaunchPlan = applyFullSuiteReadinessToReviewLaunchPlan(
+        getReviewLaunchPlan(
+            repoRoot,
+            requiredReviewTypes,
+            reviewPolicy.mode,
+            summary.required_reviews,
+            reviewStates,
+            eventsRoot,
+            taskId
+        ),
+        fullSuiteConfig.enabled,
+        fullSuiteGateStatus
     );
     const reviewTrust = readReviewTrust(reviewsRoot, taskId, requiredReviewTypes, summary.scope_category);
     const reviewSummary: NextStepReviewSummary = {
@@ -7072,7 +7111,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
     if (fullSuiteConfig.enabled && reviewLaunchPlan.next_review_type === 'test') {
         if (fullSuiteGateStatus === 'FAIL') {
             return buildResult({

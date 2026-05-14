@@ -4712,6 +4712,75 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
+    it('keeps parallel non-test reviews launchable while test review waits for full-suite validation', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.deepEqual(result.review.launchable_review_types, ['code', 'security', 'refactor']);
+        assert.deepEqual(result.review.blocked_review_lanes, [
+            {
+                review_type: 'test',
+                blocked_by: ['full-suite-validation'],
+                reason: 'Waiting for current full-suite validation evidence before launching test review.'
+            }
+        ]);
+        assert.ok(text.includes('ReviewLaunchableBatch: code, security, refactor'));
+        assert.ok(text.includes('BlockedReviewLanes: test blocked by full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+    });
+
+    it('launches parallel test review after current full-suite validation passes', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.deepEqual(result.review.launchable_review_types, ['code', 'security', 'refactor', 'test']);
+        assert.deepEqual(result.review.blocked_review_lanes, []);
+    });
+
     it('uses current early full-suite pass before continuing to mandatory test review', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
