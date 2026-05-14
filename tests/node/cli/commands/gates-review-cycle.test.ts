@@ -27,6 +27,7 @@ import { resolveRuntimeReviewerIdentity } from '../../../../src/gates/reviewer-r
 import { getTaskModeEvidence } from '../../../../src/gates/task-mode';
 import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config-work';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import { withFilesystemLockAsync } from '../../../../src/gate-runtime/task-events-locking';
 import { ensureSkillsHeadlinesCurrent } from '../../../../src/runtime/skill-headlines';
 import { writeOptionalSkillSelectionArtifact } from '../../../../src/runtime/optional-skill-selection';
 import {
@@ -1221,6 +1222,24 @@ describe('cli/commands/gates – review-cycle suites', () => {
         assert.equal(
             fs.existsSync(path.join(getReviewsRoot(repoRoot), `${taskId}-test-review-context.json`)),
             true
+        );
+        const timelineEvents = readTaskTimelineEvents(repoRoot, taskId);
+        const reviewPhaseEvents = timelineEvents.filter((event) => event.event_type === 'REVIEW_PHASE_STARTED');
+        const selectedEvents = timelineEvents.filter((event) => event.event_type === 'SKILL_SELECTED');
+        const referenceEvents = timelineEvents.filter((event) => event.event_type === 'SKILL_REFERENCE_LOADED');
+        assert.deepEqual(
+            reviewPhaseEvents.map((event) => String((event.details as Record<string, unknown>).review_type)).sort(),
+            ['api', 'code', 'test']
+        );
+        assert.deepEqual(
+            selectedEvents.map((event) => String((event.details as Record<string, unknown>).skill_id)).sort(),
+            ['api-review', 'code-review', 'test-review']
+        );
+        assert.equal(
+            referenceEvents.filter((event) => (
+                String((event.details as Record<string, unknown>).trigger_reason) === 'review_context_artifact'
+            )).length,
+            3
         );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3105,6 +3124,68 @@ describe('cli/commands/gates – review-cycle suites', () => {
             preflightPath
         });
         assert.ok(buildResult.outputLines.some((line) => /^TokenEconomyActive: (True|False)$/.test(line)));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('runBuildReviewContextCommand fails closed when required review telemetry cannot be appended', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-build-review-context-telemetry-lock';
+        seedRemediationRepoBase(repoRoot);
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'build-review-context-telemetry-lock');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Fail closed when review-context telemetry cannot be appended'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Fail closed when review-context telemetry cannot be appended',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const taskEventLockPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `.${taskId}.lock`);
+        fs.mkdirSync(path.dirname(taskEventLockPath), { recursive: true });
+        await withFilesystemLockAsync(taskEventLockPath, { timeoutMs: 30000, retryMs: 1 }, async () => {
+            await assert.rejects(
+                () => runBuildReviewContextCommand({
+                    repoRoot,
+                    reviewType: 'code',
+                    depth: '2',
+                    preflightPath,
+                    telemetryLockTimeoutMs: 20,
+                    telemetryLockRetryMs: 1
+                }),
+                /Mandatory lifecycle event 'REVIEW_PHASE_STARTED' append failed/
+            );
+        });
+
+        const timelineEvents = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            timelineEvents.some((event) => event.event_type === 'REVIEW_PHASE_STARTED'),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -7,8 +7,10 @@ import {
     resolveScopedDiffMetadataPath
 } from '../../../gates/build-review-context';
 import {
-    emitReviewPhaseStartedEventAsync
-} from '../../../gate-runtime/lifecycle-events';
+    appendMandatoryTaskEventAsync,
+    taskEventAppendHasBlockingFailure,
+    type TaskEventAppendResult
+} from '../../../gate-runtime/task-events';
 import {
     buildReviewVerdictTokenSet,
     extractReviewVerdictSectionTokenMatch,
@@ -91,6 +93,54 @@ interface CurrentPassReviewEvidenceResult {
     reviewerExecutionMode: string | null;
     reviewerIdentity: string | null;
     reusedExistingReview: boolean;
+}
+
+const REVIEW_CONTEXT_TELEMETRY_LOCK_TIMEOUT_MS = 30000;
+const REVIEW_CONTEXT_TELEMETRY_LOCK_RETRY_MS = 10;
+const reviewContextTelemetryQueues = new Map<string, Promise<void>>();
+
+function parsePositiveInteger(value: unknown, fallback: number): number {
+    const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function assertReviewPreparationTelemetryCommitted(result: TaskEventAppendResult | null, eventType: string): void {
+    if (result && !taskEventAppendHasBlockingFailure(result, false)) {
+        return;
+    }
+
+    const diagnostics = result
+        ? (
+            result.warnings.length > 0
+                ? result.warnings.join(' | ')
+                : `commit_status=${result.commit_status}`
+        )
+        : 'append returned null';
+    throw new Error(`Required review-context telemetry '${eventType}' append failed: ${diagnostics}`);
+}
+
+async function serializeReviewContextTelemetry<T>(
+    orchestratorRoot: string,
+    taskId: string,
+    work: () => Promise<T>
+): Promise<T> {
+    const queueKey = `${gateHelpers.normalizePath(orchestratorRoot)}::${taskId}`;
+    const previous = reviewContextTelemetryQueues.get(queueKey) || Promise.resolve();
+    let releaseQueue!: () => void;
+    const queued = previous.catch(() => undefined).then(() => new Promise<void>((resolve) => {
+        releaseQueue = resolve;
+    }));
+    reviewContextTelemetryQueues.set(queueKey, queued);
+
+    try {
+        await previous.catch(() => undefined);
+        return await work();
+    } finally {
+        releaseQueue();
+        if (reviewContextTelemetryQueues.get(queueKey) === queued) {
+            reviewContextTelemetryQueues.delete(queueKey);
+        }
+    }
 }
 
 interface CompileEvidenceSummary {
@@ -1056,6 +1106,8 @@ export interface BuildReviewContextCommandOptions {
     remediationPreservedScopeMismatchReason?: unknown;
     ruleContextSectionsCache?: Map<string, ReviewContextSectionsResult> | null;
     ruleFileContentCache?: Map<string, string> | null;
+    telemetryLockTimeoutMs?: unknown;
+    telemetryLockRetryMs?: unknown;
 }
 
 export async function runBuildReviewContextCommand(
@@ -1231,30 +1283,63 @@ export async function runBuildReviewContextCommand(
         reason: 'reuse check not run'
     };
 
-    try {
-        if (taskId) {
-            const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-            const skillId = resolveReviewSkillId(reviewType, repoRoot);
-            const skillPath = resolveGateExecutionPath(repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
+    if (taskId) {
+        const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
+        const skillId = resolveReviewSkillId(reviewType, repoRoot);
+        const skillPath = resolveGateExecutionPath(repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
+        const telemetryAppendOptions = {
+            passThru: true,
+            lockTimeoutMs: parsePositiveInteger(options.telemetryLockTimeoutMs, REVIEW_CONTEXT_TELEMETRY_LOCK_TIMEOUT_MS),
+            lockRetryMs: parsePositiveInteger(options.telemetryLockRetryMs, REVIEW_CONTEXT_TELEMETRY_LOCK_RETRY_MS)
+        };
 
-            await emitReviewPhaseStartedEventAsync(orchestratorRoot, taskId, {
-                review_type: reviewType,
-                depth,
-                preflight_path: gateHelpers.normalizePath(preflightPath),
-                output_path: result.output_path,
-                review_context_artifact_path: result.rule_context.artifact_path
-            });
-            await emitSkillSelectedEventAsync(orchestratorRoot, taskId, skillId, null, 'required_review');
-            if (fs.existsSync(skillPath) && fs.statSync(skillPath).isFile()) {
-                await emitSkillReferenceLoadedEventAsync(orchestratorRoot, taskId, gateHelpers.normalizePath(skillPath), skillId, 'review_skill');
-            }
-            await emitSkillReferenceLoadedEventAsync(
+        await serializeReviewContextTelemetry(orchestratorRoot, taskId, async () => {
+            await appendMandatoryTaskEventAsync(
                 orchestratorRoot,
                 taskId,
-                gateHelpers.normalizePath(result.rule_context.artifact_path),
-                skillId,
-                'review_context_artifact'
+                'REVIEW_PHASE_STARTED',
+                'INFO',
+                'Review phase started.',
+                {
+                    review_type: reviewType,
+                    depth,
+                    preflight_path: gateHelpers.normalizePath(preflightPath),
+                    output_path: result.output_path,
+                    review_context_artifact_path: result.rule_context.artifact_path
+                },
+                telemetryAppendOptions
             );
+            assertReviewPreparationTelemetryCommitted(
+                await emitSkillSelectedEventAsync(orchestratorRoot, taskId, skillId, null, 'required_review', telemetryAppendOptions),
+                'SKILL_SELECTED'
+            );
+            if (fs.existsSync(skillPath) && fs.statSync(skillPath).isFile()) {
+                assertReviewPreparationTelemetryCommitted(
+                    await emitSkillReferenceLoadedEventAsync(
+                        orchestratorRoot,
+                        taskId,
+                        gateHelpers.normalizePath(skillPath),
+                        skillId,
+                        'review_skill',
+                        telemetryAppendOptions
+                    ),
+                    'SKILL_REFERENCE_LOADED'
+                );
+            }
+            assertReviewPreparationTelemetryCommitted(
+                await emitSkillReferenceLoadedEventAsync(
+                    orchestratorRoot,
+                    taskId,
+                    gateHelpers.normalizePath(result.rule_context.artifact_path),
+                    skillId,
+                    'review_context_artifact',
+                    telemetryAppendOptions
+                ),
+                'SKILL_REFERENCE_LOADED'
+            );
+        });
+
+        try {
             reviewReuseResult = reviewReuseBlockedReason
                 ? {
                     reused: false,
@@ -1274,9 +1359,15 @@ export async function runBuildReviewContextCommand(
                     timelineEventsSummary: timelineSummary,
                     remediationPreservedScopeMismatchReason: String(options.remediationPreservedScopeMismatchReason || '').trim() || null
                 });
+        } catch (error: unknown) {
+            reviewReuseResult = {
+                reused: false,
+                receiptPath: null,
+                reviewerExecutionMode: null,
+                reviewerIdentity: null,
+                reason: `review reuse check failed: ${error instanceof Error ? error.message : String(error)}`
+            };
         }
-    } catch {
-        // Keep build-review-context resilient even when telemetry cannot be emitted.
     }
 
     const outputKV: Record<string, unknown> = {
