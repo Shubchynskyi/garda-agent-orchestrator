@@ -756,6 +756,7 @@ Before any code changes:
 - Do not start by guessing \`compile-gate\`, \`classify-change\`, or default config flags. Static gate order below is policy context; \`next-step\` is the executable navigator.
 - ${buildDualCliActiveProfileGuidance(null)}
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
+- Agents cannot approve protected task-mode entry for themselves. Any rerun with \`--orchestrator-work\` or \`--workflow-config-work\` requires a fresh operator approval, \`--operator-confirmed yes\`, and \`--operator-confirmed-at-utc "<ISO-8601 timestamp>"\`.
 - Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
 ${buildTaskStartSnippetSection(runtimeProviderPlaceholder, routePlaceholder)}
@@ -778,6 +779,7 @@ Mandatory gate order:
 
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
+- If \`next-step\` or a failed gate says \`--orchestrator-work\`, \`--workflow-config-work\`, or \`workflow set\` is required, stop for explicit operator approval before running the command with \`--operator-confirmed yes\` and \`--operator-confirmed-at-utc "<ISO-8601 timestamp>"\` where required.
 - Do not make code edits before \`enter-task-mode\`; unscoped pre-task diffs must be isolated first.
 - ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
 - ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}

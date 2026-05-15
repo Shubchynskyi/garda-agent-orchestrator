@@ -4529,6 +4529,7 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'enter-task-mode');
         assert.ok(result.reason.includes('--orchestrator-work'));
         assert.ok(result.commands[0].command.includes('--orchestrator-work'));
+        assert.ok(!result.commands[0].command.includes('--operator-confirmed yes'));
     });
 
     it('prefers protected-manifest classify recovery command over a stale classify rerun', () => {
@@ -4575,6 +4576,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('PREFLIGHT_FAILED'));
         assert.notEqual(result.commands[0].command, forgedRecoveryCommand);
         assert.ok(result.commands[0].command.includes('--orchestrator-work'));
+        assert.ok(!result.commands[0].command.includes('--operator-confirmed yes'));
         assert.ok(result.commands[0].command.includes(`--task-id "${TASK_ID}"`));
         assert.ok(result.commands[0].command.includes('--planned-changed-file "src/gates/next-step.ts"'));
         assert.ok(!result.commands[0].command.includes('T-EVIL'));

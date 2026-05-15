@@ -48,6 +48,8 @@ export async function handleEnterTaskMode(gateArgv: string[]): Promise<void> {
         '--planned-changed-files': { key: 'plannedChangedFiles', type: 'string[]' },
         '--orchestrator-work': { key: 'orchestratorWork', type: 'boolean' },
         '--workflow-config-work': { key: 'workflowConfigWork', type: 'boolean' },
+        '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
+        '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' },
         '--provider': { key: 'provider', type: 'string' },
         '--routed-to': { key: 'routedTo', type: 'string' },
         '--actor': { key: 'actor', type: 'string' },

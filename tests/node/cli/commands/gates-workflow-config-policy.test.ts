@@ -107,6 +107,10 @@ function prepareTaskRepo(
         taskId,
         orchestratorWork: options.orchestratorWork === true,
         workflowConfigWork: options.workflowConfigWork === true,
+        operatorConfirmed: options.orchestratorWork === true || options.workflowConfigWork === true ? 'yes' : undefined,
+        operatorConfirmedAtUtc: options.orchestratorWork === true || options.workflowConfigWork === true
+            ? new Date().toISOString()
+            : undefined,
         plannedChangedFiles: options.workflowConfigWork === true
             ? ['garda-agent-orchestrator/live/config/workflow-config.json']
             : [],
@@ -482,6 +486,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 taskId,
                 orchestratorWork: true,
                 workflowConfigWork: true,
+                operatorConfirmed: 'yes',
+                operatorConfirmedAtUtc: new Date().toISOString(),
                 plannedChangedFiles: ['garda-agent-orchestrator/live/config/workflow-config.json'],
                 taskSummary: 'Update app flow'
             });
@@ -508,6 +514,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                     taskId,
                     orchestratorWork: true,
                     workflowConfigWork: true,
+                    operatorConfirmed: 'yes',
+                    operatorConfirmedAtUtc: new Date().toISOString(),
                     plannedChangedFiles: ['garda-agent-orchestrator/live/config/workflow-config.json'],
                     taskSummary: 'Update app flow'
                 }),
@@ -543,6 +551,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                     taskId,
                     orchestratorWork: true,
                     workflowConfigWork: true,
+                    operatorConfirmed: 'yes',
+                    operatorConfirmedAtUtc: new Date().toISOString(),
                     taskSummary: 'Update orchestrator workflow config'
                 }),
                 /already contains workflow config changes before task-mode entry/
@@ -572,6 +582,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                     taskId,
                     orchestratorWork: true,
                     workflowConfigWork: true,
+                    operatorConfirmed: 'yes',
+                    operatorConfirmedAtUtc: new Date().toISOString(),
                     taskSummary: 'Update orchestrator workflow config'
                 }),
                 /already contains workflow config changes before task-mode entry/
@@ -1388,7 +1400,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             const workflowResult = captureConsole(() => handleWorkflow([
                 'set',
                 '--bundle-root', bundleRoot,
-                '--full-suite-out-of-scope-failure-policy', 'audit_and_warn'
+                '--full-suite-out-of-scope-failure-policy', 'audit_and_warn',
+                '--operator-confirmed', 'yes'
             ], PACKAGE_JSON));
             assert.ok(workflowResult && workflowResult.action === 'set');
             assert.equal(workflowResult.status, 'CHANGED');

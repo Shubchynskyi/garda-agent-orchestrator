@@ -18,6 +18,7 @@ Before any code changes:
 - Do not start by guessing `compile-gate`, `classify-change`, or default config flags. Static gate order below is policy context; `next-step` is the executable navigator.
 - Active profile selection comes from the workspace profile config. Inspect, switch, or create profiles with `node bin/garda.js profile current|list|use|create --target-root "."` in a self-hosted source checkout, or `node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."` inside a materialized/deployed workspace.
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.
+- Agents cannot approve protected task-mode entry for themselves. Any rerun with `--orchestrator-work` or `--workflow-config-work` requires a fresh operator approval, `--operator-confirmed yes`, and `--operator-confirmed-at-utc "<ISO-8601 timestamp>"`.
 - Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.
 
 ## Copy-Paste Start Commands
@@ -50,6 +51,7 @@ Mandatory gate order:
 
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
+- If `next-step` or a failed gate says `--orchestrator-work`, `--workflow-config-work`, or `workflow set` is required, stop for explicit operator approval before running the command with `--operator-confirmed yes` and `--operator-confirmed-at-utc "<ISO-8601 timestamp>"` where required.
 - Do not make code edits before `enter-task-mode`; unscoped pre-task diffs must be isolated first.
 - Spawn a new clean-context delegated reviewer for this review context using the provider-native/internal agent or subagent tool, not a shell command or hand-written artifact; do not reuse an existing reviewer session. Codex/Claude should use fork_context=false when available, and other providers must use provider-equivalent isolated sub-agent or task launch. If the current provider session cannot launch a fresh delegated reviewer, stop and report that blocker instead of fabricating routing, launch, review, receipt, or telemetry evidence.
 - Reusing a prior review artifact or receipt is valid only through explicit current-cycle reuse evidence; reusing the same reviewer session for a new mandatory review is not valid fresh-context launch evidence.

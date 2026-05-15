@@ -11,6 +11,10 @@ import {
     resolveBundleName
 } from '../../../core/constants';
 import {
+    parseOperatorConfirmationYes,
+    validateFreshOperatorConfirmation
+} from '../../../core/operator-confirmation';
+import {
     emitHandshakeDiagnosticsEvent,
     emitShellSmokePreflightEvent,
     emitCommandTimeoutDiagnosticsEvent,
@@ -113,6 +117,8 @@ export interface EnterTaskModeCommandOptions {
     plannedChangedFiles?: unknown;
     orchestratorWork?: unknown;
     workflowConfigWork?: unknown;
+    operatorConfirmed?: unknown;
+    operatorConfirmedAtUtc?: unknown;
     provider?: unknown;
     routedTo?: unknown;
     actor?: unknown;
@@ -303,6 +309,23 @@ function taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata: ReturnType<type
         taskQueueMetadata.notes
     ].filter(Boolean).join(' ').toLowerCase();
     return trustedTaskText.includes(WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE);
+}
+
+function requireTaskModeOperatorConfirmation(
+    options: EnterTaskModeCommandOptions,
+    scopeLabel: string
+): void {
+    const rawConfirmation = String(options.operatorConfirmed || '').trim();
+    const confirmed = rawConfirmation ? parseOperatorConfirmationYes(rawConfirmation) : false;
+    validateFreshOperatorConfirmation({
+        actionLabel: `enter-task-mode ${scopeLabel}`,
+        confirmed,
+        confirmedAtUtc: String(options.operatorConfirmedAtUtc || '').trim(),
+        requireConfirmedAtUtc: true,
+        instruction:
+            'Ask the operator to approve this protected task-mode entry, then rerun with --operator-confirmed yes and --operator-confirmed-at-utc "<ISO-8601 timestamp>". ' +
+            'Agents must not approve --orchestrator-work or --workflow-config-work for themselves.'
+    });
 }
 
 function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: string, taskModePath = ''): string {
@@ -628,6 +651,13 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `Planned task scope includes protected orchestrator files: ${protectedPlannedFiles.join(', ')}. ` +
             'Re-run enter-task-mode with --orchestrator-work before preflight so the intent stays explicit and auditable. ' +
             `Suggested command: ${rerunCommand}`
+        );
+    }
+
+    if (orchestratorWork || workflowConfigWork) {
+        requireTaskModeOperatorConfirmation(
+            options,
+            workflowConfigWork ? '--orchestrator-work --workflow-config-work' : '--orchestrator-work'
         );
     }
 

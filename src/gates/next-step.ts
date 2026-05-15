@@ -4286,7 +4286,7 @@ function readFailedGateRecovery(
         title: 'Recover failed classify-change as orchestrator work.',
         reason:
             `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected control-plane recovery signal. ` +
-            'Run the deterministic recovery command rebuilt from current task-mode and workspace state before reclassifying.',
+            'Run the deterministic recovery command rebuilt from current task-mode and workspace state before reclassifying, after fresh operator approval for protected task-mode entry.',
         label: 'Restart task mode with orchestrator work',
         command: buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode, currentChangedFiles)
     };
@@ -6780,7 +6780,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             status: 'BLOCKED',
             nextGate: 'enter-task-mode',
             title: 'Restart task mode as orchestrator work.',
-            reason: 'The current preflight touches protected orchestrator control-plane files, but task-mode evidence does not declare --orchestrator-work.',
+            reason: 'The current preflight touches protected orchestrator control-plane files, but task-mode evidence does not declare --orchestrator-work. Fresh operator approval is required before the agent can rerun protected task-mode entry.',
             commands: [
                 buildCommand(
                     'Restart task mode with orchestrator work',

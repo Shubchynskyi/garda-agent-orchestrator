@@ -254,6 +254,7 @@ describe('cli/commands/gates — task-start', () => {
                 'i'
             )
         );
+        assert.ok(!error.message.includes('--operator-confirmed yes'));
         assert.equal(fs.existsSync(artifactPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -283,6 +284,7 @@ describe('cli/commands/gates — task-start', () => {
                 'i'
             )
         );
+        assert.ok(!error.message.includes('--operator-confirmed yes'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -383,6 +385,7 @@ describe('cli/commands/gates — task-start', () => {
                 'i'
             )
         );
+        assert.ok(!error.message.includes('--operator-confirmed yes'));
         assert.equal(fs.existsSync(artifactPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -415,6 +418,7 @@ describe('cli/commands/gates — task-start', () => {
             )
         );
         assert.equal((error.message.match(/--planned-changed-file /g) || []).length, 2);
+        assert.ok(!error.message.includes('--operator-confirmed yes'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -452,6 +456,8 @@ describe('cli/commands/gates — task-start', () => {
             taskId,
             taskSummary: 'Allow explicit orchestrator-work handoff for protected planned scope',
             orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
             plannedChangedFiles: ['.github/agents/orchestrator.md']
         });
         const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
@@ -461,6 +467,70 @@ describe('cli/commands/gates — task-start', () => {
         assert.ok(result.outputLines.includes('PlannedChangedFilesCount: 1'));
         assert.ok(result.outputLines.includes('PlannedProtectedFilesCount: 1'));
         assert.equal(artifact.orchestrator_work, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects orchestrator-work task mode without fresh operator confirmation timestamp', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-operator-confirm-time';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        assert.throws(
+            () => runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Require fresh operator approval timestamp for protected planned scope',
+                orchestratorWork: true,
+                operatorConfirmed: 'yes',
+                plannedChangedFiles: ['.github/agents/orchestrator.md']
+            }),
+            /enter-task-mode --orchestrator-work requires --operator-confirmed-at-utc/
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects orchestrator-work task mode without operator confirmation', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-operator-confirm';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        assert.throws(
+            () => runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Require operator approval for protected planned scope',
+                orchestratorWork: true,
+                plannedChangedFiles: ['.github/agents/orchestrator.md']
+            }),
+            /enter-task-mode --orchestrator-work requires explicit operator confirmation/
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects stale orchestrator-work operator confirmation timestamps', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-stale-confirm';
+        const staleConfirmation = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        assert.throws(
+            () => runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Reject stale operator approval for protected planned scope',
+                orchestratorWork: true,
+                operatorConfirmed: 'yes',
+                operatorConfirmedAtUtc: staleConfirmation,
+                plannedChangedFiles: ['.github/agents/orchestrator.md']
+            }),
+            /enter-task-mode --orchestrator-work operator confirmation is stale/
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

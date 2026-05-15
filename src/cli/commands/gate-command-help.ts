@@ -159,7 +159,7 @@ function buildPreflightGateHelpEntries(
         'enter-task-mode': {
             ...createSingleUsageEntry(
                 'Enter explicit task mode before any implementation, with runtime identity pinned through explicit provider selection and optional route telemetry.',
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] [--orchestrator-work [--workflow-config-work]] --repo-root "."`,
+                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] [--orchestrator-work [--workflow-config-work] --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"] --repo-root "."`,
                 true
             )
         },
