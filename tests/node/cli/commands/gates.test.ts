@@ -187,6 +187,56 @@ function manualReviewContextRuleContextFixture(repoRoot: string, taskId: string,
     };
 }
 
+function writeManualReviewerHandoffFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
+    const reviewsRoot = getReviewsRoot(repoRoot);
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const promptTemplatePath = path.join(reviewsRoot, `${taskId}-${reviewType}-prompt-template.md`);
+    const outputTemplatePath = path.join(reviewsRoot, `${taskId}-${reviewType}-output-template.md`);
+    const evidenceManifestPath = path.join(reviewsRoot, `${taskId}-${reviewType}-evidence-manifest.json`);
+    const promptTemplateText = `# ${reviewType} review Prompt Template\nUse only this prompt template as instructions.\n`;
+    const outputTemplateText = [
+        `# ${reviewType} review Output Template`,
+        '',
+        '## Findings by Severity',
+        'none',
+        '',
+        '## Deferred Findings',
+        'none',
+        '',
+        '## Residual Risks',
+        'none',
+        '',
+        '## Verdict',
+        'REVIEW PASSED',
+        ''
+    ].join('\n');
+    const evidenceManifestText = JSON.stringify({
+        schema_version: 1,
+        task_id: taskId,
+        review_type: reviewType,
+        trust_boundary: {
+            evidence_is_untrusted: true
+        }
+    }, null, 2) + '\n';
+    fs.writeFileSync(promptTemplatePath, promptTemplateText, 'utf8');
+    fs.writeFileSync(outputTemplatePath, outputTemplateText, 'utf8');
+    fs.writeFileSync(evidenceManifestPath, evidenceManifestText, 'utf8');
+    return {
+        prompt_template: {
+            artifact_path: promptTemplatePath.replace(/\\/g, '/'),
+            artifact_sha256: createHash('sha256').update(promptTemplateText, 'utf8').digest('hex')
+        },
+        output_template: {
+            artifact_path: outputTemplatePath.replace(/\\/g, '/'),
+            artifact_sha256: createHash('sha256').update(outputTemplateText, 'utf8').digest('hex')
+        },
+        evidence_manifest: {
+            artifact_path: evidenceManifestPath.replace(/\\/g, '/'),
+            artifact_sha256: createHash('sha256').update(evidenceManifestText, 'utf8').digest('hex')
+        }
+    };
+}
+
 function manualReviewContextTreeStateFixture(repoRoot: string, taskId: string): Record<string, unknown> | null {
     const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
     if (!fs.existsSync(preflightPath) || !fs.statSync(preflightPath).isFile()) {
@@ -352,6 +402,7 @@ async function seedRoutedReviewerLaunchFixture(options: {
     fs.writeFileSync(reviewerPromptPath, reviewerPromptContent, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${options.taskId}-${reviewType}-review-context.json`);
     const reviewSnapshot = getWorkspaceSnapshot(options.repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const reviewerHandoff = writeManualReviewerHandoffFixture(options.repoRoot, options.taskId, reviewType);
     const reviewTreeState = buildReviewTreeState({
         repoRoot: options.repoRoot,
         detectionSource: 'explicit_changed_files',
@@ -373,6 +424,7 @@ async function seedRoutedReviewerLaunchFixture(options: {
             artifact_sha256: createHash('sha256').update(reviewerPromptContent, 'utf8').digest('hex'),
             preferred_prompt_artifact: reviewerPromptPath.replace(/\\/g, '/')
         },
+        reviewer_handoff: reviewerHandoff,
         reviewer_routing: createReviewerRoutingFixture(provider, {
             capability_level: 'delegation_capable'
         })
@@ -409,6 +461,9 @@ async function seedRoutedReviewerLaunchFixture(options: {
         reviewType,
         reviewerIdentity,
         reviewerPromptPath,
+        promptTemplatePath: String((reviewerHandoff.prompt_template as Record<string, unknown>).artifact_path),
+        outputTemplatePath: String((reviewerHandoff.output_template as Record<string, unknown>).artifact_path),
+        evidenceManifestPath: String((reviewerHandoff.evidence_manifest as Record<string, unknown>).artifact_path),
         reviewContextPath,
         reviewContextSha256,
         reviewTreeStateSha256: reviewTreeState.tree_state_sha256,
@@ -472,6 +527,10 @@ async function seedPromptBoundReviewFixture(options: {
     const reviewerPromptPath = path.isAbsolute(rawReviewerPromptPath)
         ? rawReviewerPromptPath
         : path.resolve(options.repoRoot, rawReviewerPromptPath);
+    const reviewerHandoff = reviewContext.reviewer_handoff as Record<string, Record<string, unknown>>;
+    const promptTemplatePathValue = String(reviewerHandoff.prompt_template?.artifact_path || '');
+    const outputTemplatePathValue = String(reviewerHandoff.output_template?.artifact_path || '');
+    const evidenceManifestPathValue = String(reviewerHandoff.evidence_manifest?.artifact_path || '');
     const routing = await runCliWithCapturedOutput([
         'gate',
         'record-review-routing',
@@ -489,6 +548,9 @@ async function seedPromptBoundReviewFixture(options: {
         reviewType: 'code',
         reviewerIdentity,
         reviewerPromptPath,
+        promptTemplatePath: path.isAbsolute(promptTemplatePathValue) ? promptTemplatePathValue : path.resolve(options.repoRoot, promptTemplatePathValue),
+        outputTemplatePath: path.isAbsolute(outputTemplatePathValue) ? outputTemplatePathValue : path.resolve(options.repoRoot, outputTemplatePathValue),
+        evidenceManifestPath: path.isAbsolute(evidenceManifestPathValue) ? evidenceManifestPathValue : path.resolve(options.repoRoot, evidenceManifestPathValue),
         reviewContextPath,
         launchArtifactPath: path.join(options.repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', options.taskId, 'code', 'reviewer-launch.json')
     };
@@ -3224,10 +3286,12 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const reviewerHandoff = writeManualReviewerHandoffFixture(repoRoot, taskId, 'code');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_handoff: reviewerHandoff,
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -3319,10 +3383,12 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        const reviewerHandoff = writeManualReviewerHandoffFixture(repoRoot, taskId, 'code');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_handoff: reviewerHandoff,
             reviewer_routing: createReviewerRoutingFixture('Antigravity')
         }, null, 2) + '\n', 'utf8');
 
@@ -3506,6 +3572,12 @@ describe('cli/commands/gates', () => {
         assert.equal(launchArtifact.review_tree_state.tree_state_sha256, fixture.reviewTreeStateSha256);
         assert.equal(launchArtifact.routing_event_sha256, fixture.routingEventSha256);
         assert.equal(launchArtifact.reviewer_prompt_path, fixture.reviewerPromptPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.prompt_template_path, fixture.promptTemplatePath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.output_template_path, fixture.outputTemplatePath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.evidence_manifest_path, fixture.evidenceManifestPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.prompt_template_sha256, createHash('sha256').update(fs.readFileSync(fixture.promptTemplatePath)).digest('hex'));
+        assert.equal(launchArtifact.output_template_sha256, createHash('sha256').update(fs.readFileSync(fixture.outputTemplatePath)).digest('hex'));
+        assert.equal(launchArtifact.evidence_manifest_sha256, createHash('sha256').update(fs.readFileSync(fixture.evidenceManifestPath)).digest('hex'));
         assert.equal(launchArtifact.attestation_source, 'garda_prepare_reviewer_launch');
         assert.equal(typeof launchArtifact.launch_binding_sha256, 'string');
         assert.ok(launchArtifact.launch_binding_sha256.length > 0);
@@ -3526,6 +3598,9 @@ describe('cli/commands/gates', () => {
             'review_context_sha256',
             'routing_event_sha256',
             'reviewer_prompt_sha256',
+            'prompt_template_sha256',
+            'output_template_sha256',
+            'evidence_manifest_sha256',
             'review_tree_state_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
@@ -3542,6 +3617,9 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewTreeStateSha256: ${fixture.reviewTreeStateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`RoutingEventSha256: ${fixture.routingEventSha256}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplatePath: ${fixture.outputTemplatePath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`EvidenceManifestPath: ${fixture.evidenceManifestPath.replace(/\\/g, '/')}`)));
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('PreparedLaunchEventSha256:')));
@@ -3552,7 +3630,7 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
-        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with ReviewerPromptPath as an opaque handoff')));
+        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -3756,6 +3834,75 @@ describe('cli/commands/gates', () => {
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects stale reviewer prompt-template artifacts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-556-stale-prompt-template-prepare';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+
+        fs.writeFileSync(fixture.promptTemplatePath, 'stale reviewer prompt template payload\n', 'utf8');
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('prepare-reviewer-launch cannot continue because reviewer prompt template artifact is stale')),
+            prepare.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects prompt-template artifacts whose realpath escapes the repo root', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-556-prompt-template-realpath-escape';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), `${taskId}-external-`));
+        const externalTemplatePath = path.join(externalRoot, 'prompt-template.md');
+        const externalTemplateText = '# code review Prompt Template\nexternal prompt template payload\n';
+        fs.writeFileSync(externalTemplatePath, externalTemplateText, 'utf8');
+        const linkDir = path.join(getReviewsRoot(repoRoot), `${taskId}-linked-external`);
+        fs.symlinkSync(externalRoot, linkDir, process.platform === 'win32' ? 'junction' : 'dir');
+        const linkedTemplatePath = path.join(linkDir, 'prompt-template.md');
+
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerHandoff = reviewContext.reviewer_handoff as Record<string, Record<string, string>>;
+        reviewerHandoff.prompt_template.artifact_path = linkedTemplatePath.replace(/\\/g, '/');
+        reviewerHandoff.prompt_template.artifact_sha256 = createHash('sha256')
+            .update(externalTemplateText, 'utf8')
+            .digest('hex');
+        fs.writeFileSync(fixture.reviewContextPath, JSON.stringify(reviewContext, null, 2) + '\n', 'utf8');
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(prepare.exitCode, 0);
+        assert.ok(
+            prepare.errors.some((line) => line.includes('prepare-reviewer-launch requires reviewer prompt template artifact to stay inside repo root')),
+            prepare.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+        fs.rmSync(externalRoot, { recursive: true, force: true });
     });
 
     it('prepare-reviewer-launch rejects prompt artifacts without a context hash binding', async () => {

@@ -21,6 +21,12 @@ export interface ReviewPromptArtifactBinding {
     expectedPromptSha256: string | null;
 }
 
+export interface ReviewHandoffArtifactBinding {
+    artifactPath: string;
+    artifactSha256: string;
+    expectedArtifactSha256: string;
+}
+
 export function getReviewContextRuleContext(reviewContext: Record<string, unknown>): Record<string, unknown> | null {
     return toPlainRecord(reviewContext.rule_context);
 }
@@ -119,6 +125,24 @@ function assertReviewerPromptRealpathInsideRepo(options: {
     }
 }
 
+function assertReviewerHandoffRealpathInsideRepo(options: {
+    repoRoot: string;
+    artifactPath: string;
+    gateName: string;
+    contextPath: string;
+    artifactLabel: string;
+}): void {
+    const repoRealPath = fs.realpathSync(options.repoRoot);
+    const artifactRealPath = fs.realpathSync(options.artifactPath);
+    if (!isPathInsideRoot(artifactRealPath, repoRealPath)) {
+        throw new Error(
+            `${options.gateName} requires ${options.artifactLabel} artifact to stay inside repo root for ` +
+            `'${normalizePath(options.contextPath)}'. Resolved artifact realpath '${normalizePath(artifactRealPath)}' escapes ` +
+            `repo root '${normalizePath(repoRealPath)}'.`
+        );
+    }
+}
+
 function getExpectedReviewerPromptSha256(options: {
     reviewContext: Record<string, unknown>;
     ruleContext: Record<string, unknown> | null;
@@ -179,5 +203,73 @@ export function resolveReviewerPromptArtifactBinding(options: {
         promptPath: promptResolution.promptPath,
         reviewerPromptSha256,
         expectedPromptSha256
+    };
+}
+
+export function resolveReviewerHandoffArtifactBinding(options: {
+    repoRoot: string;
+    contextPath: string;
+    reviewContext: Record<string, unknown>;
+    gateName: string;
+    handoffKey: string;
+    artifactLabel: string;
+}): ReviewHandoffArtifactBinding {
+    const handoff = toPlainRecord(options.reviewContext.reviewer_handoff);
+    const artifact = toPlainRecord(handoff?.[options.handoffKey]);
+    const artifactPathValue = getStringField(artifact, 'artifact_path', 'artifactPath');
+    const expectedArtifactSha256 = getStringField(artifact, 'artifact_sha256', 'artifactSha256').toLowerCase();
+    if (!artifactPathValue) {
+        throw new Error(
+            `${options.gateName} requires review context reviewer_handoff.${options.handoffKey}.artifact_path ` +
+            `for '${normalizePath(options.contextPath)}' because ${options.artifactLabel} handoff is mandatory.`
+        );
+    }
+    if (!expectedArtifactSha256) {
+        throw new Error(
+            `${options.gateName} requires review context reviewer_handoff.${options.handoffKey}.artifact_sha256 ` +
+            `for '${normalizePath(options.contextPath)}' because ${options.artifactLabel} handoff is mandatory.`
+        );
+    }
+    if (!/^[0-9a-f]{64}$/.test(expectedArtifactSha256)) {
+        throw new Error(
+            `${options.gateName} requires review context reviewer_handoff.${options.handoffKey}.artifact_sha256 ` +
+            `to be a lowercase sha256 hex digest for '${normalizePath(options.contextPath)}'.`
+        );
+    }
+    const resolvedArtifactPath = resolvePathInsideRepo(artifactPathValue, options.repoRoot, {
+        allowMissing: true,
+        enforceInside: true
+    });
+    if (!resolvedArtifactPath || !fs.existsSync(resolvedArtifactPath) || !fs.statSync(resolvedArtifactPath).isFile()) {
+        throw new Error(
+            `${options.gateName} requires a readable ${options.artifactLabel} artifact for '${normalizePath(options.contextPath)}'. ` +
+            `Resolved path '${normalizePath(resolvedArtifactPath || artifactPathValue)}' could not be read.`
+        );
+    }
+    assertReviewerHandoffRealpathInsideRepo({
+        repoRoot: options.repoRoot,
+        artifactPath: resolvedArtifactPath,
+        gateName: options.gateName,
+        contextPath: options.contextPath,
+        artifactLabel: options.artifactLabel
+    });
+    const artifactSha256 = fileSha256(resolvedArtifactPath);
+    if (!artifactSha256) {
+        throw new Error(
+            `${options.gateName} requires a hashable ${options.artifactLabel} artifact for '${normalizePath(options.contextPath)}'. ` +
+            `Resolved path '${normalizePath(resolvedArtifactPath)}' could not be read.`
+        );
+    }
+    if (artifactSha256 !== expectedArtifactSha256) {
+        throw new Error(
+            `${options.gateName} cannot continue because ${options.artifactLabel} artifact is stale for '${normalizePath(options.contextPath)}'. ` +
+            `Expected ${options.handoffKey}_sha256=${expectedArtifactSha256}; current sha256=${artifactSha256} at ` +
+            `'${normalizePath(resolvedArtifactPath)}'. Rebuild review context before launching or attesting a reviewer.`
+        );
+    }
+    return {
+        artifactPath: resolvedArtifactPath,
+        artifactSha256,
+        expectedArtifactSha256
     };
 }

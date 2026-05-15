@@ -56,6 +56,7 @@ import {
     assertReviewTreeStateFresh
 } from '../../../gates/review-tree-state';
 import {
+    resolveReviewerHandoffArtifactBinding,
     resolveReviewerPromptArtifactBinding
 } from '../../../gates/review-prompt-artifact';
 import {
@@ -114,6 +115,15 @@ interface ReviewerLaunchArtifactValidationResult {
     launchTool: string;
     providerInvocationId: string;
     launchedAtUtc: string;
+}
+
+interface ReviewerHandoffBindings {
+    promptTemplatePath: string;
+    promptTemplateSha256: string;
+    outputTemplatePath: string;
+    outputTemplateSha256: string;
+    evidenceManifestPath: string;
+    evidenceManifestSha256: string;
 }
 
 interface SupersededReviewerLaunchArtifactSnapshot {
@@ -243,6 +253,37 @@ function buildReviewerLaunchCompletionHint(): string {
     ].join('\n');
 }
 
+function resolveReviewerHandoffBindings(options: {
+    repoRoot: string;
+    contextPath: string;
+    reviewContext: Record<string, unknown>;
+    gateName: string;
+}): ReviewerHandoffBindings {
+    const promptTemplate = resolveReviewerHandoffArtifactBinding({
+        ...options,
+        handoffKey: 'prompt_template',
+        artifactLabel: 'reviewer prompt template'
+    });
+    const outputTemplate = resolveReviewerHandoffArtifactBinding({
+        ...options,
+        handoffKey: 'output_template',
+        artifactLabel: 'reviewer output template'
+    });
+    const evidenceManifest = resolveReviewerHandoffArtifactBinding({
+        ...options,
+        handoffKey: 'evidence_manifest',
+        artifactLabel: 'reviewer evidence manifest'
+    });
+    return {
+        promptTemplatePath: promptTemplate.artifactPath,
+        promptTemplateSha256: promptTemplate.artifactSha256,
+        outputTemplatePath: outputTemplate.artifactPath,
+        outputTemplateSha256: outputTemplate.artifactSha256,
+        evidenceManifestPath: evidenceManifest.artifactPath,
+        evidenceManifestSha256: evidenceManifest.artifactSha256
+    };
+}
+
 function getReviewerLaunchArtifactMismatchReasons(
     artifact: Record<string, unknown>,
     options: {
@@ -253,6 +294,9 @@ function getReviewerLaunchArtifactMismatchReasons(
         reviewContextSha256: string;
         routingEventSha256: string;
         reviewerPromptSha256: string | null;
+        promptTemplateSha256?: string | null;
+        outputTemplateSha256?: string | null;
+        evidenceManifestSha256?: string | null;
         reviewTreeStateSha256: string | null;
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
@@ -286,6 +330,24 @@ function getReviewerLaunchArtifactMismatchReasons(
         && getStringField(artifact, 'reviewer_prompt_sha256', 'reviewerPromptSha256').toLowerCase() !== options.reviewerPromptSha256
     ) {
         mismatches.push('reviewer_prompt_sha256 mismatch');
+    }
+    if (
+        options.promptTemplateSha256
+        && getStringField(artifact, 'prompt_template_sha256', 'promptTemplateSha256').toLowerCase() !== options.promptTemplateSha256
+    ) {
+        mismatches.push('prompt_template_sha256 mismatch');
+    }
+    if (
+        options.outputTemplateSha256
+        && getStringField(artifact, 'output_template_sha256', 'outputTemplateSha256').toLowerCase() !== options.outputTemplateSha256
+    ) {
+        mismatches.push('output_template_sha256 mismatch');
+    }
+    if (
+        options.evidenceManifestSha256
+        && getStringField(artifact, 'evidence_manifest_sha256', 'evidenceManifestSha256').toLowerCase() !== options.evidenceManifestSha256
+    ) {
+        mismatches.push('evidence_manifest_sha256 mismatch');
     }
     if (
         options.reviewTreeStateSha256
@@ -1464,6 +1526,9 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256: string | null;
+    promptTemplateSha256?: string | null;
+    outputTemplateSha256?: string | null;
+    evidenceManifestSha256?: string | null;
     reviewTreeStateSha256: string | null;
     launchBindingSha256: string;
     routingEventSequence: number;
@@ -1484,6 +1549,9 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
         reviewContextSha256: options.reviewContextSha256,
         routingEventSha256: options.routingEventSha256,
         reviewerPromptSha256: options.reviewerPromptSha256,
+        promptTemplateSha256: options.promptTemplateSha256,
+        outputTemplateSha256: options.outputTemplateSha256,
+        evidenceManifestSha256: options.evidenceManifestSha256,
         reviewTreeStateSha256: options.reviewTreeStateSha256,
         launchBindingSha256: options.launchBindingSha256,
         preparedLaunchEventSha256,
@@ -1518,6 +1586,9 @@ function isCurrentCompletedReviewerLaunchArtifact(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256: string | null;
+    promptTemplateSha256?: string | null;
+    outputTemplateSha256?: string | null;
+    evidenceManifestSha256?: string | null;
     reviewTreeStateSha256: string | null;
     routingEventSequence: number;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
@@ -1532,6 +1603,9 @@ function isCurrentCompletedReviewerLaunchArtifact(options: {
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
             reviewerPromptSha256: options.reviewerPromptSha256,
+            promptTemplateSha256: options.promptTemplateSha256,
+            outputTemplateSha256: options.outputTemplateSha256,
+            evidenceManifestSha256: options.evidenceManifestSha256,
             reviewTreeStateSha256: options.reviewTreeStateSha256,
             routingEventSequence: options.routingEventSequence,
             timelineEvents: options.timelineEvents,
@@ -1567,6 +1641,9 @@ function assertPreparedReviewerLaunchArtifact(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256?: string | null;
+    promptTemplateSha256?: string | null;
+    outputTemplateSha256?: string | null;
+    evidenceManifestSha256?: string | null;
     reviewTreeStateSha256?: string | null;
 }): void {
     const artifact = readJsonFile(options.artifactPath, 'Prepared reviewer launch artifact');
@@ -1620,6 +1697,24 @@ function assertPreparedReviewerLaunchArtifact(options: {
             violations.push('reviewer_prompt_sha256 must match the current review context prompt artifact');
         }
     }
+    if (options.promptTemplateSha256) {
+        const actualPromptTemplateSha256 = getStringField(artifact, 'prompt_template_sha256', 'promptTemplateSha256').toLowerCase();
+        if (actualPromptTemplateSha256 !== options.promptTemplateSha256) {
+            violations.push('prompt_template_sha256 must match the current review context prompt template artifact');
+        }
+    }
+    if (options.outputTemplateSha256) {
+        const actualOutputTemplateSha256 = getStringField(artifact, 'output_template_sha256', 'outputTemplateSha256').toLowerCase();
+        if (actualOutputTemplateSha256 !== options.outputTemplateSha256) {
+            violations.push('output_template_sha256 must match the current review context output template artifact');
+        }
+    }
+    if (options.evidenceManifestSha256) {
+        const actualEvidenceManifestSha256 = getStringField(artifact, 'evidence_manifest_sha256', 'evidenceManifestSha256').toLowerCase();
+        if (actualEvidenceManifestSha256 !== options.evidenceManifestSha256) {
+            violations.push('evidence_manifest_sha256 must match the current review context evidence manifest artifact');
+        }
+    }
     if (options.reviewTreeStateSha256) {
         const actualTreeStateSha256 = getStringField(
             artifact,
@@ -1658,6 +1753,9 @@ function validateReviewerLaunchArtifact(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256?: string | null;
+    promptTemplateSha256?: string | null;
+    outputTemplateSha256?: string | null;
+    evidenceManifestSha256?: string | null;
     reviewTreeStateSha256?: string | null;
     routingEventSequence: number;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
@@ -1714,6 +1812,9 @@ function validateReviewerLaunchArtifact(options: {
         'preparedLaunchEventSha256'
     ).toLowerCase();
     const reviewerPromptSha256 = getStringField(artifact, 'reviewer_prompt_sha256', 'reviewerPromptSha256').toLowerCase();
+    const promptTemplateSha256 = getStringField(artifact, 'prompt_template_sha256', 'promptTemplateSha256').toLowerCase();
+    const outputTemplateSha256 = getStringField(artifact, 'output_template_sha256', 'outputTemplateSha256').toLowerCase();
+    const evidenceManifestSha256 = getStringField(artifact, 'evidence_manifest_sha256', 'evidenceManifestSha256').toLowerCase();
     const launchBindingSha256 = getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
     const reviewTreeStateSha256 = getStringField(
         artifact,
@@ -1771,6 +1872,15 @@ function validateReviewerLaunchArtifact(options: {
     }
     if (options.reviewerPromptSha256 && reviewerPromptSha256 !== options.reviewerPromptSha256) {
         violations.push('reviewer_prompt_sha256 must match the current review context prompt artifact');
+    }
+    if (options.promptTemplateSha256 && promptTemplateSha256 !== options.promptTemplateSha256) {
+        violations.push('prompt_template_sha256 must match the current review context prompt template artifact');
+    }
+    if (options.outputTemplateSha256 && outputTemplateSha256 !== options.outputTemplateSha256) {
+        violations.push('output_template_sha256 must match the current review context output template artifact');
+    }
+    if (options.evidenceManifestSha256 && evidenceManifestSha256 !== options.evidenceManifestSha256) {
+        violations.push('evidence_manifest_sha256 must match the current review context evidence manifest artifact');
     }
     if (options.reviewTreeStateSha256 && reviewTreeStateSha256 !== options.reviewTreeStateSha256) {
         violations.push('review_tree_state_sha256 must match the current review context tree_state');
@@ -2410,6 +2520,12 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewContext: parsedReviewContext,
         gateName: 'prepare-reviewer-launch'
     });
+    const handoffBindings = resolveReviewerHandoffBindings({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'prepare-reviewer-launch'
+    });
     const promptPath = promptBinding.promptPath;
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const reviewTreeStateSummary = getReviewTreeStateLaunchSummary(parsedReviewContext);
@@ -2438,6 +2554,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             reviewContextSha256: contextSha256,
             routingEventSha256: routingEventProvenance.event_sha256,
             reviewerPromptSha256,
+            promptTemplateSha256: handoffBindings.promptTemplateSha256,
+            outputTemplateSha256: handoffBindings.outputTemplateSha256,
+            evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
             launchBindingSha256,
             routingEventSequence: routingEvent.sequence,
@@ -2457,6 +2576,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
             console.log(`PreparedLaunchEventSha256: ${getStringField(existingArtifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256')}`);
             console.log(`ReviewerPromptPath: ${normalizePath(promptPath)}`);
+            console.log(`PromptTemplatePath: ${normalizePath(handoffBindings.promptTemplatePath)}`);
+            console.log(`OutputTemplatePath: ${normalizePath(handoffBindings.outputTemplatePath)}`);
+            console.log(`EvidenceManifestPath: ${normalizePath(handoffBindings.evidenceManifestPath)}`);
             if (reviewTreeStateSha256) {
                 console.log(`ReviewTreeStateSha256: ${reviewTreeStateSha256}`);
             }
@@ -2480,6 +2602,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 reviewContextSha256: contextSha256,
                 routingEventSha256: routingEventProvenance.event_sha256,
                 reviewerPromptSha256,
+                promptTemplateSha256: handoffBindings.promptTemplateSha256,
+                outputTemplateSha256: handoffBindings.outputTemplateSha256,
+                evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
                 reviewTreeStateSha256: reviewTreeStateSha256 || null,
                 routingEventSequence: routingEvent.sequence,
                 timelineEvents
@@ -2518,6 +2643,12 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         routing_event_task_sequence: routingEventProvenance.task_sequence,
         reviewer_prompt_path: normalizePath(promptPath),
         reviewer_prompt_sha256: reviewerPromptSha256,
+        prompt_template_path: normalizePath(handoffBindings.promptTemplatePath),
+        prompt_template_sha256: handoffBindings.promptTemplateSha256,
+        output_template_path: normalizePath(handoffBindings.outputTemplatePath),
+        output_template_sha256: handoffBindings.outputTemplateSha256,
+        evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
+        evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
         review_tree_state_sha256: reviewTreeStateSha256 || null,
         review_tree_state: reviewTreeStateSummary,
         launch_binding_sha256: launchBindingSha256,
@@ -2542,6 +2673,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             'review_context_sha256',
             'routing_event_sha256',
             'reviewer_prompt_sha256',
+            'prompt_template_sha256',
+            'output_template_sha256',
+            'evidence_manifest_sha256',
             'review_tree_state_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
@@ -2553,7 +2687,8 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         generated_by: 'garda prepare-reviewer-launch',
         generated_at_utc: new Date().toISOString(),
         next_action: (
-            'Launch a fresh delegated reviewer with the reviewer_prompt_path as an opaque handoff artifact; ' +
+            'Launch a fresh delegated reviewer with prompt_template_path, reviewer_prompt_path, output_template_path, ' +
+            'and evidence_manifest_path as opaque handoff artifacts; ' +
             'do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
             'Run record_invocation_command after the real launch is recorded in this artifact.'
@@ -2574,6 +2709,12 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
                 reviewer_prompt_path: normalizePath(promptPath),
                 reviewer_prompt_sha256: reviewerPromptSha256,
+                prompt_template_path: normalizePath(handoffBindings.promptTemplatePath),
+                prompt_template_sha256: handoffBindings.promptTemplateSha256,
+                output_template_path: normalizePath(handoffBindings.outputTemplatePath),
+                output_template_sha256: handoffBindings.outputTemplateSha256,
+                evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
+                evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
                 launch_tool: providerLaunch.launchTool,
                 attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
             }
@@ -2602,6 +2743,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256,
+        promptTemplateSha256: handoffBindings.promptTemplateSha256,
+        outputTemplateSha256: handoffBindings.outputTemplateSha256,
+        evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewTreeStateSha256
     });
     const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
@@ -2614,6 +2758,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
     console.log(`PreparedLaunchEventSha256: ${preparedLaunchEventSha256}`);
     console.log(`ReviewerPromptPath: ${normalizePath(promptPath)}`);
+    console.log(`PromptTemplatePath: ${normalizePath(handoffBindings.promptTemplatePath)}`);
+    console.log(`OutputTemplatePath: ${normalizePath(handoffBindings.outputTemplatePath)}`);
+    console.log(`EvidenceManifestPath: ${normalizePath(handoffBindings.evidenceManifestPath)}`);
     if (reviewTreeStateSha256) {
         console.log(`ReviewTreeStateSha256: ${reviewTreeStateSha256}`);
     }
@@ -2630,9 +2777,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`HandoffInstruction: ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION}`);
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
     console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
-    console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, review_tree_state_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
+    console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, prompt_template_sha256, output_template_sha256, evidence_manifest_sha256, review_tree_state_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
-    console.log('NextAction: launch the delegated reviewer with ReviewerPromptPath as an opaque handoff, update after_launch_required_updates, then run RecordInvocationCommand.');
+    console.log('NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts, update after_launch_required_updates, then run RecordInvocationCommand.');
 }
 
 export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
@@ -2740,6 +2887,12 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         reviewContext: parsedReviewContext,
         gateName: 'complete-reviewer-launch'
     });
+    const handoffBindings = resolveReviewerHandoffBindings({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'complete-reviewer-launch'
+    });
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
@@ -2765,6 +2918,9 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256: promptBinding.reviewerPromptSha256,
+        promptTemplateSha256: handoffBindings.promptTemplateSha256,
+        outputTemplateSha256: handoffBindings.outputTemplateSha256,
+        evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewTreeStateSha256
     });
 
@@ -2869,6 +3025,12 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         reviewContext: parsedReviewContext,
         gateName: 'record-review-invocation'
     });
+    const handoffBindings = resolveReviewerHandoffBindings({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'record-review-invocation'
+    });
     const currentRouting = parsedReviewContext.reviewer_routing
         && typeof parsedReviewContext.reviewer_routing === 'object'
         && !Array.isArray(parsedReviewContext.reviewer_routing)
@@ -2935,6 +3097,9 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256: promptBinding.reviewerPromptSha256,
+        promptTemplateSha256: handoffBindings.promptTemplateSha256,
+        outputTemplateSha256: handoffBindings.outputTemplateSha256,
+        evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewTreeStateSha256: getReviewTreeStateSha256(parsedReviewContext),
         routingEventSequence: routingEvent.sequence,
         timelineEvents,
