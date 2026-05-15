@@ -49,6 +49,9 @@ export interface TaskPlan {
     scope_files: string[];
     risk_level: TaskPlanRiskLevel;
     steps: TaskPlanStep[];
+    acceptance_criteria?: string[];
+    verification_expectations?: string[];
+    out_of_scope?: string[];
     validation_strategy?: TaskPlanValidationStrategy;
     notes?: string;
     created_by?: string;
@@ -81,6 +84,21 @@ export const taskPlanSchema: Record<string, unknown> = Object.freeze({
             type: 'string',
             enum: [...RISK_LEVEL_VALUES],
             description: 'Overall risk assessment for the planned change.'
+        },
+        acceptance_criteria: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+            description: 'Explicit acceptance criteria the implementation and reviewers should evaluate.'
+        },
+        verification_expectations: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+            description: 'Expected verification evidence or intentionally limited validation scope.'
+        },
+        out_of_scope: {
+            type: 'array',
+            items: { type: 'string', minLength: 1 },
+            description: 'Explicit exclusions that reviewers should not treat as active defects by default.'
         },
         steps: {
             type: 'array',
@@ -217,6 +235,18 @@ export function validateTaskPlan(input: unknown): TaskPlan {
         risk_level: riskLevel,
         steps
     };
+
+    if (raw.acceptance_criteria !== undefined) {
+        plan.acceptance_criteria = normalizeStringArray(raw.acceptance_criteria, 'acceptance_criteria', { allowScalar: true });
+    }
+
+    if (raw.verification_expectations !== undefined) {
+        plan.verification_expectations = normalizeStringArray(raw.verification_expectations, 'verification_expectations', { allowScalar: true });
+    }
+
+    if (raw.out_of_scope !== undefined) {
+        plan.out_of_scope = normalizeStringArray(raw.out_of_scope, 'out_of_scope', { allowScalar: true });
+    }
 
     if (raw.validation_strategy !== undefined) {
         plan.validation_strategy = validateValidationStrategy(raw.validation_strategy);

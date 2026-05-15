@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- included task intent, TASK.md row data, approved plan criteria, verification expectations, and explicit out-of-scope notes in reviewer context as untrusted evidence, with stale/missing/ambiguous task criteria surfaced instead of silently trusted
 - kept protected control-plane documentation-only scopes from forcing code review solely because the docs path is protected, while preserving protected drift checks and review requirements for runtime/config/code scopes
 - made enabled full-suite validation record a fast `SKIPPED`/`DOCS_ONLY_SCOPE_NOT_REQUIRED` artifact for docs-only scopes instead of running the configured repository test command
 - made PASS review normalization infer strict follow-up obligations only from explicit structured `Deferred Findings` with `Justification:`, while preserving raw output and rejecting malformed PASS artifacts instead of turning residual-risk prose, command logs, or positive summaries into F tasks
