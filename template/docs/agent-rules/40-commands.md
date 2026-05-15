@@ -269,6 +269,7 @@ node garda-agent-orchestrator/bin/garda.js gate human-commit --operator-confirme
 Notes:
 - Enter task mode explicitly before preflight; downstream compile/review/completion gates fail without `runtime/reviews/<task-id>-task-mode.json` and timeline event `TASK_MODE_ENTERED`.
 - When the likely task file list is already known, pass repeated `--planned-changed-file` entries to `enter-task-mode`. If any planned path is under protected orchestrator roots, the gate must fail early with a remediation command that reruns the same task-mode entry with explicit `--orchestrator-work`; it must not silently auto-enable orchestrator mode.
+- Agents must not approve protected task-mode entry for themselves. Commands that use `--orchestrator-work` or `--workflow-config-work` require fresh operator approval, `--operator-confirmed yes`, and `--operator-confirmed-at-utc "<ISO-8601 timestamp>"`.
 - After opening baseline downstream rules, record them explicitly via `load-rule-pack --stage TASK_ENTRY`; `classify-change` fails without rule-pack evidence and timeline event `RULE_PACK_LOADED`.
 - When task-mode evidence lives at a nondefault path, pass the same `--task-mode-path` through `classify-change`, `load-rule-pack`, `bind-rule-pack-to-preflight`, `compile-gate`, `restart-coherent-cycle`, and `restart-review-cycle`; mixed paths are treated as provenance drift.
 - After preflight decides the required reviews, run the exact command printed by `next-step`: either `load-rule-pack --stage POST_PREFLIGHT --preflight-path ...` with the actual downstream rule files opened for this task, or `bind-rule-pack-to-preflight` when current-cycle rule files and hashes are unchanged and only the preflight binding must be refreshed.
@@ -279,6 +280,7 @@ Notes:
 - `--use-staged` includes untracked files by default, so new files are classified even before `git add`.
 - Do not use `git add -f` for ignored orchestration control-plane files (`TASK.md`, `garda-agent-orchestrator/runtime/**`, `garda-agent-orchestrator/live/docs/changes/CHANGELOG.md`); their absence from staged diff is expected.
 - `human-commit` is valid only after the operator answers `Do you want me to commit now? (yes/no)` with yes; pass `--operator-confirmed yes` for that fresh confirmation and do not treat reset/revert as a normal continuation path after a mistaken commit.
+- `workflow set` mutates guarded workflow-config policy and requires separate explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
 - For maximum precision, pass planned task file list via repeated `--changed-file`.
 - In a clean workspace, planned `--changed-file` preflight is only the initial scope hint before implementation. If `next-step` or `compile-gate` later reports scope drift after the real diff exists, treat that as expected planned-scope recovery: rerun the `next-step` command and follow its refresh sequence instead of hand-authoring recovery flags.
 - In a clean workspace, `classify-change` can auto-detect changed files from git without additional flags.

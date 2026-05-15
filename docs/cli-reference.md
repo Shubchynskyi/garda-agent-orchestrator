@@ -394,7 +394,7 @@ Safe aliases for the guarded task reset gate. They route directly to `garda gate
 
 ```text
 garda task-reset T-137 --reopen --dry-run
-garda workflow set --target-root "." --task-reset-enabled true
+garda workflow set --target-root "." --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda task-reset T-137 --discard --confirm
 garda task reset T-137 --reopen --confirm
 ```
@@ -402,7 +402,7 @@ garda task reset T-137 --reopen --confirm
 Notes:
 - `task-reset` and `task reset` are aliases that route to the `garda gate task-reset` command.
 - They route through `garda gate task-reset --task-id "<task-id>" --reopen --dry-run/--confirm --repo-root "."` or `--discard --confirm`.
-- Confirmed task-reset mutations are disabled by default. `--dry-run` remains available for inspection, but `--confirm` requires an audited opt-in via `garda workflow set --task-reset-enabled true`; manual JSON edits to `task_reset.enabled=true` are rejected unless matching workflow-set audit evidence exists.
+- Confirmed task-reset mutations are disabled by default. `--dry-run` remains available for inspection, but `--confirm` requires an audited opt-in via `garda workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; manual JSON edits to `task_reset.enabled=true` are rejected unless matching workflow-set audit evidence exists.
 - Task-reset-shaped near-misses (e.g., `garda taskreset`, `garda resettask`) fail early with remediation guidance before the bootstrap directory creation process.
 
 ### `garda workflow`
@@ -412,18 +412,19 @@ Show or change repo-local workflow configuration.
 ```text
 garda workflow --target-root "."
 garda workflow show --target-root "." --json
-garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test"
-garda workflow set --target-root "." --review-execution-policy strict_sequential
-garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000
-garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30
-garda workflow set --target-root "." --review-cycle-auto-split-enabled true
-garda workflow set --target-root "." --task-reset-enabled true
+garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --review-execution-policy strict_sequential --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --review-cycle-auto-split-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow explain --target-root "."
 ```
 
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
 - The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, and `task_reset` settings in `live/config/workflow-config.json`.
+- `workflow set` requires explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
 - `parallel_all` can make code, security, refactor, API, and other specialist lanes independent, but enabled full-suite validation still gates `test` review launch until current full-suite PASS evidence exists.
 - Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.
@@ -555,7 +556,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 
 | Gate | Canonical invocation |
 |---|---|
-| Enter task mode | `garda gate enter-task-mode --task-id "T-001" --task-summary "..."` (`--orchestrator-work` for tasks that modify protected control-plane paths — see [orchestrator-work-and-isolation](orchestrator-work-and-isolation.md)) |
+| Enter task mode | `garda gate enter-task-mode --task-id "T-001" --task-summary "..."` (`--orchestrator-work --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"` for tasks that modify protected control-plane paths after explicit operator approval — see [orchestrator-work-and-isolation](orchestrator-work-and-isolation.md)) |
 | Restart coherent cycle | `garda gate restart-coherent-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Restart review cycle | `garda gate restart-review-cycle --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json" --impact-analysis "<replace with main-agent remediation impact analysis>"` |
 | Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |

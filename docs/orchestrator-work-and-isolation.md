@@ -25,12 +25,19 @@ modifies orchestrator control-plane files:
 garda gate enter-task-mode \
   --task-id "T-018" \
   --task-summary "Update agent rules for new review flow" \
-  --orchestrator-work
+  --orchestrator-work \
+  --operator-confirmed yes \
+  --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 ```
 
 **Effect:** The completion gate skips the protected-path drift check for
 this task.  All other gates (compile, review, doc-impact) still run
 normally.
+
+Agents cannot approve protected task-mode entry for themselves. Use
+`--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`
+only after the operator explicitly approves the protected `--orchestrator-work`
+or `--workflow-config-work` entry.
 
 **When to use it:**
 
@@ -52,7 +59,8 @@ If the likely task file list is already known before preflight, pass it to
 If any planned path falls under protected orchestrator roots and
 `--orchestrator-work` is missing, `enter-task-mode` now fails **before**
 preflight with a ready-to-rerun command that includes explicit
-`--orchestrator-work`.
+`--orchestrator-work`, `--operator-confirmed yes`, and
+`--operator-confirmed-at-utc "<ISO-8601 timestamp>"`.
 
 This keeps the protection boundary fail-closed while avoiding the older
 workflow where a legitimate orchestrator task first had to trip a later
@@ -159,7 +167,9 @@ without `--orchestrator-work`.
 garda gate enter-task-mode \
   --task-id "T-xxx" \
   --task-summary "..." \
-  --orchestrator-work
+  --orchestrator-work \
+  --operator-confirmed yes \
+  --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 # then re-run preflight → implementation → gates as normal
 ```
 

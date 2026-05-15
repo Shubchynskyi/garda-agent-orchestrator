@@ -79,6 +79,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Task-mode entry command must pass before preflight or implementation:
   `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode`.
 - If the likely task file list is already known before task-mode entry, pass repeated `--planned-changed-file` hints to `enter-task-mode`. When those hints include protected orchestrator paths and `--orchestrator-work` is missing, the gate must stop before preflight and print a rerun command with explicit `--orchestrator-work`; it must never auto-enable the flag silently.
+- Agents cannot approve protected task-mode entry for themselves. Any command with `--orchestrator-work` or `--workflow-config-work` requires fresh operator approval, `--operator-confirmed yes`, and `--operator-confirmed-at-utc "<ISO-8601 timestamp>"`.
 - Enter task mode with explicit runtime identity via `--provider "<provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned, and do not rely on canonical SourceOfTruth fallback.
 - Task-mode entry must produce `runtime/reviews/<task-id>-task-mode.json` and task-timeline event `TASK_MODE_ENTERED`.
 - Baseline downstream rules must be opened and recorded before preflight:
@@ -133,6 +134,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Full-suite validation gate must run before `completion-gate` when enabled:
   `node garda-agent-orchestrator/bin/garda.js gate full-suite-validation --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --repo-root "."`.
 - Full-suite validation is controlled by `garda-agent-orchestrator/live/config/workflow-config.json` (`full_suite_validation.enabled`). Operators may edit that file directly or use the repo-local CLI surface (`garda workflow show`, `garda workflow set --full-suite-enabled true|false`); do not introduce setup/init/reinit questions for this mode.
+- `garda workflow set` is a guarded workflow-config mutation surface and requires separate explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
 - When enabled, `completion-gate` requires a full-suite-validation artifact with status `PASSED` or `WARNED` (AUDIT_AND_WARN policy). Status `FAILED` blocks completion.
 - When disabled (default), `full-suite-validation` emits `SKIPPED` and `completion-gate` does not require the artifact.
 - `AUDIT_AND_WARN` policy with out-of-scope-only failures produces status `WARNED`, exits 0, and does not block completion. The warning is audited in the artifact and timeline.
