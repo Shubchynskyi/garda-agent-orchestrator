@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../core/constants';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../gate-runtime/token-telemetry';
@@ -33,6 +34,39 @@ export interface FullSuiteValidationCycleBinding {
     } | null;
 }
 
+export interface FullSuiteDurationHistoryEntry {
+    timestamp_utc: string;
+    task_id: string;
+    status: 'PASSED' | 'FAILED' | 'WARNED';
+    command: string;
+    config_signature_sha256: string;
+    duration_ms: number;
+    timed_out: boolean;
+    exit_code: number | null;
+}
+
+export interface FullSuiteDurationHistory {
+    schema_version: 1;
+    history_limit: number;
+    updated_at_utc: string;
+    entries: FullSuiteDurationHistoryEntry[];
+}
+
+export interface FullSuiteTimeoutForecast {
+    history_path: string;
+    sample_count: number;
+    average_duration_seconds: number | null;
+    recommended_timeout_seconds: number;
+    safety_margin_seconds: number | null;
+    recommendation_source: 'history' | 'config_timeout';
+    configured_timeout_seconds: number;
+    warning: string | null;
+}
+
+export const FULL_SUITE_DURATION_HISTORY_LIMIT = 5;
+export const FULL_SUITE_TIMEOUT_MARGIN_RATIO = 0.2;
+export const FULL_SUITE_TIMEOUT_MIN_MARGIN_SECONDS = 30;
+
 const DEFAULT_CONFIG: FullSuiteValidationConfig = Object.freeze({
     enabled: false,
     command: UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
@@ -62,6 +96,8 @@ export interface FullSuiteValidationResult {
     violations: string[];
     warnings: string[];
     output_telemetry?: Record<string, unknown> | null;
+    duration_ms?: number | null;
+    timeout_forecast?: FullSuiteTimeoutForecast | null;
     cycle_binding?: FullSuiteValidationCycleBinding;
 }
 
@@ -109,6 +145,159 @@ function normalizeOutOfScopePolicy(value: unknown): OutOfScopeFailurePolicy {
         return normalized as OutOfScopeFailurePolicy;
     }
     return 'AUDIT_AND_BLOCK';
+}
+
+export function resolveFullSuiteDurationHistoryPath(repoRoot: string): string {
+    return joinOrchestratorPath(repoRoot, path.join('runtime', 'metrics', 'full-suite-validation-duration-history.json'));
+}
+
+export function buildFullSuiteConfigSignature(config: FullSuiteValidationConfig): string {
+    const relevantConfig = {
+        command: config.command,
+        timeout_ms: config.timeout_ms,
+        green_summary_max_lines: config.green_summary_max_lines,
+        red_failure_chunk_lines: config.red_failure_chunk_lines,
+        out_of_scope_failure_policy: config.out_of_scope_failure_policy
+    };
+    return createHash('sha256').update(JSON.stringify(relevantConfig)).digest('hex');
+}
+
+function isFullSuiteDurationHistoryEntry(value: unknown): value is FullSuiteDurationHistoryEntry {
+    if (!isPlainRecord(value)) {
+        return false;
+    }
+    return typeof value.timestamp_utc === 'string'
+        && typeof value.task_id === 'string'
+        && ['PASSED', 'FAILED', 'WARNED'].includes(String(value.status))
+        && typeof value.command === 'string'
+        && typeof value.config_signature_sha256 === 'string'
+        && typeof value.duration_ms === 'number'
+        && Number.isFinite(value.duration_ms)
+        && value.duration_ms > 0
+        && typeof value.timed_out === 'boolean'
+        && (typeof value.exit_code === 'number' || value.exit_code === null);
+}
+
+export function readFullSuiteDurationHistory(repoRoot: string): {
+    history: FullSuiteDurationHistory;
+    warning: string | null;
+} {
+    const historyPath = resolveFullSuiteDurationHistoryPath(repoRoot);
+    const emptyHistory: FullSuiteDurationHistory = {
+        schema_version: 1,
+        history_limit: FULL_SUITE_DURATION_HISTORY_LIMIT,
+        updated_at_utc: new Date(0).toISOString(),
+        entries: []
+    };
+    if (!fs.existsSync(historyPath)) {
+        return { history: emptyHistory, warning: null };
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(historyPath, 'utf8')) as unknown;
+        if (!isPlainRecord(parsed) || !Array.isArray(parsed.entries)) {
+            return {
+                history: emptyHistory,
+                warning: `Full-suite duration history at ${normalizePath(historyPath)} is malformed; using configured timeout fallback.`
+            };
+        }
+        return {
+            history: {
+                schema_version: 1,
+                history_limit: FULL_SUITE_DURATION_HISTORY_LIMIT,
+                updated_at_utc: typeof parsed.updated_at_utc === 'string'
+                    ? parsed.updated_at_utc
+                    : new Date(0).toISOString(),
+                entries: parsed.entries.filter(isFullSuiteDurationHistoryEntry).slice(-FULL_SUITE_DURATION_HISTORY_LIMIT)
+            },
+            warning: null
+        };
+    } catch {
+        return {
+            history: emptyHistory,
+            warning: `Full-suite duration history at ${normalizePath(historyPath)} is unreadable; using configured timeout fallback.`
+        };
+    }
+}
+
+export function recordFullSuiteValidationDuration(
+    repoRoot: string,
+    config: FullSuiteValidationConfig,
+    entry: Omit<FullSuiteDurationHistoryEntry, 'command' | 'config_signature_sha256'>
+): FullSuiteDurationHistory {
+    const historyPath = resolveFullSuiteDurationHistoryPath(repoRoot);
+    const signature = buildFullSuiteConfigSignature(config);
+    const { history } = readFullSuiteDurationHistory(repoRoot);
+    const entries = [
+        ...history.entries.filter((candidate) => candidate.config_signature_sha256 === signature),
+        {
+            ...entry,
+            command: config.command,
+            config_signature_sha256: signature
+        }
+    ].slice(-FULL_SUITE_DURATION_HISTORY_LIMIT);
+    const nextHistory: FullSuiteDurationHistory = {
+        schema_version: 1,
+        history_limit: FULL_SUITE_DURATION_HISTORY_LIMIT,
+        updated_at_utc: new Date().toISOString(),
+        entries
+    };
+    fs.mkdirSync(path.dirname(historyPath), { recursive: true });
+    fs.writeFileSync(historyPath, `${JSON.stringify(nextHistory, null, 2)}\n`, 'utf8');
+    return nextHistory;
+}
+
+export function buildFullSuiteTimeoutForecast(
+    repoRoot: string,
+    config: FullSuiteValidationConfig
+): FullSuiteTimeoutForecast {
+    const historyPath = resolveFullSuiteDurationHistoryPath(repoRoot);
+    const signature = buildFullSuiteConfigSignature(config);
+    const { history, warning } = readFullSuiteDurationHistory(repoRoot);
+    const samples = history.entries
+        .filter((entry) => entry.config_signature_sha256 === signature)
+        .filter((entry) => Number.isFinite(entry.duration_ms) && entry.duration_ms > 0)
+        .slice(-FULL_SUITE_DURATION_HISTORY_LIMIT);
+    const configuredTimeoutSeconds = Math.ceil(config.timeout_ms / 1000);
+    if (samples.length === 0) {
+        return {
+            history_path: normalizePath(historyPath),
+            sample_count: 0,
+            average_duration_seconds: null,
+            recommended_timeout_seconds: configuredTimeoutSeconds,
+            safety_margin_seconds: null,
+            recommendation_source: 'config_timeout',
+            configured_timeout_seconds: configuredTimeoutSeconds,
+            warning
+        };
+    }
+
+    const averageDurationSeconds = samples.reduce((total, entry) => total + entry.duration_ms / 1000, 0) / samples.length;
+    const recommendedTimeoutSeconds = Math.ceil(Math.max(
+        averageDurationSeconds * (1 + FULL_SUITE_TIMEOUT_MARGIN_RATIO),
+        averageDurationSeconds + FULL_SUITE_TIMEOUT_MIN_MARGIN_SECONDS
+    ));
+    return {
+        history_path: normalizePath(historyPath),
+        sample_count: samples.length,
+        average_duration_seconds: Math.round(averageDurationSeconds * 10) / 10,
+        recommended_timeout_seconds: recommendedTimeoutSeconds,
+        safety_margin_seconds: Math.round((recommendedTimeoutSeconds - averageDurationSeconds) * 10) / 10,
+        recommendation_source: 'history',
+        configured_timeout_seconds: configuredTimeoutSeconds,
+        warning
+    };
+}
+
+export function formatFullSuiteTimeoutForecast(forecast: FullSuiteTimeoutForecast): string {
+    if (forecast.recommendation_source === 'history' && forecast.average_duration_seconds !== null) {
+        return `Recommended full-suite command timeout: ${forecast.recommended_timeout_seconds}s `
+            + `(last ${forecast.sample_count} run(s) avg ${forecast.average_duration_seconds}s; `
+            + `safety margin +${forecast.safety_margin_seconds}s = 20% but at least 30s).`;
+    }
+    const suffix = forecast.warning ? ` ${forecast.warning}` : '';
+    return `Recommended full-suite command timeout: ${forecast.recommended_timeout_seconds}s `
+        + `(no recent matching full-suite duration history; using configured timeout).${suffix}`;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -516,6 +705,13 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
     }
     if (result.output_artifact_path) {
         lines.push(`OutputArtifact: ${result.output_artifact_path}`);
+    }
+    if (typeof result.duration_ms === 'number') {
+        lines.push(`DurationMs: ${result.duration_ms}`);
+    }
+    if (result.timeout_forecast) {
+        lines.push(`TimeoutForecast: ${formatFullSuiteTimeoutForecast(result.timeout_forecast)}`);
+        lines.push(`TimeoutForecastHistory: ${result.timeout_forecast.history_path}`);
     }
     if (result.cycle_binding) {
         lines.push(

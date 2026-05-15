@@ -8,6 +8,10 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import { formatNextStepText, resolveNextStep } from '../../../src/gates/next-step';
+import {
+    recordFullSuiteValidationDuration,
+    type FullSuiteValidationConfig
+} from '../../../src/gates/full-suite-validation';
 import { assertGateChainDecision } from '../cli/commands/gate-test-gatechain';
 import { getWorkspaceSnapshot } from '../../../src/gates/compile-gate';
 import { getWorkspaceSnapshotCached } from '../../../src/gates/workspace-snapshot-cache';
@@ -22,6 +26,14 @@ import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-me
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
 const requireFromTest = createRequire(__filename);
+const NEXT_STEP_FULL_SUITE_TEST_CONFIG: FullSuiteValidationConfig = Object.freeze({
+    enabled: true,
+    command: 'npm test',
+    timeout_ms: 300_000,
+    green_summary_max_lines: 5,
+    red_failure_chunk_lines: 50,
+    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+});
 
 const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
@@ -4720,6 +4732,44 @@ describe('gates/next-step', () => {
         assert.match(result.title, /before test review/);
         assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('surfaces recent full-suite duration timeout guidance before running the suite', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: NEXT_STEP_FULL_SUITE_TEST_CONFIG,
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        recordFullSuiteValidationDuration(repoRoot, NEXT_STEP_FULL_SUITE_TEST_CONFIG, {
+            timestamp_utc: '2099-01-01T00:00:00.000Z',
+            task_id: 'T-OLD-1',
+            status: 'PASSED',
+            duration_ms: 100_000,
+            timed_out: false,
+            exit_code: 0
+        });
+        recordFullSuiteValidationDuration(repoRoot, NEXT_STEP_FULL_SUITE_TEST_CONFIG, {
+            timestamp_utc: '2099-01-01T00:01:00.000Z',
+            task_id: 'T-OLD-2',
+            status: 'FAILED',
+            duration_ms: 200_000,
+            timed_out: false,
+            exit_code: 1
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.match(result.reason, /Recommended full-suite command timeout: 180s/);
+        assert.match(result.reason, /last 2 run\(s\) avg 150s/);
+        assert.ok(text.includes('FullSuiteTimeout: Recommended full-suite command timeout: 180s'));
     });
 
     it('keeps parallel non-test reviews launchable while test review waits for full-suite validation', () => {

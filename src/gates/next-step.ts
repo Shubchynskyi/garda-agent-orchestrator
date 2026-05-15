@@ -39,6 +39,8 @@ import {
     safeReadJson
 } from './task-audit-summary-collectors';
 import {
+    buildFullSuiteTimeoutForecast,
+    formatFullSuiteTimeoutForecast,
     isFullSuiteNotRequiredForDocsOnlyScope,
     loadFullSuiteValidationConfig,
     resolveWorkflowConfigPath
@@ -205,6 +207,8 @@ export interface NextStepFullSuiteSummary {
     config_path: string;
     config_source: 'effective_workflow_config';
     note: string;
+    recommended_timeout_seconds?: number | null;
+    timeout_forecast_note?: string | null;
 }
 
 export interface NextStepProjectMemorySummary {
@@ -6107,6 +6111,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     });
     const preflightSha256 = fileExists(preflightPath) ? fileSha256(preflightPath) : null;
     const fullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
+    const fullSuiteTimeoutForecast = fullSuiteConfig.enabled
+        ? buildFullSuiteTimeoutForecast(repoRoot, fullSuiteConfig)
+        : null;
+    const fullSuiteTimeoutForecastLine = fullSuiteTimeoutForecast
+        ? formatFullSuiteTimeoutForecast(fullSuiteTimeoutForecast)
+        : null;
     const fullSuiteNotRequiredForDocsOnly = isFullSuiteNotRequiredForDocsOnlyScope(preflight || {});
     const fullSuiteGatePassed = fullSuiteNotRequiredForDocsOnly
         ? hasAcceptedDocsOnlyFullSuiteSkipArtifact(
@@ -6123,6 +6133,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         command: fullSuiteConfig.command,
         config_path: toRepoDisplayPath(repoRoot, resolveWorkflowConfigPath(repoRoot)),
         config_source: 'effective_workflow_config',
+        recommended_timeout_seconds: fullSuiteTimeoutForecast?.recommended_timeout_seconds ?? null,
+        timeout_forecast_note: fullSuiteTimeoutForecastLine,
         note: fullSuiteConfig.enabled && fullSuiteNotRequiredForDocsOnly
             ? 'Full-suite validation is enabled, but this docs-only scope only requires a NOT_REQUIRED artifact.'
             : fullSuiteConfig.enabled
@@ -7207,7 +7219,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 reason:
                     `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}. ` +
                     `Run it before launching the mandatory test reviewer so suite failures fail fast on the same compiled scope. ` +
-                    `The final closeout can reuse this artifact only if no relevant task scope changes occur afterward. Command: ${fullSuiteConfig.command}.`,
+                    `The final closeout can reuse this artifact only if no relevant task scope changes occur afterward. ` +
+                    `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
                 commands: [
                     buildCommand(
                         'Run full-suite validation',
@@ -7742,7 +7755,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             status: 'BLOCKED',
             nextGate: 'full-suite-validation',
             title: 'Run full-suite validation.',
-            reason: `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}. Command: ${fullSuiteConfig.command}.`,
+            reason:
+                `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}. ` +
+                `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
             commands: [
                 buildCommand(
                     'Run full-suite validation',
@@ -7888,6 +7903,9 @@ export function formatNextStepText(result: NextStepResult): string {
         }
     }
     lines.push(`FullSuite: enabled=${result.full_suite_validation.enabled}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`);
+    if (result.full_suite_validation.timeout_forecast_note) {
+        lines.push(`FullSuiteTimeout: ${result.full_suite_validation.timeout_forecast_note}`);
+    }
     if (result.project_memory) {
         lines.push(result.project_memory.visible_summary_line);
     }

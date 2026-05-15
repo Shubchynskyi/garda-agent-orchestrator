@@ -7,12 +7,14 @@ import { appendTaskEventAsync } from '../../../gate-runtime/task-events';
 import * as gateHelpers from '../../../gates/helpers';
 import {
     buildFullSuiteValidationOutputTelemetry,
+    buildFullSuiteTimeoutForecast,
     buildDocsOnlyNotRequiredResult,
     buildSkippedResult,
     buildValidationResult,
     formatFullSuiteValidationResult,
     isFullSuiteNotRequiredForDocsOnlyScope,
     loadFullSuiteValidationConfig,
+    recordFullSuiteValidationDuration,
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
 } from '../../../gates/full-suite-validation';
@@ -558,6 +560,7 @@ export async function runFullSuiteValidationCommand(
     let commandExitCode = EXIT_GENERAL_FAILURE;
     let timedOut = false;
     let outputLines: string[] = [];
+    const startedAtMs = Date.now();
     try {
         const execution = await executeCommandAsync(config.command, {
             cwd: repoRoot,
@@ -571,6 +574,7 @@ export async function runFullSuiteValidationCommand(
         const message = error instanceof Error ? error.message : String(error);
         outputLines = [message];
     }
+    const durationMs = Math.max(1, Date.now() - startedAtMs);
     const generatedLockCleanup = timedOut
         ? cleanupGeneratedLocksAfterTimedOutFullSuite(repoRoot)
         : [];
@@ -598,6 +602,7 @@ export async function runFullSuiteValidationCommand(
     if (generatedLockCleanup.length > 0) {
         result.warnings.push(...generatedLockCleanup.map(formatGeneratedLockCleanupObservation));
     }
+    result.duration_ms = durationMs;
     result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);
     const postWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaseline, {
         allowProtectedManifestFallback: false
@@ -617,6 +622,18 @@ export async function runFullSuiteValidationCommand(
             postWorkflowConfigChanges.scan_error
         );
         blockedResult.output_artifact_path = gateHelpers.normalizePath(outputArtifactPath);
+        blockedResult.duration_ms = durationMs;
+        if (blockedResult.status !== 'SKIPPED') {
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: new Date().toISOString(),
+                task_id: taskId,
+                status: blockedResult.status,
+                duration_ms: durationMs,
+                timed_out: timedOut,
+                exit_code: commandExitCode
+            });
+        }
+        blockedResult.timeout_forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
         blockedResult.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, blockedResult);
         await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, blockedResult.status, blockedResult, {
             status: blockedResult.status,
@@ -627,6 +644,8 @@ export async function runFullSuiteValidationCommand(
             preflight_path: cycleBinding.preflight_path,
             artifact_path: gateHelpers.normalizePath(artifactPath),
             output_artifact_path: gateHelpers.normalizePath(outputArtifactPath),
+            duration_ms: blockedResult.duration_ms,
+            timeout_forecast: blockedResult.timeout_forecast,
             cycle_binding: blockedResult.cycle_binding,
             violations: blockedResult.violations,
             warnings: blockedResult.warnings,
@@ -637,6 +656,18 @@ export async function runFullSuiteValidationCommand(
             exitCode: EXIT_GATE_FAILURE
         };
     }
+    if (result.status !== 'SKIPPED') {
+        recordFullSuiteValidationDuration(repoRoot, config, {
+            timestamp_utc: new Date().toISOString(),
+            task_id: taskId,
+            status: result.status,
+            duration_ms: durationMs,
+            timed_out: timedOut,
+            exit_code: commandExitCode
+        });
+    }
+    result.timeout_forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+    result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);
     await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, result.status, result, {
         status: result.status,
         enabled: result.enabled,
@@ -646,6 +677,8 @@ export async function runFullSuiteValidationCommand(
         preflight_path: cycleBinding.preflight_path,
         artifact_path: gateHelpers.normalizePath(artifactPath),
         output_artifact_path: gateHelpers.normalizePath(outputArtifactPath),
+        duration_ms: result.duration_ms,
+        timeout_forecast: result.timeout_forecast,
         cycle_binding: result.cycle_binding,
         out_of_scope_audit_verdict: result.out_of_scope_audit_verdict,
         violations: result.violations,

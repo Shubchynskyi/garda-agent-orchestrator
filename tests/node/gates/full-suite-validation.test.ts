@@ -8,15 +8,20 @@ import { EXIT_GATE_FAILURE } from '../../../src/cli/exit-codes';
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../src/core/constants';
 import {
     buildDocsOnlyNotRequiredResult,
+    buildFullSuiteTimeoutForecast,
     buildFullSuiteValidationOutputTelemetry,
     buildSkippedResult,
     buildValidationResult,
     compactGreenSummary,
     compactRedFailureChunks,
     detectOutOfScopeFailures,
+    formatFullSuiteTimeoutForecast,
     formatFullSuiteValidationResult,
     isFullSuiteNotRequiredForDocsOnlyScope,
-    loadFullSuiteValidationConfig
+    loadFullSuiteValidationConfig,
+    recordFullSuiteValidationDuration,
+    resolveFullSuiteDurationHistoryPath,
+    type FullSuiteValidationConfig
 } from '../../../src/gates/full-suite-validation';
 import { getCurrentWorkflowConfigFileHashes } from '../../../src/gates/workflow-config-work';
 import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
@@ -55,6 +60,17 @@ function writeFullSuiteTaskModeBaseline(repoRoot: string, taskId: string): void 
         }), null, 2)}\n`,
         'utf8'
     );
+}
+
+function buildFullSuiteDurationTestConfig(command = 'npm test'): FullSuiteValidationConfig {
+    return {
+        enabled: true,
+        command,
+        timeout_ms: 300_000,
+        green_summary_max_lines: 5,
+        red_failure_chunk_lines: 50,
+        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+    };
 }
 
 describe('gates/full-suite-validation', () => {
@@ -395,6 +411,66 @@ describe('gates/full-suite-validation', () => {
         });
     });
 
+    describe('full-suite duration timeout forecast', () => {
+        it('records only the last five matching durations and recommends average plus 20 percent or at least 30 seconds', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig();
+
+            for (let index = 0; index < 6; index += 1) {
+                recordFullSuiteValidationDuration(repoRoot, config, {
+                    timestamp_utc: `2099-01-01T00:00:0${index}.000Z`,
+                    task_id: `T-${index}`,
+                    status: index % 2 === 0 ? 'PASSED' : 'FAILED',
+                    duration_ms: (index + 1) * 10_000,
+                    timed_out: false,
+                    exit_code: index % 2 === 0 ? 0 : 1
+                });
+            }
+
+            const historyPath = resolveFullSuiteDurationHistoryPath(repoRoot);
+            const history = JSON.parse(fs.readFileSync(historyPath, 'utf8')) as { entries: Array<{ task_id: string; }>; };
+            assert.equal(history.entries.length, 5);
+            assert.equal(history.entries[0].task_id, 'T-1');
+
+            const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 5);
+            assert.equal(forecast.average_duration_seconds, 40);
+            assert.equal(forecast.recommended_timeout_seconds, 70);
+            assert.equal(forecast.safety_margin_seconds, 30);
+            assert.equal(forecast.recommendation_source, 'history');
+            assert.match(formatFullSuiteTimeoutForecast(forecast), /Recommended full-suite command timeout: 70s/);
+        });
+
+        it('uses the configured timeout when duration history is missing, corrupt, or for another workflow config signature', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-fallback-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig('npm test');
+            const otherConfig = buildFullSuiteDurationTestConfig('npm run test:other');
+
+            recordFullSuiteValidationDuration(repoRoot, otherConfig, {
+                timestamp_utc: '2099-01-01T00:00:00.000Z',
+                task_id: 'T-OTHER',
+                status: 'PASSED',
+                duration_ms: 100_000,
+                timed_out: false,
+                exit_code: 0
+            });
+            let forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 0);
+            assert.equal(forecast.recommended_timeout_seconds, 300);
+            assert.equal(forecast.recommendation_source, 'config_timeout');
+
+            fs.writeFileSync(resolveFullSuiteDurationHistoryPath(repoRoot), '{not json', 'utf8');
+            forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 0);
+            assert.equal(forecast.recommended_timeout_seconds, 300);
+            assert.match(forecast.warning || '', /unreadable/);
+        });
+    });
+
     describe('CLI integration', () => {
         it('gate full-suite-validation prints SKIPPED and writes JSON artifact when disabled', async () => {
             const repoRoot = path.resolve(process.cwd());
@@ -560,7 +636,7 @@ describe('gates/full-suite-validation', () => {
             fs.writeFileSync(
                 helperScript,
                 [
-                    'for (let index = 0; index < 12; index += 1) {',
+                    'for (let index = 0; index < 40; index += 1) {',
                     '  process.stdout.write(`detail line ${index} with verbose raw output that should not survive compaction\\n`);',
                     '}',
                     'process.stdout.write("# tests 20\\n# pass 20\\n# fail 0\\n# duration_ms 1234\\n");',
@@ -597,6 +673,8 @@ describe('gates/full-suite-validation', () => {
             assert.ok(fs.existsSync(artifactPath));
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'PASSED');
+            assert.equal(typeof artifact.duration_ms, 'number');
+            assert.equal(artifact.timeout_forecast.recommendation_source, 'history');
             assert.ok(artifact.output_telemetry);
             assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
             const timelinePath = path.join(eventsDir, 'T-PASS.jsonl');
@@ -649,6 +727,70 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'FAILED');
             assert.ok(artifact.violations.some((line: string) => line.includes('baseline hashes are missing')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('records duration history for failed post-run workflow-config guard violations', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-post-workflow-config-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'mutate-workflow-config.js');
+            const workflowConfigPath = path.join(configDir, 'workflow-config.json');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const fs = require("node:fs");',
+                    'fs.appendFileSync(process.argv[2], "\\n", "utf8");',
+                    'process.stdout.write("# tests 1\\n# pass 1\\n# fail 0\\n# duration_ms 1\\n");',
+                    'process.exit(0);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(workflowConfigPath, JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}" "${workflowConfigPath.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-POST-WORKFLOW-CONFIG-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-POST-WORKFLOW-CONFIG',
+                changed_files: ['src/changed.ts'],
+                triggers: {
+                    workflow_config_file_hashes: getCurrentWorkflowConfigFileHashes(tempDir)
+                }
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-POST-WORKFLOW-CONFIG',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-POST-WORKFLOW-CONFIG-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(typeof artifact.duration_ms, 'number');
+            assert.equal(artifact.timeout_forecast.recommendation_source, 'history');
+            const durationHistory = JSON.parse(
+                fs.readFileSync(resolveFullSuiteDurationHistoryPath(tempDir), 'utf8')
+            ) as { entries: Array<{ task_id: string; status: string; }>; };
+            assert.deepEqual(
+                durationHistory.entries.map((entry) => ({ task_id: entry.task_id, status: entry.status })),
+                [{ task_id: 'T-POST-WORKFLOW-CONFIG', status: 'FAILED' }]
+            );
+            assert.ok(artifact.violations.some((line: string) => line.includes('Workflow config')));
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
