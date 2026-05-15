@@ -69,6 +69,8 @@ export interface RestartCoherentCycleCommandOptions {
     outputFiltersPath?: string;
     failTailLines?: unknown;
     emitMetrics?: unknown;
+    operatorConfirmed?: unknown;
+    operatorConfirmedAtUtc?: unknown;
 }
 
 export interface RestartReviewCycleCommandOptions {
@@ -901,6 +903,9 @@ export async function runRestartCoherentCycleCommand(
                 startBanner: previousTaskMode.start_banner,
                 plannedChangedFiles: replayScope.plannedChangedFiles,
                 orchestratorWork: previousTaskMode.orchestrator_work === true,
+                workflowConfigWork: previousTaskMode.workflow_config_work === true,
+                operatorConfirmed: options.operatorConfirmed,
+                operatorConfirmedAtUtc: options.operatorConfirmedAtUtc,
                 provider: previousTaskMode.provider || undefined,
                 routedTo: previousTaskMode.routed_to || undefined,
                 planPath: previousTaskMode.plan?.plan_path || undefined,

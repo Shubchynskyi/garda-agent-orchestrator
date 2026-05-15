@@ -219,7 +219,7 @@ function buildPreflightGateHelpEntries(
         'restart-coherent-cycle': {
             ...createSingleUsageEntry(
                 'Refresh preflight and downstream compile evidence for the current task after scope drift.',
-                `${cliPrefix} gate restart-coherent-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --repo-root "."`,
+                `${cliPrefix} gate restart-coherent-cycle --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --repo-root "."`,
                 true
             )
         },

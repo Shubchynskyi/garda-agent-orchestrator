@@ -122,6 +122,8 @@ export async function handleRestartCoherentCycle(gateArgv: string[]): Promise<vo
         '--commands-path': { key: 'commandsPath', type: 'string' },
         '--output-filters-path': { key: 'outputFiltersPath', type: 'string' },
         '--fail-tail-lines': { key: 'failTailLines', type: 'string' },
+        '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
+        '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' },
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };

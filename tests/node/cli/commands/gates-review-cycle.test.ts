@@ -335,7 +335,10 @@ describe('cli/commands/gates – review-cycle suites', () => {
             repoRoot,
             taskId,
             taskSummary: 'Restart the latest coherent cycle after misordered recovery noise',
-            startBanner: 'Garda rewrites my code'
+            startBanner: 'Garda rewrites my code',
+            orchestratorWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
         });
         loadTaskEntryRulePack(repoRoot, taskId);
         runHandshakeForTask(repoRoot, taskId);
@@ -451,6 +454,8 @@ describe('cli/commands/gates – review-cycle suites', () => {
             preflightPath,
             commandsPath,
             outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, 0);
@@ -481,6 +486,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
             'utf8'
         )) as Record<string, unknown>;
         assert.equal(refreshedTaskModeArtifact.start_banner, 'Garda rewrites my code');
+        assert.equal(refreshedTaskModeArtifact.orchestrator_work, true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2627,6 +2633,8 @@ describe('cli/commands/gates – review-cycle suites', () => {
                 taskId,
                 taskSummary: `Restart review cycle classifies ${scenario.suffix} remediation`,
                 orchestratorWork: !!scenario.changedFile,
+                operatorConfirmed: scenario.changedFile ? 'yes' : undefined,
+                operatorConfirmedAtUtc: scenario.changedFile ? new Date().toISOString() : undefined,
                 plannedChangedFiles: [changedFile]
             });
             loadTaskEntryRulePack(repoRoot, taskId);
