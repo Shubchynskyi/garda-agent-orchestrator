@@ -1085,7 +1085,7 @@ test('applyProfileGuardrails: zero-diff suppression fails closed when code revie
     assert.equal(codeDecision?.decision, 'profile_forced');
 });
 
-test('applyProfileGuardrails: fast docs-only keeps code review for protected control-plane scope', () => {
+test('applyProfileGuardrails: fast docs-only suppresses code review for protected control-plane docs surface', () => {
     const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
     const caps: ReviewCapabilities = {
         code: true, db: true, security: true, refactor: true,
@@ -1096,7 +1096,25 @@ test('applyProfileGuardrails: fast docs-only keeps code review for protected con
         caps,
         'docs-only',
         'fast',
-        { protectedControlPlaneChanged: true }
+        { protectedControlPlaneChanged: true, protectedControlPlaneDocsOnly: true }
+    );
+    const codeDecision = result.decisions.find(d => d.review_type === 'code');
+    assert.equal(codeDecision?.effective_value, false);
+    assert.equal(codeDecision?.decision, 'lightened_by_profile');
+});
+
+test('applyProfileGuardrails: fast docs-only keeps code review for non-doc protected control-plane scope', () => {
+    const profile: ProfileReviewPolicy = { code: true, db: 'auto', security: 'auto', refactor: false };
+    const caps: ReviewCapabilities = {
+        code: true, db: true, security: true, refactor: true,
+        api: false, test: false, performance: false, infra: false, dependency: false
+    };
+    const result = applyProfileGuardrails(
+        profile,
+        caps,
+        'docs-only',
+        'fast',
+        { protectedControlPlaneChanged: true, protectedControlPlaneDocsOnly: false }
     );
     const codeDecision = result.decisions.find(d => d.review_type === 'code');
     assert.equal(codeDecision?.effective_value, true);
@@ -1222,6 +1240,22 @@ test('resolveEffectivePolicy: scopeCategory docs-only allows profile to disable 
         assert.ok(policy.guardrail_diagnostics !== null);
         assert.equal(policy.guardrail_diagnostics!.lightening_eligible, true);
         assert.equal(policy.scope_category, 'docs-only');
+    } finally {
+        cleanUp(bundleRoot);
+    }
+});
+
+test('resolveEffectivePolicy: balanced docs-only protected docs surface does not force code review', () => {
+    const bundleRoot = makeTempBundle({});
+    try {
+        const policy = resolveEffectivePolicy(bundleRoot, {
+            scopeCategory: 'docs-only',
+            protectedControlPlaneChanged: true,
+            protectedControlPlaneDocsOnly: true
+        });
+        assert.equal(policy.review_policy.code, false, 'protected documentation surface should not force code review');
+        const codeDecision = policy.guardrail_diagnostics!.decisions.find(d => d.review_type === 'code');
+        assert.equal(codeDecision?.decision, 'lightened_by_profile');
     } finally {
         cleanUp(bundleRoot);
     }

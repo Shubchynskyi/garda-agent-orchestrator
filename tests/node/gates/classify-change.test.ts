@@ -291,7 +291,7 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.test, true);
         });
 
-        it('rejects protected control-plane docs as ordinary docs even when a configured glob matches', () => {
+        it('keeps protected control-plane documentation as docs-only without ordinary-doc trust', () => {
             const result = classifyChange({
                 normalizedFiles: ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
                 taskIntent: 'Update protected rule docs',
@@ -306,9 +306,28 @@ describe('gates/classify-change', () => {
                 reviewCapabilities: defaultCapabilities
             });
 
+            assert.equal(result.scope_category, 'docs-only');
+            assert.equal(result.triggers.protected_control_plane_changed, true);
+            assert.equal((result.triggers as Record<string, unknown>).protected_control_plane_docs_only, true);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+        });
+
+        it('keeps root protected agent entrypoints audit-only instead of protected docs-only', () => {
+            const result = classifyChange({
+                normalizedFiles: ['AGENTS.md'],
+                taskIntent: 'Update root agent entrypoint',
+                changedLinesTotal: 8,
+                additionsTotal: 6,
+                deletionsTotal: 2,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
             assert.equal(result.scope_category, 'audit-only');
             assert.equal(result.triggers.protected_control_plane_changed, true);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+            assert.equal((result.triggers as Record<string, unknown>).protected_control_plane_docs_only, false);
         });
 
         it('rejects sensitive review trigger paths as ordinary docs even when configured', () => {
@@ -1031,6 +1050,7 @@ describe('gates/classify-change', () => {
             });
 
             assert.equal(result.triggers.protected_control_plane_changed, true);
+            assert.equal((result.triggers as Record<string, unknown>).protected_control_plane_docs_only, false);
             assert.deepEqual(result.triggers.changed_protected_files, ['garda-agent-orchestrator/src/cli/main.ts']);
         });
 

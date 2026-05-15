@@ -562,6 +562,20 @@ export function isDocumentationLikePath(pathValue: string, ordinaryDocPaths: str
         || matchOrdinaryDocPathPattern(normalizedPath, ordinaryDocPaths) !== null;
 }
 
+function isProtectedControlPlaneDocumentationSurfacePath(
+    pathValue: string,
+    config: SafeOrdinaryDocumentationPathConfig
+): boolean {
+    const normalizedPath = normalizePath(pathValue);
+    const isDocsSurface = normalizedPath.startsWith('docs/')
+        || normalizedPath.includes('/docs/');
+    return isDocsSurface
+        && isDocumentationLikePath(normalizedPath, config.ordinary_doc_paths)
+        && !isRuntimeCodeLikePath(normalizedPath, config.code_like_regexes, config.runtime_roots)
+        && !testPrecompiled(normalizedPath, CONFIG_LIKE_COMPILED)
+        && !matchesSensitiveOrdinaryDocTrigger(normalizedPath, config);
+}
+
 export function isRuntimeCodeLikePath(pathValue: string, codeLikeRegexes: string[], runtimeRoots: string[]): boolean {
     const normalizedPath = normalizePath(pathValue);
     return matchAnyRegex(normalizedPath, codeLikeRegexes, {
@@ -634,6 +648,20 @@ export function classifyScopeCategory(
         const isProtectedControlPlane = testPathPrefix(file, options.protectedControlPlaneRoots || []);
         if (isCode && isProtectedControlPlane) {
             codeCount++;
+            continue;
+        }
+        if (isProtectedControlPlane && isProtectedControlPlaneDocumentationSurfacePath(file, {
+            code_like_regexes: codeLikeRegexes,
+            runtime_roots: runtimeRoots,
+            protected_control_plane_roots: options.protectedControlPlaneRoots || [],
+            ordinary_doc_paths: options.ordinaryDocPaths || [],
+            sql_or_migration_regexes: options.sqlOrMigrationRegexes || [],
+            db_trigger_regexes: options.dbTriggerRegexes || [],
+            security_trigger_regexes: options.securityTriggerRegexes || [],
+            api_trigger_regexes: options.apiTriggerRegexes || [],
+            dependency_trigger_regexes: options.dependencyTriggerRegexes || []
+        })) {
+            docCount++;
             continue;
         }
         if (isAudit || isProtectedControlPlane) {
@@ -812,6 +840,9 @@ export function classifyChange(options: ClassifyChangeOptions) {
 
     const protectedControlPlaneFiles = normalizedFiles.filter((p: string) => testPathPrefix(p, classificationConfig.protected_control_plane_roots));
     const protectedControlPlaneChanged = protectedControlPlaneFiles.length > 0;
+    const protectedControlPlaneDocsOnly = normalizedFiles.length > 0
+        && protectedControlPlaneFiles.length === normalizedFiles.length
+        && protectedControlPlaneFiles.every((p: string) => isProtectedControlPlaneDocumentationSurfacePath(p, classificationConfig));
 
     const dbStrongChangedFiles = normalizedFiles.filter((p: string) => (
         isStrongDatabaseChangedScope(p, sqlOrMigration, classificationConfig.db_trigger_regexes)
@@ -948,6 +979,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
             runtime_changed: runtimeChanged,
             runtime_code_changed: runtimeCodeChanged,
             protected_control_plane_changed: protectedControlPlaneChanged,
+            protected_control_plane_docs_only: protectedControlPlaneDocsOnly,
             changed_protected_files: protectedControlPlaneFiles,
             db: dbTriggered,
             db_strong_changed_files: dbStrongChangedFiles,

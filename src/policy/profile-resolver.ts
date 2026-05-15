@@ -117,6 +117,8 @@ export interface ResolveOptions {
     forceCodeReview?: boolean;
     /** Whether current scope touches protected orchestrator control-plane files. */
     protectedControlPlaneChanged?: boolean;
+    /** Whether every protected control-plane change is documentation-only surface. */
+    protectedControlPlaneDocsOnly?: boolean;
     /** Current preflight proved a clean BASELINE_ONLY scope with no reviewable diff. */
     zeroDiffBaselineOnly?: boolean;
 }
@@ -172,6 +174,7 @@ export interface ProfileGuardrailOptions {
     forceAllDomainReviews?: boolean;
     forceCodeReview?: boolean;
     protectedControlPlaneChanged?: boolean;
+    protectedControlPlaneDocsOnly?: boolean;
     zeroDiffBaselineOnly?: boolean;
 }
 
@@ -184,7 +187,10 @@ function shouldLightenExplicitCodeReviewForDocsOnly(
     return reviewType === 'code'
         && profileValue === true
         && scopeCategory === 'docs-only'
-        && options.protectedControlPlaneChanged !== true;
+        && (
+            options.protectedControlPlaneChanged !== true
+            || options.protectedControlPlaneDocsOnly === true
+        );
 }
 
 function shouldLightenReviewForTestOnlyScope(
@@ -669,6 +675,7 @@ export function resolveEffectivePolicy(
                 forceAllDomainReviews: options.forceAllDomainReviews,
                 forceCodeReview: options.forceCodeReview,
                 protectedControlPlaneChanged: options.protectedControlPlaneChanged,
+                protectedControlPlaneDocsOnly: options.protectedControlPlaneDocsOnly,
                 zeroDiffBaselineOnly: options.zeroDiffBaselineOnly
             }
         );

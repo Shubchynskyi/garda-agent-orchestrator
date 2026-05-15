@@ -649,6 +649,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false),
                         forceCodeReview: parseBooleanOption(options.forceCodeReview, false),
                         protectedControlPlaneChanged: (result.triggers as Record<string, unknown>).protected_control_plane_changed === true,
+                        protectedControlPlaneDocsOnly: (result.triggers as Record<string, unknown>).protected_control_plane_docs_only === true,
                         zeroDiffBaselineOnly: isZeroDiffBaselineOnlyNoReviewableScope(
                             result,
                             domainSurface,

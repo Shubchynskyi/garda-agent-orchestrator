@@ -28,6 +28,7 @@ export interface TaskProfileSelectionOptions {
     forceAllDomainReviews?: boolean;
     forceCodeReview?: boolean;
     protectedControlPlaneChanged?: boolean;
+    protectedControlPlaneDocsOnly?: boolean;
     zeroDiffBaselineOnly?: boolean;
 }
 
@@ -55,6 +56,7 @@ export function resolveTaskProfileSelection(
         ...(options.forceAllDomainReviews === true ? { forceAllDomainReviews: true } : {}),
         ...(options.forceCodeReview === true ? { forceCodeReview: true } : {}),
         ...(options.protectedControlPlaneChanged === true ? { protectedControlPlaneChanged: true } : {}),
+        ...(options.protectedControlPlaneDocsOnly === true ? { protectedControlPlaneDocsOnly: true } : {}),
         ...(options.zeroDiffBaselineOnly === true ? { zeroDiffBaselineOnly: true } : {})
     });
 
