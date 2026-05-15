@@ -116,6 +116,14 @@ interface ReviewerLaunchArtifactValidationResult {
     launchedAtUtc: string;
 }
 
+interface SupersededReviewerLaunchArtifactSnapshot {
+    artifact_path: string;
+    artifact_sha256: string;
+    snapshot_path: string;
+    superseded_reason: string;
+    mismatches: string[];
+}
+
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
 const PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE = 'garda_prepare_reviewer_launch';
@@ -233,6 +241,82 @@ function buildReviewerLaunchCompletionHint(): string {
         `- Required completed-launch updates: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}.`,
         `- Trust boundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`
     ].join('\n');
+}
+
+function getReviewerLaunchArtifactMismatchReasons(
+    artifact: Record<string, unknown>,
+    options: {
+        taskId: string;
+        reviewType: string;
+        reviewerExecutionMode: 'delegated_subagent';
+        reviewerIdentity: string;
+        reviewContextSha256: string;
+        routingEventSha256: string;
+        reviewerPromptSha256: string | null;
+        reviewTreeStateSha256: string | null;
+        launchBindingSha256: string;
+        preparedLaunchEventSha256: string;
+        routingEventSequence: number;
+        timelineEvents: readonly ReviewDependencyTimelineEvent[];
+    }
+): string[] {
+    const mismatches: string[] = [];
+    if (getStringField(artifact, 'task_id', 'taskId') !== options.taskId) {
+        mismatches.push('task_id mismatch');
+    }
+    if (getStringField(artifact, 'review_type', 'reviewType').toLowerCase() !== options.reviewType) {
+        mismatches.push('review_type mismatch');
+    }
+    if (getStringField(artifact, 'reviewer_execution_mode', 'reviewerExecutionMode') !== options.reviewerExecutionMode) {
+        mismatches.push('reviewer_execution_mode mismatch');
+    }
+    if (
+        getStringField(artifact, 'reviewer_identity', 'reviewerIdentity', 'reviewer_session_id', 'reviewerSessionId') !== options.reviewerIdentity
+    ) {
+        mismatches.push('reviewer_identity mismatch');
+    }
+    if (getStringField(artifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() !== options.reviewContextSha256) {
+        mismatches.push('review_context_sha256 mismatch');
+    }
+    if (getStringField(artifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() !== options.routingEventSha256) {
+        mismatches.push('routing_event_sha256 mismatch');
+    }
+    if (
+        options.reviewerPromptSha256
+        && getStringField(artifact, 'reviewer_prompt_sha256', 'reviewerPromptSha256').toLowerCase() !== options.reviewerPromptSha256
+    ) {
+        mismatches.push('reviewer_prompt_sha256 mismatch');
+    }
+    if (
+        options.reviewTreeStateSha256
+        && getStringField(artifact, 'review_tree_state_sha256', 'reviewTreeStateSha256').toLowerCase() !== options.reviewTreeStateSha256
+    ) {
+        mismatches.push('review_tree_state_sha256 mismatch');
+    }
+    if (getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase() !== options.launchBindingSha256) {
+        mismatches.push('launch_binding_sha256 mismatch');
+    }
+    if (
+        getStringField(artifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256').toLowerCase()
+            !== options.preparedLaunchEventSha256
+    ) {
+        mismatches.push('prepared_launch_event_sha256 mismatch');
+    } else if (
+        !findMatchingReviewerLaunchPreparedEvent(options.timelineEvents, {
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerExecutionMode: options.reviewerExecutionMode,
+            reviewerIdentity: options.reviewerIdentity,
+            reviewContextSha256: options.reviewContextSha256,
+            routingEventSha256: options.routingEventSha256,
+            launchBindingSha256: options.launchBindingSha256,
+            preparedLaunchEventSha256: options.preparedLaunchEventSha256,
+            minSequenceExclusive: options.routingEventSequence
+        })
+    ) {
+        mismatches.push('prepared_launch_event_sha256 is not current telemetry');
+    }
+    return mismatches;
 }
 
 function resolveCanonicalReviewPaths(
@@ -1342,6 +1426,123 @@ function getReviewTreeStateLaunchSummary(reviewContext: Record<string, unknown>)
     };
 }
 
+function snapshotSupersededReviewerLaunchArtifact(options: {
+    artifactPath: string;
+    mismatches: string[];
+}): SupersededReviewerLaunchArtifactSnapshot {
+    const artifactSha256 = fileSha256(options.artifactPath);
+    if (!artifactSha256) {
+        throw new Error(`Reviewer launch artifact could not be hashed before supersession: ${normalizePath(options.artifactPath)}.`);
+    }
+    const parsedPath = path.parse(options.artifactPath);
+    const snapshotPath = path.join(
+        parsedPath.dir,
+        `${parsedPath.name}-superseded-${artifactSha256}${parsedPath.ext || '.json'}`
+    );
+    if (!fs.existsSync(snapshotPath)) {
+        fs.copyFileSync(options.artifactPath, snapshotPath);
+    }
+    const mismatches = options.mismatches.length > 0
+        ? options.mismatches
+        : ['existing reviewer launch artifact is not current for this preparation'];
+    return {
+        artifact_path: normalizePath(options.artifactPath),
+        artifact_sha256: artifactSha256,
+        snapshot_path: normalizePath(snapshotPath),
+        superseded_reason: mismatches.join('; '),
+        mismatches
+    };
+}
+
+function getCurrentPreparedReviewerLaunchMismatches(options: {
+    artifactPath: string;
+    artifact: Record<string, unknown>;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    reviewerPromptSha256: string | null;
+    reviewTreeStateSha256: string | null;
+    launchBindingSha256: string;
+    routingEventSequence: number;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
+}): string[] {
+    const evidenceType = getStringField(options.artifact, 'evidence_type', 'artifact_type');
+    const attestationState = getStringField(options.artifact, 'attestation_state', 'attestationState');
+    const preparedLaunchEventSha256 = getStringField(
+        options.artifact,
+        'prepared_launch_event_sha256',
+        'preparedLaunchEventSha256'
+    ).toLowerCase();
+    const mismatches = getReviewerLaunchArtifactMismatchReasons(options.artifact, {
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerExecutionMode: options.reviewerExecutionMode,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256: options.reviewContextSha256,
+        routingEventSha256: options.routingEventSha256,
+        reviewerPromptSha256: options.reviewerPromptSha256,
+        reviewTreeStateSha256: options.reviewTreeStateSha256,
+        launchBindingSha256: options.launchBindingSha256,
+        preparedLaunchEventSha256,
+        routingEventSequence: options.routingEventSequence,
+        timelineEvents: options.timelineEvents
+    });
+    if (Number(options.artifact.schema_version) !== 1) {
+        mismatches.push('schema_version mismatch');
+    }
+    if (evidenceType !== PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE) {
+        mismatches.push('evidence_type mismatch');
+    }
+    if (attestationState !== 'prepared') {
+        mismatches.push('attestation_state mismatch');
+    }
+    if (getStringField(options.artifact, 'attestation_source', 'attestationSource', 'source') !== PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE) {
+        mismatches.push('attestation_source mismatch');
+    }
+    if (!preparedLaunchEventSha256) {
+        mismatches.push('prepared_launch_event_sha256 missing');
+    }
+    return mismatches;
+}
+
+function isCurrentCompletedReviewerLaunchArtifact(options: {
+    repoRoot: string;
+    artifactPath: string;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: 'delegated_subagent';
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    reviewerPromptSha256: string | null;
+    reviewTreeStateSha256: string | null;
+    routingEventSequence: number;
+    timelineEvents: readonly ReviewDependencyTimelineEvent[];
+}): boolean {
+    try {
+        validateReviewerLaunchArtifact({
+            repoRoot: options.repoRoot,
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerExecutionMode: options.reviewerExecutionMode,
+            reviewerIdentity: options.reviewerIdentity,
+            reviewContextSha256: options.reviewContextSha256,
+            routingEventSha256: options.routingEventSha256,
+            reviewerPromptSha256: options.reviewerPromptSha256,
+            reviewTreeStateSha256: options.reviewTreeStateSha256,
+            routingEventSequence: options.routingEventSequence,
+            timelineEvents: options.timelineEvents,
+            artifactPathValue: options.artifactPath
+        });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function resolveProviderLaunchMetadata(runtimeIdentity: ReturnType<typeof resolveRuntimeReviewerIdentity>): {
     provider: string | null;
     launchTool: string;
@@ -2202,20 +2403,6 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         artifactPathValue: options.reviewerLaunchArtifactPath
     });
     const existingArtifact = readJsonObjectIfPresent(launchArtifactPath);
-    const existingEvidenceType = existingArtifact ? getStringField(existingArtifact, 'evidence_type', 'artifact_type') : '';
-    const existingAttestationState = existingArtifact ? getStringField(existingArtifact, 'attestation_state', 'attestationState') : '';
-    if (
-        existingArtifact
-        && existingEvidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
-        && existingAttestationState === 'launched'
-        && getStringField(existingArtifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() === contextSha256
-        && getStringField(existingArtifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() === routingEventProvenance.event_sha256
-    ) {
-        throw new Error(
-            `Completed reviewer launch artifact already exists: ${normalizePath(launchArtifactPath)}. ` +
-            'Run record-review-invocation for this completed launch evidence instead of replacing it.'
-        );
-    }
 
     const promptBinding = resolveReviewerPromptArtifactBinding({
         repoRoot,
@@ -2237,6 +2424,77 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256
     });
+    let supersededLaunchArtifact: SupersededReviewerLaunchArtifactSnapshot | null = null;
+    if (existingArtifact) {
+        const existingEvidenceType = getStringField(existingArtifact, 'evidence_type', 'artifact_type');
+        const existingAttestationState = getStringField(existingArtifact, 'attestation_state', 'attestationState');
+        const preparedMismatches = getCurrentPreparedReviewerLaunchMismatches({
+            artifactPath: launchArtifactPath,
+            artifact: existingArtifact,
+            taskId,
+            reviewType,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            reviewContextSha256: contextSha256,
+            routingEventSha256: routingEventProvenance.event_sha256,
+            reviewerPromptSha256,
+            reviewTreeStateSha256: reviewTreeStateSha256 || null,
+            launchBindingSha256,
+            routingEventSequence: routingEvent.sequence,
+            timelineEvents
+        });
+        if (
+            existingEvidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+            && existingAttestationState === 'prepared'
+            && preparedMismatches.length === 0
+        ) {
+            const existingLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+            console.log(`REVIEWER_LAUNCH_PREPARED: ${reviewType}`);
+            console.log(`ReviewerIdentity: ${reviewerIdentity}`);
+            console.log(`ReviewContextPath: ${normalizePath(contextPath)}`);
+            console.log(`ReviewContextSha256: ${contextSha256}`);
+            console.log(`RoutingEventSha256: ${routingEventProvenance.event_sha256}`);
+            console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
+            console.log(`PreparedLaunchEventSha256: ${getStringField(existingArtifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256')}`);
+            console.log(`ReviewerPromptPath: ${normalizePath(promptPath)}`);
+            if (reviewTreeStateSha256) {
+                console.log(`ReviewTreeStateSha256: ${reviewTreeStateSha256}`);
+            }
+            console.log(`ReviewerLaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
+            console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
+            console.log('AttestationState: prepared');
+            console.log('SupersededLaunchArtifact: none');
+            console.log('NextAction: existing reviewer launch metadata is current; launch the delegated reviewer, then run complete-reviewer-launch.');
+            return;
+        }
+        if (
+            existingEvidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+            && existingAttestationState === 'launched'
+            && isCurrentCompletedReviewerLaunchArtifact({
+                repoRoot,
+                artifactPath: launchArtifactPath,
+                taskId,
+                reviewType,
+                reviewerExecutionMode,
+                reviewerIdentity,
+                reviewContextSha256: contextSha256,
+                routingEventSha256: routingEventProvenance.event_sha256,
+                reviewerPromptSha256,
+                reviewTreeStateSha256: reviewTreeStateSha256 || null,
+                routingEventSequence: routingEvent.sequence,
+                timelineEvents
+            })
+        ) {
+            throw new Error(
+                `Completed reviewer launch artifact already exists: ${normalizePath(launchArtifactPath)}. ` +
+                'Run record-review-invocation for this completed launch evidence instead of replacing it.'
+            );
+        }
+        supersededLaunchArtifact = snapshotSupersededReviewerLaunchArtifact({
+            artifactPath: launchArtifactPath,
+            mismatches: preparedMismatches
+        });
+    }
     const recordInvocationCommand = buildRecordReviewInvocationCommand({
         repoRoot,
         taskId,
@@ -2291,6 +2549,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         ],
         record_invocation_command: recordInvocationCommand,
         attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
+        superseded_launch_artifact: supersededLaunchArtifact,
         generated_by: 'garda prepare-reviewer-launch',
         generated_at_utc: new Date().toISOString(),
         next_action: (
@@ -2361,6 +2620,11 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`ReviewerLaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
     console.log(`ReviewerLaunchArtifactSha256: ${launchArtifactSha256}`);
     console.log('AttestationState: prepared');
+    if (supersededLaunchArtifact) {
+        console.log(`SupersededLaunchArtifactSnapshotPath: ${supersededLaunchArtifact.snapshot_path}`);
+        console.log(`SupersededLaunchArtifactSha256: ${supersededLaunchArtifact.artifact_sha256}`);
+        console.log(`SupersededLaunchArtifactReason: ${supersededLaunchArtifact.superseded_reason}`);
+    }
     console.log(`LaunchTool: ${providerLaunch.launchTool}`);
     console.log(`LaunchInstruction: ${providerLaunch.launchInstruction}`);
     console.log(`HandoffInstruction: ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION}`);

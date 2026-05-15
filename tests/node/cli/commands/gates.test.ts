@@ -4553,6 +4553,8 @@ describe('cli/commands/gates', () => {
             attestation_source: 'garda_prepare_reviewer_launch',
             launch_tool: 'stale'
         }, null, 2) + '\n', 'utf8');
+        const staleArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
+        const staleSnapshotPath = launchArtifactPath.replace(/\.json$/, `-superseded-${staleArtifactSha256}.json`);
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -4580,6 +4582,77 @@ describe('cli/commands/gates', () => {
         assert.equal(launchArtifact.review_context_sha256, fixture.reviewContextSha256);
         assert.equal(launchArtifact.routing_event_sha256, fixture.routingEventSha256);
         assert.notEqual(launchArtifact.launch_tool, 'stale');
+        assert.equal(fs.existsSync(staleSnapshotPath), true);
+        assert.deepEqual(JSON.parse(fs.readFileSync(staleSnapshotPath, 'utf8')), {
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch_preparation',
+            attestation_state: 'prepared',
+            task_id: taskId,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: fixture.reviewerIdentity,
+            review_context_sha256: 'a'.repeat(64),
+            routing_event_sha256: 'b'.repeat(64),
+            attestation_source: 'garda_prepare_reviewer_launch',
+            launch_tool: 'stale'
+        });
+        assert.equal(launchArtifact.superseded_launch_artifact.artifact_sha256, staleArtifactSha256);
+        assert.equal(launchArtifact.superseded_launch_artifact.snapshot_path, staleSnapshotPath.replace(/\\/g, '/'));
+        assert.ok(
+            launchArtifact.superseded_launch_artifact.mismatches.includes('review_context_sha256 mismatch'),
+            launchArtifact.superseded_launch_artifact.superseded_reason
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch leaves current prepared launch metadata unchanged', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-current';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
+
+        const runPrepare = async (): Promise<number> => {
+            const previousExitCode = process.exitCode;
+            const previousCwd = process.cwd();
+            process.exitCode = 0;
+            try {
+                process.chdir(repoRoot);
+                await runCliMainWithHandling([
+                    'gate',
+                    'prepare-reviewer-launch',
+                    '--task-id', taskId,
+                    '--review-type', 'code',
+                    '--repo-root', repoRoot,
+                    '--reviewer-execution-mode', 'delegated_subagent',
+                    '--reviewer-identity', fixture.reviewerIdentity
+                ]);
+                return process.exitCode ?? 0;
+            } finally {
+                process.chdir(previousCwd);
+                process.exitCode = previousExitCode;
+            }
+        };
+
+        assert.equal(await runPrepare(), 0);
+        const firstArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
+        const firstArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
+        const firstPreparedEvents = readTaskTimelineEvents(repoRoot, taskId)
+            .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length;
+
+        assert.equal(await runPrepare(), 0);
+
+        assert.equal(fs.readFileSync(launchArtifactPath, 'utf8'), firstArtifactText);
+        assert.equal(createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex'), firstArtifactSha256);
+        assert.equal(
+            readTaskTimelineEvents(repoRoot, taskId)
+                .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length,
+            firstPreparedEvents
+        );
+        assert.equal(
+            fs.readdirSync(path.dirname(launchArtifactPath)).some((entry) => entry.includes('-superseded-')),
+            false
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
