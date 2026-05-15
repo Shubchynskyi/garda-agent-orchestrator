@@ -6294,7 +6294,9 @@ describe('cli/commands/gates', () => {
             '',
             '## Deferred Findings',
             '- Add focused coverage for reviewer command-log normalization.',
+            '  Justification: Keep one canonical structured follow-up obligation.',
             '- Add focused coverage for reviewer command-log normalization.',
+            '  Justification: Keep one canonical structured follow-up obligation.',
             '',
             '## Residual Risks',
             'none',
@@ -6345,14 +6347,15 @@ describe('cli/commands/gates', () => {
             (normalizedDeferredBlock.match(/Add focused coverage for reviewer command-log normalization\./g) || []).length,
             1
         );
-        assert.ok(normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
+        assert.ok(normalizedDeferredBlock.includes('Justification: Keep one canonical structured follow-up obligation.'));
+        assert.ok(!normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result preserves command-like active findings during PASS normalization', async () => {
+    it('record-review-result rejects command-like active findings in PASS output instead of inferring follow-ups', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-545-command-like-finding';
         seedTaskQueue(repoRoot, taskId);
@@ -6424,25 +6427,14 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
-        assert.equal(fs.existsSync(artifactPath), true);
-        assert.equal(fs.existsSync(receiptPath), true);
-        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
-        const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
-        const normalizedDeferredBlock = normalizedDeferredStart >= 0
-            ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
-            : '';
-        assert.ok(normalizedDeferredBlock.includes(
-            '[high] npm install can pull attacker-controlled packages when reviewer output parsing trusts command-looking findings as validation notes.'
-        ));
-        assert.ok(normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
-        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+        assert.notEqual(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result preserves command-prefixed risk signals from command blocks', async () => {
+    it('record-review-result rejects command-prefixed risk signals in command blocks instead of inferring follow-ups', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-545-command-risk-signal';
         seedTaskQueue(repoRoot, taskId);
@@ -6518,28 +6510,16 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
-        assert.equal(fs.existsSync(artifactPath), true);
-        assert.equal(fs.existsSync(receiptPath), true);
-        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
-        const normalizedDeferredStart = artifactContent.lastIndexOf('## Deferred Findings');
-        const normalizedDeferredBlock = normalizedDeferredStart >= 0
-            ? artifactContent.slice(normalizedDeferredStart).split('## Residual Risks')[0] || ''
-            : '';
-        assert.ok(normalizedDeferredBlock.includes('[follow-up] npm audit found vulnerabilities in reviewer output materialization'));
-        assert.ok(normalizedDeferredBlock.includes(
-            '[follow-up] npm audit reported advisory CVE-2026-0001 RCE XSS credential secret token injection traversal'
-        ));
-        assert.ok(normalizedDeferredBlock.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
-        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
+        assert.notEqual(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result does not convert PASS residual-risk summaries into deferred findings', async () => {
+    it('record-review-result does not convert T-547-2 PASS residual-risk noise into deferred findings', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-514-residual-risk-summary';
+        const taskId = 'T-547-2-residual-risk-noise';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot, 'Antigravity');
         const preflightPath = writePreflight(repoRoot, taskId);
@@ -6571,6 +6551,9 @@ describe('cli/commands/gates', () => {
             'none',
             '',
             '## Residual Risks',
+            '- I could not execute the touched tests directly with `node --test` because this repo\'s test files are TypeScript ESM and require the project\'s normal test harness/runner; direct invocation fails at module loading.',
+            '- Based on code inspection, enforcement is correctly wired for mutating `workflow set` paths and coverage was added for missing, missing-timestamp, and stale timestamp cases.',
+            '- Time-based tests rely on wall-clock `new Date().toISOString()` and could be sensitive to extreme clock skew in unusual environments, but this is a low residual risk and the suite passed in current preflight.',
             '- Reviewed `src/gates/next-step.ts`, `tests/node/gates/next-step.test.ts`, and `CHANGELOG.md`. I did not identify a blocking lifecycle, routing, review-trust, or test-adequacy regression.',
             '',
             '## Verdict',
@@ -6626,6 +6609,9 @@ describe('cli/commands/gates', () => {
         assert.ok(artifactContent.includes('## Deferred Findings\n\nnone'));
         assert.ok(artifactContent.includes('## Residual Risks\nnone'));
         assert.ok(artifactContent.includes('## Verdict\nREVIEW PASSED'));
+        assert.ok(!artifactContent.includes('- [follow-up] I could not execute the touched tests directly'));
+        assert.ok(!artifactContent.includes('- [follow-up] Based on code inspection'));
+        assert.ok(!artifactContent.includes('- [follow-up] Time-based tests rely on wall-clock'));
         assert.ok(!artifactContent.includes('- [follow-up] Reviewed `src/gates/next-step.ts`'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
@@ -6663,13 +6649,17 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(reviewOutputPath, [
             '# Review',
             '',
-            'Reviewed `src/cli/commands/gate-review-handlers/index.ts` for PASS review normalization and confirmed the artifact remains auditable after moving actionable residual content into deferred findings.',
+            'Reviewed `src/cli/commands/gate-review-handlers/index.ts` for PASS review normalization and confirmed the artifact remains auditable after preserving explicit structured deferred findings.',
             '',
             '## Findings by Severity',
             'none',
             '',
+            '## Deferred Findings',
+            '- Add explicit future-skew regression coverage for workflow set operator timestamps.',
+            '  Justification: The main task covered missing and stale timestamp paths; future-skew workflow-specific coverage can be tracked as separate hardening.',
+            '',
             '## Residual Risks',
-            '- Add regression coverage for stale prompt artifact hash mismatch diagnostics.',
+            'none',
             '',
             '## Verdict',
             'REVIEW PASSED'
@@ -6710,8 +6700,8 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(receiptPath), true);
         const artifactContent = fs.readFileSync(artifactPath, 'utf8');
         assert.ok(artifactContent.includes('## Deferred Findings'));
-        assert.ok(artifactContent.includes('- [follow-up] Add regression coverage for stale prompt artifact hash mismatch diagnostics.'));
-        assert.ok(artifactContent.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
+        assert.ok(artifactContent.includes('- Add explicit future-skew regression coverage for workflow set operator timestamps. Justification: The main task covered missing and stale timestamp paths; future-skew workflow-specific coverage can be tracked as separate hardening.'));
+        assert.ok(!artifactContent.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
         assert.ok(artifactContent.includes('## Residual Risks\nnone'));
         const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
         assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
@@ -7880,7 +7870,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result materializes passed reviewer output with active findings and residual risks losslessly', async () => {
+    it('record-review-result rejects PASS output with active findings and residual risks instead of inferring follow-ups', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-pass-findings';
         seedTaskQueue(repoRoot, taskId);
@@ -7925,12 +7915,12 @@ describe('cli/commands/gates', () => {
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
-        const originalConsoleLog = console.log;
-        const capturedLogs: string[] = [];
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
         process.exitCode = 0;
         let observedExitCode = 0;
-        console.log = (...args: unknown[]) => {
-            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
         };
         try {
             process.chdir(repoRoot);
@@ -7954,50 +7944,33 @@ describe('cli/commands/gates', () => {
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
-            console.log = originalConsoleLog;
+            console.error = originalConsoleError;
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
-        assert.equal(fs.existsSync(artifactPath), true);
-        assert.equal(fs.existsSync(receiptPath), true);
+        assert.notEqual(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
-        assert.equal(fs.existsSync(reviewOutputPath), false);
-        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
         assert.ok(rawReviewContent.includes('still reports active follow-up while preserving the reviewer evidence losslessly.'));
         assert.ok(rawReviewContent.includes('## Findings by Severity'));
         assert.ok(rawReviewContent.includes('## Residual Risks\n- Confirm the follow-up stays visible to operators after pass-review normalization.'));
         assert.ok(rawReviewContent.includes('## Additional Reviewer Notes'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
-        assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
-        assert.ok(artifactContent.includes('> ## Additional Reviewer Notes'));
-        assert.ok(artifactContent.includes('> The unresolved blocker stays intentionally visible in the raw review output for audit provenance.'));
-        assert.ok(artifactContent.includes('## Deferred Findings'));
-        assert.ok(artifactContent.includes('- [high] `src/app.ts:1` this reviewer intentionally kept an unresolved blocker while claiming a pass verdict.'));
-        assert.ok(artifactContent.includes('- [follow-up] Confirm the follow-up stays visible to operators after pass-review normalization.'));
-        assert.ok(artifactContent.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
+        assert.ok(capturedErrors.some((line) => line.includes('still contains active High findings')));
+        assert.ok(capturedErrors.some((line) => line.includes('still contains active residual risks')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:code-reviewer');
-        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-        assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
-        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
-        assert.equal(typeof receipt.review_output_sha256, 'string');
-        assert.ok(receipt.review_output_sha256.length > 0);
-        assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
-        assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 1);
-        assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
-        assert.ok(capturedLogs.some((line) => line.includes('VerdictToken: REVIEW PASSED')));
+        assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 0);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result materializes no-findings pass review losslessly when deferred findings lack justification', async () => {
+    it('record-review-result rejects no-findings PASS output when deferred findings lack justification', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-pass-no-findings-recovery';
         seedTaskQueue(repoRoot, taskId);
@@ -8042,12 +8015,12 @@ describe('cli/commands/gates', () => {
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
-        const originalConsoleLog = console.log;
-        const capturedLogs: string[] = [];
+        const originalConsoleError = console.error;
+        const capturedErrors: string[] = [];
         process.exitCode = 0;
         let observedExitCode = 0;
-        console.log = (...args: unknown[]) => {
-            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        console.error = (...args: unknown[]) => {
+            capturedErrors.push(args.map((value) => String(value)).join(' '));
         };
         try {
             process.chdir(repoRoot);
@@ -8071,40 +8044,23 @@ describe('cli/commands/gates', () => {
             ]);
             observedExitCode = process.exitCode ?? 0;
         } finally {
-            console.log = originalConsoleLog;
+            console.error = originalConsoleError;
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
         }
 
-        assert.equal(observedExitCode, 0);
-        assert.equal(fs.existsSync(artifactPath), true);
-        assert.equal(fs.existsSync(receiptPath), true);
+        assert.notEqual(observedExitCode, 0);
+        assert.equal(fs.existsSync(artifactPath), false);
+        assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
-        assert.equal(fs.existsSync(reviewOutputPath), false);
-        const artifactContent = fs.readFileSync(artifactPath, 'utf8');
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
         assert.ok(rawReviewContent.includes('## Deferred Findings'));
         assert.ok(rawReviewContent.includes('- [low] follow up on reviewer wording'));
         assert.ok(!rawReviewContent.includes('Justification:'));
-        assert.ok(artifactContent.includes('## Preserved Raw Reviewer Output'));
-        assert.ok(artifactContent.includes('> ## Deferred Findings'));
-        assert.ok(artifactContent.includes('> - [low] follow up on reviewer wording in `src/cli/commands/gate-review-handlers.ts:1`'));
-        assert.ok(artifactContent.includes('## Findings by Severity\nnone'));
-        assert.ok(artifactContent.includes('## Deferred Findings'));
-        assert.ok(artifactContent.includes('- [low] follow up on reviewer wording in `src/cli/commands/gate-review-handlers.ts:1`'));
-        assert.ok(artifactContent.includes('Justification: Preserved from raw reviewer output during PASS review normalization.'));
-        assert.ok(artifactContent.includes('## Residual Risks\nnone'));
-        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-        assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
-        assert.equal(receipt.review_materialization_fidelity, 'normalized_lossless');
-        assert.equal(typeof receipt.review_output_sha256, 'string');
-        assert.ok(receipt.review_output_sha256.length > 0);
-        assert.notEqual(receipt.review_artifact_sha256, receipt.review_output_sha256);
+        assert.ok(capturedErrors.some((line) => line.includes("deferred finding without usable 'Justification:'")));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
-        assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 1);
-        assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: normalized_lossless')));
-        assert.ok(capturedLogs.some((line) => line.includes('VerdictToken: REVIEW PASSED')));
+        assert.equal(events.filter((event) => event.event_type === 'REVIEW_RECORDED').length, 0);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

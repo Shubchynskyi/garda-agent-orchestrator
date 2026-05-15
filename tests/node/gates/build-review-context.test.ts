@@ -989,7 +989,8 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifact.includes('1-3 concise sentences naming the reviewed files and behavior checked'));
             assert.ok(promptArtifact.includes('Do not return only headings, `none`, and a PASS verdict'));
             assert.ok(promptArtifact.includes('record-review-result rejects trivial or obviously synthetic reports'));
-            assert.ok(promptArtifact.includes('Validation-boundary notes are not findings, deferred findings, or residual risks'));
+            assert.ok(promptArtifact.includes('Validation-boundary notes, command logs, positive inspection summaries, and speculative performance or environment hypotheticals are not findings'));
+            assert.ok(promptArtifact.includes('will not infer strict follow-up obligations from `Residual Risks`, command logs, validation-boundary notes, or positive summaries'));
             assert.ok(promptArtifact.includes('separate `## Commands Run` section after `## Verdict`'));
             assert.deepEqual(result.task_scope.changed_files, ['src/app.ts']);
             assert.deepEqual(result.task_scope.required_reviews, ['code', 'security']);
@@ -1052,8 +1053,8 @@ describe('gates/build-review-context', () => {
                 assert.ok(promptArtifact.includes(`Return a canonical ${reviewType} review report using exactly this section order and heading text`));
                 assert.ok(promptArtifact.includes(`PASS verdict line must be exactly: \`${passToken}\``));
                 assert.ok(promptArtifact.includes(`FAIL verdict line must be exactly: \`${passToken.replace(/\bPASSED\b/g, 'FAILED')}\``));
-                assert.ok(promptArtifact.includes('Deferred Findings` is only for actionable accepted follow-ups'));
-                assert.ok(promptArtifact.includes('Validation-boundary notes are not findings, deferred findings, or residual risks'));
+                assert.ok(promptArtifact.includes('Deferred Findings` is only for explicit actionable accepted follow-ups'));
+                assert.ok(promptArtifact.includes('will not infer strict follow-up obligations from `Residual Risks`, command logs, validation-boundary notes, or positive summaries'));
                 assert.ok(promptArtifact.includes('never put command headings or command bullets under `Deferred Findings` or `Residual Risks`'));
             }
             fs.rmSync(repoRoot, { recursive: true, force: true });

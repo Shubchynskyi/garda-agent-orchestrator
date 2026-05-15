@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made PASS review normalization infer strict follow-up obligations only from explicit structured `Deferred Findings` with `Justification:`, while preserving raw output and rejecting malformed PASS artifacts instead of turning residual-risk prose, command logs, or positive summaries into F tasks
 
 ## 1.1.0
 - made final closeout and `next-step` commit guidance suppress commit commands and confirmation questions when no tracked committable changes remain, while preserving guarded commit prompts for real tracked diffs

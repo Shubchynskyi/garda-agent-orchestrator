@@ -173,7 +173,7 @@ function buildReviewerOutputContractMarkdown(reviewType: string): string[] {
         '<active findings by Critical/High/Medium/Low, or none>',
         '',
         '## Deferred Findings',
-        '<accepted non-blocking follow-up with Justification:, or none>',
+        '<explicit actionable follow-up with a concrete next step and Justification:, or none>',
         '',
         '## Residual Risks',
         '<active open risks, or none>',
@@ -187,9 +187,10 @@ function buildReviewerOutputContractMarkdown(reviewType: string): string[] {
         '- Do not return only headings, `none`, and a PASS verdict; record-review-result rejects trivial or obviously synthetic reports.',
         '- Keep PASS analysis compact and concrete; put accepted non-blocking follow-ups only in Deferred Findings with `Justification:`.',
         '- `Findings by Severity` is only for active defects that should block or be fixed.',
-        '- `Deferred Findings` is only for actionable accepted follow-ups with a concrete next step and `Justification:`.',
-        '- `Residual Risks` is only for concrete active risks that remain after the review.',
-        '- Validation-boundary notes are not findings, deferred findings, or residual risks. Mention read-only scope, tests not run by the reviewer, gate-owned full-suite validation, or commands already covered by gates only in the prose summary, then set the sections above to `none`.',
+        '- `Deferred Findings` is only for explicit actionable accepted follow-ups with a concrete next step and `Justification:`; these entries become strict follow-up obligations.',
+        '- `Residual Risks` is only for concrete active risks that remain after the review. Do not use it for optional future work, validation limits, or speculative notes in a PASS review.',
+        '- Validation-boundary notes, command logs, positive inspection summaries, and speculative performance or environment hypotheticals are not findings, deferred findings, or residual risks. Mention read-only scope, tests not run by the reviewer, gate-owned full-suite validation, or commands already covered by gates only in the prose summary, then set the sections above to `none`.',
+        '- `record-review-result` preserves raw reviewer output for audit, but it will not infer strict follow-up obligations from `Residual Risks`, command logs, validation-boundary notes, or positive summaries.',
         '- If you include command logs, put them in a separate `## Commands Run` section after `## Verdict`, or mention them in prose; never put command headings or command bullets under `Deferred Findings` or `Residual Risks`.',
         ''
     ];

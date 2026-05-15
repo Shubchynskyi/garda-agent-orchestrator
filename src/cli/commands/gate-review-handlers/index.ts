@@ -686,7 +686,9 @@ function appendDeferredFinding(lines: string[], entry: string): void {
         return;
     }
     lines.push(`- ${normalizedEntry}`);
-    lines.push('  Justification: Preserved from raw reviewer output during PASS review normalization.');
+    if (!/\bJustification\s*:/iu.test(normalizedEntry)) {
+        lines.push('  Justification: Preserved from raw reviewer output during PASS review normalization.');
+    }
     lines.push('');
 }
 
@@ -745,7 +747,15 @@ function isGenericPassValidationBoundaryNote(
         /\bfull[- ]suite validation (already )?(passed|ran|is gate[- ]owned|was covered)\b/u,
         /\bgate[- ]owned (compile|full[- ]suite|validation)\b/u,
         /\bcovered by (the )?(compile|full[- ]suite|mandatory) gate\b/u,
-        /\bi did not identify (a )?(blocking )?(lifecycle|routing|review|test|regression|issue|risk|defect)/u
+        /\bi did not identify (a )?(blocking )?(lifecycle|routing|review|test|regression|issue|risk|defect)/u,
+        /\bcould not execute (the )?.*tests? directly\b/u,
+        /\brequires the project'?s normal test harness\b/u,
+        /\bdirect invocation fails at module loading\b/u,
+        /\bbased on code inspection\b.*\b(correctly wired|coverage was added|coverage is present)\b/u,
+        /\benforcement is correctly wired\b/u,
+        /\bcould be sensitive to extreme clock skew\b/u,
+        /\blow residual risk\b.*\bsuite passed\b/u,
+        /\bspeculative\b.*\b(performance|environment|risk|hypothetical)/u
     ];
     if (boundaryPatterns.some((pattern) => pattern.test(normalizedEntry))) {
         return true;
@@ -822,13 +832,12 @@ function buildLosslessPassReviewNormalization(options: {
     } = options;
     const activeFindings = (['critical', 'high', 'medium', 'low'] as const)
         .flatMap((severity) => findingsEvidence.findings_by_severity[severity].map((entry) => `[${severity}] ${entry}`));
-    const rawDeferredEntries = dedupeReviewFollowUpEntries([
-        ...findingsEvidence.deferred_findings,
-        ...findingsEvidence.invalid_deferred_findings
-    ]);
+    const rawDeferredEntries = dedupeReviewFollowUpEntries(findingsEvidence.deferred_findings);
+    const invalidDeferredEntries = dedupeReviewFollowUpEntries(findingsEvidence.invalid_deferred_findings);
     const rawResidualRiskEntries = findingsEvidence.residual_risks.map((entry) => `[follow-up] ${entry}`);
     const rawSourceEntries = dedupeReviewFollowUpEntries([
         ...rawDeferredEntries,
+        ...invalidDeferredEntries,
         ...activeFindings,
         ...rawResidualRiskEntries
     ]);
@@ -836,12 +845,12 @@ function buildLosslessPassReviewNormalization(options: {
         rawResidualRiskEntries,
         { filterStandaloneCommandNotes: false }
     );
+    const activeInvalidDeferredEntries = filterGenericPassValidationBoundaryEntries(invalidDeferredEntries);
+    if (activeFindings.length > 0 || activeResidualRisks.length > 0 || activeInvalidDeferredEntries.length > 0) {
+        return null;
+    }
     const deferredEntries = filterGenericPassValidationBoundaryEntries(rawDeferredEntries);
-    const rawPendingDeferredEntries = dedupeReviewFollowUpEntries([
-        ...deferredEntries,
-        ...activeFindings,
-        ...activeResidualRisks
-    ]);
+    const rawPendingDeferredEntries = dedupeReviewFollowUpEntries(deferredEntries);
     if (rawSourceEntries.length === 0) {
         return null;
     }
