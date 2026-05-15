@@ -61,8 +61,14 @@ import {
     resolveBundleNameForTarget
 } from '../core/constants';
 import {
-    buildDefaultWorkflowConfig
+    buildGardaSelfGuardPolicyChangeCommand,
+    buildDefaultWorkflowConfig,
+    formatGardaSelfGuardProtectedControlPlaneGuidance,
+    readOrchestratorWorkPolicyModeForBundle
 } from '../core/workflow-config';
+import {
+    isOrchestratorSourceCheckout
+} from './protected-control-plane';
 import {
     getProjectMemoryImpactLifecycleEvidence,
     type ProjectMemoryImpactEvidenceStatus,
@@ -4334,6 +4340,17 @@ function readFailedGateRecovery(
     if (!hasProtectedOrchestratorWorkRecoverySignal(errorText)) {
         return null;
     }
+    if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
+        return {
+            nextGate: 'operator-maintenance',
+            title: 'Garda self-guard blocks agent-owned protected control-plane recovery.',
+            reason:
+                `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected control-plane recovery signal. ` +
+                formatGardaSelfGuardProtectedControlPlaneGuidance(),
+            label: 'Operator policy change',
+            command: buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
+        };
+    }
     const currentWorkspace = readCurrentGitWorkspaceSnapshot(repoRoot, true);
     const currentChangedFiles = Array.isArray(currentWorkspace?.changed_files)
         ? currentWorkspace.changed_files
@@ -5418,6 +5435,11 @@ function buildOrchestratorWorkRestartCommand(
     }
     parts.push('--repo-root "."');
     return parts.join(' ');
+}
+
+function isGardaSelfGuardDenyAgentEntry(repoRoot: string): boolean {
+    return !isOrchestratorSourceCheckout(repoRoot)
+        && readOrchestratorWorkPolicyModeForBundle(resolveBundleRootForNextStep(repoRoot)) === 'deny_agent_entry';
 }
 
 function getTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
@@ -6854,6 +6876,23 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         preflightTouchesProtectedControlPlane(preflight)
         && !taskMode?.orchestrator_work
     ) {
+        if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'operator-maintenance',
+                title: 'Garda self-guard blocks agent-owned protected control-plane work.',
+                reason:
+                    'The current preflight touches protected Garda control-plane files. ' +
+                    formatGardaSelfGuardProtectedControlPlaneGuidance(),
+                commands: [
+                    buildCommand(
+                        'Operator policy change',
+                        buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
+                    )
+                ]
+            });
+        }
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',

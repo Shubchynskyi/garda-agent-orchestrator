@@ -60,6 +60,16 @@ function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function markAsSourceCheckout(repoRoot: string): void {
+    fs.writeFileSync(
+        path.join(repoRoot, 'package.json'),
+        JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2),
+        'utf8'
+    );
+    fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+}
+
 function readPreflightChangedFiles(preflightPath: unknown): string[] {
     const resolvedPath = String(preflightPath || '').trim();
     if (!resolvedPath || !fs.existsSync(resolvedPath)) {
@@ -303,6 +313,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        markAsSourceCheckout(repoRoot);
         writeProtectedControlPlaneManifest(repoRoot);
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
@@ -458,7 +469,7 @@ describe('cli/commands/gates – review-cycle suites', () => {
             operatorConfirmedAtUtc: new Date().toISOString(),
             emitMetrics: false
         });
-        assert.equal(restartResult.exitCode, 0);
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
         assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
         assert.match(restartResult.outputLines.join('\n'), /DetectionSource: explicit_changed_files/);
 
@@ -2627,6 +2638,9 @@ describe('cli/commands/gates – review-cycle suites', () => {
             initializeGitRepo(repoRoot);
             seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
             seedInitAnswers(repoRoot, 'Codex');
+            if (scenario.changedFile) {
+                markAsSourceCheckout(repoRoot);
+            }
 
             runEnterTaskMode({
                 repoRoot,

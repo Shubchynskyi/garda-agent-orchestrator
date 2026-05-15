@@ -63,6 +63,10 @@ function writeBaselineAgentEntrypoint(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# baseline\n', 'utf8');
 }
 
+function markAsSourceCheckout(repoRoot: string): void {
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify(PACKAGE_JSON, null, 2), 'utf8');
+}
+
 function seedWorkflowConfigTaskQueue(repoRoot: string, taskId: string, status = 'TODO'): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
@@ -90,6 +94,7 @@ function prepareTaskRepo(
     const repoRoot = createTempRepo();
     const taskSummary = 'Update app flow';
     writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: options.ignoreBundle === true });
+    markAsSourceCheckout(repoRoot);
     writeBaselineAgentEntrypoint(repoRoot);
     if (options.workflowConfigWork === true) {
         seedWorkflowConfigTaskQueue(repoRoot, taskId);
@@ -450,6 +455,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
 
         try {
             writeIgnoredRuntimePolicy(repoRoot);
+            markAsSourceCheckout(repoRoot);
             writeBaselineAgentEntrypoint(repoRoot);
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
@@ -476,6 +482,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
 
         try {
             writeIgnoredRuntimePolicy(repoRoot);
+            markAsSourceCheckout(repoRoot);
             writeBaselineAgentEntrypoint(repoRoot);
             seedWorkflowConfigTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
@@ -503,6 +510,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
 
         try {
             writeIgnoredRuntimePolicy(repoRoot);
+            markAsSourceCheckout(repoRoot);
             writeBaselineAgentEntrypoint(repoRoot);
             seedIncidentalWorkflowConfigMentionTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);

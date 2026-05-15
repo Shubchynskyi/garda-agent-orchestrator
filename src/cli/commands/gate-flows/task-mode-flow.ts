@@ -15,6 +15,10 @@ import {
     validateFreshOperatorConfirmation
 } from '../../../core/operator-confirmation';
 import {
+    formatGardaSelfGuardProtectedControlPlaneGuidance,
+    readOrchestratorWorkPolicyModeForBundle
+} from '../../../core/workflow-config';
+import {
     emitHandshakeDiagnosticsEvent,
     emitShellSmokePreflightEvent,
     emitCommandTimeoutDiagnosticsEvent,
@@ -311,6 +315,18 @@ function taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata: ReturnType<type
     return trustedTaskText.includes(WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE);
 }
 
+function isGardaSelfGuardDenyAgentEntry(repoRoot: string, orchestratorRoot: string): boolean {
+    return !gateHelpers.isOrchestratorSourceCheckout(repoRoot)
+        && readOrchestratorWorkPolicyModeForBundle(orchestratorRoot) === 'deny_agent_entry';
+}
+
+function buildGardaSelfGuardDenialMessage(protectedFiles: readonly string[]): string {
+    return formatGardaSelfGuardProtectedControlPlaneGuidance({
+        protectedFiles,
+        includeWorkflowConfigWork: true
+    });
+}
+
 function requireTaskModeOperatorConfirmation(
     options: EnterTaskModeCommandOptions,
     scopeLabel: string
@@ -578,6 +594,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     const workflowConfigPreTaskBaseline = getWorkflowConfigPreTaskBaselineState(repoRoot, workflowConfigFileHashes);
     const dirtyWorkflowConfigFiles = [...workflowConfigPreTaskBaseline.changed_files].sort();
     const startBanner = resolveTaskModeStartBanner(repoRoot, taskId, artifactPath, options.startBanner);
+    const selfGuardDenyAgentEntry = isGardaSelfGuardDenyAgentEntry(repoRoot, orchestratorRoot);
 
     let planMetadata: TaskModePlanMetadata | null = null;
     const rawPlanPath = String(options.planPath || '').trim();
@@ -612,6 +629,13 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `Workspace already contains workflow config changes before task-mode entry: ${dirtyWorkflowConfigFiles.join(', ')}. ` +
             'Enter task mode before editing workflow-config.json so the change cannot be laundered into the baseline.'
         );
+    }
+
+    if (
+        selfGuardDenyAgentEntry
+        && (orchestratorWork || workflowConfigWork || protectedPlannedFiles.length > 0)
+    ) {
+        throw new Error(buildGardaSelfGuardDenialMessage(protectedPlannedFiles));
     }
 
     if (workflowConfigWork && !orchestratorWork) {

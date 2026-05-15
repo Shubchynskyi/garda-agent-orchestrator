@@ -13,7 +13,8 @@
       "title": "Project memory refresh",
       "body": [
         "Project memory mode was updated in 1.1.0.",
-        "Before starting task work, let your agent execute the project-memory refresh prompt so local project memory is current for the new workflow."
+        "Before starting task work, let your agent execute the project-memory refresh prompt so local project memory is current for the new workflow.",
+        "Garda self-guard is enabled by default for application workspaces: agents can no longer self-escalate into --orchestrator-work for protected Garda bundle edits. Operators can change the policy with garda workflow set --garda-self-guard on|off."
       ]
     }
   ]

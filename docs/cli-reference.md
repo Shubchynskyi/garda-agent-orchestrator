@@ -132,7 +132,8 @@ Notes:
 - The command accepts either a positional task id (`T-137`), `--task-id`, or a `--preflight-path` that ends in `<task-id>-preflight.json`.
 - Before the first preflight, `next-step` reuses task-mode `planned_changed_files` to print concrete `classify-change --changed-file` arguments; agents should not invent placeholder paths.
 - After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
-- If preflight scope touches protected orchestrator control-plane files without `--orchestrator-work`, restart task mode with the exact command printed by `next-step` or by the failed preflight gate before continuing.
+- If preflight scope touches protected orchestrator control-plane files without `--orchestrator-work`, restart task mode with the exact command printed by `next-step` or by the failed preflight gate before continuing, except in application workspaces where Garda self-guard is on and `next-step` routes to `operator-maintenance`.
+- In materialized/application workspaces the `garda-agent-orchestrator/` bundle is vendor/control-plane. With `garda_self_guard=on`, agents cannot self-escalate into `--orchestrator-work`; operators must run update/repair/maintenance or deliberately relax the policy with `workflow set --garda-self-guard off`.
 - Review navigation uses the launch batch, not only the legacy single-review field. Human output can include `ReviewLaunchableBatch`, `BlockedReviewLanes`, and `ReviewFailedCurrent`; JSON includes `review.launchable_review_types`, `review.blocked_review_lanes`, and `review.failed_review_type`.
 - `NextReview` / `review.next_review_type` remain compatibility fields for older single-lane consumers. When a launch batch contains multiple independent lanes, agents may launch those reviewers in parallel only after `next-step` says they are launchable.
 - `BlockedReviewLanes` names dependency reasons such as upstream review types or `full-suite-validation`. When full-suite validation is enabled, the `test` reviewer must wait for current full-suite PASS evidence even under a parallel-capable review policy; unrelated non-test lanes can remain launchable.
@@ -418,6 +419,8 @@ garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-
 garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --review-cycle-auto-split-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --garda-self-guard on
+garda workflow set --target-root "." --garda-self-guard off --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow explain --target-root "."
 ```
 
@@ -425,6 +428,7 @@ Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
 - The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, and `task_reset` settings in `live/config/workflow-config.json`.
 - `workflow set` requires explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
+- `--garda-self-guard on` maps to `orchestrator_work_policy.mode=deny_agent_entry`; `off` maps to `require_operator_confirmation` and requires explicit operator approval.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
 - `parallel_all` can make code, security, refactor, API, and other specialist lanes independent, but enabled full-suite validation still gates `test` review launch until current full-suite PASS evidence exists.
 - Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.

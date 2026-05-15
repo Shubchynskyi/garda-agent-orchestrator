@@ -4535,6 +4535,7 @@ describe('gates/next-step', () => {
 
     it('routes protected control-plane preflight to an orchestrator-work restart command', () => {
         const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
@@ -4552,8 +4553,33 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--operator-confirmed yes'));
     });
 
+    it('blocks app-workspace protected control-plane recovery when garda self-guard is on', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.triggers = {
+            protected_control_plane_changed: true,
+            changed_protected_files: ['garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md']
+        };
+        writeJson(preflightPath, preflight);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'operator-maintenance');
+        assert.match(result.reason, /Garda self-guard is on/);
+        assert.ok(!result.commands[0].command.includes('--orchestrator-work'));
+        assert.ok(result.commands[0].command.includes('workflow set'));
+        assert.ok(result.commands[0].command.includes('--garda-self-guard off'));
+    });
+
     it('prefers protected-manifest classify recovery command over a stale classify rerun', () => {
         const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(workflowConfigPath, workflowConfig);
         writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
             taskId: TASK_ID,
             entryMode: 'EXPLICIT_TASK_EXECUTION',

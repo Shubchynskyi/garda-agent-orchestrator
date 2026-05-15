@@ -757,6 +757,7 @@ Before any code changes:
 - ${buildDualCliActiveProfileGuidance(null)}
 - If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 - Agents cannot approve protected task-mode entry for themselves. Any rerun with \`--orchestrator-work\` or \`--workflow-config-work\` requires a fresh operator approval, \`--operator-confirmed yes\`, and \`--operator-confirmed-at-utc "<ISO-8601 timestamp>"\`.
+- In materialized/application workspaces, the Garda bundle is vendor/control-plane. When \`garda_self_guard\` is on, agents must not self-escalate into \`--orchestrator-work\`; route protected Garda bundle edits to operator-owned update/repair/maintenance or an explicit \`workflow set --garda-self-guard off\` policy change.
 - Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 
 ${buildTaskStartSnippetSection(runtimeProviderPlaceholder, routePlaceholder)}
@@ -780,6 +781,7 @@ Mandatory gate order:
 Hard stops:
 - If a mandatory gate fails or is unavailable, stop and report the exact command and stderr.
 - If \`next-step\` or a failed gate says \`--orchestrator-work\`, \`--workflow-config-work\`, or \`workflow set\` is required, stop for explicit operator approval before running the command with \`--operator-confirmed yes\` and \`--operator-confirmed-at-utc "<ISO-8601 timestamp>"\` where required.
+- If \`next-step\` reports \`operator-maintenance\` because Garda self-guard is on, do not rerun task mode with \`--orchestrator-work\`; an operator must run update/repair/maintenance or deliberately relax the guard.
 - Do not make code edits before \`enter-task-mode\`; unscoped pre-task diffs must be isolated first.
 - ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
 - ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}

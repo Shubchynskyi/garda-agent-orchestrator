@@ -55,6 +55,12 @@ export const ORCHESTRATOR_WORK_POLICY_MODES = Object.freeze([
 ] as const);
 export type OrchestratorWorkPolicyMode = typeof ORCHESTRATOR_WORK_POLICY_MODES[number];
 
+const GARDA_SELF_GUARD_POLICY_CHANGE_ARGUMENTS = [
+    '--garda-self-guard off',
+    '--operator-confirmed yes',
+    '--operator-confirmed-at-utc "<ISO-8601 timestamp>"'
+] as const;
+
 export interface OrchestratorWorkPolicyConfig {
     mode: OrchestratorWorkPolicyMode;
     [key: string]: unknown;
@@ -172,6 +178,42 @@ export function readOrchestratorWorkPolicyModeForBundle(bundleRoot: string): Orc
     } catch {
         return DEFAULT_WORKFLOW_CONFIG.orchestrator_work_policy.mode;
     }
+}
+
+export function buildGardaSelfGuardPolicyChangeCommand(cliPrefix: string, includeTargetRoot = true): string {
+    return [
+        `${cliPrefix} workflow set`,
+        ...GARDA_SELF_GUARD_POLICY_CHANGE_ARGUMENTS,
+        ...(includeTargetRoot ? ['--target-root "."'] : [])
+    ].join(' ');
+}
+
+export function buildGardaSelfGuardPolicyChangeReference(): string {
+    return [
+        'workflow set',
+        ...GARDA_SELF_GUARD_POLICY_CHANGE_ARGUMENTS
+    ].join(' ');
+}
+
+export function formatGardaSelfGuardProtectedControlPlaneGuidance(options: {
+    protectedFiles?: readonly string[];
+    includeWorkflowConfigWork?: boolean;
+    policyChangeReference?: string;
+} = {}): string {
+    const protectedFiles = options.protectedFiles || [];
+    const protectedFileText = protectedFiles.length > 0
+        ? ` Planned protected files: ${protectedFiles.join(', ')}.`
+        : '';
+    const protectedModes = options.includeWorkflowConfigWork
+        ? '--orchestrator-work or --workflow-config-work'
+        : '--orchestrator-work';
+    const policyChangeReference = options.policyChangeReference || buildGardaSelfGuardPolicyChangeReference();
+
+    return (
+        `Garda self-guard is on for this application workspace: agents cannot enter ${protectedModes} for protected Garda control-plane edits.` +
+        protectedFileText +
+        ` Route this to an operator-owned update, repair, or maintenance flow, or have the operator deliberately relax the policy with ${policyChangeReference}.`
+    );
 }
 
 export function getWorkflowConfigPath(bundleRoot: string): string {

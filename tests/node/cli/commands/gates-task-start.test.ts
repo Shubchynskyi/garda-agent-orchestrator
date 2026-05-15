@@ -48,6 +48,10 @@ async function captureExpectedAsyncError(callback: () => Promise<void>): Promise
     assert.fail('Expected command to throw an error.');
 }
 
+function markAsSourceCheckout(repoRoot: string): void {
+    fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2), 'utf8');
+}
+
 const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
     Claude: 'CLAUDE.md',
     Codex: 'AGENTS.md',
@@ -230,7 +234,7 @@ function initializeGitRepo(repoRoot: string): void {
 }
 
 describe('cli/commands/gates — task-start', () => {
-    it('fails enter-task-mode early when planned scope includes protected orchestrator files without orchestrator-work', () => {
+    it('blocks app-workspace protected orchestrator scope when garda self-guard is on', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900planned-protected-handoff';
         seedTaskQueue(repoRoot, taskId);
@@ -245,16 +249,10 @@ describe('cli/commands/gates — task-start', () => {
             }));
         assert.match(
             error.message,
-            new RegExp(
-                `Planned task scope includes protected orchestrator files: \\.github/agents/orchestrator\\.md\\.` +
-                `.*Suggested command: node garda-agent-orchestrator/bin/garda\\.js gate enter-task-mode` +
-                `.*--repo-root '${escapeRegExp(path.resolve(repoRoot))}'` +
-                `.*--orchestrator-work` +
-                `.*--planned-changed-file '\\.github/agents/orchestrator\\.md'`,
-                'i'
-            )
+            /Garda self-guard is on for this application workspace/
         );
-        assert.ok(!error.message.includes('--operator-confirmed yes'));
+        assert.ok(!error.message.includes('gate enter-task-mode'));
+        assert.ok(!error.message.includes('--planned-changed-file'));
         assert.equal(fs.existsSync(artifactPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -363,6 +361,7 @@ describe('cli/commands/gates — task-start', () => {
         const taskId = 'T-900planned-protected-handler-alias';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        markAsSourceCheckout(repoRoot);
 
         const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
         const error = await captureExpectedAsyncError(() => handleEnterTaskMode([
@@ -378,7 +377,7 @@ describe('cli/commands/gates — task-start', () => {
             error.message,
             new RegExp(
                 `Planned task scope includes protected orchestrator files: \\.github/agents/orchestrator\\.md\\.` +
-                `.*Suggested command: node garda-agent-orchestrator/bin/garda\\.js gate enter-task-mode` +
+                `.*Suggested command: node bin/garda\\.js gate enter-task-mode` +
                 `.*--repo-root '${escapeRegExp(path.resolve(repoRoot))}'` +
                 `.*--orchestrator-work` +
                 `.*--planned-changed-file '\\.github/agents/orchestrator\\.md'`,
@@ -396,6 +395,7 @@ describe('cli/commands/gates — task-start', () => {
         const taskId = 'T-900planned-protected-handler-merged-aliases';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        markAsSourceCheckout(repoRoot);
 
         const error = await captureExpectedAsyncError(() => handleEnterTaskMode([
             '--repo-root', repoRoot,
@@ -411,7 +411,7 @@ describe('cli/commands/gates — task-start', () => {
         assert.match(
             error.message,
             new RegExp(
-                `Suggested command: node garda-agent-orchestrator/bin/garda\\.js gate enter-task-mode` +
+                `Suggested command: node bin/garda\\.js gate enter-task-mode` +
                 `.*--planned-changed-file '\\.github/agents/orchestrator\\.md'` +
                 `.*--planned-changed-file 'src/app\\.ts'`,
                 'i'
@@ -450,6 +450,7 @@ describe('cli/commands/gates — task-start', () => {
         const taskId = 'T-900planned-protected-allowed';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        markAsSourceCheckout(repoRoot);
 
         const result = runEnterTaskMode({
             repoRoot,
@@ -476,6 +477,7 @@ describe('cli/commands/gates — task-start', () => {
         const taskId = 'T-900planned-protected-operator-confirm-time';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        markAsSourceCheckout(repoRoot);
 
         assert.throws(
             () => runEnterTaskMode({
@@ -497,6 +499,7 @@ describe('cli/commands/gates — task-start', () => {
         const taskId = 'T-900planned-protected-operator-confirm';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        markAsSourceCheckout(repoRoot);
 
         assert.throws(
             () => runEnterTaskMode({
@@ -518,6 +521,7 @@ describe('cli/commands/gates — task-start', () => {
         const staleConfirmation = new Date(Date.now() - 11 * 60 * 1000).toISOString();
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        markAsSourceCheckout(repoRoot);
 
         assert.throws(
             () => runEnterTaskMode({
