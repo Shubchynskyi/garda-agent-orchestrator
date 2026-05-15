@@ -210,6 +210,103 @@ test('workflow set updates task reset availability with audit record', () => {
     }
 });
 
+test('workflow set maps short on off aliases to existing boolean settings', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--full-suite', 'on',
+            '--scope-budget', 'off',
+            '--review-cycle', 'off',
+            '--review-cycle-auto-split', 'on',
+            '--project-memory', 'off',
+            '--task-reset', 'on',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.ok(result.changed_fields.includes('full_suite_validation.enabled'));
+        assert.ok(result.changed_fields.includes('scope_budget_guard.enabled'));
+        assert.ok(result.changed_fields.includes('review_cycle_guard.enabled'));
+        assert.ok(result.changed_fields.includes('review_cycle_guard.auto_split_enabled'));
+        assert.ok(result.changed_fields.includes('project_memory_maintenance.enabled'));
+        assert.ok(result.changed_fields.includes('task_reset.enabled'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.full_suite_validation.enabled, true);
+        assert.equal(parsedConfig.scope_budget_guard.enabled, false);
+        assert.equal(parsedConfig.review_cycle_guard.enabled, false);
+        assert.equal(parsedConfig.review_cycle_guard.auto_split_enabled, true);
+        assert.equal(parsedConfig.project_memory_maintenance.enabled, false);
+        assert.equal(parsedConfig.task_reset.enabled, true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects conflicting short alias and long boolean flag values', () => {
+    const pairs = [
+        ['--full-suite', '--full-suite-enabled'],
+        ['--scope-budget', '--scope-budget-enabled'],
+        ['--review-cycle', '--review-cycle-enabled'],
+        ['--review-cycle-auto-split', '--review-cycle-auto-split-enabled'],
+        ['--project-memory', '--project-memory-enabled'],
+        ['--task-reset', '--task-reset-enabled']
+    ] as const;
+
+    for (const [aliasFlag, canonicalFlag] of pairs) {
+        const bundleRoot = createBundleRoot();
+        try {
+            assert.throws(
+                () => handleWorkflow([
+                    'set',
+                    '--bundle-root', bundleRoot,
+                    aliasFlag, 'on',
+                    canonicalFlag, 'false',
+                    ...buildOperatorConfirmationArgs()
+                ], PACKAGE_JSON),
+                new RegExp(`${aliasFlag} conflicts with ${canonicalFlag}`)
+            );
+        } finally {
+            fs.rmSync(bundleRoot, { recursive: true, force: true });
+        }
+    }
+});
+
+test('workflow set rejects invalid boolean tokens for short aliases and canonical flags', () => {
+    const pairs = [
+        ['--full-suite', '--full-suite-enabled'],
+        ['--scope-budget', '--scope-budget-enabled'],
+        ['--review-cycle', '--review-cycle-enabled'],
+        ['--review-cycle-auto-split', '--review-cycle-auto-split-enabled'],
+        ['--project-memory', '--project-memory-enabled'],
+        ['--task-reset', '--task-reset-enabled']
+    ] as const;
+
+    for (const flags of pairs) {
+        for (const flag of flags) {
+            const bundleRoot = createBundleRoot();
+            try {
+                assert.throws(
+                    () => handleWorkflow([
+                        'set',
+                        '--bundle-root', bundleRoot,
+                        flag, 'maybe',
+                        ...buildOperatorConfirmationArgs()
+                    ], PACKAGE_JSON),
+                    new RegExp(`${flag} must be one of: true, false, yes, no, 1, 0, on, off`)
+                );
+            } finally {
+                fs.rmSync(bundleRoot, { recursive: true, force: true });
+            }
+        }
+    }
+});
+
 test('workflow set enables garda self-guard without operator confirmation', () => {
     const bundleRoot = createBundleRoot({}, {
         orchestrator_work_policy: {
@@ -318,8 +415,15 @@ test('workflow help describes project-memory update as the default policy', () =
 
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
-    assert.ok(helpText.includes('workflow set --project-memory-enabled true --project-memory-mode update'));
-    assert.ok(helpText.includes('workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('workflow set --full-suite on --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('--scope-budget on|off|--scope-budget-enabled true|false'));
+    assert.ok(helpText.includes('--review-cycle on|off|--review-cycle-enabled true|false'));
+    assert.ok(helpText.includes('--review-cycle-auto-split on|off|--review-cycle-auto-split-enabled true|false'));
+    assert.ok(helpText.includes('--project-memory on|off|--project-memory-enabled true|false'));
+    assert.ok(helpText.includes('workflow set --project-memory on --project-memory-mode update'));
+    assert.ok(helpText.includes('workflow set --task-reset on --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('--task-reset on|off|--task-reset-enabled true|false'));
+    assert.ok(helpText.includes('Short aliases map exactly to existing boolean settings'));
     assert.ok(helpText.includes('workflow set --garda-self-guard on'));
     assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('Task reset mutations are disabled by default'));

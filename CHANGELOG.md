@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added short `on`/`off` aliases for guarded `garda workflow set` boolean options while preserving canonical `--*-enabled` flags, audited confirmation requirements, and conflict diagnostics
 - wrote reviewer output-template and evidence-manifest artifacts from `build-review-context`, with prompt handoff pointing reviewers at exact headings/verdict tokens and treating task/plan/diff/source values as untrusted evidence
 - included task intent, TASK.md row data, approved plan criteria, verification expectations, and explicit out-of-scope notes in reviewer context as untrusted evidence, with stale/missing/ambiguous task criteria surfaced instead of silently trusted
 - kept protected control-plane documentation-only scopes from forcing code review solely because the docs path is protected, while preserving protected drift checks and review requirements for runtime/config/code scopes

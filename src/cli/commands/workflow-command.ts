@@ -81,6 +81,11 @@ interface WorkflowCommandRoots {
     configPath: string;
 }
 
+interface ResolvedWorkflowBooleanSetting {
+    value: string;
+    flagName: string;
+}
+
 interface WorkflowConfigState {
     rawConfig: WorkflowFileConfigData | null;
     config: WorkflowFileConfigData;
@@ -141,6 +146,7 @@ const WORKFLOW_SHARED_DEFINITIONS = {
 
 const WORKFLOW_SET_DEFINITIONS = {
     ...WORKFLOW_SHARED_DEFINITIONS,
+    '--full-suite': { key: 'fullSuiteAlias', type: 'string' },
     '--full-suite-enabled': { key: 'fullSuiteEnabled', type: 'string' },
     '--full-suite-command': { key: 'fullSuiteCommand', type: 'string' },
     '--full-suite-timeout-ms': { key: 'fullSuiteTimeoutMs', type: 'string' },
@@ -148,6 +154,7 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--full-suite-red-failure-chunk-lines': { key: 'fullSuiteRedFailureChunkLines', type: 'string' },
     '--full-suite-out-of-scope-failure-policy': { key: 'fullSuiteOutOfScopeFailurePolicy', type: 'string' },
     '--review-execution-policy': { key: 'reviewExecutionPolicy', type: 'string' },
+    '--scope-budget': { key: 'scopeBudgetAlias', type: 'string' },
     '--scope-budget-enabled': { key: 'scopeBudgetEnabled', type: 'string' },
     '--scope-budget-action': { key: 'scopeBudgetAction', type: 'string' },
     '--scope-budget-profiles': { key: 'scopeBudgetProfiles', type: 'string' },
@@ -160,7 +167,10 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--review-cycle-max-failed-non-test-reviews': { key: 'reviewCycleMaxFailedNonTestReviews', type: 'string' },
     '--review-cycle-max-total-non-test-reviews': { key: 'reviewCycleMaxTotalNonTestReviews', type: 'string' },
     '--review-cycle-excluded-review-types': { key: 'reviewCycleExcludedReviewTypes', type: 'string' },
+    '--review-cycle': { key: 'reviewCycleAlias', type: 'string' },
+    '--review-cycle-auto-split': { key: 'reviewCycleAutoSplitAlias', type: 'string' },
     '--review-cycle-auto-split-enabled': { key: 'reviewCycleAutoSplitEnabled', type: 'string' },
+    '--project-memory': { key: 'projectMemoryAlias', type: 'string' },
     '--project-memory-enabled': { key: 'projectMemoryEnabled', type: 'string' },
     '--project-memory-mode': { key: 'projectMemoryMode', type: 'string' },
     '--project-memory-run-before-final-closeout': { key: 'projectMemoryRunBeforeFinalCloseout', type: 'string' },
@@ -168,6 +178,7 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--project-memory-max-compact-summary-chars': { key: 'projectMemoryMaxCompactSummaryChars', type: 'string' },
     '--project-memory-read-strategy': { key: 'projectMemoryReadStrategy', type: 'string' },
     '--project-memory-impact-artifact-retention-days': { key: 'projectMemoryImpactArtifactRetentionDays', type: 'string' },
+    '--task-reset': { key: 'taskResetAlias', type: 'string' },
     '--task-reset-enabled': { key: 'taskResetEnabled', type: 'string' },
     '--garda-self-guard': { key: 'gardaSelfGuard', type: 'string' },
     '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
@@ -415,12 +426,12 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`TaskResetEnabled: ${taskReset.enabled}`);
     lines.push(`GardaSelfGuard: ${orchestratorWorkPolicy.mode === 'deny_agent_entry' ? 'on' : 'off'}`);
     lines.push(`OrchestratorWorkPolicy: ${orchestratorWorkPolicy.mode}`);
-    lines.push('Tip: run "workflow set --full-suite-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
+    lines.push('Tip: run "workflow set --full-suite on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
-    lines.push('Tip: run "workflow set --scope-budget-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');
-    lines.push('Tip: run "workflow set --review-cycle-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');
-    lines.push('Tip: run "workflow set --project-memory-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');
-    lines.push('Tip: run "workflow set --task-reset-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
+    lines.push('Tip: run "workflow set --scope-budget on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');
+    lines.push('Tip: run "workflow set --review-cycle on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');
+    lines.push('Tip: run "workflow set --project-memory on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');
+    lines.push('Tip: run "workflow set --task-reset on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
     lines.push('Tip: run "workflow set --garda-self-guard on|off" to control agent self-entry into protected orchestrator work; off requires explicit operator approval.');
     return lines.join('\n');
 }
@@ -433,7 +444,46 @@ function parseBooleanText(value: string, flagName: string): boolean {
     if (['false', 'no', '0', 'off'].includes(normalized)) {
         return false;
     }
-    throw new Error(`${flagName} must be true or false.`);
+    throw new Error(`${flagName} must be one of: true, false, yes, no, 1, 0, on, off.`);
+}
+
+function resolveBooleanSettingOption(options: {
+    parsedOptions: ParsedOptionsRecord;
+    canonicalKey: string;
+    aliasKey: string;
+    canonicalFlag: string;
+    aliasFlag: string;
+}): ResolvedWorkflowBooleanSetting | null {
+    const canonicalValue = options.parsedOptions[options.canonicalKey];
+    const aliasValue = options.parsedOptions[options.aliasKey];
+    const canonicalText = typeof canonicalValue === 'string' ? canonicalValue : null;
+    const aliasText = typeof aliasValue === 'string' ? aliasValue : null;
+    if (canonicalText !== null && aliasText !== null) {
+        const canonicalBoolean = parseBooleanText(canonicalText, options.canonicalFlag);
+        const aliasBoolean = parseBooleanText(aliasText, options.aliasFlag);
+        if (canonicalBoolean !== aliasBoolean) {
+            throw new Error(
+                `${options.aliasFlag} conflicts with ${options.canonicalFlag}; pass only one value or make both values match.`
+            );
+        }
+        return {
+            value: canonicalText,
+            flagName: options.canonicalFlag
+        };
+    }
+    if (canonicalText !== null) {
+        return {
+            value: canonicalText,
+            flagName: options.canonicalFlag
+        };
+    }
+    if (aliasText !== null) {
+        return {
+            value: aliasText,
+            flagName: options.aliasFlag
+        };
+    }
+    return null;
 }
 
 function parseIntegerText(value: string, flagName: string, minimum: number): number {
@@ -600,9 +650,54 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         JSON.stringify(state.config.full_suite_validation)
     ) as WorkflowConfigData['full_suite_validation'];
     const changedFields: string[] = [];
+    const fullSuiteEnabledSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'fullSuiteEnabled',
+        aliasKey: 'fullSuiteAlias',
+        canonicalFlag: '--full-suite-enabled',
+        aliasFlag: '--full-suite'
+    });
+    const scopeBudgetEnabledSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'scopeBudgetEnabled',
+        aliasKey: 'scopeBudgetAlias',
+        canonicalFlag: '--scope-budget-enabled',
+        aliasFlag: '--scope-budget'
+    });
+    const reviewCycleEnabledSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'reviewCycleEnabled',
+        aliasKey: 'reviewCycleAlias',
+        canonicalFlag: '--review-cycle-enabled',
+        aliasFlag: '--review-cycle'
+    });
+    const reviewCycleAutoSplitSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'reviewCycleAutoSplitEnabled',
+        aliasKey: 'reviewCycleAutoSplitAlias',
+        canonicalFlag: '--review-cycle-auto-split-enabled',
+        aliasFlag: '--review-cycle-auto-split'
+    });
+    const projectMemoryEnabledSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'projectMemoryEnabled',
+        aliasKey: 'projectMemoryAlias',
+        canonicalFlag: '--project-memory-enabled',
+        aliasFlag: '--project-memory'
+    });
+    const taskResetEnabledSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'taskResetEnabled',
+        aliasKey: 'taskResetAlias',
+        canonicalFlag: '--task-reset-enabled',
+        aliasFlag: '--task-reset'
+    });
 
-    if (typeof options.fullSuiteEnabled === 'string') {
-        nextFullSuiteValidation.enabled = parseBooleanText(options.fullSuiteEnabled, '--full-suite-enabled');
+    if (fullSuiteEnabledSetting) {
+        nextFullSuiteValidation.enabled = parseBooleanText(
+            fullSuiteEnabledSetting.value,
+            fullSuiteEnabledSetting.flagName
+        );
         changedFields.push('full_suite_validation.enabled');
     }
     if (typeof options.fullSuiteCommand === 'string') {
@@ -654,8 +749,11 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         changedFields.push('review_execution_policy.mode');
     }
     const nextScopeBudgetGuard = normalizeScopeBudgetGuardConfig(nextConfig.scope_budget_guard);
-    if (typeof options.scopeBudgetEnabled === 'string') {
-        nextScopeBudgetGuard.enabled = parseBooleanText(options.scopeBudgetEnabled, '--scope-budget-enabled');
+    if (scopeBudgetEnabledSetting) {
+        nextScopeBudgetGuard.enabled = parseBooleanText(
+            scopeBudgetEnabledSetting.value,
+            scopeBudgetEnabledSetting.flagName
+        );
         changedFields.push('scope_budget_guard.enabled');
     }
     if (typeof options.scopeBudgetAction === 'string') {
@@ -684,8 +782,11 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.scope_budget_guard = nextScopeBudgetGuard;
     const nextReviewCycleGuard = normalizeReviewCycleGuardConfig(nextConfig.review_cycle_guard);
-    if (typeof options.reviewCycleEnabled === 'string') {
-        nextReviewCycleGuard.enabled = parseBooleanText(options.reviewCycleEnabled, '--review-cycle-enabled');
+    if (reviewCycleEnabledSetting) {
+        nextReviewCycleGuard.enabled = parseBooleanText(
+            reviewCycleEnabledSetting.value,
+            reviewCycleEnabledSetting.flagName
+        );
         changedFields.push('review_cycle_guard.enabled');
     }
     if (typeof options.reviewCycleAction === 'string') {
@@ -715,10 +816,10 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         );
         changedFields.push('review_cycle_guard.excluded_review_types');
     }
-    if (typeof options.reviewCycleAutoSplitEnabled === 'string') {
+    if (reviewCycleAutoSplitSetting) {
         nextReviewCycleGuard.auto_split_enabled = parseBooleanText(
-            options.reviewCycleAutoSplitEnabled,
-            '--review-cycle-auto-split-enabled'
+            reviewCycleAutoSplitSetting.value,
+            reviewCycleAutoSplitSetting.flagName
         );
         changedFields.push('review_cycle_guard.auto_split_enabled');
     }
@@ -727,10 +828,10 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const nextProjectMemoryMaintenance = cloneProjectMemoryMaintenanceConfig(
         nextConfig.project_memory_maintenance ?? buildDefaultWorkflowConfig().project_memory_maintenance
     );
-    if (typeof options.projectMemoryEnabled === 'string') {
+    if (projectMemoryEnabledSetting) {
         nextProjectMemoryMaintenance.enabled = parseBooleanText(
-            options.projectMemoryEnabled,
-            '--project-memory-enabled'
+            projectMemoryEnabledSetting.value,
+            projectMemoryEnabledSetting.flagName
         );
         changedFields.push('project_memory_maintenance.enabled');
     }
@@ -777,8 +878,11 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const nextTaskReset = cloneTaskResetConfig(
         nextConfig.task_reset ?? buildDefaultWorkflowConfig().task_reset
     );
-    if (typeof options.taskResetEnabled === 'string') {
-        nextTaskReset.enabled = parseBooleanText(options.taskResetEnabled, '--task-reset-enabled');
+    if (taskResetEnabledSetting) {
+        nextTaskReset.enabled = parseBooleanText(
+            taskResetEnabledSetting.value,
+            taskResetEnabledSetting.flagName
+        );
         changedFields.push('task_reset.enabled');
     }
     nextConfig.task_reset = nextTaskReset;
@@ -801,7 +905,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
-            + '--task-reset-enabled, or --garda-self-guard.'
+            + '--task-reset-enabled, their short on/off aliases, or --garda-self-guard.'
         );
     }
 
@@ -907,7 +1011,7 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
             'When review_cycle_guard.auto_split_enabled is false, next-step tells the agent to wait for operator direction after a blocking review-cycle violation.',
             'When review_cycle_guard.auto_split_enabled is true, next-step emits a dedicated auto-split prompt artifact for the agent instead of waiting for operator input.',
             'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.',
-            'Task reset: confirmed reset mutations are disabled by default and require audited opt-in with workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>".',
+            'Task reset: confirmed reset mutations are disabled by default and require audited opt-in with workflow set --task-reset on --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>".',
             'workflow set requires explicit operator approval with --operator-confirmed yes and --operator-confirmed-at-utc; agents must not approve workflow-config mutations for themselves.',
             'Task reset dry-run remains available while disabled because it only reports reset scope and does not mutate task status or artifacts.'
         ]
