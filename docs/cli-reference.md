@@ -11,6 +11,14 @@ The runtime is Node-only.
 - Runtime baseline: `Node.js 24 LTS`
 - Source installs from a git/source checkout run `npm prepare`, which builds the generated `bin/garda.js` launcher and compiled runtime before execution.
 
+Runtime compatibility matrix:
+
+| Node.js line | Garda 1.1.x status | Notes |
+|---|---|---|
+| Node 24 LTS | Supported | Covered by `package.json` engines, CI, release validation, and cross-platform smoke. |
+| Node 22 LTS | Best-effort only | Not an official support target without engines, CI matrix, diagnostics, and release validation coverage. |
+| Node 20 and older | Unsupported | Below the enforced `>=24.0.0` runtime baseline. |
+
 ---
 
 ## Core Commands

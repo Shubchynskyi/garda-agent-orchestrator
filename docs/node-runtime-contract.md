@@ -11,6 +11,16 @@ This document captures the current Node-only runtime surface.
 - Entrypoint: generated `bin/garda.js` (compiled from `src/bin/garda.ts`)
 - Runtime baseline: `Node.js >=24.0.0`
 
+## Compatibility Matrix
+
+Garda 1.1.x is a Node 24-only supported runtime line. Node 22 is still an upstream Maintenance LTS release line, but Garda does not make it official support unless engines, CI, runtime diagnostics, and release validation all include Node 22.
+
+| Node.js line | Garda 1.1.x status | Contract |
+|---|---|---|
+| Node 24 LTS | Supported | Public CLI, lifecycle commands, gate commands, release validation, and cross-platform smoke are covered by CI and `package.json` engines. |
+| Node 22 LTS | Best-effort only | No official support claim, no CI matrix, no release validation, and no diagnostic promise. A successful local build on Node 22 is evidence for that machine only. |
+| Node 20 and older | Unsupported | Below the enforced `>=24.0.0` runtime baseline. |
+
 ## Execution Modes
 
 - Source-repository mode: run `npm run build`, which compiles `src/bin/garda.ts` into `bin/garda.js`; that launcher then resolves compiled `dist/src/**/*.js`.

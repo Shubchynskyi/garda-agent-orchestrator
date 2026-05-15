@@ -4,7 +4,7 @@
 
 This document records the TypeScript/Node foundation that now backs the active runtime.
 
-- baseline: **Node 24 LTS**
+- baseline: **Node 24 LTS** (the 1.1.x support contract is Node 24-only)
 - source of truth: **`src/**/*.ts`**
 - executed runtime: **`dist/src/**/*.js`** (or staged **`.node-build/src/**/*.js`** in test fixtures)
 - public router: generated **`bin/garda.js`** compiled from **`src/bin/garda.ts`**
@@ -98,6 +98,17 @@ Repository CI mirrors the same contract in `.github/workflows/ci.yml`:
 5. cross-platform lifecycle smoke on Linux, macOS, and Windows (Node 24)
 
 The lifecycle smoke installs from a `file://` clone of the current workflow branch, not implicitly from the repository default branch. That keeps pull-request and branch runs aligned with the code under test.
+
+### Node 22 Support Decision
+
+Node 22 is not an official Garda 1.1.x runtime. It is an upstream Maintenance LTS line, so local experiments may still be useful, but the release contract remains Node 24-only until all of these are true in the same release line:
+
+1. `package.json` engines allow the Node 22 range.
+2. CI runs typecheck, full tests, release validation, and smoke coverage on Node 22.
+3. Runtime diagnostics and docs describe Node 22 as supported.
+4. Release notes call out the support expansion.
+
+Until then, Node 22 success is best-effort local compatibility evidence, not support.
 
 ## Current Runtime State
 

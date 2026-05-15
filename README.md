@@ -149,12 +149,19 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 - **Node.js 24 LTS is the supported runtime baseline** for the public CLI, lifecycle commands, and gate commands. CI targets Node 24 across the supported OS matrix.
 - **A local Git working tree is required.** Garda uses `git status` and `git diff` from the local repository to derive task scope, dirty-worktree baselines, zero-diff evidence, protected control-plane drift, and review freshness. The hosting service does not matter: GitHub, GitLab, Bitbucket, a private server, or no remote at all are all acceptable as long as the project is a local Git repository and the `git` CLI is available.
-- **Compatibility note:** as of `v1.0.0`, the codebase also builds on `Node 20.20.2` and `Node 22.22.2`. However, those versions are not part of the official support contract, and runtime diagnostics still enforce the documented `>=24.0.0` baseline.
+- **1.1.x compatibility stance:** Node 22 is not an officially supported Garda runtime. It may remain useful for local investigation while the upstream Node.js project keeps it in Maintenance LTS, but Garda does not claim Node 22 compatibility without `package.json` engine support, CI matrix coverage, and release validation on that line.
+- **Compatibility note:** as of `v1.0.0`, the codebase also built on `Node 20.20.2` and `Node 22.22.2`. That historical observation is not part of the official support contract, and runtime diagnostics still enforce the documented `>=24.0.0` baseline.
 - **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/garda.ts` compiles into the public `bin/garda.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
 - **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and the wider repo graph (`tsconfig.node-foundation.json` / `tsconfig.tests.json`) covers `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
 - **Release validation is explicit:** `npm run validate:release` requires a clean tracked/untracked worktree, proves `build -> embedded bundle parity when present -> test -> pack -> install/invoke`, and checks the worktree again before release handoff.
 - **GitHub Actions CI mirrors the hot path:** `ci.yml` runs `typecheck`, `test`, `validate:release`, and a cross-platform lifecycle smoke that installs from the current workflow branch instead of drifting to the repository default branch.
 - Root `tsconfig.json` extends `tsconfig.node-foundation.json`, so editors like IntelliJ IDEA or WebStorm can discover the repository without custom setup.
+
+| Node.js line | 1.1.x support status | Release/CI contract |
+|---|---|---|
+| Node 24 LTS | Official supported baseline | `package.json` requires `>=24.0.0`; GitHub Actions typecheck, unit, release validation, and cross-platform smoke run on Node 24. |
+| Node 22 LTS | Not officially supported | No engines claim, no CI matrix, no release validation, and no runtime diagnostics promise. Treat successful local builds as best-effort only. |
+| Node 20 and older | Unsupported | Below the enforced runtime baseline and outside the 1.1.x support contract. |
 
 ## Documentation
 

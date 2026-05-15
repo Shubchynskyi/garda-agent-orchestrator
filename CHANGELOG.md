@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- documented the Garda 1.1.x Node runtime support stance as Node 24-only, with Node 22 treated as best-effort local compatibility until engines, CI, diagnostics, and release validation explicitly cover it
 - added short `on`/`off` aliases for guarded `garda workflow set` boolean options while preserving canonical `--*-enabled` flags, audited confirmation requirements, and conflict diagnostics
 - wrote reviewer output-template and evidence-manifest artifacts from `build-review-context`, with prompt handoff pointing reviewers at exact headings/verdict tokens and treating task/plan/diff/source values as untrusted evidence
 - included task intent, TASK.md row data, approved plan criteria, verification expectations, and explicit out-of-scope notes in reviewer context as untrusted evidence, with stale/missing/ambiguous task criteria surfaced instead of silently trusted
