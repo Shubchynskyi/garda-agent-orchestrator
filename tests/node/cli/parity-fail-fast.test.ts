@@ -551,6 +551,8 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
                 '--target-root', targetDir,
                 '--full-suite-enabled', 'true',
                 '--review-execution-policy', 'strict_sequential',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString(),
                 '--json'
             ],
             { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
@@ -630,6 +632,8 @@ test('workflow set routes legacy materialized target roots through the CLI dispa
                 'set',
                 '--target-root', targetDir,
                 '--review-execution-policy', 'strict_sequential',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString(),
                 '--json'
             ],
             { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }

@@ -663,7 +663,7 @@ export function getWorkflowConfigWorkViolations(options: {
         return [
             `Workflow config files changed before ${options.phaseLabel} with inconsistent task-mode evidence: ` +
             `--workflow-config-work requires --orchestrator-work: ${changedWorkflowConfigFiles.join(', ')}. ` +
-            'Re-enter task mode with --orchestrator-work --workflow-config-work.'
+            'Re-enter task mode with --orchestrator-work --workflow-config-work --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" after explicit operator approval.'
         ];
     }
 
@@ -677,7 +677,7 @@ export function getWorkflowConfigWorkViolations(options: {
     if (options.taskModeEvidence.workflow_config_work === true) {
         return [
             `Workflow config files changed before ${options.phaseLabel} with --workflow-config-work but without --orchestrator-work: ` +
-            `${changedWorkflowConfigFiles.join(', ')}. Re-enter task mode with --orchestrator-work --workflow-config-work.`
+            `${changedWorkflowConfigFiles.join(', ')}. Re-enter task mode with --orchestrator-work --workflow-config-work --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" after explicit operator approval.`
         ];
     }
 
@@ -686,6 +686,6 @@ export function getWorkflowConfigWorkViolations(options: {
         : '--orchestrator-work --workflow-config-work';
     return [
         `Workflow config files changed before ${options.phaseLabel} without task-mode ${flagHint}: ${changedWorkflowConfigFiles.join(', ')}. ` +
-        `Re-enter task mode with ${flagHint} only for tasks that intentionally change workflow-config.json; workflow set audit logs do not grant task-mode permission.`
+        `Re-enter task mode with ${flagHint} --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" only after explicit operator approval for tasks that intentionally change workflow-config.json; workflow set audit logs do not grant task-mode permission.`
     ];
 }

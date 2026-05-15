@@ -23,5 +23,5 @@ export function buildNextStepNavigatorGuidance(cliCommand = 'node bin/garda.js')
 }
 
 export function buildFullSuiteDisabledGuidance(cliCommand = 'node bin/garda.js'): string {
-    return `Full repository test validation after each task is currently disabled. Do not silently enable it; ask for explicit permission or show: \`${cliCommand} workflow set --full-suite-enabled true --full-suite-command "<project test command>" --target-root "."\`. If a valid command is already configured, use \`${cliCommand} workflow set --full-suite-enabled true --target-root "."\`.`;
+    return `Full repository test validation after each task is currently disabled. Do not silently enable it; ask for explicit permission or show: \`${cliCommand} workflow set --full-suite-enabled true --full-suite-command "<project test command>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root "."\`. If a valid command is already configured, use \`${cliCommand} workflow set --full-suite-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root "."\`.`;
 }

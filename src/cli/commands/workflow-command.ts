@@ -5,6 +5,10 @@ import {
     resolveBundleName
 } from '../../core/constants';
 import {
+    parseOperatorConfirmationYes,
+    validateFreshOperatorConfirmation
+} from '../../core/operator-confirmation';
+import {
     REVIEW_EXECUTION_POLICY_MODES,
     buildReviewExecutionPolicySummaryLine,
     describeReviewExecutionPolicy,
@@ -158,7 +162,9 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--project-memory-max-compact-summary-chars': { key: 'projectMemoryMaxCompactSummaryChars', type: 'string' },
     '--project-memory-read-strategy': { key: 'projectMemoryReadStrategy', type: 'string' },
     '--project-memory-impact-artifact-retention-days': { key: 'projectMemoryImpactArtifactRetentionDays', type: 'string' },
-    '--task-reset-enabled': { key: 'taskResetEnabled', type: 'string' }
+    '--task-reset-enabled': { key: 'taskResetEnabled', type: 'string' },
+    '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
+    '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' }
 };
 
 function resolveWorkflowRoots(options: ParsedOptionsRecord): WorkflowCommandRoots {
@@ -376,12 +382,12 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ProjectMemoryMaintenanceReadStrategy: ${projectMemoryMaintenance.read_strategy}`);
     lines.push(`ProjectMemoryMaintenanceImpactArtifactRetentionDays: ${projectMemoryMaintenance.impact_artifact_retention_days}`);
     lines.push(`TaskResetEnabled: ${taskReset.enabled}`);
-    lines.push('Tip: run "workflow set --full-suite-enabled true|false" to change the repo-local mode.');
-    lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}>" to change review launch ordering.`);
-    lines.push('Tip: run "workflow set --scope-budget-enabled true|false" to change the scope budget guard.');
-    lines.push('Tip: run "workflow set --review-cycle-enabled true|false" to change the review cycle guard.');
-    lines.push('Tip: run "workflow set --project-memory-enabled true|false" to change project memory maintenance checks.');
-    lines.push('Tip: run "workflow set --task-reset-enabled true|false" to change confirmed task-reset availability.');
+    lines.push('Tip: run "workflow set --full-suite-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
+    lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
+    lines.push('Tip: run "workflow set --scope-budget-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');
+    lines.push('Tip: run "workflow set --review-cycle-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');
+    lines.push('Tip: run "workflow set --project-memory-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');
+    lines.push('Tip: run "workflow set --task-reset-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
     return lines.join('\n');
 }
 
@@ -508,6 +514,20 @@ function writeWorkflowConfigAuditRecord(
         after_sha256: sha256Text(afterText)
     }) + '\n', 'utf8');
     return auditPath;
+}
+
+function requireWorkflowSetOperatorConfirmation(options: ParsedOptionsRecord): void {
+    const rawConfirmation = String(options.operatorConfirmed || '').trim();
+    const confirmed = rawConfirmation ? parseOperatorConfirmationYes(rawConfirmation) : false;
+    validateFreshOperatorConfirmation({
+        actionLabel: 'workflow set',
+        confirmed,
+        confirmedAtUtc: String(options.operatorConfirmedAtUtc || '').trim(),
+        requireConfirmedAtUtc: true,
+        instruction:
+            'Ask the operator to approve this workflow-config mutation, then rerun with --operator-confirmed yes and --operator-confirmed-at-utc "<ISO-8601 timestamp>". ' +
+            'Agents must not approve workflow-config changes for themselves.'
+    });
 }
 
 function handleShow(options: ParsedOptionsRecord): WorkflowShowResult {
@@ -746,6 +766,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
 
     let auditPath: string | null = null;
     if (changed) {
+        requireWorkflowSetOperatorConfirmation(options);
         writeWorkflowConfig(roots.configPath, nextValidated);
         auditPath = writeWorkflowConfigAuditRecord(
             roots.bundleRoot,
@@ -824,7 +845,8 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
             'When review_cycle_guard.auto_split_enabled is false, next-step tells the agent to wait for operator direction after a blocking review-cycle violation.',
             'When review_cycle_guard.auto_split_enabled is true, next-step emits a dedicated auto-split prompt artifact for the agent instead of waiting for operator input.',
             'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.',
-            'Task reset: confirmed reset mutations are disabled by default and require audited opt-in with workflow set --task-reset-enabled true.',
+            'Task reset: confirmed reset mutations are disabled by default and require audited opt-in with workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>".',
+            'workflow set requires explicit operator approval with --operator-confirmed yes and --operator-confirmed-at-utc; agents must not approve workflow-config mutations for themselves.',
             'Task reset dry-run remains available while disabled because it only reports reset scope and does not mutate task status or artifacts.'
         ]
     };

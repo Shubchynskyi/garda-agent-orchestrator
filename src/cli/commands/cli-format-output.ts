@@ -510,18 +510,18 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
         summary: 'Show and set repo-local workflow config.',
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} workflow [show] [--target-root PATH] [--bundle-root PATH] [--json]`,
-            `${PRIMARY_CLI_NAME} workflow set [--full-suite-enabled true|false] [--full-suite-command CMD] [--review-execution-policy MODE] [--scope-budget-enabled true|false] [--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY] [--scope-budget-profiles LIST] [--scope-budget-max-files N] [--scope-budget-max-changed-lines N] [--scope-budget-max-required-reviews N] [--scope-budget-max-review-tokens N] [--review-cycle-enabled true|false] [--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY] [--review-cycle-max-failed-non-test-reviews N] [--review-cycle-max-total-non-test-reviews N] [--review-cycle-excluded-review-types LIST] [--review-cycle-auto-split-enabled true|false] [--project-memory-enabled true|false] [--project-memory-mode off|check|update|strict] [--project-memory-run-before-final-closeout true|false] [--project-memory-require-user-approval-for-writes true|false] [--project-memory-max-compact-summary-chars N] [--project-memory-read-strategy index_first] [--project-memory-impact-artifact-retention-days N] [--task-reset-enabled true|false] [--target-root PATH] [--json]`
+            `${PRIMARY_CLI_NAME} workflow set [--full-suite-enabled true|false] [--full-suite-command CMD] [--review-execution-policy MODE] [--scope-budget-enabled true|false] [--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY] [--scope-budget-profiles LIST] [--scope-budget-max-files N] [--scope-budget-max-changed-lines N] [--scope-budget-max-required-reviews N] [--scope-budget-max-review-tokens N] [--review-cycle-enabled true|false] [--review-cycle-action BLOCK_FOR_OPERATOR_DECISION|WARN_ONLY] [--review-cycle-max-failed-non-test-reviews N] [--review-cycle-max-total-non-test-reviews N] [--review-cycle-excluded-review-types LIST] [--review-cycle-auto-split-enabled true|false] [--project-memory-enabled true|false] [--project-memory-mode off|check|update|strict] [--project-memory-run-before-final-closeout true|false] [--project-memory-require-user-approval-for-writes true|false] [--project-memory-max-compact-summary-chars N] [--project-memory-read-strategy index_first] [--project-memory-impact-artifact-retention-days N] [--task-reset-enabled true|false] --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" [--target-root PATH] [--json]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} workflow`,
-            `${PRIMARY_CLI_NAME} workflow set --full-suite-enabled true --full-suite-command "npm test"`,
-            `${PRIMARY_CLI_NAME} workflow set --review-execution-policy strict_sequential`,
-            `${PRIMARY_CLI_NAME} workflow set --scope-budget-enabled true --scope-budget-max-changed-lines 1200`,
-            `${PRIMARY_CLI_NAME} workflow set --scope-budget-max-review-tokens 50000`,
-            `${PRIMARY_CLI_NAME} workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30`,
-            `${PRIMARY_CLI_NAME} workflow set --review-cycle-auto-split-enabled true`,
-            `${PRIMARY_CLI_NAME} workflow set --project-memory-enabled true --project-memory-mode update`,
-            `${PRIMARY_CLI_NAME} workflow set --task-reset-enabled true`
+            `${PRIMARY_CLI_NAME} workflow set --full-suite-enabled true --full-suite-command "npm test" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --review-execution-policy strict_sequential --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --scope-budget-enabled true --scope-budget-max-changed-lines 1200 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --scope-budget-max-review-tokens 50000 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --review-cycle-auto-split-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --project-memory-enabled true --project-memory-mode update --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`
         ]),
         hints: Object.freeze([
             'Default mode: workflow with no subcommand behaves like workflow show.',
@@ -531,7 +531,8 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             'Review cycle guard can block runaway non-test review attempts; fresh defaults allow 15 failed non-test reviews and 30 total non-test reviews, with test review excluded by default.',
             'Review cycle auto split is disabled by default and can be enabled with --review-cycle-auto-split-enabled true.',
             'Project memory maintenance defaults to update mode; use off, check, update, or strict mode for explicit repo-local policy.',
-            'Task reset mutations are disabled by default and can be enabled with --task-reset-enabled true.'
+            'Task reset mutations are disabled by default and can be enabled with --task-reset-enabled true.',
+            'workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc after explicit operator approval; agents must not approve workflow-config mutations for themselves.'
         ])
     }),
     stats: Object.freeze({

@@ -577,7 +577,9 @@ describe('runTaskResetCommand — TASK_RESET_DISABLED', () => {
             captureConsole(() => handleWorkflow([
                 'set',
                 '--bundle-root', bundleRoot,
-                '--task-reset-enabled', 'true'
+                '--task-reset-enabled', 'true',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString()
             ], { name: 'garda-agent-orchestrator', version: '1.0.0' }));
             const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
             assert.equal(result.outcome, 'RESET_COMPLETE');

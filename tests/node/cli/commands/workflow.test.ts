@@ -8,6 +8,9 @@ import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
 import { buildGuardedCommandHelpText } from '../../../../src/cli/commands/cli-format-output';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator', version: '1.0.0' };
+function buildOperatorConfirmationArgs(): string[] {
+    return ['--operator-confirmed', 'yes', '--operator-confirmed-at-utc', new Date().toISOString()];
+}
 
 function createBundleRoot(
     fullSuiteOverrides: Partial<Record<string, unknown>> = {},
@@ -94,7 +97,8 @@ test('workflow set updates scope budget guard settings deterministically', () =>
             '--scope-budget-max-files', '7',
             '--scope-budget-max-changed-lines', '300',
             '--scope-budget-max-required-reviews', '3',
-            '--scope-budget-max-review-tokens', '5000'
+            '--scope-budget-max-review-tokens', '5000',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
@@ -126,7 +130,8 @@ test('workflow set updates review cycle guard settings deterministically', () =>
             '--review-cycle-max-failed-non-test-reviews', '4',
             '--review-cycle-max-total-non-test-reviews', '8',
             '--review-cycle-excluded-review-types', 'test,docs',
-            '--review-cycle-auto-split-enabled', 'true'
+            '--review-cycle-auto-split-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
@@ -159,7 +164,8 @@ test('workflow set updates project memory maintenance settings deterministically
             '--project-memory-require-user-approval-for-writes', 'false',
             '--project-memory-max-compact-summary-chars', '9000',
             '--project-memory-read-strategy', 'index_first',
-            '--project-memory-impact-artifact-retention-days', '45'
+            '--project-memory-impact-artifact-retention-days', '45',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
@@ -186,7 +192,8 @@ test('workflow set updates task reset availability with audit record', () => {
         const { result, output } = captureConsole(() => handleWorkflow([
             'set',
             '--bundle-root', bundleRoot,
-            '--task-reset-enabled', 'true'
+            '--task-reset-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
@@ -203,13 +210,69 @@ test('workflow set updates task reset availability with audit record', () => {
     }
 });
 
+test('workflow set rejects changed config without operator confirmation', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--task-reset-enabled', 'true'
+            ], PACKAGE_JSON),
+            /workflow set requires explicit operator confirmation/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects changed config without fresh operator confirmation timestamp', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--task-reset-enabled', 'true',
+                '--operator-confirmed', 'yes'
+            ], PACKAGE_JSON),
+            /workflow set requires --operator-confirmed-at-utc/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects stale operator confirmation timestamps', () => {
+    const bundleRoot = createBundleRoot();
+    const staleConfirmation = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--task-reset-enabled', 'true',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', staleConfirmation
+            ], PACKAGE_JSON),
+            /workflow set operator confirmation is stale/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow help describes project-memory update as the default policy', () => {
     const helpText = buildGuardedCommandHelpText('workflow');
 
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
     assert.ok(helpText.includes('workflow set --project-memory-enabled true --project-memory-mode update'));
-    assert.ok(helpText.includes('workflow set --task-reset-enabled true'));
+    assert.ok(helpText.includes('workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('Task reset mutations are disabled by default'));
     assert.ok(!helpText.includes('Project memory maintenance is disabled by default'));
 });
@@ -292,6 +355,7 @@ test('workflow set --json returns valid JSON for machine-readable automation', (
             '--bundle-root', bundleRoot,
             '--full-suite-enabled', 'true',
             '--review-execution-policy', 'strict_sequential',
+            ...buildOperatorConfirmationArgs(),
             '--json'
         ], PACKAGE_JSON));
         const parsed = JSON.parse(output);
@@ -326,7 +390,8 @@ test('workflow set updates repo-local full-suite config deterministically', () =
             '--full-suite-command', 'npm run test:full',
             '--full-suite-timeout-ms', '123456',
             '--full-suite-out-of-scope-failure-policy', 'audit_and_warn',
-            '--review-execution-policy', 'parallel_all'
+            '--review-execution-policy', 'parallel_all',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
@@ -430,7 +495,8 @@ test('workflow set preserves legacy compatibility omission when changing only fu
         const { result } = captureConsole(() => handleWorkflow([
             'set',
             '--bundle-root', bundleRoot,
-            '--full-suite-enabled', 'true'
+            '--full-suite-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
 
         assert.ok(result && result.action === 'set');
@@ -459,7 +525,8 @@ test('workflow set preserves legacy compatibility omission when config is missin
         const { result } = captureConsole(() => handleWorkflow([
             'set',
             '--bundle-root', explicitBundleRoot,
-            '--full-suite-enabled', 'true'
+            '--full-suite-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
 
         assert.ok(result && result.action === 'set');
@@ -499,7 +566,8 @@ test('workflow set with explicit --bundle-root materializes the current review_e
         const { result } = captureConsole(() => handleWorkflow([
             'set',
             '--bundle-root', explicitBundleRoot,
-            '--full-suite-enabled', 'true'
+            '--full-suite-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
 
         assert.ok(result && result.action === 'set');

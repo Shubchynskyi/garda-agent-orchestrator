@@ -444,7 +444,7 @@ function buildOutputLines(
     }
     if (outcome === 'TASK_RESET_DISABLED') {
         lines.push('TaskResetEnabled: false');
-        lines.push('Action: Enable confirmed reset mutations with audited command: workflow set --task-reset-enabled true.');
+        lines.push('Action: Enable confirmed reset mutations with audited command: workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>".');
     }
     if (artifacts.length > 0) {
         lines.push(`ArtifactsFound: ${artifacts.length}`);

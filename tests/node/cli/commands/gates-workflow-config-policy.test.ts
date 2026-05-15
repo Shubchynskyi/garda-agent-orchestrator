@@ -1401,7 +1401,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 'set',
                 '--bundle-root', bundleRoot,
                 '--full-suite-out-of-scope-failure-policy', 'audit_and_warn',
-                '--operator-confirmed', 'yes'
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString()
             ], PACKAGE_JSON));
             assert.ok(workflowResult && workflowResult.action === 'set');
             assert.equal(workflowResult.status, 'CHANGED');
