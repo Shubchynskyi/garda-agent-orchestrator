@@ -25,7 +25,8 @@ describe('gates/completion — protected control-plane', () => {
 
         function createCompletionWorkspace(
             orchestratorWork: boolean,
-            protectedPreflightMode: 'none' | 'snapshot' | 'digest'
+            protectedPreflightMode: 'none' | 'snapshot' | 'digest',
+            options: { fullSuiteEnabled?: boolean } = {}
         ) {
             const repoRoot = fs.mkdtempSync(path.join(process.cwd(), 'tmp-completion-protected-'));
             const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
@@ -58,7 +59,7 @@ describe('gates/completion — protected control-plane', () => {
             fs.mkdirSync(path.dirname(protectedFilePath), { recursive: true });
             fs.writeFileSync(protectedFilePath, 'console.log("before");\n', 'utf8');
             const workflowConfig = buildDefaultWorkflowConfig();
-            workflowConfig.full_suite_validation.enabled = false;
+            workflowConfig.full_suite_validation.enabled = options.fullSuiteEnabled === true;
             workflowConfig.full_suite_validation.command = 'npm test';
             workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
             workflowConfig.project_memory_maintenance.enabled = false;
@@ -358,6 +359,80 @@ describe('gates/completion — protected control-plane', () => {
 
                 assert.equal(result.status, 'PASSED');
                 assert.equal(result.outcome, 'PASS');
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('accepts enabled full-suite SKIPPED evidence for docs-only scopes', () => {
+            const workspace = createCompletionWorkspace(false, 'none', { fullSuiteEnabled: true });
+
+            try {
+                const preflight = JSON.parse(fs.readFileSync(workspace.preflightPath, 'utf8')) as Record<string, unknown>;
+                preflight.scope_category = 'docs-only';
+                preflight.changed_files = ['docs/runbook.md'];
+                preflight.required_reviews = {};
+                preflight.triggers = {
+                    runtime_code_changed: false,
+                    test: false,
+                    db: false,
+                    security: false,
+                    api: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false,
+                    refactor: false
+                };
+                writeJson(workspace.preflightPath, preflight);
+                const rulePack = JSON.parse(fs.readFileSync(workspace.rulePackPath, 'utf8')) as Record<string, unknown>;
+                const stages = rulePack.stages as Record<string, unknown>;
+                const postPreflight = stages.post_preflight as Record<string, unknown>;
+                postPreflight.preflight_hash_sha256 = fileSha256(workspace.preflightPath);
+                writeJson(workspace.rulePackPath, rulePack);
+
+                const cycleBinding = {
+                    task_id: 'T-1010',
+                    preflight_path: normalizePath(workspace.preflightPath),
+                    preflight_sha256: fileSha256(workspace.preflightPath),
+                    compile_gate_timestamp: '2026-04-02T17:00:02.000Z'
+                };
+                writeJson(path.join(path.dirname(workspace.preflightPath), 'T-1010-full-suite-validation.json'), {
+                    status: 'SKIPPED',
+                    enabled: true,
+                    command: 'npm test',
+                    required: false,
+                    skip_reason: 'DOCS_ONLY_SCOPE_NOT_REQUIRED',
+                    cycle_binding: cycleBinding,
+                    output_artifact_path: null,
+                    violations: [],
+                    warnings: []
+                });
+                fs.appendFileSync(
+                    workspace.timelinePath,
+                    `${JSON.stringify({
+                        event_type: 'FULL_SUITE_VALIDATION_SKIPPED',
+                        timestamp_utc: '2026-04-02T17:00:04.500Z',
+                        outcome: 'PASS',
+                        details: { cycle_binding: cycleBinding }
+                    })}\n`,
+                    'utf8'
+                );
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED', result.violations.join('\n'));
             } finally {
                 fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
             }

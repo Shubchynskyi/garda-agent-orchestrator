@@ -57,6 +57,8 @@ export interface FullSuiteValidationResult {
     harness_failure_detected?: boolean;
     harness_failure_audit_verdict?: 'WARNED' | 'NOT_APPLICABLE';
     harness_failure_reason?: string | null;
+    required?: boolean;
+    skip_reason?: string | null;
     violations: string[];
     warnings: string[];
     output_telemetry?: Record<string, unknown> | null;
@@ -107,6 +109,51 @@ function normalizeOutOfScopePolicy(value: unknown): OutOfScopeFailurePolicy {
         return normalized as OutOfScopeFailurePolicy;
     }
     return 'AUDIT_AND_BLOCK';
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasTrueFlag(record: Record<string, unknown>, key: string): boolean {
+    return record[key] === true;
+}
+
+function hasRequiredReview(preflight: Record<string, unknown>): boolean {
+    const requiredReviews = isPlainRecord(preflight.required_reviews) ? preflight.required_reviews : {};
+    return Object.values(requiredReviews).some((value) => value === true);
+}
+
+export function isFullSuiteNotRequiredForDocsOnlyScope(preflight: Record<string, unknown>): boolean {
+    const scopeCategory = String(preflight.scope_category || '').trim().toLowerCase();
+    if (scopeCategory !== 'docs-only') {
+        return false;
+    }
+
+    const changedFiles = Array.isArray(preflight.changed_files)
+        ? preflight.changed_files.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    if (changedFiles.length === 0) {
+        return false;
+    }
+
+    const triggers = isPlainRecord(preflight.triggers) ? preflight.triggers : {};
+    const executionTriggers = [
+        'runtime_code_changed',
+        'db',
+        'security',
+        'api',
+        'test',
+        'performance',
+        'infra',
+        'dependency',
+        'refactor'
+    ];
+    if (executionTriggers.some((key) => hasTrueFlag(triggers, key))) {
+        return false;
+    }
+
+    return !hasRequiredReview(preflight);
 }
 
 export function compactGreenSummary(outputLines: string[], maxLines: number): string[] {
@@ -221,10 +268,36 @@ export function buildSkippedResult(
         status: 'SKIPPED',
         enabled: false,
         command: config.command,
+        required: false,
+        skip_reason: 'CONFIG_DISABLED',
         exit_code: null,
         timed_out: false,
         output_artifact_path: null,
         compact_summary: ['Full-suite validation is disabled.'],
+        failure_chunks: [],
+        out_of_scope_failure_policy: config.out_of_scope_failure_policy,
+        out_of_scope_failure_detected: false,
+        out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+        violations: [],
+        warnings: [],
+        cycle_binding: cycleBinding
+    };
+}
+
+export function buildDocsOnlyNotRequiredResult(
+    config: FullSuiteValidationConfig,
+    cycleBinding?: FullSuiteValidationCycleBinding
+): FullSuiteValidationResult {
+    return {
+        status: 'SKIPPED',
+        enabled: config.enabled,
+        command: config.command,
+        required: false,
+        skip_reason: 'DOCS_ONLY_SCOPE_NOT_REQUIRED',
+        exit_code: null,
+        timed_out: false,
+        output_artifact_path: null,
+        compact_summary: ['Full-suite validation is not required for this docs-only scope.'],
         failure_chunks: [],
         out_of_scope_failure_policy: config.out_of_scope_failure_policy,
         out_of_scope_failure_detected: false,
@@ -428,6 +501,12 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
     lines.push(`FULL_SUITE_VALIDATION_${result.status}`);
     lines.push(`Enabled: ${result.enabled}`);
     lines.push(`Command: ${result.command}`);
+    if (typeof result.required === 'boolean') {
+        lines.push(`Required: ${result.required}`);
+    }
+    if (result.skip_reason) {
+        lines.push(`SkipReason: ${result.skip_reason}`);
+    }
 
     if (result.exit_code !== null) {
         lines.push(`ExitCode: ${result.exit_code}`);

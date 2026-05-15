@@ -1010,7 +1010,7 @@ function seedCompletionPass(repoRoot: string, taskId: string): void {
 function seedFullSuiteValidation(
     repoRoot: string,
     taskId: string,
-    status: 'PASSED' | 'FAILED' = 'PASSED',
+    status: 'PASSED' | 'FAILED' | 'SKIPPED' = 'PASSED',
     timestampUtc?: string
 ): void {
     const timelinePath = path.join(eventsRoot(repoRoot), `${taskId}.jsonl`);
@@ -1033,15 +1033,23 @@ function seedFullSuiteValidation(
         status,
         enabled: true,
         command: 'npm test',
-        exit_code: status === 'PASSED' ? 0 : 1,
+        required: status === 'SKIPPED' ? false : undefined,
+        skip_reason: status === 'SKIPPED' ? 'DOCS_ONLY_SCOPE_NOT_REQUIRED' : undefined,
+        exit_code: status === 'PASSED' ? 0 : status === 'SKIPPED' ? null : 1,
         cycle_binding: cycleBinding,
-        output_artifact_path: path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-output.log`)
+        output_artifact_path: status === 'SKIPPED'
+            ? null
+            : path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-output.log`)
     });
     appendEvent(
         repoRoot,
         taskId,
-        status === 'PASSED' ? 'FULL_SUITE_VALIDATION_PASSED' : 'FULL_SUITE_VALIDATION_FAILED',
-        status === 'PASSED' ? 'PASS' : 'FAIL',
+        status === 'PASSED'
+            ? 'FULL_SUITE_VALIDATION_PASSED'
+            : status === 'SKIPPED'
+                ? 'FULL_SUITE_VALIDATION_SKIPPED'
+                : 'FULL_SUITE_VALIDATION_FAILED',
+        status === 'FAILED' ? 'FAIL' : 'PASS',
         { cycle_binding: cycleBinding },
         timestampUtc
     );
@@ -5936,6 +5944,135 @@ describe('gates/next-step', () => {
         assert.equal(result.full_suite_validation.enabled, false);
         assert.equal(result.next_gate, 'completion-gate');
         assert.ok(result.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('records full-suite as not required for docs-only scopes when full-suite config is enabled', () => {
+        const repoRoot = makeTempRepo();
+        const defaultWorkflowConfig = buildDefaultWorkflowConfig();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            ...defaultWorkflowConfig,
+            full_suite_validation: {
+                ...defaultWorkflowConfig.full_suite_validation,
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            },
+            project_memory_maintenance: {
+                ...defaultWorkflowConfig.project_memory_maintenance,
+                enabled: false
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, {});
+        const docsPath = path.join(repoRoot, 'docs', 'runbook.md');
+        fs.mkdirSync(path.dirname(docsPath), { recursive: true });
+        fs.writeFileSync(docsPath, '# Runbook\n', 'utf8');
+        const docsSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['docs/runbook.md']);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.detection_source = docsSnapshot.detection_source;
+        preflight.scope_category = 'docs-only';
+        preflight.changed_files = docsSnapshot.changed_files;
+        preflight.metrics = {
+            changed_lines_total: docsSnapshot.changed_lines_total,
+            changed_files_sha256: docsSnapshot.changed_files_sha256,
+            scope_content_sha256: docsSnapshot.scope_content_sha256,
+            scope_sha256: docsSnapshot.scope_sha256
+        };
+        preflight.required_reviews = { ...ALL_REVIEW_FLAGS };
+        preflight.triggers = {
+            runtime_code_changed: false,
+            test: false,
+            db: false,
+            security: false,
+            api: false,
+            performance: false,
+            infra: false,
+            dependency: false,
+            refactor: false
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        const beforeSkip = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(beforeSkip.next_gate, 'full-suite-validation', beforeSkip.reason);
+        assert.match(beforeSkip.title, /not required/i);
+        assert.ok(beforeSkip.commands[0].command.includes('gate full-suite-validation'));
+        assert.equal(beforeSkip.commands[0].label, 'Record full-suite not required');
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'SKIPPED', '2099-01-01T00:00:05.000Z');
+        const afterSkip = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(afterSkip.next_gate, 'completion-gate', afterSkip.reason);
+        assert.ok(afterSkip.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('rejects stale full-suite not-required artifacts for docs-only scopes', () => {
+        const repoRoot = makeTempRepo();
+        const defaultWorkflowConfig = buildDefaultWorkflowConfig();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            ...defaultWorkflowConfig,
+            full_suite_validation: {
+                ...defaultWorkflowConfig.full_suite_validation,
+                enabled: true,
+                command: 'npm test'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            },
+            project_memory_maintenance: {
+                ...defaultWorkflowConfig.project_memory_maintenance,
+                enabled: false
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, {});
+        const docsPath = path.join(repoRoot, 'docs', 'runbook.md');
+        fs.mkdirSync(path.dirname(docsPath), { recursive: true });
+        fs.writeFileSync(docsPath, '# Runbook\n', 'utf8');
+        const docsSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['docs/runbook.md']);
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.detection_source = docsSnapshot.detection_source;
+        preflight.scope_category = 'docs-only';
+        preflight.changed_files = docsSnapshot.changed_files;
+        preflight.metrics = {
+            changed_lines_total: docsSnapshot.changed_lines_total,
+            changed_files_sha256: docsSnapshot.changed_files_sha256,
+            scope_content_sha256: docsSnapshot.scope_content_sha256,
+            scope_sha256: docsSnapshot.scope_sha256
+        };
+        preflight.required_reviews = { ...ALL_REVIEW_FLAGS };
+        preflight.triggers = {
+            runtime_code_changed: false,
+            test: false,
+            db: false,
+            security: false,
+            api: false,
+            performance: false,
+            infra: false,
+            dependency: false,
+            refactor: false
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'SKIPPED');
+        const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
+        const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
+        (fullSuiteArtifact.cycle_binding as Record<string, unknown>).compile_gate_timestamp = '2000-01-01T00:00:00.000Z';
+        writeJson(fullSuitePath, fullSuiteArtifact);
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation', result.reason);
+        assert.match(result.title, /not required/i);
+        assert.equal(result.commands[0].label, 'Record full-suite not required');
     });
 
     it('routes to project-memory-impact before completion when project memory maintenance is enabled', () => {

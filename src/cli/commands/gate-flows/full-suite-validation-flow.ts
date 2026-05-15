@@ -7,9 +7,11 @@ import { appendTaskEventAsync } from '../../../gate-runtime/task-events';
 import * as gateHelpers from '../../../gates/helpers';
 import {
     buildFullSuiteValidationOutputTelemetry,
+    buildDocsOnlyNotRequiredResult,
     buildSkippedResult,
     buildValidationResult,
     formatFullSuiteValidationResult,
+    isFullSuiteNotRequiredForDocsOnlyScope,
     loadFullSuiteValidationConfig,
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
@@ -485,6 +487,26 @@ export async function runFullSuiteValidationCommand(
         await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, skippedResult.status, skippedResult, {
             status: skippedResult.status,
             enabled: skippedResult.enabled,
+            required: skippedResult.required,
+            skip_reason: skippedResult.skip_reason,
+            preflight_path: cycleBinding.preflight_path,
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            cycle_binding: skippedResult.cycle_binding
+        });
+        return {
+            outputText: `${formatFullSuiteValidationResult(skippedResult)}\n`,
+            exitCode: 0
+        };
+    }
+
+    if (isFullSuiteNotRequiredForDocsOnlyScope(preflight)) {
+        const skippedResult = buildDocsOnlyNotRequiredResult(config, cycleBinding);
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, skippedResult.status, skippedResult, {
+            status: skippedResult.status,
+            enabled: skippedResult.enabled,
+            command: skippedResult.command,
+            required: skippedResult.required,
+            skip_reason: skippedResult.skip_reason,
             preflight_path: cycleBinding.preflight_path,
             artifact_path: gateHelpers.normalizePath(artifactPath),
             cycle_binding: skippedResult.cycle_binding

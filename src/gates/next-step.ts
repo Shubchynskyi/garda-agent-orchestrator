@@ -39,6 +39,7 @@ import {
     safeReadJson
 } from './task-audit-summary-collectors';
 import {
+    isFullSuiteNotRequiredForDocsOnlyScope,
     loadFullSuiteValidationConfig,
     resolveWorkflowConfigPath
 } from './full-suite-validation';
@@ -2055,6 +2056,59 @@ function getGateStatus(summary: TaskAuditSummaryResult, gateName: string): GateO
 
 function isGatePassed(summary: TaskAuditSummaryResult, gateName: string): boolean {
     return getGateStatus(summary, gateName) === 'PASS';
+}
+
+function hasAcceptedDocsOnlyFullSuiteSkipArtifact(
+    reviewsRoot: string,
+    taskId: string,
+    expectedCommand: string,
+    preflightPath: string,
+    preflightSha256: string | null,
+    summary: TaskAuditSummaryResult
+): boolean {
+    const artifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
+    const artifact = safeReadJson(artifactPath) as Record<string, unknown> | null;
+    if (!artifact) {
+        return false;
+    }
+    return String(artifact.status || '').trim().toUpperCase() === 'SKIPPED'
+        && artifact.enabled === true
+        && artifact.required === false
+        && String(artifact.skip_reason || '').trim() === 'DOCS_ONLY_SCOPE_NOT_REQUIRED'
+        && String(artifact.command || '').trim() === expectedCommand
+        && fullSuiteArtifactMatchesCurrentCycle(artifact, taskId, preflightPath, preflightSha256, summary);
+}
+
+function fullSuiteArtifactMatchesCurrentCycle(
+    artifact: Record<string, unknown>,
+    taskId: string,
+    preflightPath: string,
+    preflightSha256: string | null,
+    summary: TaskAuditSummaryResult
+): boolean {
+    const rawCycleBinding = artifact.cycle_binding;
+    if (!rawCycleBinding || typeof rawCycleBinding !== 'object' || Array.isArray(rawCycleBinding)) {
+        return false;
+    }
+    const cycleBinding = rawCycleBinding as Record<string, unknown>;
+    const expectedPreflightPath = normalizePath(preflightPath);
+    const expectedPreflightSha256 = String(preflightSha256 || '').trim().toLowerCase();
+    if (String(cycleBinding.task_id || '').trim() !== taskId) {
+        return false;
+    }
+    if (normalizePath(cycleBinding.preflight_path || '') !== expectedPreflightPath) {
+        return false;
+    }
+    if (expectedPreflightSha256 && String(cycleBinding.preflight_sha256 || '').trim().toLowerCase() !== expectedPreflightSha256) {
+        return false;
+    }
+    const expectedCompileTimestamp = String(
+        summary.gates.find((gate) => gate.gate === 'compile-gate')?.timestamp_utc || ''
+    ).trim();
+    const artifactCompileTimestamp = cycleBinding.compile_gate_timestamp == null
+        ? ''
+        : String(cycleBinding.compile_gate_timestamp || '').trim();
+    return !!expectedCompileTimestamp && artifactCompileTimestamp === expectedCompileTimestamp;
 }
 
 function getRequiredReviewTypes(requiredReviews: Record<string, boolean>): string[] {
@@ -6051,13 +6105,27 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         eventsRoot,
         reviewsRoot
     });
+    const preflightSha256 = fileExists(preflightPath) ? fileSha256(preflightPath) : null;
     const fullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
+    const fullSuiteNotRequiredForDocsOnly = isFullSuiteNotRequiredForDocsOnlyScope(preflight || {});
+    const fullSuiteGatePassed = fullSuiteNotRequiredForDocsOnly
+        ? hasAcceptedDocsOnlyFullSuiteSkipArtifact(
+                reviewsRoot,
+                taskId,
+                fullSuiteConfig.command,
+                preflightPath,
+                preflightSha256,
+                summary
+            )
+        : isGatePassed(summary, 'full-suite-validation');
     const fullSuiteSummary: NextStepFullSuiteSummary = {
         enabled: fullSuiteConfig.enabled,
         command: fullSuiteConfig.command,
         config_path: toRepoDisplayPath(repoRoot, resolveWorkflowConfigPath(repoRoot)),
         config_source: 'effective_workflow_config',
-        note: fullSuiteConfig.enabled
+        note: fullSuiteConfig.enabled && fullSuiteNotRequiredForDocsOnly
+            ? 'Full-suite validation is enabled, but this docs-only scope only requires a NOT_REQUIRED artifact.'
+            : fullSuiteConfig.enabled
             ? 'Full-suite validation is mandatory because the effective workflow config enables it.'
             : 'Full-suite validation is disabled in the effective workflow config.'
     };
@@ -6069,7 +6137,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const projectMemorySummary = buildProjectMemoryNextStepSummary(projectMemoryEvidence);
     const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
     const reviewPolicy = resolveReviewPolicy(preflight);
-    const preflightSha256 = fileExists(preflightPath) ? fileSha256(preflightPath) : null;
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
     ));
@@ -7111,7 +7178,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (fullSuiteConfig.enabled && reviewLaunchPlan.next_review_type === 'test') {
+    if (fullSuiteConfig.enabled && !fullSuiteNotRequiredForDocsOnly && reviewLaunchPlan.next_review_type === 'test') {
         if (fullSuiteGateStatus === 'FAIL') {
             return buildResult({
                 ...resultBase,
@@ -7130,7 +7197,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        if (!isGatePassed(summary, 'full-suite-validation')) {
+        if (!fullSuiteGatePassed) {
             const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
             return buildResult({
                 ...resultBase,
@@ -7651,7 +7718,25 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (fullSuiteConfig.enabled && !isGatePassed(summary, 'full-suite-validation')) {
+    if (fullSuiteConfig.enabled && !fullSuiteGatePassed) {
+        const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+        if (fullSuiteNotRequiredForDocsOnly) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'full-suite-validation',
+                title: 'Record full-suite validation as not required.',
+                reason:
+                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}, ` +
+                    'but the current scope is docs-only. Record a SKIPPED/NOT_REQUIRED artifact instead of running the configured full-suite command.',
+                commands: [
+                    buildCommand(
+                        'Record full-suite not required',
+                        fullSuiteCommand
+                    )
+                ]
+            });
+        }
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
@@ -7661,7 +7746,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Run full-suite validation',
-                    `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`
+                    fullSuiteCommand
                 )
             ]
         });

@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../../src/cli/exit-codes';
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../src/core/constants';
 import {
+    buildDocsOnlyNotRequiredResult,
     buildFullSuiteValidationOutputTelemetry,
     buildSkippedResult,
     buildValidationResult,
@@ -14,6 +15,7 @@ import {
     compactRedFailureChunks,
     detectOutOfScopeFailures,
     formatFullSuiteValidationResult,
+    isFullSuiteNotRequiredForDocsOnlyScope,
     loadFullSuiteValidationConfig
 } from '../../../src/gates/full-suite-validation';
 import { getCurrentWorkflowConfigFileHashes } from '../../../src/gates/workflow-config-work';
@@ -167,6 +169,43 @@ describe('gates/full-suite-validation', () => {
             });
             assert.equal(result.status, 'SKIPPED');
             assert.equal(result.cycle_binding?.task_id, 'T-123');
+        });
+
+        it('detects docs-only scopes where full-suite validation is not required', () => {
+            assert.equal(isFullSuiteNotRequiredForDocsOnlyScope({
+                scope_category: 'docs-only',
+                changed_files: ['docs/runbook.md'],
+                triggers: {
+                    runtime_code_changed: false,
+                    test: false
+                },
+                required_reviews: {}
+            }), true);
+
+            assert.equal(isFullSuiteNotRequiredForDocsOnlyScope({
+                scope_category: 'docs-only',
+                changed_files: ['tests/README.md'],
+                triggers: {
+                    test: true
+                },
+                required_reviews: { test: true }
+            }), false);
+        });
+
+        it('buildDocsOnlyNotRequiredResult records an explicit skip reason', () => {
+            const config = { ...loadFullSuiteValidationConfig('/nonexistent'), enabled: true, command: 'npm test' };
+            const result = buildDocsOnlyNotRequiredResult(config, {
+                task_id: 'T-123',
+                preflight_path: 'runtime/reviews/T-123-preflight.json',
+                preflight_sha256: 'abc123',
+                compile_gate_timestamp: null
+            });
+
+            assert.equal(result.status, 'SKIPPED');
+            assert.equal(result.enabled, true);
+            assert.equal(result.required, false);
+            assert.equal(result.skip_reason, 'DOCS_ONLY_SCOPE_NOT_REQUIRED');
+            assert.ok(formatFullSuiteValidationResult(result).includes('SkipReason: DOCS_ONLY_SCOPE_NOT_REQUIRED'));
         });
 
         it('buildValidationResult returns WARNED for AUDIT_AND_WARN out-of-scope failures', () => {
@@ -386,6 +425,60 @@ describe('gates/full-suite-validation', () => {
             const timelinePath = path.join(eventsDir, 'T-SKIP.jsonl');
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_SKIPPED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation records NOT_REQUIRED for enabled docs-only scopes without running the command', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-docs-skip-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" -e "process.exit(9)"`,
+                    timeout_ms: 30000
+                }
+            }), 'utf8');
+            const preflightPath = path.join(reviewsDir, 'T-DOCS-SKIP-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-DOCS-SKIP',
+                scope_category: 'docs-only',
+                changed_files: ['docs/runbook.md'],
+                triggers: {
+                    runtime_code_changed: false,
+                    test: false,
+                    db: false,
+                    security: false,
+                    api: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false,
+                    refactor: false
+                },
+                required_reviews: {}
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-DOCS-SKIP',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, result.errors.join('\n'));
+            const artifactPath = path.join(reviewsDir, 'T-DOCS-SKIP-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'SKIPPED');
+            assert.equal(artifact.enabled, true);
+            assert.equal(artifact.required, false);
+            assert.equal(artifact.skip_reason, 'DOCS_ONLY_SCOPE_NOT_REQUIRED');
+            const timeline = fs.readFileSync(path.join(eventsDir, 'T-DOCS-SKIP.jsonl'), 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_SKIPPED"/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });

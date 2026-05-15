@@ -63,6 +63,7 @@ import {
 } from './task-audit-summary-collectors';
 import {
     loadFullSuiteValidationConfig,
+    isFullSuiteNotRequiredForDocsOnlyScope,
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
 } from './full-suite-validation';
@@ -193,7 +194,9 @@ function validateProjectMemoryImpactForCompletion(input: {
     if (input.fullSuiteValidationEnabled) {
         const fullSuiteEvent = findLatestTimelineEvent(
             input.orderedEvents,
-            (entry) => entry.event_type === 'FULL_SUITE_VALIDATION_PASSED' || entry.event_type === 'FULL_SUITE_VALIDATION_WARNED'
+            (entry) => entry.event_type === 'FULL_SUITE_VALIDATION_PASSED'
+                || entry.event_type === 'FULL_SUITE_VALIDATION_WARNED'
+                || entry.event_type === 'FULL_SUITE_VALIDATION_SKIPPED'
         );
         if (!fullSuiteEvent) {
             violations.push('Project memory impact evidence requires current full-suite validation evidence when full-suite validation is enabled.');
@@ -245,6 +248,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     });
 
     const preflight = validatedPreflight.preflight || {};
+    const fullSuiteNotRequiredForDocsOnly = isFullSuiteNotRequiredForDocsOnlyScope(preflight);
     const dirtyWorkspaceProtectionEvidence = detectProtectedDirtyWorkspaceDrift(
         repoRoot,
         getProtectedDirtyWorkspaceScopeFromPreflight(preflight)
@@ -725,9 +729,15 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
                 }
             }
 
-            if (artifactStatus !== 'PASSED' && artifactStatus !== 'WARNED') {
+            const artifactIsAcceptedDocsOnlySkip =
+                artifactStatus === 'SKIPPED'
+                && fullSuiteNotRequiredForDocsOnly
+                && String(fullSuiteArtifact.skip_reason || '').trim() === 'DOCS_ONLY_SCOPE_NOT_REQUIRED'
+                && fullSuiteArtifact.required === false;
+            if (artifactStatus !== 'PASSED' && artifactStatus !== 'WARNED' && !artifactIsAcceptedDocsOnlySkip) {
                 const message =
-                    `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' must have status PASSED or WARNED when enabled, got '${artifactStatus || 'UNKNOWN'}'.`;
+                    `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' must have status PASSED or WARNED when enabled, ` +
+                    `or SKIPPED with skip_reason DOCS_ONLY_SCOPE_NOT_REQUIRED for docs-only scopes, got '${artifactStatus || 'UNKNOWN'}'.`;
                 errors.push(message);
                 fullSuiteValidationEvidence.violations.push(message);
             }

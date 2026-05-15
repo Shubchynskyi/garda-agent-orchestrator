@@ -223,7 +223,7 @@ function getLifecycleGates(fullSuiteValidationEnabled: boolean, projectMemoryImp
         const fullSuiteGate = {
             gate: 'full-suite-validation',
             pass_event: 'FULL_SUITE_VALIDATION_PASSED',
-            fail_events: ['FULL_SUITE_VALIDATION_FAILED', 'FULL_SUITE_VALIDATION_SKIPPED']
+            fail_events: ['FULL_SUITE_VALIDATION_FAILED']
         };
         if (completionIndex === -1) {
             gates.push(fullSuiteGate);
