@@ -10,6 +10,9 @@
   "review_execution_policy": {
     "mode": "code_first_optional"
   },
+  "orchestrator_work_policy": {
+    "mode": "deny_agent_entry"
+  },
   "scope_budget_guard": {
     "enabled": true,
     "profiles": [

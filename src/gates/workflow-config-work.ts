@@ -199,20 +199,20 @@ const SAFE_FULL_SUITE_COMPATIBILITY_COMMANDS = new Set([
 ]);
 const COMPATIBILITY_TOP_LEVEL_KEYS = [
     'full_suite_validation',
+    'orchestrator_work_policy',
     'project_memory_maintenance',
     'review_cycle_guard',
     'review_execution_policy',
     'scope_budget_guard',
     'task_reset'
 ];
-const COMPATIBILITY_PRE_TASK_RESET_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
-    (key) => key !== 'task_reset'
-);
-const COMPATIBILITY_LEGACY_REVIEW_POLICY_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
-    (key) => key !== 'review_execution_policy'
-);
-const COMPATIBILITY_LEGACY_TOP_LEVEL_KEYS = COMPATIBILITY_TOP_LEVEL_KEYS.filter(
-    (key) => key !== 'review_execution_policy' && key !== 'task_reset'
+const COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS = ['orchestrator_work_policy', 'review_execution_policy', 'task_reset'];
+const COMPATIBILITY_ALLOWED_TOP_LEVEL_KEY_SETS = Array.from(
+    { length: 1 << COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS.length },
+    (_entry, mask) => COMPATIBILITY_TOP_LEVEL_KEYS.filter((key) => {
+        const optionalIndex = COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS.indexOf(key);
+        return optionalIndex < 0 || (mask & (1 << optionalIndex)) === 0;
+    })
 );
 const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
     'command',
@@ -250,6 +250,7 @@ const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
     'run_before_final_closeout'
 ];
 const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
+const COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS = ['mode'];
 
 function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
     const actualKeys = Object.keys(record).sort();
@@ -298,12 +299,7 @@ function isSubsetOf(actual: readonly string[], allowed: readonly string[]): bool
 function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string, unknown>): boolean {
     if (
         !hasExactOwnKeys(SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE as unknown as Record<string, unknown>, COMPATIBILITY_TOP_LEVEL_KEYS)
-        || (
-            !hasExactOwnKeys(config, COMPATIBILITY_TOP_LEVEL_KEYS)
-            && !hasExactOwnKeys(config, COMPATIBILITY_PRE_TASK_RESET_TOP_LEVEL_KEYS)
-            && !hasExactOwnKeys(config, COMPATIBILITY_LEGACY_REVIEW_POLICY_TOP_LEVEL_KEYS)
-            && !hasExactOwnKeys(config, COMPATIBILITY_LEGACY_TOP_LEVEL_KEYS)
-        )
+        || !COMPATIBILITY_ALLOWED_TOP_LEVEL_KEY_SETS.some((keySet) => hasExactOwnKeys(config, keySet))
     ) {
         return false;
     }
@@ -425,6 +421,19 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
             || !hasExactOwnKeys(defaultTaskReset, COMPATIBILITY_TASK_RESET_KEYS)
             || !hasExactOwnKeys(taskReset, COMPATIBILITY_TASK_RESET_KEYS)
             || taskReset.enabled !== false
+        ) {
+            return false;
+        }
+    }
+
+    if (hasOwnKey(config, 'orchestrator_work_policy')) {
+        const orchestratorWorkPolicy = toPlainRecord(config.orchestrator_work_policy);
+        const defaultOrchestratorWorkPolicy = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.orchestrator_work_policy as unknown as Record<string, unknown>;
+        if (
+            !orchestratorWorkPolicy
+            || !hasExactOwnKeys(defaultOrchestratorWorkPolicy, COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS)
+            || !hasExactOwnKeys(orchestratorWorkPolicy, COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS)
+            || String(orchestratorWorkPolicy.mode || '').trim().toLowerCase() !== 'deny_agent_entry'
         ) {
             return false;
         }

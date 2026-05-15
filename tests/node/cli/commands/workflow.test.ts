@@ -210,6 +210,54 @@ test('workflow set updates task reset availability with audit record', () => {
     }
 });
 
+test('workflow set enables garda self-guard without operator confirmation', () => {
+    const bundleRoot = createBundleRoot({}, {
+        orchestrator_work_policy: {
+            mode: 'require_operator_confirmation'
+        }
+    });
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--garda-self-guard', 'on'
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.equal(result.orchestrator_work_policy.mode, 'deny_agent_entry');
+        assert.ok(result.changed_fields.includes('orchestrator_work_policy.mode'));
+        assert.ok(result.audit_path);
+        assert.ok(output.includes('Garda self-guard: on (deny_agent_entry)'));
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.orchestrator_work_policy.mode, 'deny_agent_entry');
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set requires operator confirmation to disable garda self-guard', () => {
+    const bundleRoot = createBundleRoot({}, {
+        orchestrator_work_policy: {
+            mode: 'deny_agent_entry'
+        }
+    });
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--garda-self-guard', 'off'
+            ], PACKAGE_JSON),
+            /workflow set requires explicit operator confirmation/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow set rejects changed config without operator confirmation', () => {
     const bundleRoot = createBundleRoot();
 
@@ -272,6 +320,7 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
     assert.ok(helpText.includes('workflow set --project-memory-enabled true --project-memory-mode update'));
     assert.ok(helpText.includes('workflow set --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('workflow set --garda-self-guard on'));
     assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('Task reset mutations are disabled by default'));
     assert.ok(!helpText.includes('Project memory maintenance is disabled by default'));

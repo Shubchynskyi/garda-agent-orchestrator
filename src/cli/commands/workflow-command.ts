@@ -25,8 +25,11 @@ import {
     type ProjectMemoryMaintenanceConfig,
     type ProjectMemoryMaintenanceMode,
     type ProjectMemoryReadStrategy,
+    type OrchestratorWorkPolicyConfig,
+    type OrchestratorWorkPolicyMode,
     type TaskResetConfig,
-    type WorkflowConfigData
+    type WorkflowConfigData,
+    normalizeOrchestratorWorkPolicyConfig
 } from '../../core/workflow-config';
 import { buildProjectMemoryMaintenanceSummaryLine } from '../../core/project-memory-rollout';
 import {
@@ -60,6 +63,7 @@ type WorkflowFileConfigData = {
     review_cycle_guard?: WorkflowConfigData['review_cycle_guard'];
     project_memory_maintenance?: WorkflowConfigData['project_memory_maintenance'];
     task_reset?: WorkflowConfigData['task_reset'];
+    orchestrator_work_policy?: WorkflowConfigData['orchestrator_work_policy'];
     [key: string]: unknown;
 };
 
@@ -96,12 +100,14 @@ interface WorkflowCommandResultBase {
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
     task_reset: TaskResetConfig;
+    orchestrator_work_policy: OrchestratorWorkPolicyConfig;
     visible_summary_line: string;
     review_execution_policy_summary_line: string;
     scope_budget_guard_summary_line: string;
     review_cycle_guard_summary_line: string;
     project_memory_maintenance_summary_line: string;
     task_reset_summary_line: string;
+    orchestrator_work_policy_summary_line: string;
 }
 
 interface WorkflowShowResult extends WorkflowCommandResultBase {
@@ -163,6 +169,7 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--project-memory-read-strategy': { key: 'projectMemoryReadStrategy', type: 'string' },
     '--project-memory-impact-artifact-retention-days': { key: 'projectMemoryImpactArtifactRetentionDays', type: 'string' },
     '--task-reset-enabled': { key: 'taskResetEnabled', type: 'string' },
+    '--garda-self-guard': { key: 'gardaSelfGuard', type: 'string' },
     '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
     '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' }
 };
@@ -194,6 +201,12 @@ function cloneTaskResetConfig(config: TaskResetConfig): TaskResetConfig {
     return JSON.parse(JSON.stringify(config)) as TaskResetConfig;
 }
 
+function cloneOrchestratorWorkPolicyConfig(
+    config: OrchestratorWorkPolicyConfig
+): OrchestratorWorkPolicyConfig {
+    return JSON.parse(JSON.stringify(config)) as OrchestratorWorkPolicyConfig;
+}
+
 function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFileConfigData {
     const defaultConfig = buildDefaultWorkflowConfig() as WorkflowConfigData;
     return {
@@ -204,7 +217,10 @@ function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFi
         project_memory_maintenance: cloneProjectMemoryMaintenanceConfig(
             config.project_memory_maintenance ?? defaultConfig.project_memory_maintenance
         ),
-        task_reset: cloneTaskResetConfig(config.task_reset ?? defaultConfig.task_reset)
+        task_reset: cloneTaskResetConfig(config.task_reset ?? defaultConfig.task_reset),
+        orchestrator_work_policy: cloneOrchestratorWorkPolicyConfig(
+            normalizeOrchestratorWorkPolicyConfig(config.orchestrator_work_policy ?? defaultConfig.orchestrator_work_policy)
+        )
     };
 }
 
@@ -217,7 +233,8 @@ function readWorkflowConfigState(configPath: string, bundleRoot: string): Workfl
                 full_suite_validation: defaultConfig.full_suite_validation,
                 scope_budget_guard: defaultConfig.scope_budget_guard,
                 project_memory_maintenance: defaultConfig.project_memory_maintenance,
-                task_reset: defaultConfig.task_reset
+                task_reset: defaultConfig.task_reset,
+                orchestrator_work_policy: defaultConfig.orchestrator_work_policy
             }),
             exists: false,
             missingReviewExecutionPolicyMode: hasMaterializedWorkflowConfigBaseline(bundleRoot)
@@ -291,6 +308,11 @@ function buildTaskResetLine(config: TaskResetConfig): string {
     return `Task reset: ${config.enabled ? 'enabled' : 'disabled'}`;
 }
 
+function buildOrchestratorWorkPolicyLine(config: OrchestratorWorkPolicyConfig): string {
+    const selfGuard = config.mode === 'deny_agent_entry' ? 'on' : 'off';
+    return `Garda self-guard: ${selfGuard} (${config.mode})`;
+}
+
 function buildWorkflowShowResult(
     roots: WorkflowCommandRoots,
     state: WorkflowConfigState
@@ -303,6 +325,11 @@ function buildWorkflowShowResult(
     );
     const taskReset = cloneTaskResetConfig(
         state.config.task_reset ?? buildDefaultWorkflowConfig().task_reset
+    );
+    const orchestratorWorkPolicy = cloneOrchestratorWorkPolicyConfig(
+        normalizeOrchestratorWorkPolicyConfig(
+            state.config.orchestrator_work_policy ?? buildDefaultWorkflowConfig().orchestrator_work_policy
+        )
     );
     return {
         action: 'show',
@@ -317,12 +344,14 @@ function buildWorkflowShowResult(
         review_cycle_guard: reviewCycleGuard,
         project_memory_maintenance: projectMemoryMaintenance,
         task_reset: taskReset,
+        orchestrator_work_policy: orchestratorWorkPolicy,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
         review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
         scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard),
         review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard),
         project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceSummaryLine(projectMemoryMaintenance),
-        task_reset_summary_line: buildTaskResetLine(taskReset)
+        task_reset_summary_line: buildTaskResetLine(taskReset),
+        orchestrator_work_policy_summary_line: buildOrchestratorWorkPolicyLine(orchestratorWorkPolicy)
     };
 }
 
@@ -337,6 +366,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     const reviewCycleGuard = result.review_cycle_guard;
     const projectMemoryMaintenance = result.project_memory_maintenance;
     const taskReset = result.task_reset;
+    const orchestratorWorkPolicy = result.orchestrator_work_policy;
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
     lines.push(`Action: ${result.action}`);
@@ -351,6 +381,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(result.review_cycle_guard_summary_line);
     lines.push(result.project_memory_maintenance_summary_line);
     lines.push(result.task_reset_summary_line);
+    lines.push(result.orchestrator_work_policy_summary_line);
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
@@ -382,12 +413,15 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ProjectMemoryMaintenanceReadStrategy: ${projectMemoryMaintenance.read_strategy}`);
     lines.push(`ProjectMemoryMaintenanceImpactArtifactRetentionDays: ${projectMemoryMaintenance.impact_artifact_retention_days}`);
     lines.push(`TaskResetEnabled: ${taskReset.enabled}`);
+    lines.push(`GardaSelfGuard: ${orchestratorWorkPolicy.mode === 'deny_agent_entry' ? 'on' : 'off'}`);
+    lines.push(`OrchestratorWorkPolicy: ${orchestratorWorkPolicy.mode}`);
     lines.push('Tip: run "workflow set --full-suite-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
     lines.push('Tip: run "workflow set --scope-budget-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');
     lines.push('Tip: run "workflow set --review-cycle-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');
     lines.push('Tip: run "workflow set --project-memory-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');
     lines.push('Tip: run "workflow set --task-reset-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
+    lines.push('Tip: run "workflow set --garda-self-guard on|off" to control agent self-entry into protected orchestrator work; off requires explicit operator approval.');
     return lines.join('\n');
 }
 
@@ -455,6 +489,17 @@ function parseProjectMemoryReadStrategy(value: string): ProjectMemoryReadStrateg
         throw new Error(`--project-memory-read-strategy must be one of: ${PROJECT_MEMORY_READ_STRATEGIES.join(', ')}.`);
     }
     return normalized as ProjectMemoryReadStrategy;
+}
+
+function parseGardaSelfGuardMode(value: string): OrchestratorWorkPolicyMode {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'on' || normalized === 'true' || normalized === '1' || normalized === 'yes') {
+        return 'deny_agent_entry';
+    }
+    if (normalized === 'off' || normalized === 'false' || normalized === '0' || normalized === 'no') {
+        return 'require_operator_confirmation';
+    }
+    throw new Error('--garda-self-guard must be on or off.');
 }
 
 function parseProfileList(value: string): string[] {
@@ -738,6 +783,17 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.task_reset = nextTaskReset;
 
+    const nextOrchestratorWorkPolicy = cloneOrchestratorWorkPolicyConfig(
+        normalizeOrchestratorWorkPolicyConfig(
+            nextConfig.orchestrator_work_policy ?? buildDefaultWorkflowConfig().orchestrator_work_policy
+        )
+    );
+    if (typeof options.gardaSelfGuard === 'string') {
+        nextOrchestratorWorkPolicy.mode = parseGardaSelfGuardMode(options.gardaSelfGuard);
+        changedFields.push('orchestrator_work_policy.mode');
+    }
+    nextConfig.orchestrator_work_policy = nextOrchestratorWorkPolicy;
+
     if (changedFields.length === 0) {
         throw new Error(
             "Workflow setting flags are required for 'workflow set'. "
@@ -745,7 +801,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
-            + 'or --task-reset-enabled.'
+            + '--task-reset-enabled, or --garda-self-guard.'
         );
     }
 
@@ -755,7 +811,8 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             scope_budget_guard: state.config.scope_budget_guard,
             review_cycle_guard: state.config.review_cycle_guard,
             project_memory_maintenance: state.config.project_memory_maintenance,
-            task_reset: state.config.task_reset
+            task_reset: state.config.task_reset,
+            orchestrator_work_policy: state.config.orchestrator_work_policy
         }) as WorkflowFileConfigData),
         null,
         2
@@ -766,7 +823,12 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
 
     let auditPath: string | null = null;
     if (changed) {
-        requireWorkflowSetOperatorConfirmation(options);
+        const safeSelfGuardHardening = changedFields.length === 1
+            && changedFields[0] === 'orchestrator_work_policy.mode'
+            && nextValidated.orchestrator_work_policy?.mode === 'deny_agent_entry';
+        if (!safeSelfGuardHardening) {
+            requireWorkflowSetOperatorConfirmation(options);
+        }
         writeWorkflowConfig(roots.configPath, nextValidated);
         auditPath = writeWorkflowConfigAuditRecord(
             roots.bundleRoot,

@@ -49,6 +49,17 @@ export interface TaskResetConfig {
     [key: string]: unknown;
 }
 
+export const ORCHESTRATOR_WORK_POLICY_MODES = Object.freeze([
+    'deny_agent_entry',
+    'require_operator_confirmation'
+] as const);
+export type OrchestratorWorkPolicyMode = typeof ORCHESTRATOR_WORK_POLICY_MODES[number];
+
+export interface OrchestratorWorkPolicyConfig {
+    mode: OrchestratorWorkPolicyMode;
+    [key: string]: unknown;
+}
+
 export interface WorkflowConfigData {
     full_suite_validation: FullSuiteValidationConfig;
     review_execution_policy: ReviewExecutionPolicyConfig;
@@ -56,6 +67,7 @@ export interface WorkflowConfigData {
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
     task_reset: TaskResetConfig;
+    orchestrator_work_policy: OrchestratorWorkPolicyConfig;
     [key: string]: unknown;
 }
 
@@ -101,6 +113,9 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
     }),
     task_reset: Object.freeze({
         enabled: false
+    }),
+    orchestrator_work_policy: Object.freeze({
+        mode: 'deny_agent_entry'
     })
 });
 
@@ -125,6 +140,38 @@ const LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT: ReviewCycleGuardConfig = Obje
 
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {
     return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG);
+}
+
+export function normalizeOrchestratorWorkPolicyConfig(input: unknown): OrchestratorWorkPolicyConfig {
+    if (!isPlainObject(input)) {
+        return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.orchestrator_work_policy);
+    }
+    const rawMode = typeof input.mode === 'string'
+        ? input.mode.trim().toLowerCase()
+        : DEFAULT_WORKFLOW_CONFIG.orchestrator_work_policy.mode;
+    const mode = ORCHESTRATOR_WORK_POLICY_MODES.includes(rawMode as OrchestratorWorkPolicyMode)
+        ? rawMode as OrchestratorWorkPolicyMode
+        : DEFAULT_WORKFLOW_CONFIG.orchestrator_work_policy.mode;
+    return {
+        ...cloneJsonValue(input),
+        mode
+    };
+}
+
+export function readOrchestratorWorkPolicyModeForBundle(bundleRoot: string): OrchestratorWorkPolicyMode {
+    const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
+    if (!pathExists(workflowConfigPath)) {
+        return DEFAULT_WORKFLOW_CONFIG.orchestrator_work_policy.mode;
+    }
+    try {
+        const parsed = readJsonFile(workflowConfigPath);
+        if (!isPlainObject(parsed)) {
+            return DEFAULT_WORKFLOW_CONFIG.orchestrator_work_policy.mode;
+        }
+        return normalizeOrchestratorWorkPolicyConfig(parsed.orchestrator_work_policy).mode;
+    } catch {
+        return DEFAULT_WORKFLOW_CONFIG.orchestrator_work_policy.mode;
+    }
 }
 
 export function getWorkflowConfigPath(bundleRoot: string): string {

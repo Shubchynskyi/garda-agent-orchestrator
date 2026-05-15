@@ -25,9 +25,11 @@ import {
     normalizeReviewCycleGuardConfig
 } from '../core/review-cycle-guard';
 import {
+    ORCHESTRATOR_WORK_POLICY_MODES,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES,
-    buildDefaultWorkflowConfig
+    buildDefaultWorkflowConfig,
+    type OrchestratorWorkPolicyMode
 } from '../core/workflow-config';
 
 interface IntegerArrayOptions {
@@ -588,7 +590,7 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset'] as const;
+    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'orchestrator_work_policy'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -670,6 +672,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         if (raw.task_reset !== undefined) {
             normalized.task_reset = validateTaskResetSection(raw.task_reset);
         }
+        if (raw.orchestrator_work_policy !== undefined) {
+            normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
+        }
         return normalized;
     }
 
@@ -705,7 +710,42 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     if (raw.task_reset !== undefined) {
         normalized.task_reset = validateTaskResetSection(raw.task_reset);
     }
+    if (raw.orchestrator_work_policy !== undefined) {
+        normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
+    }
     return normalized;
+}
+
+function validateOrchestratorWorkPolicySection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.orchestrator_work_policy');
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        ['mode'],
+        'workflow-config.orchestrator_work_policy'
+    );
+    assertNoUnknownKeys(
+        section,
+        ['mode'],
+        'workflow-config.orchestrator_work_policy'
+    );
+    const defaults = buildDefaultWorkflowConfig().orchestrator_work_policy as unknown as Record<string, unknown>;
+    const normalizedInput = {
+        ...defaults,
+        ...section
+    };
+    const mode = normalizeNonEmptyString(
+        normalizedInput.mode,
+        'workflow-config.orchestrator_work_policy.mode'
+    ).toLowerCase();
+    if (!ORCHESTRATOR_WORK_POLICY_MODES.includes(mode as OrchestratorWorkPolicyMode)) {
+        throw new Error(
+            `workflow-config.orchestrator_work_policy.mode must be one of: ${ORCHESTRATOR_WORK_POLICY_MODES.join(', ')}.`
+        );
+    }
+    return {
+        ...normalizedInput,
+        mode
+    };
 }
 
 function validateTaskResetSection(input: unknown): Record<string, unknown> {

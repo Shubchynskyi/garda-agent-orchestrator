@@ -395,6 +395,19 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
             },
             required: ['enabled'],
             additionalProperties: false
+        },
+        orchestrator_work_policy: {
+            type: 'object',
+            description: 'Workspace self-guard policy for agent-entered protected orchestrator work.',
+            properties: {
+                mode: {
+                    type: 'string',
+                    enum: ['deny_agent_entry', 'require_operator_confirmation'],
+                    description: 'deny_agent_entry blocks agent self-escalation into --orchestrator-work; require_operator_confirmation preserves source-checkout confirmation behavior.'
+                }
+            },
+            required: ['mode'],
+            additionalProperties: false
         }
     },
     additionalProperties: true
