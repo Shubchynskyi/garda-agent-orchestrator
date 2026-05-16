@@ -11,6 +11,8 @@ const HTML_COMMAND_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
     '--repo-root': { key: 'targetRoot', type: 'string' },
     '--output-path': { key: 'outputPath', type: 'string' },
+    '--snapshot': { key: 'snapshot', type: 'boolean' },
+    '--retain-snapshots': { key: 'retainSnapshots', type: 'string' },
     '--json': { key: 'json', type: 'boolean' }
 };
 
@@ -25,12 +27,29 @@ function formatHtmlReportOutput(result: StaticHtmlReportResult, jsonMode: boolea
     }
     return [
         'GARDA_HTML_REPORT',
+        `LatestPath: ${result.latest_path}`,
+        `LatestUrl: ${result.latest_url}`,
         `OutputPath: ${result.output_path}`,
         `Url: ${result.url}`,
+        `SnapshotPath: ${result.snapshot_path || 'none'}`,
+        `SnapshotUrl: ${result.snapshot_url || 'none'}`,
+        `SnapshotRetention: ${result.snapshot_retention ?? 'none'}`,
+        `DeletedSnapshots: ${result.deleted_snapshot_paths.length}`,
         `Tasks: ${result.task_count}`,
         `WorkflowSettings: ${result.workflow_setting_count}`,
         `Unavailable: ${result.unavailable_count}`
     ].join('\n');
+}
+
+function parseSnapshotRetention(value: unknown): number | null {
+    if (typeof value !== 'string' || value.trim() === '') {
+        return null;
+    }
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error('--retain-snapshots must be a positive integer.');
+    }
+    return parsed;
 }
 
 export function handleHtml(commandArgv: string[], _packageJson: PackageJsonLike): StaticHtmlReportResult | null {
@@ -47,9 +66,12 @@ export function handleHtml(commandArgv: string[], _packageJson: PackageJsonLike)
     const outputPath = typeof parsed.outputPath === 'string' && parsed.outputPath.trim()
         ? normalizePathValue(parsed.outputPath)
         : null;
+    const snapshotRetention = parseSnapshotRetention(parsed.retainSnapshots);
     const result = buildStaticHtmlReport({
         repoRoot: targetRoot,
-        outputPath
+        outputPath,
+        snapshot: parsed.snapshot === true || snapshotRetention !== null,
+        snapshotRetention
     });
     console.log(formatHtmlReportOutput(result, parsed.json === true));
     return result;

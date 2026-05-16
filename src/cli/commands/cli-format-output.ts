@@ -580,17 +580,19 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
     html: Object.freeze({
         summary: 'Write a static read-only HTML report and print its browser link.',
         usage: Object.freeze([
-            `${PRIMARY_CLI_NAME} html [--target-root PATH] [--output-path PATH] [--json]`,
-            `${PRIMARY_CLI_NAME} html --output-path "garda-agent-orchestrator/runtime/reports/garda-report.html"`
+            `${PRIMARY_CLI_NAME} html [--target-root PATH] [--output-path PATH] [--snapshot] [--retain-snapshots N] [--json]`,
+            `${PRIMARY_CLI_NAME} html --output-path "garda-agent-orchestrator/runtime/reports/garda-report.html" --snapshot --retain-snapshots 5`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} html`,
             `${PRIMARY_CLI_NAME} html --target-root "."`,
+            `${PRIMARY_CLI_NAME} html --snapshot --retain-snapshots 5`,
             `${PRIMARY_CLI_NAME} html --json`
         ]),
         hints: Object.freeze([
             'The report is read-only: it reads TASK.md, workflow config, and existing runtime logs/artifacts.',
             'Default output is garda-agent-orchestrator/runtime/reports/garda-report.html.',
+            'Use --snapshot to keep a timestamped copy under runtime/reports/snapshots; --retain-snapshots N keeps the newest N snapshots.',
             'Open the printed file URL in a browser; no local server is started.'
         ])
     }),

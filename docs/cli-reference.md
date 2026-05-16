@@ -203,13 +203,15 @@ Write a static read-only HTML report and print a browser link.
 ```text
 garda html --target-root "."
 garda html --target-root "." --output-path "garda-agent-orchestrator/runtime/reports/garda-report.html"
+garda html --target-root "." --snapshot --retain-snapshots 5
 garda html --target-root "." --json
 ```
 
 Notes:
 - The report has tabs for the canonical upper `TASK.md` Active Queue, current workflow settings, and short operator instructions.
 - Clicking a task row opens read-only details derived from task stats, lifecycle events, audit summaries, and artifact metadata.
-- The command writes a single HTML file and prints a `file://` URL. It does not start a server or mutate task lifecycle state.
+- The command refreshes a stable latest HTML file and prints a `file://` URL. It does not start a server or mutate task lifecycle state.
+- `--snapshot` writes a timestamped copy under `runtime/reports/snapshots`; `--retain-snapshots N` keeps the newest N generated snapshots.
 
 ### `garda bootstrap`
 

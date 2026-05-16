@@ -50,6 +50,10 @@ export function isGeneratedRuntimeControlPlaneArtifactPath(pathValue: string | n
         return true;
     }
 
+    if (hasRuntimeSegment(normalizedPath, 'runtime/reports/')) {
+        return true;
+    }
+
     if (hasRuntimeSegment(normalizedPath, 'runtime/cache/')) {
         return true;
     }

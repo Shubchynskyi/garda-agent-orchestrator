@@ -75,3 +75,52 @@ test('buildStaticHtmlReport writes default runtime report and returns a browser 
     assert.ok(fs.existsSync(result.output_path));
     assert.match(fs.readFileSync(result.output_path, 'utf8'), /Garda HTML Report/);
 });
+
+test('buildStaticHtmlReport can write timestamped snapshots', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+
+    const result = buildStaticHtmlReport({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z',
+        snapshot: true
+    });
+
+    assert.equal(result.latest_path, result.output_path);
+    assert.equal(result.latest_url, result.url);
+    assert.ok(result.snapshot_path?.endsWith(path.join('snapshots', 'garda-report-20260516T000000000Z.html')));
+    assert.match(result.snapshot_url || '', /^file:\/\//);
+    assert.ok(result.snapshot_path && fs.existsSync(result.snapshot_path));
+});
+
+test('buildStaticHtmlReport prunes old snapshots when retention is set', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+
+    buildStaticHtmlReport({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z',
+        snapshot: true
+    });
+    buildStaticHtmlReport({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:01:00.000Z',
+        snapshot: true
+    });
+    const result = buildStaticHtmlReport({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:02:00.000Z',
+        snapshot: true,
+        snapshotRetention: 2
+    });
+
+    assert.equal(result.deleted_snapshot_paths.length, 1);
+    assert.ok(result.deleted_snapshot_paths[0].endsWith('garda-report-20260516T000000000Z.html'));
+    const snapshotDir = path.dirname(result.snapshot_path || '');
+    assert.deepEqual(fs.readdirSync(snapshotDir).sort(), [
+        'garda-report-20260516T000100000Z.html',
+        'garda-report-20260516T000200000Z.html'
+    ]);
+});

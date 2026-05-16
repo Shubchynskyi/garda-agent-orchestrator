@@ -69,6 +69,55 @@ test('handleHtml supports json output', async () => {
     assert.match(parsed.url, /^file:\/\//);
 });
 
+test('handleHtml supports snapshot output and retention', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+
+    const text = await captureOutput(() => handleHtml([
+        '--target-root', repoRoot,
+        '--snapshot',
+        '--retain-snapshots', '1'
+    ], PACKAGE_JSON));
+
+    assert.ok(text.includes('LatestPath:'));
+    assert.ok(text.includes('SnapshotPath:'));
+    assert.ok(text.includes('SnapshotRetention: 1'));
+    assert.ok(text.includes('DeletedSnapshots: 0'));
+    const snapshotDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reports', 'snapshots');
+    assert.equal(fs.readdirSync(snapshotDir).length, 1);
+});
+
+test('handleHtml enables snapshots when retention is provided', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+
+    const text = await captureOutput(() => handleHtml([
+        '--target-root', repoRoot,
+        '--retain-snapshots', '1',
+        '--json'
+    ], PACKAGE_JSON));
+    const parsed = JSON.parse(text) as { snapshot_path: string | null; snapshot_retention: number };
+
+    assert.equal(parsed.snapshot_retention, 1);
+    assert.ok(parsed.snapshot_path);
+    assert.ok(fs.existsSync(parsed.snapshot_path));
+});
+
+test('handleHtml rejects invalid snapshot retention values', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+
+    for (const value of ['0', '-1', '1.5', 'abc']) {
+        await assert.rejects(
+            () => captureOutput(() => handleHtml([
+                '--target-root', repoRoot,
+                '--retain-snapshots', value
+            ], PACKAGE_JSON)),
+            /--retain-snapshots must be a positive integer/
+        );
+    }
+});
+
 test('handleHtml accepts repo-root as target-root alias', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);

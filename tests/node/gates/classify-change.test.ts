@@ -943,6 +943,7 @@ describe('gates/classify-change', () => {
             const result = classifyChange({
                 normalizedFiles: [
                     'tests/node/cli/commands/gates-preflight.test.ts',
+                    'garda-agent-orchestrator/runtime/reports/garda-report.html',
                     'garda-agent-orchestrator/runtime/task-events/T-504.jsonl',
                     'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
                     'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
@@ -963,12 +964,13 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.code, false);
             assert.equal(result.required_reviews.test, true);
             assert.deepEqual(result.triggers.ignored_generated_runtime_files, [
+                'garda-agent-orchestrator/runtime/reports/garda-report.html',
                 'garda-agent-orchestrator/runtime/task-events/T-504.jsonl',
                 'Z:/missing/root/runtime/task-events/all-tasks.jsonl',
                 'mnt/wsl/projects/missing/runtime/task-events/T-504.jsonl'
             ]);
-            assert.equal(result.metrics.ignored_generated_runtime_files_count, 3);
-            assert.match(result.workspace_hygiene_warnings[0], /Ignored 3 generated runtime\/control-plane artifact/);
+            assert.equal(result.metrics.ignored_generated_runtime_files_count, 4);
+            assert.match(result.workspace_hygiene_warnings[0], /Ignored 4 generated runtime\/control-plane artifact/);
         });
 
         it('keeps real code changes as code review even with generated review artifacts', () => {
