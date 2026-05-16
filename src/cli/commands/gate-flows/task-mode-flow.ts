@@ -16,7 +16,7 @@ import {
 } from '../../../core/operator-confirmation';
 import {
     formatGardaSelfGuardProtectedControlPlaneGuidance,
-    readOrchestratorWorkPolicyModeForBundle
+    isGardaSelfGuardDenyAgentEntryForBundle
 } from '../../../core/workflow-config';
 import {
     emitHandshakeDiagnosticsEvent,
@@ -315,8 +315,10 @@ function taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata: ReturnType<type
 }
 
 function isGardaSelfGuardDenyAgentEntry(repoRoot: string, orchestratorRoot: string): boolean {
-    return !gateHelpers.isOrchestratorSourceCheckout(repoRoot)
-        && readOrchestratorWorkPolicyModeForBundle(orchestratorRoot) === 'deny_agent_entry';
+    return isGardaSelfGuardDenyAgentEntryForBundle(
+        gateHelpers.isOrchestratorSourceCheckout(repoRoot),
+        orchestratorRoot
+    );
 }
 
 function buildGardaSelfGuardDenialMessage(protectedFiles: readonly string[]): string {

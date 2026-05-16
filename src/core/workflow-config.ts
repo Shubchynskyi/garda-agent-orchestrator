@@ -180,6 +180,14 @@ export function readOrchestratorWorkPolicyModeForBundle(bundleRoot: string): Orc
     }
 }
 
+export function isGardaSelfGuardDenyAgentEntryForBundle(
+    isOrchestratorSourceCheckout: boolean,
+    bundleRoot: string
+): boolean {
+    return !isOrchestratorSourceCheckout
+        && readOrchestratorWorkPolicyModeForBundle(bundleRoot) === 'deny_agent_entry';
+}
+
 export function buildGardaSelfGuardPolicyChangeCommand(cliPrefix: string, includeTargetRoot = true): string {
     return [
         `${cliPrefix} workflow set`,

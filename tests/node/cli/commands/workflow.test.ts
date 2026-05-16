@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
 import { buildGuardedCommandHelpText } from '../../../../src/cli/commands/cli-format-output';
+import { isGardaSelfGuardDenyAgentEntryForBundle } from '../../../../src/core/workflow-config';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator', version: '1.0.0' };
 function buildOperatorConfirmationArgs(): string[] {
@@ -331,6 +332,28 @@ test('workflow set enables garda self-guard without operator confirmation', () =
         assert.equal(parsedConfig.orchestrator_work_policy.mode, 'deny_agent_entry');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('isGardaSelfGuardDenyAgentEntryForBundle centralizes source-checkout and policy checks', () => {
+    const denyBundleRoot = createBundleRoot({}, {
+        orchestrator_work_policy: {
+            mode: 'deny_agent_entry'
+        }
+    });
+    const confirmationBundleRoot = createBundleRoot({}, {
+        orchestrator_work_policy: {
+            mode: 'require_operator_confirmation'
+        }
+    });
+
+    try {
+        assert.equal(isGardaSelfGuardDenyAgentEntryForBundle(false, denyBundleRoot), true);
+        assert.equal(isGardaSelfGuardDenyAgentEntryForBundle(true, denyBundleRoot), false);
+        assert.equal(isGardaSelfGuardDenyAgentEntryForBundle(false, confirmationBundleRoot), false);
+    } finally {
+        fs.rmSync(denyBundleRoot, { recursive: true, force: true });
+        fs.rmSync(confirmationBundleRoot, { recursive: true, force: true });
     }
 });
 

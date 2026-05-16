@@ -64,7 +64,7 @@ import {
     buildGardaSelfGuardPolicyChangeCommand,
     buildDefaultWorkflowConfig,
     formatGardaSelfGuardProtectedControlPlaneGuidance,
-    readOrchestratorWorkPolicyModeForBundle
+    isGardaSelfGuardDenyAgentEntryForBundle
 } from '../core/workflow-config';
 import {
     isOrchestratorSourceCheckout
@@ -5440,8 +5440,10 @@ function buildOrchestratorWorkRestartCommand(
 }
 
 function isGardaSelfGuardDenyAgentEntry(repoRoot: string): boolean {
-    return !isOrchestratorSourceCheckout(repoRoot)
-        && readOrchestratorWorkPolicyModeForBundle(resolveBundleRootForNextStep(repoRoot)) === 'deny_agent_entry';
+    return isGardaSelfGuardDenyAgentEntryForBundle(
+        isOrchestratorSourceCheckout(repoRoot),
+        resolveBundleRootForNextStep(repoRoot)
+    );
 }
 
 function getTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
