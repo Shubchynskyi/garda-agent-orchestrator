@@ -404,6 +404,7 @@ export type CommandHelpName =
     | GuardedCommandHelpName
     | 'stats'
     | 'task'
+    | 'html'
     | 'status'
     | 'doctor'
     | 'debug'
@@ -576,6 +577,23 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             'The events action does not expose --output-path; use the gate command directly when you intentionally need an artifact.'
         ])
     }),
+    html: Object.freeze({
+        summary: 'Write a static read-only HTML report and print its browser link.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} html [--target-root PATH] [--output-path PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} html --output-path "garda-agent-orchestrator/runtime/reports/garda-report.html"`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} html`,
+            `${PRIMARY_CLI_NAME} html --target-root "."`,
+            `${PRIMARY_CLI_NAME} html --json`
+        ]),
+        hints: Object.freeze([
+            'The report is read-only: it reads TASK.md, workflow config, and existing runtime logs/artifacts.',
+            'Default output is garda-agent-orchestrator/runtime/reports/garda-report.html.',
+            'Open the printed file URL in a browser; no local server is started.'
+        ])
+    }),
     status: Object.freeze({
         summary: 'Show current project status without changing files.',
         usage: Object.freeze([
@@ -697,7 +715,7 @@ function styleHelpToken(token: string): string {
         || normalized === 'node'
         || normalized.endsWith('garda.js')
         || [
-            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'bootstrap', 'install', 'init', 'reinit',
+            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
             'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
@@ -814,6 +832,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  debug env     Show environment and runtime triage snapshot for bug reports.',
             '  stats         Show token-overhead and runtime analytics per task or across all tasks.',
             '  task          Inspect one task via read-only stats and event timeline views.',
+            '  html          Write a static read-only HTML report and print its browser link.',
             '  bootstrap     Deploy the bundle only.',
             '  install       Deploy or refresh the bundle and run the Node install pipeline.',
             '  init          Re-materialize live/ from an existing deployed bundle.',

@@ -196,6 +196,21 @@ Notes:
 - Human task event output uses color when the terminal supports it; `--as-json`, `--compact-latest-cycle`, and persisted `--output-path` output remain uncolored.
 - The task namespace is inspection-only. It does not alias, replace, or modify `next-step`, and the events wrapper does not expose `--output-path`; use the explicit gate command when intentionally materializing an artifact.
 
+### `garda html`
+
+Write a static read-only HTML report and print a browser link.
+
+```text
+garda html --target-root "."
+garda html --target-root "." --output-path "garda-agent-orchestrator/runtime/reports/garda-report.html"
+garda html --target-root "." --json
+```
+
+Notes:
+- The report has tabs for the canonical upper `TASK.md` Active Queue, current workflow settings, and short operator instructions.
+- Clicking a task row opens read-only details derived from task stats, lifecycle events, audit summaries, and artifact metadata.
+- The command writes a single HTML file and prints a `file://` URL. It does not start a server or mutate task lifecycle state.
+
 ### `garda bootstrap`
 
 Deploy the bundle without running install.

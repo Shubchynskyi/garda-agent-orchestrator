@@ -45,7 +45,8 @@ function resolveTargetOrBundleParityRoot(commandArgv: string[]): string {
         return path.dirname(path.resolve(explicitBundleRoot));
     }
     const explicitTargetRoot = readPathFlag(commandArgv, '--target-root');
-    return explicitTargetRoot ? path.resolve(explicitTargetRoot) : '.';
+    const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
+    return explicitTargetRoot ? path.resolve(explicitTargetRoot) : explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
 }
 
 function resolveParityRoot(commandName: string, commandArgv: string[]): string {
@@ -57,7 +58,7 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
         const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
         return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
     }
-    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair'].includes(commandName)) {
+    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair', 'html'].includes(commandName)) {
         return '.';
     }
     return resolveTargetOrBundleParityRoot(commandArgv);
@@ -232,6 +233,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         case 'task': {
             const { handleTask } = await import('./task-command');
             await handleTask(commandArgv, packageJson);
+            return;
+        }
+        case 'html': {
+            const { handleHtml } = await import('./html-command');
+            handleHtml(commandArgv, packageJson);
             return;
         }
         case 'bootstrap': {
