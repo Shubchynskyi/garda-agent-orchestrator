@@ -2,7 +2,22 @@ import { randomInt } from 'node:crypto';
 
 export const ORCHESTRATOR_START_BANNERS = Object.freeze([
     'Garda captures my mind',
-    'Garda rewrites my code'
+    'Garda rewrites my code',
+    'Garda orchestrator active.',
+    'Garda task workflow engaged.',
+    'Garda guarded workflow active.',
+    'Garda navigator active.',
+    'Garda task mode entered.',
+    'Garda orchestration loop started.',
+    'Garda task lifecycle started.',
+    'Garda next-step workflow active.',
+    'Garda guarded task run started.',
+    'Garda operator workflow engaged.',
+    'Garda task route engaged.',
+    'Garda control-plane workflow active.',
+    'Garda workflow controls loaded.',
+    'Garda queue route active.',
+    'Garda task execution path active.'
 ] as const);
 
 export type OrchestratorStartBanner = (typeof ORCHESTRATOR_START_BANNERS)[number];

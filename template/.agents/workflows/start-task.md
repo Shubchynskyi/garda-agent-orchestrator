@@ -11,7 +11,7 @@ It routes to the canonical Garda workflow and does not replace `80-task-workflow
 Before any code changes:
 - Open `AGENTS.md` and `TASK.md`.
 - If an active provider bridge exists, open it too before implementation.
-- At fresh main-agent task start, show one English start marker from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) once in the first relevant reply; this UX marker is not gate evidence.
+- At fresh main-agent task start, show one English start marker from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code` or `Garda orchestrator active.` or `Garda task workflow engaged.` or `Garda guarded workflow active.` or `Garda navigator active.` or `Garda task mode entered.` or `Garda orchestration loop started.` or `Garda task lifecycle started.` or `Garda next-step workflow active.` or `Garda guarded task run started.` or `Garda operator workflow engaged.` or `Garda task route engaged.` or `Garda control-plane workflow active.` or `Garda workflow controls loaded.` or `Garda queue route active.` or `Garda task execution path active.`) once in the first relevant reply; this UX marker is not gate evidence.
 - Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - Enter orchestrator mode with the canonical command: Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.

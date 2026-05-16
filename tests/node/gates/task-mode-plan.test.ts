@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
+import { ORCHESTRATOR_START_BANNERS } from '../../../src/core/orchestrator-start-banner';
 import {
     buildTaskModeArtifact,
     getTaskModeEvidence,
@@ -186,6 +187,41 @@ test('buildTaskModeArtifact omits start banner unless explicit telemetry is supp
         startBanner: 'Garda captures my mind'
     });
     assert.equal(artifactWithMarker.start_banner, 'Garda captures my mind');
+
+    const artifactWithOperatorMarker = buildTaskModeArtifact({
+        taskId: 'T-099',
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Implement the widget feature end to end',
+        startBanner: 'Garda task workflow engaged.'
+    });
+    assert.equal(artifactWithOperatorMarker.start_banner, 'Garda task workflow engaged.');
+});
+
+test('orchestrator start banner list includes operator-provided Garda phrases', () => {
+    const expectedOperatorPhrases = [
+        'Garda orchestrator active.',
+        'Garda task workflow engaged.',
+        'Garda guarded workflow active.',
+        'Garda navigator active.',
+        'Garda task mode entered.',
+        'Garda orchestration loop started.',
+        'Garda task lifecycle started.',
+        'Garda next-step workflow active.',
+        'Garda guarded task run started.',
+        'Garda operator workflow engaged.',
+        'Garda task route engaged.',
+        'Garda control-plane workflow active.',
+        'Garda workflow controls loaded.',
+        'Garda queue route active.',
+        'Garda task execution path active.'
+    ];
+
+    assert.deepEqual(
+        ORCHESTRATOR_START_BANNERS.slice(-expectedOperatorPhrases.length),
+        expectedOperatorPhrases
+    );
 });
 
 test('buildTaskModeArtifact preserves blocked reviewer-subagent launch metadata when provided', () => {
