@@ -1123,6 +1123,36 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('AfterCommand: rerun'));
     });
 
+    it('keeps Active Queue title when User Summary repeats the task id', () => {
+        const repoRoot = makeTempRepo();
+        const taskId = 'T-036';
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '## Active Queue',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${taskId} | TODO | P1 | ai-flow | Implement AI ambiguity handling and manual fallback | gpt-5.4 | 2026-05-16 | balanced | Next-step regression fixture. |`,
+            '',
+            '## User Summary (RU)',
+            '',
+            '| ID | Summary |',
+            '|---|---|',
+            `| ${taskId} | Handles ambiguous AI results and manual fallback. |`,
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
+            resolveNextStep({ taskId, repoRoot })
+        ));
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.commands[0].command.includes('--task-summary "Implement AI ambiguity handling and manual fallback"'));
+        assert.ok(!result.commands[0].command.includes('--task-summary "T-036"'));
+    });
+
     it('uses execution provider environment instead of source-of-truth metadata', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {

@@ -4545,28 +4545,22 @@ function parseTaskQueueEntriesFromContent(content: string): Map<string, TaskQueu
             continue;
         }
         const cells = parseTaskMdTableRow(line);
-        const rawTaskId = cells[0].trimmed;
-        if (cells.length < 2 || rawTaskId.toUpperCase() === 'ID' || !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)) {
-            continue;
-        }
-        if (cells.length < 8) {
-            const taskId = rawTaskId;
-            entries.set(taskId, {
-                taskId,
-                status: cells[1]?.trimmed || null,
-                title: null,
-                profile: null,
-                notes: cells[cells.length - 1]?.trimmed || null
-            });
+        const rawTaskId = cells[0]?.trimmed || '';
+        if (
+            cells.length < 9
+            || cells.every((cell) => /^:?-{3,}:?$/u.test(cell.trimmed))
+            || rawTaskId.toUpperCase() === 'ID'
+            || !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)
+        ) {
             continue;
         }
         const taskId = rawTaskId;
         entries.set(taskId, {
-                taskId,
-                status: cells[1]?.trimmed || null,
-                title: cells[4]?.trimmed || null,
-                profile: cells[7]?.trimmed || null,
-                notes: cells[8]?.trimmed || null
+            taskId,
+            status: cells[1]?.trimmed || null,
+            title: cells[4]?.trimmed || null,
+            profile: cells[7]?.trimmed || null,
+            notes: cells[8]?.trimmed || null
         });
     }
     return entries;
