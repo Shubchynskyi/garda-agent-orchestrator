@@ -38,7 +38,7 @@ Escalate back to the full orchestration skill immediately if:
 - only the rule ids/snippets directly triggered by changed scope.
 
 ## Compact Workflow
-1. Start only from ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.`` and make the fresh main-agent execution reply emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits, then list the first mandatory gates to run.
+1. Start only from ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.`` and show one English start marker from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) once in the first relevant reply; this UX marker is not gate evidence. Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.
 2. Capture requested/effective depth in non-status `TASK.md` notes; successful `enter-task-mode` reconciles the task to `IN_PROGRESS`.
 3. Build a concise plan focused on changed files, risks, and validation.
 4. Run `enter-task-mode`, `load-rule-pack --stage TASK_ENTRY`, `handshake-diagnostics`, `shell-smoke-preflight`, and then preflight/classification; stop using this short form if escalation is required.

@@ -6,17 +6,16 @@ export const ORCHESTRATOR_START_BANNERS = Object.freeze([
 ] as const);
 
 export type OrchestratorStartBanner = (typeof ORCHESTRATOR_START_BANNERS)[number];
-export const ORCHESTRATOR_START_BANNER_CONTRACT_EFFECTIVE_AT_UTC = '2026-04-20T00:00:00.000Z';
 
 export const ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE = ORCHESTRATOR_START_BANNERS
     .map((banner) => `\`${banner}\``)
     .join(' or ');
 
 export const FRESH_MAIN_AGENT_START_BANNER_RULE =
-    'Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.';
+    'At fresh main-agent task start, show one English start marker from the repo-owned list once in the first relevant reply; this UX marker is not gate evidence.';
 
 export const START_BANNER_GATE_LIST_RULE =
-    'That same reply must list the first mandatory gates to run before implementation.';
+    'Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.';
 
 export const START_BANNER_EXEMPTION_RULE =
     'Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.';
@@ -31,9 +30,9 @@ export function selectRandomOrchestratorStartBanner(): OrchestratorStartBanner {
 }
 
 export function buildFreshMainAgentStartBannerSentence(): string {
-    return `Fresh main-agent task runs must begin with exactly one English start banner from the repo-owned list (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}) before any edits and then list the first mandatory gates to run.`;
+    return `At fresh main-agent task start, show one English start marker from the repo-owned list (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}) once in the first relevant reply; this UX marker is not gate evidence.`;
 }
 
 export function buildSetupStartBannerSentence(): string {
-    return `Require the first fresh main-agent execution reply to emit exactly one English start banner from the repo-owned list (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}) before any edits and list the first gates it will run.`;
+    return `Ask the first fresh main-agent execution reply to show one English start marker from the repo-owned list (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}); this UX marker is not gate evidence.`;
 }

@@ -5279,8 +5279,7 @@ function buildEnterTaskModeCommand(
         `--task-id ${quoteCommandValue(taskId)}`,
         '--entry-mode "EXPLICIT_TASK_EXECUTION"',
         `--requested-depth ${quoteCommandValue(resolveDefaultDepthFromTaskQueue(taskEntry))}`,
-        `--task-summary ${quoteCommandValue(taskEntry?.title || taskId)}`,
-        '--start-banner "Garda captures my mind"'
+        `--task-summary ${quoteCommandValue(taskEntry?.title || taskId)}`
     ];
     parts.push(`--provider ${quoteProviderForCommand(provider)}`);
     parts.push('--repo-root "."');
@@ -5415,9 +5414,12 @@ function buildOrchestratorWorkRestartCommand(
         `--entry-mode ${quoteCommandValue(getStringField(taskMode, 'entry_mode', 'EXPLICIT_TASK_EXECUTION'))}`,
         `--requested-depth ${quoteCommandValue(getNumberField(taskMode, 'requested_depth', '<1|2|3>'))}`,
         `--task-summary ${quoteCommandValue(getStringField(taskMode, 'task_summary', '<TASK.md summary>'))}`,
-        `--start-banner ${quoteCommandValue(getStringField(taskMode, 'start_banner', '<repo-owned-banner>'))}`,
         `--provider ${quoteCommandValue(getStringField(taskMode, 'provider', '<provider>'))}`
     ];
+    const startBanner = getStringField(taskMode, 'start_banner', '');
+    if (startBanner) {
+        parts.push(`--start-banner ${quoteCommandValue(startBanner)}`);
+    }
     const routedTo = getStringField(taskMode, 'routed_to', '');
     if (routedTo) {
         parts.push(`--routed-to ${quoteCommandValue(routedTo)}`);

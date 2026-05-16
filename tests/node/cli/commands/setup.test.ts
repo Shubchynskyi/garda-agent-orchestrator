@@ -911,7 +911,7 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Use `next-step` as the navigator'));
     assert.ok(text.includes('launch a sub-agent using your internal tools'));
     assert.ok(text.includes('profile current|list|use|create'));
-    assert.ok(text.includes('start banner'));
+    assert.ok(text.includes('start marker'));
     assert.ok(text.includes('Garda captures my mind'));
     assert.ok(text.includes('Mandatory orchestrator flow:'));
     assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate'));

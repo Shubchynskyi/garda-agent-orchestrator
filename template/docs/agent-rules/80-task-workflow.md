@@ -41,8 +41,8 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Default executable navigator is `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`; run it before the first gate, after every suggested command, and after any gate failure.
 - Static gate order below is policy context. Agents must not start at `compile-gate`, infer default flags, or skip to review from the static list when `next-step` can inspect current task evidence.
 - Active profile selection comes from `live/config/profiles.json` and the `TASK.md` `Profile` column; do not present `depth=<1|2|3>` as normal user task-start guidance.
-- Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.
-- That same reply must list the first mandatory gates to run before implementation.
+- At fresh main-agent task start, show one English start marker from the repo-owned list once in the first relevant reply; this UX marker is not gate evidence.
+- Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 

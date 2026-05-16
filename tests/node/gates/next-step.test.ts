@@ -1116,7 +1116,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('<'));
         assert.ok(result.commands[0].command.includes('--requested-depth "2"'));
         assert.ok(result.commands[0].command.includes('--task-summary "Make next-step output executable in tests"'));
-        assert.ok(result.commands[0].command.includes('--start-banner "Garda captures my mind"'));
+        assert.equal(result.commands[0].command.includes('--start-banner'), false);
         assert.ok(result.commands[0].command.includes('--provider "Codex"'));
         const text = formatNextStepText(result);
         assert.ok(text.includes(EXPECTED_LOOP_LINE));
@@ -4603,7 +4603,6 @@ describe('gates/next-step', () => {
             '--entry-mode "EXPLICIT_TASK_EXECUTION"',
             '--requested-depth "2"',
             '--task-summary "Injected recovery"',
-            '--start-banner "Garda captures my mind"',
             '--provider "Codex"',
             '--orchestrator-work',
             '--planned-changed-file "src/gates/next-step.ts"',

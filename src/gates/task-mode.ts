@@ -7,9 +7,7 @@ import {
 } from '../core/provider-registry';
 import {
     normalizeOrchestratorStartBanner,
-    ORCHESTRATOR_START_BANNER_CONTRACT_EFFECTIVE_AT_UTC,
-    ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE,
-    selectRandomOrchestratorStartBanner
+    ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE
 } from '../core/orchestrator-start-banner';
 import { assertValidTaskId } from '../gate-runtime/task-events';
 import { getProviderOrchestratorProfileDefinitions } from '../materialization/common';
@@ -71,7 +69,7 @@ export interface TaskModeArtifact {
     task_summary: string;
     orchestrator_work: boolean;
     workflow_config_work: boolean;
-    start_banner: string;
+    start_banner: string | null;
     provider: string | null;
     canonical_source_of_truth: string | null;
     execution_provider_source: string | null;
@@ -190,19 +188,6 @@ function normalizePathList(value: unknown): string[] {
         return [];
     }
     return [...new Set(value.map((entry) => String(entry || '').trim().replace(/\\/g, '/')).filter(Boolean))].sort();
-}
-
-function isStartBannerRequiredForArtifact(artifactObject: Record<string, unknown>): boolean {
-    if (Object.prototype.hasOwnProperty.call(artifactObject, 'start_banner')) {
-        return true;
-    }
-    const timestampUtc = String(artifactObject.timestamp_utc || '').trim();
-    const artifactTimestampMs = Date.parse(timestampUtc);
-    const contractEffectiveMs = Date.parse(ORCHESTRATOR_START_BANNER_CONTRACT_EFFECTIVE_AT_UTC);
-    if (!Number.isFinite(artifactTimestampMs)) {
-        return true;
-    }
-    return artifactTimestampMs >= contractEffectiveMs;
 }
 
 export function normalizeTaskModeEntryMode(value: unknown): TaskModeEntryMode {
@@ -456,8 +441,8 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
     const requestedStartBanner = String(options.startBanner || '').trim();
     const normalizedStartBanner = requestedStartBanner
         ? normalizeOrchestratorStartBanner(requestedStartBanner)
-        : selectRandomOrchestratorStartBanner();
-    if (!normalizedStartBanner) {
+        : null;
+    if (requestedStartBanner && !normalizedStartBanner) {
         throw new Error(
             `StartBanner must be one of the repo-owned banners (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}). ` +
             `Got '${requestedStartBanner}'.`
@@ -701,27 +686,6 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     }
     if (!result.task_summary || result.task_summary.length < 8) {
         result.evidence_status = 'EVIDENCE_SUMMARY_INVALID';
-        return result;
-    }
-    if (isStartBannerRequiredForArtifact(artifactObject) && !result.start_banner) {
-        result.evidence_status = 'EVIDENCE_START_BANNER_INVALID';
-        return result;
-    }
-    if (result.timeline_declares_start_banner && !result.timeline_start_banner) {
-        result.evidence_status = 'EVIDENCE_START_BANNER_INVALID';
-        return result;
-    }
-    if (result.timeline_declares_start_banner && !result.start_banner) {
-        result.evidence_status = 'EVIDENCE_START_BANNER_INVALID';
-        return result;
-    }
-    if (
-        result.timeline_declares_start_banner
-        && result.timeline_start_banner
-        && result.start_banner
-        && result.timeline_start_banner !== result.start_banner
-    ) {
-        result.evidence_status = 'EVIDENCE_START_BANNER_MISMATCH';
         return result;
     }
     if (!result.canonical_source_of_truth) {

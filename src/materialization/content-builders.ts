@@ -7,6 +7,7 @@ import {
 } from '../core/onboarding-contract';
 import {
     buildFreshMainAgentStartBannerSentence,
+    START_BANNER_GATE_LIST_RULE,
     START_BANNER_EXEMPTION_RULE
 } from '../core/orchestrator-start-banner';
 import {
@@ -72,7 +73,6 @@ function buildEnterTaskModeSnippet(commandPrefix: string, runtimeIdentityFlag: s
         '--entry-mode "EXPLICIT_TASK_EXECUTION"',
         '--requested-depth "<1|2|3>"',
         '--task-summary "<task summary>"',
-        '--start-banner "<repo-owned-banner>"',
         runtimeIdentityFlag,
         '--repo-root "."'
     ].join(' ');
@@ -553,6 +553,7 @@ export function buildRedirectManagedBlock(
         'Do not implement tasks directly without orchestration preflight and required review gates.',
         `Canonical task-start command: ${buildTaskStartNavigatorPrompt()}`,
         buildFreshMainAgentStartBannerSentence(),
+        START_BANNER_GATE_LIST_RULE,
         'If the workspace already contains modified files before task-mode entry, stop and isolate scope via `--use-staged` or explicit `--changed-file ...` preflight inputs before continuing.',
         'Use compact command protocol from `40-commands.md`: first `scan`, then `inspect`, then verbose `debug` only by exception.',
         'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
@@ -625,24 +626,25 @@ Required:
 1. Open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows/start-task.md\`.
 2. Start every task with ${buildTaskStartNavigatorPrompt()}
 3. ${buildFreshMainAgentStartBannerSentence()}
-4. Run \`${buildBundleNextStepSnippet()}\` as the default task loop in deployed workspaces, or \`${buildSourceNextStepSnippet()}\` in this source checkout; rerun the same command after every suggested command.
-5. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
-6. ${buildDualCliActiveProfileGuidance(null)}
-7. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
-8. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Garda.
-9. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
-10. Mandatory reviews on this provider must preserve \`delegated_subagent\` reviewer execution; same-agent self-review is invalid and stale fallback metadata cannot satisfy a fresh cycle.
-11. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
-12. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
-13. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
-14. ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
-15. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
-16. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
-17. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
-18. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
-19. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
-20. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
-21. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
+4. ${START_BANNER_GATE_LIST_RULE}
+5. Run \`${buildBundleNextStepSnippet()}\` as the default task loop in deployed workspaces, or \`${buildSourceNextStepSnippet()}\` in this source checkout; rerun the same command after every suggested command.
+6. Follow the shared checklist in \`.agents/workflows/start-task.md\` exactly.
+7. ${buildDualCliActiveProfileGuidance(null)}
+8. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
+9. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Garda.
+10. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
+11. Mandatory reviews on this provider must preserve \`delegated_subagent\` reviewer execution; same-agent self-review is invalid and stale fallback metadata cannot satisfy a fresh cycle.
+12. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
+13. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
+14. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
+15. ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
+16. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
+17. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
+18. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+19. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
+20. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+21. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
+22. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
 
 ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 
@@ -661,6 +663,7 @@ Hard stop: first open \`${canonicalFile}\`, \`TASK.md\`, and \`.agents/workflows
 Do not implement tasks directly without orchestration preflight and required review gates.
 Canonical task-start command: ${buildTaskStartNavigatorPrompt()}
 ${buildFreshMainAgentStartBannerSentence()}
+${START_BANNER_GATE_LIST_RULE}
 If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
 Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.
 This provider profile is a strict bridge to Garda skills and the Node gate router.
@@ -683,11 +686,12 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 2. Read \`TASK.md\` and select/create a task row before implementation.
 3. Execute task workflow only in orchestrator mode: ${buildTaskStartNavigatorPrompt()}
 4. ${buildFreshMainAgentStartBannerSentence()}
-5. Use \`${buildSourceNextStepSnippet()}\` in a self-hosted source checkout, or \`${buildBundleNextStepSnippet()}\` inside a materialized/deployed workspace, as the command navigator before every numbered gate below.
-6. ${buildDualCliActiveProfileGuidance(null)}
-7. If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
-8. Enter task mode explicitly only when \`next-step\` tells you to do so: via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace; ${runtimeIdentityInstruction}.
-9. Record baseline downstream rules explicitly when \`next-step\` requests it: via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack ...\` inside a materialized/deployed workspace.
+5. ${START_BANNER_GATE_LIST_RULE}
+6. Use \`${buildSourceNextStepSnippet()}\` in a self-hosted source checkout, or \`${buildBundleNextStepSnippet()}\` inside a materialized/deployed workspace, as the command navigator before every numbered gate below.
+7. ${buildDualCliActiveProfileGuidance(null)}
+8. If the workspace already contains modified files before task-mode entry, stop and isolate scope via \`--use-staged\` or explicit \`--changed-file ...\` preflight inputs before continuing.
+9. Enter task mode explicitly only when \`next-step\` tells you to do so: via \`node bin/garda.js gate enter-task-mode ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} enter-task-mode ...\` inside a materialized/deployed workspace; ${runtimeIdentityInstruction}.
+10. Record baseline downstream rules explicitly when \`next-step\` requests it: via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} load-rule-pack ...\` inside a materialized/deployed workspace.
 10. Run handshake diagnostics when requested by \`next-step\`: via \`node bin/garda.js gate handshake-diagnostics ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} handshake-diagnostics ...\` inside a materialized/deployed workspace.
 11. Run shell smoke preflight when requested by \`next-step\`: via \`node bin/garda.js gate shell-smoke-preflight ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} shell-smoke-preflight ...\` inside a materialized/deployed workspace.
 12. Run preflight classification before implementation when requested by \`next-step\`: via \`node bin/garda.js gate classify-change ...\` in a self-hosted source checkout, or via \`${getNodeGateCommandPrefix()} classify-change ...\` inside a materialized/deployed workspace.
@@ -750,6 +754,7 @@ Before any code changes:
 - Open \`${canonicalFile}\` and \`TASK.md\`.
 - If an active provider bridge exists, open it too before implementation.
 - ${buildFreshMainAgentStartBannerSentence()}
+- ${START_BANNER_GATE_LIST_RULE}
 - ${START_BANNER_EXEMPTION_RULE}
 - Enter orchestrator mode with the canonical command: ${buildTaskStartNavigatorPrompt()}
 - ${buildNextStepNavigatorGuidance('node bin/garda.js')} In deployed workspaces use \`${buildBundleNextStepSnippet()}\`.

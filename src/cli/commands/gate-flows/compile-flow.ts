@@ -830,8 +830,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             if (preTaskModifiedFiles.length > 0) {
                 preflightErrors.push(
                     `Workspace already contained modified files before task-mode entry: ${preTaskModifiedFiles.join(', ')}. ` +
-                    'This run is invalid as a normal orchestrated task start because the fresh main-agent start-banner step must happen before any edits. ' +
-                    'The start banner is a one-time orchestrator-mode marker, not a file-state claim. ' +
+                    'This run is invalid as a normal orchestrated task start because task-mode entry must happen before any edits. ' +
+                    'The optional start marker is a one-time orchestrator-mode UX marker, not a file-state claim. ' +
                     'Clean/stash unrelated changes, or rerun classify-change with --use-staged or explicit --changed-file scope after entering task mode.'
                 );
             }

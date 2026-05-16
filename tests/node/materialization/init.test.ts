@@ -658,7 +658,7 @@ describe('runInit', () => {
             assert.ok(usage.includes('Use `next-step` as the navigator'));
             assert.ok(usage.includes('launch a sub-agent using your internal tools'));
             assert.ok(usage.includes('next-step "<task-id>" --repo-root "."'));
-            assert.ok(usage.includes('Require the first fresh main-agent execution reply to emit exactly one English start banner'));
+            assert.ok(usage.includes('Ask the first fresh main-agent execution reply to show one English start marker'));
             assert.ok(usage.includes('Garda captures my mind'));
             assert.ok(usage.includes('garda-agent-orchestrator/live/config/profiles.json'));
             assert.ok(usage.includes('node garda-agent-orchestrator/bin/garda.js profile current --target-root "."'));

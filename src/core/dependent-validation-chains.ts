@@ -88,7 +88,7 @@ export const GATE_CHAIN_MANIFEST: readonly GateChainEdge[] = defineGateChainMani
         artifact: 'task_mode',
         artifact_suffix: '-task-mode.json',
         missing_remediation_command:
-            '{cli} gate enter-task-mode --task-id "{taskId}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "{depth}" --task-summary "<task summary>" --start-banner "<banner>" --provider "<provider>" --repo-root "{repoRoot}"'
+            '{cli} gate enter-task-mode --task-id "{taskId}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "{depth}" --task-summary "<task summary>" --provider "<provider>" --repo-root "{repoRoot}"'
     },
     {
         id: 'task-entry-rules-to-handshake',

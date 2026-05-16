@@ -159,7 +159,7 @@ function buildPreflightGateHelpEntries(
         'enter-task-mode': {
             ...createSingleUsageEntry(
                 'Enter explicit task mode before any implementation, with runtime identity pinned through explicit provider selection and optional route telemetry.',
-                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] [--orchestrator-work [--workflow-config-work] --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"] --repo-root "."`,
+                `${cliPrefix} gate enter-task-mode --task-id "${TASK_ID_PLACEHOLDER}" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "<provider>" [--routed-to "<provider-bridge-or-entrypoint>"] [--start-banner "<repo-owned-marker>"] [--orchestrator-work [--workflow-config-work] --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"] --repo-root "."`,
                 true
             )
         },
@@ -523,7 +523,7 @@ export function buildGateCommandOverviewText(repoRoot = process.cwd()): string {
         `  ${dim('Use per-gate help to inspect exact syntax before execution.')}`,
         '',
         bold('Examples'),
-        `  ${green(`${cliPrefix} gate enter-task-mode --task-id "T-178" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "2" --task-summary "<task summary>" --start-banner "Garda captures my mind" --provider "Codex" --repo-root "."`)}`,
+        `  ${green(`${cliPrefix} gate enter-task-mode --task-id "T-178" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "2" --task-summary "<task summary>" --provider "Codex" --repo-root "."`)}`,
         `  ${green(`${cliPrefix} gate task-audit-summary --task-id "T-178" --as-json --repo-root "."`)}`
     ].join('\n');
 }

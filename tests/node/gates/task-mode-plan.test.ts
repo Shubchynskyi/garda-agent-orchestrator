@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { ORCHESTRATOR_START_BANNERS } from '../../../src/core/orchestrator-start-banner';
 import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
 import {
     buildTaskModeArtifact,
@@ -168,7 +167,7 @@ test('buildTaskModeArtifact sets plan to null for null plan', () => {
     assert.equal(artifact.plan, null);
 });
 
-test('buildTaskModeArtifact assigns a repo-owned start banner', () => {
+test('buildTaskModeArtifact omits start banner unless explicit telemetry is supplied', () => {
     const artifact = buildTaskModeArtifact({
         taskId: 'T-099',
         entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -176,7 +175,17 @@ test('buildTaskModeArtifact assigns a repo-owned start banner', () => {
         effectiveDepth: 2,
         taskSummary: 'Implement the widget feature end to end'
     });
-    assert.ok(ORCHESTRATOR_START_BANNERS.includes(artifact.start_banner as (typeof ORCHESTRATOR_START_BANNERS)[number]));
+    assert.equal(artifact.start_banner, null);
+
+    const artifactWithMarker = buildTaskModeArtifact({
+        taskId: 'T-099',
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Implement the widget feature end to end',
+        startBanner: 'Garda captures my mind'
+    });
+    assert.equal(artifactWithMarker.start_banner, 'Garda captures my mind');
 });
 
 test('buildTaskModeArtifact preserves blocked reviewer-subagent launch metadata when provided', () => {
@@ -388,7 +397,7 @@ test('getTaskModeEvidence rejects implicit runtime-provider fallback at task-mod
     }
 });
 
-test('getTaskModeEvidence rejects invalid repo-external start banners', () => {
+test('getTaskModeEvidence ignores invalid repo-external start banners as non-gate telemetry', () => {
     const tmpDir = makeTempDir();
     try {
         const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
@@ -406,14 +415,14 @@ test('getTaskModeEvidence rejects invalid repo-external start banners', () => {
         fs.writeFileSync(artifactPath, JSON.stringify(raw, null, 2));
 
         const evidence = getTaskModeEvidence(tmpDir, 'T-099');
-        assert.equal(evidence.evidence_status, 'EVIDENCE_START_BANNER_INVALID');
-        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes('repo-owned start_banner')));
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.start_banner, null);
     } finally {
         cleanupDir(tmpDir);
     }
 });
 
-test('getTaskModeEvidence rejects mismatched task-mode and timeline start banners', () => {
+test('getTaskModeEvidence ignores mismatched task-mode and timeline start banners as non-gate telemetry', () => {
     const tmpDir = makeTempDir();
     try {
         const orchestratorRoot = path.join(tmpDir, 'garda-agent-orchestrator');
@@ -433,9 +442,6 @@ test('getTaskModeEvidence rejects mismatched task-mode and timeline start banner
         });
         fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2), 'utf8');
 
-        const mismatchedBanner = artifact.start_banner === 'Garda captures my mind'
-            ? 'Garda rewrites my code'
-            : 'Garda captures my mind';
         appendTaskEvent(orchestratorRoot, 'T-099', 'TASK_MODE_ENTERED', 'PASS', 'Current task-mode entry with mismatched timeline banner.', {
             artifact_path: artifactPath.replace(/\\/g, '/'),
             entry_mode: 'EXPLICIT_TASK_EXECUTION',
@@ -445,12 +451,13 @@ test('getTaskModeEvidence rejects mismatched task-mode and timeline start banner
             canonical_source_of_truth: 'Codex',
             execution_provider_source: 'provider_entrypoint',
             runtime_identity_status: 'resolved',
-            start_banner: mismatchedBanner
+            start_banner: 'Garda rewrites my code'
         });
 
         const evidence = getTaskModeEvidence(tmpDir, 'T-099');
-        assert.equal(evidence.evidence_status, 'EVIDENCE_START_BANNER_MISMATCH');
-        assert.ok(getTaskModeEvidenceViolations(evidence).some((entry) => entry.includes('does not match')));
+        assert.equal(evidence.evidence_status, 'PASS');
+        assert.equal(evidence.start_banner, null);
+        assert.equal(evidence.timeline_start_banner, 'Garda rewrites my code');
     } finally {
         cleanupDir(tmpDir);
     }
@@ -765,16 +772,17 @@ test('runEnterTaskModeCommand without --plan-path produces plan: null', () => {
             requestedDepth: 2,
             effectiveDepth: 2,
             taskSummary: 'Implement the widget feature end to end',
+            startBanner: undefined,
             emitMetrics: false
         });
         assert.equal(result.exitCode, 0);
         assert.ok(result.outputLines.some(l => l.includes('PlanGuided: false')));
-        assert.ok(result.outputLines.some(l => l.includes('StartBanner: ')));
+        assert.equal(result.outputLines.some(l => l.includes('StartBanner: ')), false);
 
         const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
         const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.equal(artifact.plan, null);
-        assert.ok(ORCHESTRATOR_START_BANNERS.includes(artifact.start_banner));
+        assert.equal(artifact.start_banner, null);
     } finally {
         cleanupDir(tmpDir);
     }

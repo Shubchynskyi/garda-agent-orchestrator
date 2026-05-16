@@ -152,7 +152,7 @@ test('formatExplainResult for TASK_MODE_NOT_ENTERED mentions enter-task-mode', (
     const result = explainFailure('TASK_MODE_NOT_ENTERED');
     const output = formatExplainResult(result);
     assert.ok(output.includes('enter-task-mode'));
-    assert.ok(output.includes('--start-banner "<repo-owned-banner>"'));
+    assert.equal(output.includes('--start-banner "<repo-owned-banner>"'), false);
 });
 
 // ── scanRuntimeForKnownFailures ───────────────────────────────────────────────

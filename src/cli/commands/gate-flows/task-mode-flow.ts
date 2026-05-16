@@ -58,7 +58,6 @@ import {
 } from '../../../gates/command-timeout-diagnostics';
 import {
     buildTaskModeArtifact,
-    getTaskModeEvidence,
     normalizeTaskModeEntryMode,
     parseTaskModeDepth,
     resolveTaskModeArtifactPath,
@@ -400,8 +399,7 @@ function buildTaskModeIdentitySuggestionCommand(
         `${buildGateCommandPrefix(repoRoot)} gate enter-task-mode`,
         `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
         `--task-id ${quotePowerShellCliValue(taskId)}`,
-        '--task-summary "<task-summary>"',
-        '--start-banner "<repo-owned-banner>"'
+        '--task-summary "<task-summary>"'
     ];
     if (routingDecision.provider) {
         commandParts.push(`--provider ${quotePowerShellCliValue(routingDecision.provider)}`);
@@ -542,11 +540,8 @@ function resolvePrePreflightSequenceLockPath(repoRoot: string, taskId: string): 
 }
 
 function resolveTaskModeStartBanner(
-    repoRoot: string,
-    taskId: string,
-    artifactPath: string,
     requestedStartBanner: unknown
-): string {
+): string | null {
     const requestedBanner = String(requestedStartBanner || '').trim();
     if (requestedBanner) {
         const normalizedRequestedBanner = normalizeOrchestratorStartBanner(requestedBanner);
@@ -559,16 +554,7 @@ function resolveTaskModeStartBanner(
         return normalizedRequestedBanner;
     }
 
-    const previousTaskMode = getTaskModeEvidence(repoRoot, taskId, artifactPath);
-    if (previousTaskMode.start_banner) {
-        return previousTaskMode.start_banner;
-    }
-
-    throw new Error(
-        'StartBanner is required for a fresh main-agent task run. ' +
-        `Emit one repo-owned banner (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}) in the first reply, ` +
-        'then rerun enter-task-mode with --start-banner "<repo-owned-banner>".'
-    );
+    return null;
 }
 
 export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -593,7 +579,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     );
     const workflowConfigPreTaskBaseline = getWorkflowConfigPreTaskBaselineState(repoRoot, workflowConfigFileHashes);
     const dirtyWorkflowConfigFiles = [...workflowConfigPreTaskBaseline.changed_files].sort();
-    const startBanner = resolveTaskModeStartBanner(repoRoot, taskId, artifactPath, options.startBanner);
+    const startBanner = resolveTaskModeStartBanner(options.startBanner);
     const selfGuardDenyAgentEntry = isGardaSelfGuardDenyAgentEntry(repoRoot, orchestratorRoot);
 
     let planMetadata: TaskModePlanMetadata | null = null;
@@ -889,7 +875,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             `EntryMode: ${taskModeArtifact.entry_mode}`,
             `RequestedDepth: ${taskModeArtifact.requested_depth}`,
             `EffectiveDepth: ${taskModeArtifact.effective_depth}`,
-            `StartBanner: ${taskModeArtifact.start_banner}`,
+            ...(taskModeArtifact.start_banner ? [`StartBanner: ${taskModeArtifact.start_banner}`] : []),
             `OrchestratorWork: ${taskModeArtifact.orchestrator_work}`,
             `WorkflowConfigWork: ${taskModeArtifact.workflow_config_work}`,
             ...(routingDecision.provider ? [`Provider: ${routingDecision.provider}`] : []),

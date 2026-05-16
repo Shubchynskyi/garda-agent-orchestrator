@@ -287,19 +287,25 @@ describe('cli/commands/gates — task-start', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('requires an explicit repo-owned start banner for a fresh main-agent task run', () => {
+    it('allows fresh main-agent task mode without persisted start-banner telemetry', () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-900fresh-start-banner-required';
+        const taskId = 'T-900fresh-start-banner-optional';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
 
-        const error = captureExpectedError(() => runEnterTaskModeCommand(withDefaultTaskModeRouting({
+        const result = runEnterTaskModeCommand(withDefaultTaskModeRouting({
             repoRoot,
             taskId,
-            taskSummary: 'Reject a fresh main-agent task run that omits the explicit start banner'
-        })));
-        assert.match(error.message, /StartBanner is required for a fresh main-agent task run/i);
-        assert.match(error.message, /--start-banner "<repo-owned-banner>"/i);
+            taskSummary: 'Allow a fresh main-agent task run that omits optional start-banner telemetry'
+        }));
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.outputLines.some((line) => line.startsWith('StartBanner:')), false);
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(artifact.start_banner, null);
+        const taskModeEvent = readTaskTimelineEvents(repoRoot, taskId)
+            .find((event) => event.event_type === 'TASK_MODE_ENTERED') as Record<string, unknown>;
+        assert.equal(((taskModeEvent.details as Record<string, unknown>) || {}).start_banner, null);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -95,7 +95,8 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 ## Task Start Contract
 - The canonical user command is: ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``
 - Active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; do not present `depth=<1|2|3>` as normal user task-start guidance.
-- Before any edit, a fresh main-agent task run must emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) and list the first mandatory gates to run.
+- At fresh main-agent task start, show one English start marker from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) once in the first relevant reply; this UX marker is not gate evidence.
+- Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
@@ -107,7 +108,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
    - Node: `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`
    - Do not start with `compile-gate`, infer default config flags, or choose a gate from this static list unless `next-step` prints it as the single recommended command.
 5. Enter task mode explicitly before preflight when `next-step` requests it:
-   - Node: `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>"`
+   - Node: `node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "<EXPLICIT_TASK_EXECUTION|TASK_CREATED_FROM_REQUEST>" --requested-depth "<1|2|3>" --task-summary "<task summary>"`
    - `enter-task-mode` writes task-scoped event `TASK_MODE_ENTERED` automatically and persists `runtime/reviews/<task-id>-task-mode.json`.
    - Enter task mode with explicit runtime identity via `--provider "<provider>"`; add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned, and do not rely on canonical SourceOfTruth fallback.
 6. Record baseline downstream rules explicitly before preflight when `next-step` requests it:

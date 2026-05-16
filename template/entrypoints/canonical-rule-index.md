@@ -21,7 +21,8 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - Do not execute task work until this canonical file and `TASK.md` are both read.
 - Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.
 - Execute tasks only through orchestration workflow (``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``), with preflight and required review gates.
-- Fresh main-agent task run must emit exactly one English start banner from the repo-owned list before any edit.
+- At fresh main-agent task start, show one English start marker from the repo-owned list once in the first relevant reply; this UX marker is not gate evidence.
+- Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
 - Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
 - After the review receipt is persisted, close or release the reviewer sub-agent session.

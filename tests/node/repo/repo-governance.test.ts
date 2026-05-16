@@ -256,8 +256,8 @@ test('source-checkout generated router files stay synced with builder output whe
 });
 
 test('start-banner contract stays synced across canonical guidance files', () => {
-    const startBannerToken = '--start-banner "<repo-owned-banner>"';
-    const listGateText = 'list the first mandatory gates to run';
+    const uxMarkerText = 'this UX marker is not gate evidence';
+    const evidenceDecouplingText = 'Do not use start-marker presence or exact text as hard evidence';
     const legacyStartMarker = 'files not modified yet';
     const normalize = (content: string) => content.replace(/\r\n/g, '\n').trim();
     const expectedTemplateSharedRouterContent = normalize(buildSharedStartTaskWorkflowContent('AGENTS.md'));
@@ -286,7 +286,7 @@ test('start-banner contract stays synced across canonical guidance files', () =>
 
     for (const relativePath of trackedCanonicalFiles) {
         const content = readRepoFile(relativePath);
-        assert.ok(content.includes(startBannerToken), `${relativePath} must mention the repo-owned start banner flag`);
+        assert.equal(content.includes('--start-banner "<repo-owned-banner>"'), false, `${relativePath} must not require the repo-owned start banner flag`);
     }
 
     for (const relativePath of [
@@ -295,7 +295,8 @@ test('start-banner contract stays synced across canonical guidance files', () =>
         'template/.agents/workflows/start-task.md'
     ]) {
         const content = readRepoFile(relativePath);
-        assert.ok(content.includes(listGateText), `${relativePath} must preserve the start-banner gate-list instruction`);
+        assert.ok(content.includes(uxMarkerText), `${relativePath} must preserve start-marker UX guidance`);
+        assert.ok(content.includes(evidenceDecouplingText), `${relativePath} must preserve start-marker evidence decoupling`);
     }
 
     for (const relativePath of [
@@ -320,7 +321,7 @@ test('start-banner contract stays synced across canonical guidance files', () =>
             || relativePath.endsWith('/docs/agent-rules/40-commands.md')
             || relativePath.endsWith('/docs/agent-rules/90-skill-catalog.md')
         ) {
-            assert.ok(content.includes(startBannerToken), `${relativePath} must mention the repo-owned start banner flag`);
+            assert.equal(content.includes('--start-banner "<repo-owned-banner>"'), false, `${relativePath} must not require the repo-owned start banner flag`);
         }
         if (
             relativePath.endsWith('/skills/orchestration/SKILL.md')
@@ -328,7 +329,8 @@ test('start-banner contract stays synced across canonical guidance files', () =>
             || relativePath === '.agents/workflows/start-task.md'
             || relativePath.endsWith('/.agents/workflows/start-task.md')
         ) {
-            assert.ok(content.includes(listGateText), `${relativePath} must preserve the start-banner gate-list instruction`);
+            assert.ok(content.includes(uxMarkerText), `${relativePath} must preserve start-marker UX guidance`);
+            assert.ok(content.includes(evidenceDecouplingText), `${relativePath} must preserve start-marker evidence decoupling`);
         }
         if (
             relativePath === '.agents/workflows/start-task.md'

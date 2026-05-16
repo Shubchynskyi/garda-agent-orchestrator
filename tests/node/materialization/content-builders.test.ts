@@ -524,8 +524,8 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes('Required runtime identity: use `--provider "GitHub Copilot"`'));
         assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
         assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "GitHub Copilot" --repo-root "."'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "GitHub Copilot" --routed-to ".github/agents/orchestrator.md" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "GitHub Copilot" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "GitHub Copilot" --routed-to ".github/agents/orchestrator.md" --repo-root "."'));
         for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
             assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
         }
@@ -542,8 +542,8 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes('--routed-to ".antigravity/agents/orchestrator.md"'));
         assert.ok(result.includes('Required runtime identity: use `--provider "Antigravity"`'));
         assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "Antigravity" --repo-root "."'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "Antigravity" --routed-to ".antigravity/agents/orchestrator.md" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "Antigravity" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "Antigravity" --routed-to ".antigravity/agents/orchestrator.md" --repo-root "."'));
         for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
             assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
         }
@@ -587,8 +587,9 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('launch a sub-agent using your internal tools'));
         assert.ok(result.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
         assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
-        assert.ok(result.includes('start banner'));
+        assert.ok(result.includes('start marker'));
         assert.ok(result.includes('Garda captures my mind'));
+        assert.ok(result.includes('this UX marker is not gate evidence'));
     });
 
     it('includes compact-command protocol reference', () => {
@@ -625,8 +626,8 @@ describe('buildSharedStartTaskWorkflowContent', () => {
         assert.ok(result.includes('Required runtime identity: use `--provider "<runtime-provider>"`'));
         assert.ok(result.includes('node bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
         assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "TASK_ENTRY"'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --repo-root "."'));
-        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --start-banner "<repo-owned-banner>" --provider "<runtime-provider>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "<runtime-provider>" --repo-root "."'));
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>" --entry-mode "EXPLICIT_TASK_EXECUTION" --requested-depth "<1|2|3>" --task-summary "<task summary>" --provider "<runtime-provider>" --routed-to "<provider-bridge-or-entrypoint>" --repo-root "."'));
         for (const ruleFileSnippet of TASK_ENTRY_RULE_FILE_SNIPPETS) {
             assert.ok(result.includes(ruleFileSnippet), ruleFileSnippet);
         }
