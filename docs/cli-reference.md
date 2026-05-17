@@ -232,6 +232,8 @@ Notes:
 - Per-task details are fetched lazily from read-only local JSON endpoints when the user clicks `Load details`, including gate timeline, blockers, review summary, and artifact links.
 - By default the UI does not run shell commands, mutate task lifecycle state, edit workflow config, or write settings.
 - `--actions` exposes only allow-listed Garda commands from the Actions tab. Action requests support preview mode, require typed confirmation for mutating actions such as `html-report`, and append runtime audit JSONL entries under `garda-agent-orchestrator/runtime/ui-actions/`.
+- With `--actions`, the workflow tab also exposes a guarded settings editor for allow-listed safe integer workflow knobs such as full-suite output limits and project-memory retention/tuning values. The editor supports preview and execution modes, requires the exact confirmation phrase `APPLY GARDA SETTING`, and runs the existing audited `garda workflow set` command path with `--operator-confirmed yes`; it does not write `workflow-config.json` directly.
+- High-risk policy switches such as full-suite enablement, review policy, scope-budget policy, review-cycle policy, and task-reset enablement remain read-only in the UI and must be changed through the explicit workflow command surface.
 - Action execution requires the page's per-process request token, exact localhost `Origin`, and JSON content type; cross-origin localhost posts are rejected.
 - The Actions tab does not accept arbitrary shell text; each action maps to a fixed existing Garda command.
 

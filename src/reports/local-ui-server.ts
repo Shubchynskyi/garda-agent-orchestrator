@@ -8,6 +8,7 @@ import { isCanonicalTaskId } from '../core/task-ids';
 import {
     buildReportDataContract,
     buildReportTaskDetail,
+    buildWorkflowConfigTab,
     type ReportDataContract,
     type ReportTaskDetail
 } from './report-data-contract';
@@ -62,6 +63,26 @@ interface UiActionRequest {
     action_id?: unknown;
     mode?: unknown;
     confirmation?: unknown;
+}
+
+interface UiSettingRequest {
+    setting_id?: unknown;
+    value?: unknown;
+    mode?: unknown;
+    confirmation?: unknown;
+}
+
+interface UiSettingDefinition {
+    id: string;
+    key: string;
+    label: string;
+    description: string;
+    flag: string;
+    current_value: unknown;
+    value_type: 'integer';
+    min: number;
+    max: number;
+    confirmation_phrase: string;
 }
 
 export interface UiActionRunnerResult {
@@ -178,6 +199,113 @@ function buildUiActionDefinitions(repoRoot: string): UiActionDefinition[] {
             { mutates: true, confirmationPhrase: 'RUN GARDA HTML' }
         )
     ];
+}
+
+const UI_SETTING_CONFIRMATION_PHRASE = 'APPLY GARDA SETTING';
+
+const UI_SETTING_DEFINITIONS = [
+    {
+        id: 'full-suite-green-summary-max-lines',
+        key: 'full_suite_validation.green_summary_max_lines',
+        label: 'Full-suite green summary lines',
+        description: 'Tune how many successful full-suite lines the gate keeps in compact human output.',
+        flag: '--full-suite-green-summary-max-lines',
+        min: 1,
+        max: 200
+    },
+    {
+        id: 'full-suite-red-failure-chunk-lines',
+        key: 'full_suite_validation.red_failure_chunk_lines',
+        label: 'Full-suite failure chunk lines',
+        description: 'Tune how many failing full-suite lines the gate keeps per compact failure chunk.',
+        flag: '--full-suite-red-failure-chunk-lines',
+        min: 10,
+        max: 1000
+    },
+    {
+        id: 'project-memory-max-compact-summary-chars',
+        key: 'project_memory_maintenance.max_compact_summary_chars',
+        label: 'Project-memory compact summary chars',
+        description: 'Tune the maximum generated compact project-memory summary size.',
+        flag: '--project-memory-max-compact-summary-chars',
+        min: 2000,
+        max: 200000
+    },
+    {
+        id: 'project-memory-impact-retention-days',
+        key: 'project_memory_maintenance.impact_artifact_retention_days',
+        label: 'Project-memory impact retention days',
+        description: 'Tune how long project-memory impact artifacts are retained.',
+        flag: '--project-memory-impact-artifact-retention-days',
+        min: 1,
+        max: 3650
+    }
+] as const;
+
+function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition[] {
+    const settings = buildWorkflowConfigTab(repoRoot).settings;
+    return UI_SETTING_DEFINITIONS.map((definition) => ({
+        ...definition,
+        current_value: settings.find((setting) => setting.key === definition.key)?.value,
+        value_type: 'integer',
+        confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE
+    }));
+}
+
+function findSetting(settings: UiSettingDefinition[], settingId: unknown): UiSettingDefinition | null {
+    if (typeof settingId !== 'string') {
+        return null;
+    }
+    return settings.find((setting) => setting.id === settingId) || null;
+}
+
+function normalizeSettingRequest(payload: unknown): UiSettingRequest {
+    return payload && typeof payload === 'object' ? payload as UiSettingRequest : {};
+}
+
+function parseUiSettingValue(setting: UiSettingDefinition, value: unknown): number {
+    const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+    if (!/^\d+$/u.test(raw)) {
+        throw new Error(`${setting.label} must be an integer.`);
+    }
+    const parsed = Number(raw);
+    if (!Number.isSafeInteger(parsed) || parsed < setting.min || parsed > setting.max) {
+        throw new Error(`${setting.label} must be an integer from ${setting.min} to ${setting.max}.`);
+    }
+    return parsed;
+}
+
+function buildUiSettingCommand(repoRoot: string, setting: UiSettingDefinition, value: number, timestampUtc: string): UiActionCommand {
+    const cliPath = resolveGardaCliPath(repoRoot);
+    const args = [
+        'workflow',
+        'set',
+        setting.flag,
+        String(value),
+        '--target-root',
+        repoRoot,
+        '--operator-confirmed',
+        'yes',
+        '--operator-confirmed-at-utc',
+        timestampUtc
+    ];
+    return {
+        executable: process.execPath,
+        args: [cliPath, ...args],
+        display: displayGardaCommand(repoRoot, cliPath, args)
+    };
+}
+
+function buildUiSettingAction(repoRoot: string, setting: UiSettingDefinition, value: number, timestampUtc: string): UiActionDefinition {
+    return {
+        id: `setting:${setting.id}`,
+        label: setting.label,
+        description: setting.description,
+        mutates: true,
+        requires_confirmation: true,
+        confirmation_phrase: setting.confirmation_phrase,
+        command: buildUiSettingCommand(repoRoot, setting, value, timestampUtc)
+    };
 }
 
 function capOutput(value: string, maxChars = 32000): string {
@@ -446,6 +574,131 @@ async function handleUiActionRequest(
     }
 }
 
+async function handleUiSettingRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    if (!options.actionsEnabled) {
+        sendApiError(response, 403, 'UI setting edits are disabled. Restart with --actions to enable guarded workflow commands.', 'settings_disabled');
+        return;
+    }
+    if (!isValidActionRequestBoundary(request, options.actionToken)) {
+        sendApiError(response, 403, 'UI setting request failed origin, token, or content-type validation.', 'action_boundary_rejected');
+        return;
+    }
+    const payload = normalizeSettingRequest(await readJsonBody(request));
+    const settings = buildUiSettingDefinitions(repoRoot);
+    const setting = findSetting(settings, payload.setting_id);
+    if (!setting) {
+        sendApiError(response, 400, 'Unknown editable setting.', 'unknown_setting');
+        return;
+    }
+    let value: number;
+    try {
+        value = parseUiSettingValue(setting, payload.value);
+    } catch (error) {
+        sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_setting_value');
+        return;
+    }
+    const mode = payload.mode === 'execute' ? 'execute' : 'preview';
+    const timestampUtc = new Date().toISOString();
+    const action = buildUiSettingAction(repoRoot, setting, value, timestampUtc);
+    if (mode === 'preview') {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: timestampUtc,
+            action_id: action.id,
+            mode,
+            status: 'previewed',
+            command: action.command.display
+        });
+        sendJson(response, 200, {
+            setting_id: setting.id,
+            key: setting.key,
+            mode,
+            status: 'previewed',
+            current_value: setting.current_value,
+            proposed_value: value,
+            changed_keys: [setting.key],
+            command: action.command.display,
+            requires_confirmation: true,
+            confirmation_phrase: setting.confirmation_phrase,
+            audit_path: auditPath
+        });
+        return;
+    }
+    if (payload.confirmation !== setting.confirmation_phrase) {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: timestampUtc,
+            action_id: action.id,
+            mode,
+            status: 'confirmation_required',
+            command: action.command.display
+        });
+        sendJson(response, 409, {
+            setting_id: setting.id,
+            key: setting.key,
+            mode,
+            status: 'confirmation_required',
+            current_value: setting.current_value,
+            proposed_value: value,
+            changed_keys: [setting.key],
+            command: action.command.display,
+            requires_confirmation: true,
+            confirmation_phrase: setting.confirmation_phrase,
+            audit_path: auditPath
+        });
+        return;
+    }
+    try {
+        const result = await options.actionRunner(action, repoRoot);
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: timestampUtc,
+            action_id: action.id,
+            mode,
+            status: 'executed',
+            command: action.command.display,
+            exit_code: result.exit_code,
+            signal: result.signal
+        });
+        sendJson(response, result.exit_code === 0 ? 200 : 500, {
+            setting_id: setting.id,
+            key: setting.key,
+            mode,
+            status: 'executed',
+            current_value: setting.current_value,
+            proposed_value: value,
+            changed_keys: [setting.key],
+            command: action.command.display,
+            exit_code: result.exit_code,
+            signal: result.signal,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            audit_path: auditPath
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: timestampUtc,
+            action_id: action.id,
+            mode,
+            status: 'failed_to_launch',
+            command: action.command.display,
+            error: message
+        });
+        sendJson(response, 500, {
+            setting_id: setting.id,
+            key: setting.key,
+            mode,
+            status: 'failed_to_launch',
+            command: action.command.display,
+            error: message,
+            audit_path: auditPath
+        });
+    }
+}
+
 function buildReport(repoRoot: string): ReportDataContract {
     return buildReportDataContract({
         repoRoot,
@@ -590,6 +843,7 @@ th { background: var(--panel); color: #344054; position: sticky; top: 0; z-index
 <section class="panel tab" id="workflow-tab" hidden>
 <div class="panel-head"><h2>Workflow Config</h2></div>
 <div class="detail" id="workflow"><p class="empty">Loading workflow settings...</p></div>
+<div class="detail" id="settings-editor"><p class="empty">Loading guarded setting controls...</p></div>
 </section>
 <section class="panel tab" id="instructions-tab" hidden>
 <div class="panel-head"><h2>Instructions</h2></div>
@@ -614,6 +868,7 @@ const metaNode = document.getElementById('meta');
 const warningsNode = document.getElementById('warnings');
 const overviewNode = document.getElementById('overview');
 const workflowNode = document.getElementById('workflow');
+const settingsEditorNode = document.getElementById('settings-editor');
 const instructionsNode = document.getElementById('instructions');
 const actionsNode = document.getElementById('actions');
 const actionStatusNode = document.getElementById('action-status');
@@ -690,6 +945,51 @@ function renderWorkflow(report) {
     return;
   }
   workflowNode.innerHTML = '<div class="kv">' + settings.map(setting => '<div><span>' + safe(setting.key) + '</span><strong><code>' + safe(JSON.stringify(setting.value)) + '</code><br>' + safe(setting.description) + '<br><code>' + safe(setting.command) + '</code></strong></div>').join('') + '</div>';
+}
+function renderSettingResult(result) {
+  actionStatusNode.innerHTML = '<h3>' + safe(result.key || result.setting_id || 'Setting') + '</h3>'
+    + '<p><strong>Status:</strong> ' + safe(result.status) + '</p>'
+    + '<p><strong>Changed key:</strong> <code>' + safe((result.changed_keys || []).join(', ')) + '</code></p>'
+    + '<p><strong>Current:</strong> <code>' + safe(JSON.stringify(result.current_value)) + '</code></p>'
+    + '<p><strong>Proposed:</strong> <code>' + safe(JSON.stringify(result.proposed_value)) + '</code></p>'
+    + '<p><strong>Command:</strong> <code>' + safe(result.command) + '</code></p>'
+    + (result.audit_path ? '<p><strong>Audit:</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')
+    + (result.stdout ? '<h3>stdout</h3><pre>' + safe(result.stdout) + '</pre>' : '')
+    + (result.stderr ? '<h3>stderr</h3><pre>' + safe(result.stderr) + '</pre>' : '');
+}
+async function submitSetting(settingId, mode, value, confirmation) {
+  const response = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
+    body: JSON.stringify({ setting_id: settingId, mode, value, confirmation })
+  });
+  const result = await response.json();
+  renderSettingResult(result);
+}
+function renderSettingsEditor(payload) {
+  if (!payload.enabled) {
+    settingsEditorNode.innerHTML = '<h3>Guarded editor</h3><p class="empty">Setting edits are disabled. Restart with <code>garda ui --actions</code> to enable audited workflow commands.</p>';
+    return;
+  }
+  if (!payload.settings || payload.settings.length === 0) {
+    settingsEditorNode.innerHTML = '<h3>Guarded editor</h3><p class="empty">No editable safe settings available.</p>';
+    return;
+  }
+  settingsEditorNode.innerHTML = '<h3>Guarded editor</h3><div class="action-grid">' + payload.settings.map(setting => '<div class="action-item"><h3>' + safe(setting.label) + '</h3><p>' + safe(setting.description) + '</p><p><code>' + safe(setting.key) + '</code></p><p>Current: <code>' + safe(JSON.stringify(setting.current_value)) + '</code></p><input id="setting-input-' + safe(setting.id) + '" type="number" min="' + safe(setting.min) + '" max="' + safe(setting.max) + '" value="' + safe(setting.current_value) + '"><div class="action-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-mode="preview">Preview</button><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-mode="execute">Apply</button></div></div>').join('') + '</div>';
+  for (const button of settingsEditorNode.querySelectorAll('button[data-setting-id]')) {
+    button.addEventListener('click', () => {
+      const setting = payload.settings.find(item => item.id === button.dataset.settingId);
+      const mode = button.dataset.settingMode;
+      const input = document.getElementById('setting-input-' + button.dataset.settingId);
+      const confirmation = mode === 'execute' && setting
+        ? window.prompt('Type "' + setting.confirmation_phrase + '" to apply this setting:')
+        : null;
+      if (mode === 'execute' && confirmation === null) {
+        return;
+      }
+      submitSetting(button.dataset.settingId, mode, input ? input.value : '', confirmation);
+    });
+  }
 }
 function renderInstructions(report) {
   const entries = report.instructions_tab.entries || [];
@@ -789,6 +1089,9 @@ fetch('/api/report').then(response => response.json()).then(renderTasks).catch(e
 fetch('/api/actions').then(response => response.json()).then(renderActions).catch(error => {
   actionsNode.innerHTML = '<p class="error">' + safe(error && error.message ? error.message : error) + '</p>';
 });
+fetch('/api/settings').then(response => response.json()).then(renderSettingsEditor).catch(error => {
+  settingsEditorNode.innerHTML = '<p class="error">' + safe(error && error.message ? error.message : error) + '</p>';
+});
 </script>
 </body>
 </html>`;
@@ -818,6 +1121,12 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
             });
             return;
         }
+        if (request.method === 'POST' && pathname === '/api/settings') {
+            handleUiSettingRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_setting_request');
+            });
+            return;
+        }
         if (request.method !== 'GET') {
             if (pathname.startsWith('/api/')) {
                 sendApiError(response, 405, 'Only GET is supported.', 'method_not_allowed');
@@ -841,6 +1150,13 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
             sendJson(response, 200, {
                 enabled: options.actionsEnabled,
                 actions
+            });
+            return;
+        }
+        if (pathname === '/api/settings') {
+            sendJson(response, 200, {
+                enabled: options.actionsEnabled,
+                settings: buildUiSettingDefinitions(resolvedRepoRoot)
             });
             return;
         }

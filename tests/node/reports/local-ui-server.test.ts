@@ -75,14 +75,23 @@ class FakeElement {
     }
 
     querySelectorAll(selector: string): FakeElement[] {
-        if (selector !== 'button[data-task-id]' && selector !== 'button[data-action-id]') {
+        if (selector !== 'button[data-task-id]' && selector !== 'button[data-action-id]' && selector !== 'button[data-setting-id]') {
             return [];
         }
         if (this.buttonCacheHtml !== this.innerHTML) {
             this.buttonCacheHtml = this.innerHTML;
-            const attributeName = selector === 'button[data-task-id]' ? 'task-id' : 'action-id';
-            const dataKey = selector === 'button[data-task-id]' ? 'taskId' : 'actionId';
+            const attributeName = selector === 'button[data-task-id]'
+                ? 'task-id'
+                : selector === 'button[data-action-id]'
+                    ? 'action-id'
+                    : 'setting-id';
+            const dataKey = selector === 'button[data-task-id]'
+                ? 'taskId'
+                : selector === 'button[data-action-id]'
+                    ? 'actionId'
+                    : 'settingId';
             const modePattern = /data-action-mode="([^"]+)"/u;
+            const settingModePattern = /data-setting-mode="([^"]+)"/u;
             this.buttonCache = Array.from(this.innerHTML.matchAll(new RegExp(`data-${attributeName}="([^"]+)"`, 'gu')), (match) => {
                 const button = new FakeElement(`button-${match[1]}`);
                 button.dataset[dataKey] = match[1];
@@ -90,6 +99,10 @@ class FakeElement {
                 const modeMatch = buttonHtml.match(modePattern);
                 if (modeMatch) {
                     button.dataset.actionMode = modeMatch[1];
+                }
+                const settingModeMatch = buttonHtml.match(settingModePattern);
+                if (settingModeMatch) {
+                    button.dataset.settingMode = settingModeMatch[1];
                 }
                 return button;
             });
@@ -111,6 +124,7 @@ function createFakeDocument(): {
         'warnings',
         'overview',
         'workflow',
+        'settings-editor',
         'instructions',
         'actions',
         'action-status',
@@ -272,6 +286,7 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /id="status-filter"/u);
         assert.match(html, /id="priority-filter"/u);
         assert.match(html, /id="actions"/u);
+        assert.match(html, /id="settings-editor"/u);
         assert.match(html, /Gate Timeline/u);
         assert.match(html, /Artifacts/u);
     } finally {
@@ -379,6 +394,21 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 }
             ]
         };
+        const settings = {
+            enabled: true,
+            settings: [
+                {
+                    id: 'full-suite-green-summary-max-lines',
+                    key: 'full_suite_validation.green_summary_max_lines',
+                    label: 'Full-suite green summary lines',
+                    description: 'Tune green output',
+                    current_value: 5,
+                    min: 1,
+                    max: 200,
+                    confirmation_phrase: 'APPLY GARDA SETTING'
+                }
+            ]
+        };
 
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
@@ -394,6 +424,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     }
                     if (url === '/api/actions') {
                         return actions;
+                    }
+                    if (url === '/api/settings') {
+                        return settings;
                     }
                     return detail;
                 }
@@ -433,6 +466,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements['workflow-tab'].hidden, false);
         assert.equal(fakeDocument.elements['task-detail-panel'].hidden, false);
         assert.match(fakeDocument.elements.workflow.innerHTML, /full_suite_validation\.enabled/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-green-summary-max-lines/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
         assert.match(fakeDocument.elements.actions.innerHTML, /node bin\/garda\.js status/u);
 
@@ -504,6 +538,116 @@ test('local UI actions are disabled unless explicitly enabled', async () => {
         });
         assert.equal(runResponse.status, 403);
         assert.equal((await runResponse.json() as { code: string }).code, 'actions_disabled');
+
+        const settingsResponse = await fetch(`${server.url}api/settings`);
+        assert.equal(settingsResponse.status, 200);
+        const settings = await settingsResponse.json() as { enabled: boolean; settings: Array<{ id: string }> };
+        assert.equal(settings.enabled, false);
+        assert.ok(settings.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
+
+        const settingRunResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ setting_id: 'full-suite-green-summary-max-lines', mode: 'preview', value: 7 })
+        });
+        assert.equal(settingRunResponse.status, 403);
+        assert.equal((await settingRunResponse.json() as { code: string }).code, 'settings_disabled');
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI settings use guarded workflow commands with preview confirmation and audit', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const executedCommands: string[] = [];
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => {
+            executedCommands.push(action.command.display);
+            return {
+                exit_code: 0,
+                signal: null,
+                stdout: 'updated',
+                stderr: ''
+            };
+        }
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const actionHeaders = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+        const listResponse = await fetch(`${server.url}api/settings`);
+        assert.equal(listResponse.status, 200);
+        const list = await listResponse.json() as {
+            enabled: boolean;
+            settings: Array<{ id: string; key: string; current_value: unknown }>;
+        };
+        assert.equal(list.enabled, true);
+        assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
+        assert.ok(!list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
+
+        const invalidResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'full-suite-green-summary-max-lines', mode: 'preview', value: 0 })
+        });
+        assert.equal(invalidResponse.status, 400);
+        assert.equal((await invalidResponse.json() as { code: string }).code, 'invalid_setting_value');
+
+        const previewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'full-suite-green-summary-max-lines', mode: 'preview', value: 7 })
+        });
+        assert.equal(previewResponse.status, 200);
+        const preview = await previewResponse.json() as {
+            status: string;
+            key: string;
+            proposed_value: number;
+            command: string;
+            changed_keys: string[];
+            confirmation_phrase: string;
+        };
+        assert.equal(preview.status, 'previewed');
+        assert.equal(preview.key, 'full_suite_validation.green_summary_max_lines');
+        assert.equal(preview.proposed_value, 7);
+        assert.deepEqual(preview.changed_keys, ['full_suite_validation.green_summary_max_lines']);
+        assert.match(preview.command, /workflow set --full-suite-green-summary-max-lines 7/u);
+        assert.match(preview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
+        assert.doesNotMatch(preview.command, /workflow-config\.json/u);
+        assert.equal(preview.confirmation_phrase, 'APPLY GARDA SETTING');
+        assert.deepEqual(executedCommands, []);
+
+        const blockedResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'full-suite-green-summary-max-lines', mode: 'execute', value: 7, confirmation: 'wrong' })
+        });
+        assert.equal(blockedResponse.status, 409);
+        assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
+        assert.deepEqual(executedCommands, []);
+
+        const executeResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'full-suite-green-summary-max-lines', mode: 'execute', value: 7, confirmation: 'APPLY GARDA SETTING' })
+        });
+        assert.equal(executeResponse.status, 200);
+        const execute = await executeResponse.json() as { status: string; stdout: string; audit_path: string };
+        assert.equal(execute.status, 'executed');
+        assert.equal(execute.stdout, 'updated');
+        assert.equal(executedCommands.length, 1);
+        assert.match(executedCommands[0], /workflow set --full-suite-green-summary-max-lines 7/u);
+        const auditLines = fs.readFileSync(execute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.ok(auditLines.length >= 3);
+        assert.match(auditLines[auditLines.length - 1], /"action_id":"setting:full-suite-green-summary-max-lines"/u);
+        assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);
     } finally {
         await server.close();
     }
@@ -630,6 +774,66 @@ test('local UI actions reject cross-origin missing-token and non-json posts', as
         assert.equal((await crossOrigin.json() as { code: string }).code, 'action_boundary_rejected');
 
         const nonJson = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'text/plain',
+                'origin': server.url.slice(0, -1),
+                'x-garda-action-token': actionToken
+            },
+            body
+        });
+        assert.equal(nonJson.status, 403);
+        assert.equal((await nonJson.json() as { code: string }).code, 'action_boundary_rejected');
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI settings reject cross-origin missing-token and non-json posts', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async () => ({
+            exit_code: 0,
+            signal: null,
+            stdout: 'unexpected',
+            stderr: ''
+        })
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const body = JSON.stringify({
+            setting_id: 'full-suite-green-summary-max-lines',
+            mode: 'preview',
+            value: 7
+        });
+        const missingToken = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': server.url.slice(0, -1)
+            },
+            body
+        });
+        assert.equal(missingToken.status, 403);
+        assert.equal((await missingToken.json() as { code: string }).code, 'action_boundary_rejected');
+
+        const crossOrigin = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': 'http://example.test',
+                'x-garda-action-token': actionToken
+            },
+            body
+        });
+        assert.equal(crossOrigin.status, 403);
+        assert.equal((await crossOrigin.json() as { code: string }).code, 'action_boundary_rejected');
+
+        const nonJson = await fetch(`${server.url}api/settings`, {
             method: 'POST',
             headers: {
                 'content-type': 'text/plain',
