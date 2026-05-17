@@ -71,6 +71,7 @@ import { getProviderEntryById } from '../../../core/provider-registry';
 import {
     extractMarkdownSectionLines,
     getCanonicalReviewSectionHeading,
+    getMarkdownMeaningfulEntries,
     getReviewArtifactFindingsEvidence,
     isTrivialReview,
     normalizeCanonicalReviewSectionHeadings
@@ -633,7 +634,10 @@ function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerd
     return [
         'Minimal compliant PASS review template for a no-findings review (structure only; substantive analysis is still required):',
         `# ${getReviewHeading(reviewType)}`,
-        'Validated the relevant files with concrete scope notes, file references, and enough detail to exceed the trivial-review filter.',
+        '',
+        '## Validation Notes',
+        'Validated the relevant files with concrete scope notes, file references, behavior boundaries, and verification evidence.',
+        '',
         '## Findings by Severity',
         'none',
         '## Deferred Findings',
@@ -648,11 +652,44 @@ function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerd
 
 type ReviewFindingsEvidence = ReturnType<typeof getReviewArtifactFindingsEvidence>;
 
+function getPassValidationNotesViolations(options: {
+    artifactPath: string;
+    reviewContent: string;
+    verdictToken: string;
+    expectedPassVerdict: string;
+    requirePassValidationNotes: boolean;
+}): string[] {
+    if (!options.requirePassValidationNotes || options.verdictToken !== options.expectedPassVerdict) {
+        return [];
+    }
+    const normalizedArtifactPath = normalizePath(options.artifactPath);
+    const lines = String(options.reviewContent || '').split('\n');
+    const validationLines = extractMarkdownSectionLines(lines, 'Validation Notes');
+    if (validationLines.length === 0) {
+        return [
+            `Review artifact '${normalizedArtifactPath}' is missing required PASS section '## Validation Notes'. ` +
+            'Fill it with concrete reviewed files, behavior, boundaries, and verification evidence.'
+        ];
+    }
+    const entries = getMarkdownMeaningfulEntries(validationLines);
+    const joinedEntries = entries.join(' ').trim();
+    const hasConcreteReference = /`[^`]+`/.test(joinedEntries)
+        || /\b[A-Za-z0-9_./-]+\.[A-Za-z0-9]+(?::\d+)?\b/.test(joinedEntries);
+    if (entries.length === 0 || joinedEntries.length < 80 || !hasConcreteReference) {
+        return [
+            `Review artifact '${normalizedArtifactPath}' has empty or non-substantive PASS validation notes. ` +
+            'The `## Validation Notes` section must name concrete reviewed files and summarize checked behavior, boundaries, or verification evidence.'
+        ];
+    }
+    return [];
+}
+
 function analyzeEarlyReviewMaterialization(options: {
     artifactPath: string;
     reviewContent: string;
     verdictToken: string;
     expectedPassVerdict: string;
+    requirePassValidationNotes: boolean;
 }): { violations: string[]; findingsEvidence: ReviewFindingsEvidence } {
     const { artifactPath, reviewContent, verdictToken, expectedPassVerdict } = options;
     const violations: string[] = [];
@@ -663,6 +700,7 @@ function analyzeEarlyReviewMaterialization(options: {
             'Meaningful review artifacts must include implementation details and carry at least 100 characters of content.'
         );
     }
+    violations.push(...getPassValidationNotesViolations(options));
 
     const findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, reviewContent);
     const requireCleanPassArtifact = verdictToken === expectedPassVerdict;
@@ -696,6 +734,26 @@ function analyzeEarlyReviewMaterialization(options: {
         violations,
         findingsEvidence
     };
+}
+
+function reviewContextRequiresPassValidationNotes(contextPath: string, repoRoot: string): boolean {
+    const reviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    const handoff = reviewContext.reviewer_handoff && typeof reviewContext.reviewer_handoff === 'object' && !Array.isArray(reviewContext.reviewer_handoff)
+        ? reviewContext.reviewer_handoff as Record<string, unknown>
+        : null;
+    if (!handoff) {
+        return false;
+    }
+    const outputTemplateBinding = resolveReviewerHandoffArtifactBinding({
+        repoRoot,
+        contextPath,
+        reviewContext,
+        gateName: 'record-review-result',
+        handoffKey: 'output_template',
+        artifactLabel: 'reviewer output template'
+    });
+    const outputTemplateText = fs.readFileSync(outputTemplateBinding.artifactPath, 'utf8');
+    return outputTemplateText.includes('## Validation Notes');
 }
 
 function hasMarkdownHeading(reviewContent: string, heading: string): boolean {
@@ -1010,6 +1068,14 @@ function buildLosslessPassReviewNormalization(options: {
         normalizedLines.push('');
     }
     appendPreservedRawReviewerOutput(normalizedLines, reviewContent);
+    const validationNotesLines = extractMarkdownSectionLines(String(reviewContent || '').split('\n'), 'Validation Notes');
+    if (validationNotesLines.length > 0) {
+        normalizedLines.push('## Validation Notes');
+        normalizedLines.push(...validationNotesLines);
+        if (normalizedLines[normalizedLines.length - 1]?.trim().length !== 0) {
+            normalizedLines.push('');
+        }
+    }
     normalizedLines.push('## Findings by Severity');
     normalizedLines.push('none');
     normalizedLines.push('');
@@ -1205,6 +1271,35 @@ function assertExplicitReviewContextRuntimeIdentity(options: {
         );
     }
     return runtimeIdentity;
+}
+
+function assertReviewContextRuntimeIdentityMetadataPresent(options: {
+    reviewType: string;
+    contextPath: string;
+    reviewContext: Record<string, unknown> | null;
+    reviewerRouting: Record<string, unknown> | null;
+}): void {
+    if (!options.reviewerRouting) {
+        return;
+    }
+    const handoff = options.reviewContext?.reviewer_handoff;
+    if (!handoff || typeof handoff !== 'object' || Array.isArray(handoff)) {
+        return;
+    }
+    const routing = options.reviewerRouting;
+    const violations: string[] = [];
+    if (routing.canonical_source_of_truth == null || String(routing.canonical_source_of_truth).trim() === '') {
+        violations.push(`Review '${options.reviewType}' review-context is missing canonical_source_of_truth in ${normalizePath(options.contextPath)}.`);
+    }
+    if (routing.execution_provider == null || String(routing.execution_provider).trim() === '') {
+        violations.push(`Review '${options.reviewType}' review-context is missing execution_provider in ${normalizePath(options.contextPath)}.`);
+    }
+    if (routing.identity_status == null || String(routing.identity_status).trim() === '') {
+        violations.push(`Review '${options.reviewType}' review-context is missing identity_status in ${normalizePath(options.contextPath)}.`);
+    }
+    if (violations.length > 0) {
+        throw new Error(violations.join(' '));
+    }
 }
 
 function matchesRoutingEvent(
@@ -3188,11 +3283,61 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.`
         );
     }
+    const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
+        options,
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
+    );
+    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const preflightSha256 = fileSha256(preflightPath);
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    assertReviewContextContractOrThrow({
+        taskId,
+        reviewType,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        preflightPath,
+        preflightSha256,
+        preflightPayload,
+        requireStrictBindingMetadata: !!options.reviewContextPath
+    });
+    const currentRouting = parsedReviewContext.reviewer_routing
+        && typeof parsedReviewContext.reviewer_routing === 'object'
+        && !Array.isArray(parsedReviewContext.reviewer_routing)
+        ? parsedReviewContext.reviewer_routing as Record<string, unknown>
+        : null;
+    assertReviewContextRuntimeIdentityMetadataPresent({
+        reviewType,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        reviewerRouting: currentRouting
+    });
+    if (reviewType === 'test') {
+        assertRequiredUpstreamReviewDependencies({
+            taskId,
+            preflightPath,
+            preflightPayload,
+            reviewType,
+            timelineEvents: readDependencyTimelineEvents(timelinePath),
+            taskModePath: String(options.taskModePath || '').trim()
+        });
+    }
+    if (parsedReviewContext.tree_state != null) {
+        assertReviewTreeStateFresh({
+            repoRoot,
+            reviewContext: parsedReviewContext,
+            contextPath,
+            gateName: 'record-review-result'
+        });
+    }
+
+    const requirePassValidationNotes = reviewContextRequiresPassValidationNotes(contextPath, repoRoot);
     const materializationAnalysis = analyzeEarlyReviewMaterialization({
         artifactPath,
         reviewContent,
         verdictToken,
-        expectedPassVerdict
+        expectedPassVerdict,
+        requirePassValidationNotes
     });
     const normalizedHeadings = normalizeCanonicalReviewSectionHeadings(reviewContent);
     if (normalizedHeadings.changed) {
@@ -3200,7 +3345,8 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             artifactPath,
             reviewContent: normalizedHeadings.content,
             verdictToken,
-            expectedPassVerdict
+            expectedPassVerdict,
+            requirePassValidationNotes
         });
         if (normalizedHeadingAnalysis.violations.length <= materializationAnalysis.violations.length) {
             reviewContent = normalizedHeadings.content;
@@ -3221,7 +3367,8 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
                 artifactPath,
                 reviewContent: normalizedPassReviewContent,
                 verdictToken,
-                expectedPassVerdict
+                expectedPassVerdict,
+                requirePassValidationNotes
             });
             const preservedBlockingViolations = materializationAnalysis.violations.filter(
                 (violation) => !isLosslessPassNormalizationEligibleViolation(violation)
@@ -3248,33 +3395,16 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             (passTemplateHint ? `\n\n${passTemplateHint}` : '')
         );
     }
-
-    const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
-        options,
-        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
-    );
-    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-    const preflightSha256 = fileSha256(preflightPath);
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
-    assertRequiredUpstreamReviewDependencies({
-        taskId,
-        preflightPath,
-        preflightPayload,
-        reviewType,
-        timelineEvents: readDependencyTimelineEvents(timelinePath),
-        taskModePath: String(options.taskModePath || '').trim()
-    });
-    const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
-    assertReviewContextContractOrThrow({
-        taskId,
-        reviewType,
-        contextPath,
-        reviewContext: parsedReviewContext,
-        preflightPath,
-        preflightSha256,
-        preflightPayload,
-        requireStrictBindingMetadata: !!options.reviewContextPath
-    });
+    if (reviewType !== 'test') {
+        assertRequiredUpstreamReviewDependencies({
+            taskId,
+            preflightPath,
+            preflightPayload,
+            reviewType,
+            timelineEvents: readDependencyTimelineEvents(timelinePath),
+            taskModePath: String(options.taskModePath || '').trim()
+        });
+    }
     assertReviewTreeStateFresh({
         repoRoot,
         reviewContext: parsedReviewContext,
@@ -3287,11 +3417,6 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         reviewContext: parsedReviewContext,
         gateName: 'record-review-result'
     });
-    const currentRouting = parsedReviewContext.reviewer_routing
-        && typeof parsedReviewContext.reviewer_routing === 'object'
-        && !Array.isArray(parsedReviewContext.reviewer_routing)
-        ? parsedReviewContext.reviewer_routing as Record<string, unknown>
-        : null;
     const runtimeIdentity = assertExplicitReviewContextRuntimeIdentity({
         repoRoot,
         taskId,

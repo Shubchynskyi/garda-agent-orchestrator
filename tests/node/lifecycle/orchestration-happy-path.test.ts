@@ -471,6 +471,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         writeTextFile(reviewOutputPath, [
             '# Test Review',
             '',
+            '## Validation Notes',
             'Validated `tests/app.test.ts`, `scripts/full-suite-check.cjs`, the generated test review context, and the current full-suite validation artifact for this task. The changed test file adds the completed-path assertion that the full-suite script explicitly checks, so the test-only scope is represented in both the diff and the repository-wide validation evidence. The review context, launch metadata, invocation telemetry, and preflight binding all match the same task cycle.',
             '',
             '## Findings by Severity',

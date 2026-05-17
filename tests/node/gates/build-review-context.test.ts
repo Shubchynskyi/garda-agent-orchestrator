@@ -1320,7 +1320,9 @@ describe('gates/build-review-context', () => {
             assert.ok(String(result.reviewer_routing.opaque_handoff_instruction || '').includes('Do not open or summarize'));
             assert.ok(promptArtifact.includes('## Reviewer Output Contract'));
             assert.ok(promptArtifact.includes('Return a canonical code review report using exactly this section order and heading text'));
-            assert.ok(promptArtifact.includes('```markdown\n## Findings by Severity'));
+            assert.ok(promptArtifact.includes('```markdown\n## Validation Notes'));
+            assert.ok(promptArtifact.includes('<concrete reviewed files, behavior, boundaries, and verification notes; required for PASS>'));
+            assert.ok(promptArtifact.includes('## Findings by Severity'));
             assert.ok(promptArtifact.includes('## Deferred Findings'));
             assert.ok(promptArtifact.includes('## Residual Risks'));
             assert.ok(promptArtifact.includes('## Verdict'));
@@ -1328,7 +1330,7 @@ describe('gates/build-review-context', () => {
             assert.ok(promptArtifact.includes('FAIL verdict line must be exactly: `REVIEW FAILED`'));
             assert.ok(promptArtifact.includes('1-3 concise sentences naming the reviewed files and behavior checked'));
             assert.ok(promptArtifact.includes('Do not return only headings, `none`, and a PASS verdict'));
-            assert.ok(promptArtifact.includes('record-review-result rejects trivial or obviously synthetic reports'));
+            assert.ok(promptArtifact.includes('record-review-result rejects missing, empty, trivial, or obviously synthetic PASS reports'));
             assert.ok(promptArtifact.includes('Validation-boundary notes, command logs, positive inspection summaries, and speculative performance or environment hypotheticals are not findings'));
             assert.ok(promptArtifact.includes('will not infer strict follow-up obligations from `Residual Risks`, command logs, validation-boundary notes, or positive summaries'));
             assert.ok(promptArtifact.includes('separate `## Commands Run` section after `## Verdict`'));
@@ -1352,6 +1354,9 @@ describe('gates/build-review-context', () => {
                 '# code review Output Template',
                 '',
                 'Fill this template without changing section headings, section order, or verdict tokens.',
+                '',
+                '## Validation Notes',
+                '<concrete reviewed files, behavior, boundaries, and verification notes; required for PASS>',
                 '',
                 '## Findings by Severity',
                 '<Critical/High/Medium/Low findings, or none>',
@@ -1438,6 +1443,8 @@ describe('gates/build-review-context', () => {
                 assert.ok(promptArtifact.includes(`Return a canonical ${reviewType} review report using exactly this section order and heading text`));
                 assert.ok(promptArtifact.includes(`PASS verdict line must be exactly: \`${passToken}\``));
                 assert.ok(promptArtifact.includes(`FAIL verdict line must be exactly: \`${passToken.replace(/\bPASSED\b/g, 'FAILED')}\``));
+                assert.ok(promptArtifact.includes('## Validation Notes'));
+                assert.ok(promptArtifact.includes('`Validation Notes` is mandatory for PASS reviews'));
                 assert.ok(promptArtifact.includes('Deferred Findings` is only for explicit actionable accepted follow-ups'));
                 assert.ok(promptArtifact.includes('will not infer strict follow-up obligations from `Residual Risks`, command logs, validation-boundary notes, or positive summaries'));
                 assert.ok(promptArtifact.includes('never put command headings or command bullets under `Deferred Findings` or `Residual Risks`'));
@@ -1446,9 +1453,11 @@ describe('gates/build-review-context', () => {
                 assert.ok(promptTemplateArtifact.includes(`# ${reviewType} review Prompt Template`));
                 assert.ok(promptTemplateArtifact.includes(`PASS verdict token: ${passToken}`));
                 assert.ok(promptTemplateArtifact.includes(`FAIL verdict token: ${passToken.replace(/\bPASSED\b/g, 'FAILED')}`));
+                assert.ok(promptTemplateArtifact.includes('A PASS review must fill `## Validation Notes`'));
                 assert.equal(result.reviewer_handoff.prompt_template.artifact_sha256, sha256Text(promptTemplateArtifact));
                 assert.equal(fs.existsSync(result.reviewer_handoff.output_template.artifact_path), true);
                 const templateArtifact = fs.readFileSync(result.reviewer_handoff.output_template.artifact_path, 'utf8');
+                assert.ok(templateArtifact.includes('## Validation Notes'));
                 assert.ok(templateArtifact.includes(`## Verdict\n<${passToken} or ${passToken.replace(/\bPASSED\b/g, 'FAILED')}>`));
                 assert.equal(result.reviewer_handoff.output_template.artifact_sha256, sha256Text(templateArtifact));
                 assert.equal(fs.existsSync(result.reviewer_handoff.evidence_manifest.artifact_path), true);

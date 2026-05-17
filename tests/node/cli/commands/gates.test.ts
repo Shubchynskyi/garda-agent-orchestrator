@@ -4185,6 +4185,9 @@ describe('cli/commands/gates', () => {
             '',
             'Validated the staged review snapshot and current reviewer launch telemetry for `src/app.ts` after the delegated reviewer finished.',
             '',
+            '## Validation Notes',
+            'Reviewed `src/app.ts` against the staged review snapshot, current reviewer launch telemetry, and stale working-tree boundary so the result ingestion path can reach tree-state validation.',
+            '',
             '## Findings by Severity',
             'none',
             '',
@@ -4411,6 +4414,9 @@ describe('cli/commands/gates', () => {
             '',
             'Validated the reviewer prompt binding path, the invocation telemetry dependency, and the review context rule_context artifact hash before writing the final review artifact for src/app.ts. This content is intentionally specific enough to pass the review materialization guard so the test reaches the prompt freshness check.',
             '',
+            '## Validation Notes',
+            'Reviewed `src/app.ts`, the reviewer prompt binding path, invocation telemetry dependency, and review-context artifact hash so this fixture reaches the prompt freshness guard.',
+            '',
             '## Findings by Severity',
             'none',
             '',
@@ -4514,6 +4520,9 @@ describe('cli/commands/gates', () => {
             '# Review',
             '',
             'Validated reviewer prompt binding, receipt provenance, and required review gate enforcement for `src/app.ts` before intentionally mutating the prompt artifact after receipt recording.',
+            '',
+            '## Validation Notes',
+            'Reviewed `src/app.ts`, reviewer prompt binding, receipt provenance, and required-review gate enforcement before mutating the prompt artifact after receipt recording.',
             '',
             '## Findings by Severity',
             'none',
@@ -4631,6 +4640,9 @@ describe('cli/commands/gates', () => {
             '# Review',
             '',
             'Validated the staged review snapshot and current required-review receipt binding for `src/app.ts` before any later workspace drift occurs.',
+            '',
+            '## Validation Notes',
+            'Reviewed `src/app.ts`, the staged review snapshot, and current required-review receipt binding before later same-path working-tree drift is introduced.',
             '',
             '## Findings by Severity',
             'none',
@@ -8006,6 +8018,212 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result materializes no-findings PASS output with substantive validation notes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-validation-notes-pass';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            '## Validation Notes',
+            'Reviewed `src/app.ts`, the prompt-bound review context, delegated invocation telemetry, and no-findings PASS materialization path. The implementation behavior, review boundaries, and receipt persistence were checked against the generated output template.',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Deferred Findings',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), true);
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), true);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects headings-only PASS output with empty validation notes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-validation-notes-empty';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            '## Validation Notes',
+            'none',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Deferred Findings',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(result.errors.some((line) => line.includes('empty or non-substantive PASS validation notes')), result.errors.join('\n'));
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result fails closed when bound output template is stale before PASS notes policy resolution', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-validation-notes-template-stale';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        fs.writeFileSync(fixture.outputTemplatePath, '# tampered output template\n', 'utf8');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Deferred Findings',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(result.errors.some((line) => line.includes('reviewer output template artifact is stale')), result.errors.join('\n'));
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result fails closed when output template binding is missing before PASS notes policy resolution', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-validation-notes-template-missing';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath: fixture.reviewContextPath,
+            reviewerIdentity: fixture.reviewerIdentity
+        });
+        const reviewContext = JSON.parse(fs.readFileSync(fixture.reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const reviewerHandoff = reviewContext.reviewer_handoff as Record<string, unknown>;
+        delete reviewerHandoff.output_template;
+        fs.writeFileSync(fixture.reviewContextPath, `${JSON.stringify(reviewContext, null, 2)}\n`, 'utf8');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            '## Findings by Severity',
+            'none',
+            '',
+            '## Deferred Findings',
+            'none',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW PASSED'
+        ].join('\n'), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', fixture.preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.ok(result.errors.some((line) => line.includes('reviewer_handoff.output_template.artifact_path')), result.errors.join('\n'));
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+        assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result keeps trivial pass review blocked when lossless normalization would otherwise add deferred follow-up', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-trivial-pass-findings';
@@ -10653,12 +10871,15 @@ describe('cli/commands/gates', () => {
             codeReviewBuildExitCode = Number(process.exitCode ?? 0);
 
             fs.writeFileSync(codeReviewOutputPath, [
-                '# Review',
-                '',
-                'Validated `src/gates/completion.ts` and `src/cli/commands/gate-build-handlers.ts`, confirming that current-cycle upstream review evidence is present before downstream test review preparation is allowed to continue.',
-                '',
-                '## Findings by Severity',
-                'none',
+            '# Review',
+            '',
+            'Validated `src/gates/completion.ts` and `src/cli/commands/gate-build-handlers.ts`, confirming that current-cycle upstream review evidence is present before downstream test review preparation is allowed to continue.',
+            '',
+            '## Validation Notes',
+            'Reviewed `src/gates/completion.ts` and `src/cli/commands/gate-build-handlers.ts` for current-cycle upstream review evidence before downstream test review preparation is allowed.',
+            '',
+            '## Findings by Severity',
+            'none',
                 '',
                 '## Residual Risks',
                 'none',
@@ -11136,12 +11357,15 @@ describe('cli/commands/gates', () => {
             codeReviewBuildExitCode = Number(process.exitCode ?? 0);
 
             fs.writeFileSync(codeReviewOutputPath, [
-                '# Review',
-                '',
-                'Validated `src/cli/commands/gate-build-handlers.ts`, `src/gates/review-dependencies.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that current-cycle upstream review readiness now follows recorded review-context paths and that downstream sequencing is enforced consistently across both preparation and materialization gates.',
-                '',
-                '## Findings by Severity',
-                'none',
+            '# Review',
+            '',
+            'Validated `src/cli/commands/gate-build-handlers.ts`, `src/gates/review-dependencies.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that current-cycle upstream review readiness now follows recorded review-context paths and that downstream sequencing is enforced consistently across both preparation and materialization gates.',
+            '',
+            '## Validation Notes',
+            'Reviewed `src/cli/commands/gate-build-handlers.ts`, `src/gates/review-dependencies.ts`, and `src/cli/commands/gate-review-handlers.ts` for recorded custom review-context path sequencing across preparation and materialization gates.',
+            '',
+            '## Findings by Severity',
+            'none',
                 '',
                 '## Residual Risks',
                 'none',
@@ -11195,12 +11419,15 @@ describe('cli/commands/gates', () => {
             testReviewBuildExitCode = Number(process.exitCode ?? 0);
 
             fs.writeFileSync(testReviewOutputPath, [
-                '# Review',
-                '',
-                'Validated `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates-artifacts.ts`, and `src/gates/completion.ts`, confirming that downstream review validation now follows the recorded custom code review-context path through materialization, review-gate verification, and completion-gate consumption.',
-                '',
-                '## Findings by Severity',
-                'none',
+            '# Review',
+            '',
+            'Validated `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates-artifacts.ts`, and `src/gates/completion.ts`, confirming that downstream review validation now follows the recorded custom code review-context path through materialization, review-gate verification, and completion-gate consumption.',
+            '',
+            '## Validation Notes',
+            'Reviewed `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates-artifacts.ts`, and `src/gates/completion.ts` for downstream validation through the recorded custom code review-context path.',
+            '',
+            '## Findings by Severity',
+            'none',
                 '',
                 '## Residual Risks',
                 'none',
@@ -11359,12 +11586,15 @@ describe('cli/commands/gates', () => {
             buildExitCode = Number(process.exitCode ?? 0);
 
             fs.writeFileSync(reviewOutputPath, [
-                '# Review',
-                '',
-                'Validated `src/cli/commands/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts`, confirming that review gates now resolve the canonical review-context artifact deterministically and ignore stale legacy default siblings.',
-                '',
-                '## Findings by Severity',
-                'none',
+            '# Review',
+            '',
+            'Validated `src/cli/commands/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts`, confirming that review gates now resolve the canonical review-context artifact deterministically and ignore stale legacy default siblings.',
+            '',
+            '## Validation Notes',
+            'Reviewed `src/cli/commands/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts` for canonical review-context resolution and stale legacy sibling rejection.',
+            '',
+            '## Findings by Severity',
+            'none',
                 '',
                 '## Residual Risks',
                 'none',
@@ -11546,6 +11776,9 @@ describe('cli/commands/gates', () => {
                 '# Review',
                 '',
                 'Validated `src/gates/build-review-context.ts`, `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gate-flows/review-flow.ts`, and `src/gates/completion.ts`, confirming that the explicit custom task-mode artifact path remains authoritative through review materialization, review-gate verification, and completion-gate closeout even when a conflicting default task-mode artifact exists.',
+                '',
+                '## Validation Notes',
+                'Reviewed `src/gates/build-review-context.ts`, `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gate-flows/review-flow.ts`, and `src/gates/completion.ts` for explicit custom task-mode path authority across review materialization and closeout.',
                 '',
                 '## Findings by Severity',
                 'none',
@@ -11796,6 +12029,9 @@ describe('cli/commands/gates', () => {
                 '',
                 'Validated `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that upstream code-review evidence remains bound to the explicit custom task-mode artifact path even when a drifted default task-mode artifact exists.',
                 '',
+                '## Validation Notes',
+                'Reviewed `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts` for upstream code-review evidence bound to the explicit custom task-mode artifact path.',
+                '',
                 '## Findings by Severity',
                 'none',
                 '',
@@ -11862,6 +12098,9 @@ describe('cli/commands/gates', () => {
                 '# Review',
                 '',
                 'Validated `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts`, confirming that downstream test-review dependency checks now stay bound to the explicit custom task-mode artifact path instead of falling back to a drifted default task-mode artifact.',
+                '',
+                '## Validation Notes',
+                'Reviewed `src/gates/review-dependencies.ts`, `src/cli/commands/gate-build-handlers.ts`, and `src/cli/commands/gate-review-handlers.ts` for downstream test-review dependency checks bound to the explicit custom task-mode artifact path.',
                 '',
                 '## Findings by Severity',
                 'none',
