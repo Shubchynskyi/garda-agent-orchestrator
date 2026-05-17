@@ -217,11 +217,12 @@ Notes:
 
 ### `garda ui`
 
-Start a foreground read-only localhost UI and print a browser URL.
+Start a foreground localhost UI and print a browser URL.
 
 ```text
 garda ui --target-root "."
 garda ui --target-root "." --port 17340
+garda ui --target-root "." --actions
 ```
 
 Notes:
@@ -229,7 +230,10 @@ Notes:
 - The terminal stays occupied while the UI is running. Stop it with Ctrl+C.
 - The dashboard loads the canonical upper `TASK.md` queue immediately, with overview counters, task search, status/priority filters, workflow config and instructions tabs, and a task detail panel.
 - Per-task details are fetched lazily from read-only local JSON endpoints when the user clicks `Load details`, including gate timeline, blockers, review summary, and artifact links.
-- The UI does not run arbitrary shell commands, mutate task lifecycle state, edit workflow config, or write settings.
+- By default the UI does not run shell commands, mutate task lifecycle state, edit workflow config, or write settings.
+- `--actions` exposes only allow-listed Garda commands from the Actions tab. Action requests support preview mode, require typed confirmation for mutating actions such as `html-report`, and append runtime audit JSONL entries under `garda-agent-orchestrator/runtime/ui-actions/`.
+- Action execution requires the page's per-process request token, exact localhost `Origin`, and JSON content type; cross-origin localhost posts are rejected.
+- The Actions tab does not accept arbitrary shell text; each action maps to a fixed existing Garda command.
 
 ### `garda bootstrap`
 

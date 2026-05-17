@@ -20,12 +20,14 @@ async function captureOutput(action: () => unknown | Promise<unknown>): Promise<
     return captured.join('\n');
 }
 
-test('handleUi prints no-dependency read-only server help', async () => {
+test('handleUi prints no-dependency localhost server help', async () => {
     const text = await captureOutput(() => handleUi(['--help'], PACKAGE_JSON));
 
     assert.match(text, /garda ui/);
     assert.match(text, /127\.0\.0\.1/);
     assert.match(text, /read-only/i);
+    assert.match(text, /--actions/);
+    assert.match(text, /allow-listed/i);
     assert.match(text, /Ctrl\+C/);
 });
 
@@ -33,5 +35,12 @@ test('handleUi rejects invalid explicit port', async () => {
     await assert.rejects(
         () => captureOutput(() => handleUi(['--port', '0'], PACKAGE_JSON)),
         /--port must be an integer from 1 to 65535/
+    );
+});
+
+test('handleUi rejects conflicting read-only and actions flags', async () => {
+    await assert.rejects(
+        () => captureOutput(() => handleUi(['--read-only', '--actions'], PACKAGE_JSON)),
+        /--actions cannot be combined with --read-only/
     );
 });

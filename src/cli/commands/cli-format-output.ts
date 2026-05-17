@@ -600,21 +600,23 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
         ])
     }),
     ui: Object.freeze({
-        summary: 'Start a read-only localhost UI with lazy task-detail loading.',
+        summary: 'Start a localhost UI with lazy task-detail loading and optional allow-listed actions.',
         usage: Object.freeze([
-            `${PRIMARY_CLI_NAME} ui [--target-root PATH] [--port PORT] [--read-only]`,
+            `${PRIMARY_CLI_NAME} ui [--target-root PATH] [--port PORT] [--read-only] [--actions]`,
             `${PRIMARY_CLI_NAME} ui --target-root "."`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} ui`,
             `${PRIMARY_CLI_NAME} ui --target-root "."`,
-            `${PRIMARY_CLI_NAME} ui --port 17340`
+            `${PRIMARY_CLI_NAME} ui --port 17340`,
+            `${PRIMARY_CLI_NAME} ui --actions`
         ]),
         hints: Object.freeze([
             'The UI server binds only to 127.0.0.1 and prints a browser URL.',
             'The process intentionally stays in the foreground; stop it with Ctrl+C.',
             'Task details are loaded on demand through read-only local JSON endpoints.',
-            'No browser command can run shell commands, mutate workflow state, or edit settings.'
+            'By default the browser cannot run commands, mutate workflow state, or edit settings.',
+            '--actions exposes only allow-listed Garda commands with preview, confirmation for mutating actions, and runtime audit events.'
         ])
     }),
     status: Object.freeze({

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added opt-in `garda ui --actions` for allow-listed local UI actions with preview, confirmation for mutating commands, and runtime audit logging
 - expanded `garda ui` into a richer read-only dashboard with overview counters, task search/filter controls, workflow and instructions tabs, and clearer lazy task details
 - added `garda ui` as a no-dependency read-only localhost server that prints a browser URL and loads per-task details lazily on demand
 - made `garda html` return promptly on large runtime histories by rendering the full task list with lazy/skipped deep task details by default, while adding `--max-detailed-tasks N` for explicit heavier snapshots

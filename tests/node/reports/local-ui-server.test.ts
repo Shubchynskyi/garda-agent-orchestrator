@@ -75,14 +75,22 @@ class FakeElement {
     }
 
     querySelectorAll(selector: string): FakeElement[] {
-        if (selector !== 'button[data-task-id]') {
+        if (selector !== 'button[data-task-id]' && selector !== 'button[data-action-id]') {
             return [];
         }
         if (this.buttonCacheHtml !== this.innerHTML) {
             this.buttonCacheHtml = this.innerHTML;
-            this.buttonCache = Array.from(this.innerHTML.matchAll(/data-task-id="([^"]+)"/gu), (match) => {
+            const attributeName = selector === 'button[data-task-id]' ? 'task-id' : 'action-id';
+            const dataKey = selector === 'button[data-task-id]' ? 'taskId' : 'actionId';
+            const modePattern = /data-action-mode="([^"]+)"/u;
+            this.buttonCache = Array.from(this.innerHTML.matchAll(new RegExp(`data-${attributeName}="([^"]+)"`, 'gu')), (match) => {
                 const button = new FakeElement(`button-${match[1]}`);
-                button.dataset.taskId = match[1];
+                button.dataset[dataKey] = match[1];
+                const buttonHtml = this.innerHTML.slice(Math.max(0, match.index || 0), this.innerHTML.indexOf('</button>', match.index || 0));
+                const modeMatch = buttonHtml.match(modePattern);
+                if (modeMatch) {
+                    button.dataset.actionMode = modeMatch[1];
+                }
                 return button;
             });
         }
@@ -104,12 +112,15 @@ function createFakeDocument(): {
         'overview',
         'workflow',
         'instructions',
+        'actions',
+        'action-status',
         'task-search',
         'status-filter',
         'priority-filter',
         'tasks-tab',
         'workflow-tab',
         'instructions-tab',
+        'actions-tab',
         'task-detail-panel'
     ]) {
         elements[id] = new FakeElement(id, id.endsWith('-tab') || id === 'task-detail-panel' ? ['tab'] : []);
@@ -117,7 +128,7 @@ function createFakeDocument(): {
     elements['workflow-tab'].hidden = true;
     elements['instructions-tab'].hidden = true;
 
-    const navButtons = ['tasks-tab', 'workflow-tab', 'instructions-tab'].map((tabId, index) => {
+    const navButtons = ['tasks-tab', 'workflow-tab', 'instructions-tab', 'actions-tab'].map((tabId, index) => {
         const button = new FakeElement(`nav-${tabId}`, index === 0 ? ['active'] : []);
         button.dataset.tab = tabId;
         return button;
@@ -135,6 +146,7 @@ function createFakeDocument(): {
                     elements['tasks-tab'],
                     elements['workflow-tab'],
                     elements['instructions-tab'],
+                    elements['actions-tab'],
                     elements['task-detail-panel']
                 ];
             }
@@ -146,6 +158,12 @@ function createFakeDocument(): {
 function extractDashboardScript(html: string): string {
     const match = html.match(/<script>([\s\S]*)<\/script>/u);
     assert.ok(match, 'expected inline dashboard script');
+    return match[1];
+}
+
+function extractActionToken(html: string): string {
+    const match = html.match(/const actionToken = "([^"]+)";/u);
+    assert.ok(match, 'expected inline action token');
     return match[1];
 }
 
@@ -249,9 +267,11 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /data-tab="tasks-tab"/u);
         assert.match(html, /Workflow Config/u);
         assert.match(html, /Instructions/u);
+        assert.match(html, /Actions/u);
         assert.match(html, /id="task-search"/u);
         assert.match(html, /id="status-filter"/u);
         assert.match(html, /id="priority-filter"/u);
+        assert.match(html, /id="actions"/u);
         assert.match(html, /Gate Timeline/u);
         assert.match(html, /Artifacts/u);
     } finally {
@@ -346,13 +366,37 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 }
             ]
         };
+        const actions = {
+            enabled: true,
+            actions: [
+                {
+                    id: 'status',
+                    label: 'Status',
+                    description: 'Run status',
+                    command: 'node bin/garda.js status --target-root "."',
+                    requires_confirmation: false,
+                    confirmation_phrase: null
+                }
+            ]
+        };
 
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
+            window: {
+                prompt: () => null
+            },
             fetch: async (url: string) => ({
                 ok: true,
                 status: 200,
-                json: async () => url === '/api/report' ? report : detail
+                json: async () => {
+                    if (url === '/api/report') {
+                        return report;
+                    }
+                    if (url === '/api/actions') {
+                        return actions;
+                    }
+                    return detail;
+                }
             })
         });
         await flushPromises();
@@ -390,6 +434,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements['task-detail-panel'].hidden, false);
         assert.match(fakeDocument.elements.workflow.innerHTML, /full_suite_validation\.enabled/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
+        assert.match(fakeDocument.elements.actions.innerHTML, /node bin\/garda\.js status/u);
 
         const taskButton = tasksNode.querySelectorAll('button[data-task-id]')[0];
         await taskButton.dispatch('click');
@@ -435,6 +480,166 @@ test('local UI server returns JSON errors for API method and route failures', as
             error: 'Not found.',
             code: 'not_found'
         });
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI actions are disabled unless explicitly enabled', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0 });
+    try {
+        const listResponse = await fetch(`${server.url}api/actions`);
+        assert.equal(listResponse.status, 200);
+        assert.deepEqual(await listResponse.json(), {
+            enabled: false,
+            actions: []
+        });
+
+        const runResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action_id: 'status', mode: 'preview' })
+        });
+        assert.equal(runResponse.status, 403);
+        assert.equal((await runResponse.json() as { code: string }).code, 'actions_disabled');
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI actions support preview confirmation execution and audit', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const executedCommands: string[] = [];
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => {
+            executedCommands.push(action.command.display);
+            return {
+                exit_code: 0,
+                signal: null,
+                stdout: 'ok',
+                stderr: ''
+            };
+        }
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const actionHeaders = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+        const listResponse = await fetch(`${server.url}api/actions`);
+        assert.equal(listResponse.status, 200);
+        const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; command: string }> };
+        assert.equal(list.enabled, true);
+        assert.ok(list.actions.some((action) => action.id === 'html-report'));
+        assert.ok(list.actions.every((action) => action.command.includes('bin/garda.js')));
+
+        const previewResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'html-report', mode: 'preview' })
+        });
+        assert.equal(previewResponse.status, 200);
+        const preview = await previewResponse.json() as {
+            status: string;
+            command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
+        };
+        assert.equal(preview.status, 'previewed');
+        assert.match(preview.command, /html --target-root/u);
+        assert.equal(preview.requires_confirmation, true);
+        assert.equal(preview.confirmation_phrase, 'RUN GARDA HTML');
+        assert.deepEqual(executedCommands, []);
+
+        const blockedResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'html-report', mode: 'execute', confirmation: 'wrong' })
+        });
+        assert.equal(blockedResponse.status, 409);
+        assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
+        assert.deepEqual(executedCommands, []);
+
+        const executeResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'html-report', mode: 'execute', confirmation: 'RUN GARDA HTML' })
+        });
+        assert.equal(executeResponse.status, 200);
+        const execute = await executeResponse.json() as { status: string; stdout: string; audit_path: string };
+        assert.equal(execute.status, 'executed');
+        assert.equal(execute.stdout, 'ok');
+        assert.equal(executedCommands.length, 1);
+        assert.ok(fs.existsSync(execute.audit_path));
+        const auditLines = fs.readFileSync(execute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.equal(auditLines.length, 3);
+        assert.match(auditLines[0], /"status":"previewed"/u);
+        assert.match(auditLines[1], /"status":"confirmation_required"/u);
+        assert.match(auditLines[2], /"status":"executed"/u);
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI actions reject cross-origin missing-token and non-json posts', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async () => ({
+            exit_code: 0,
+            signal: null,
+            stdout: 'unexpected',
+            stderr: ''
+        })
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const body = JSON.stringify({ action_id: 'status', mode: 'execute' });
+        const missingToken = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': server.url.slice(0, -1)
+            },
+            body
+        });
+        assert.equal(missingToken.status, 403);
+        assert.equal((await missingToken.json() as { code: string }).code, 'action_boundary_rejected');
+
+        const crossOrigin = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': 'http://example.test',
+                'x-garda-action-token': actionToken
+            },
+            body
+        });
+        assert.equal(crossOrigin.status, 403);
+        assert.equal((await crossOrigin.json() as { code: string }).code, 'action_boundary_rejected');
+
+        const nonJson = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'text/plain',
+                'origin': server.url.slice(0, -1),
+                'x-garda-action-token': actionToken
+            },
+            body
+        });
+        assert.equal(nonJson.status, 403);
+        assert.equal((await nonJson.json() as { code: string }).code, 'action_boundary_rejected');
     } finally {
         await server.close();
     }

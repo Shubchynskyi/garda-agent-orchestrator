@@ -14,7 +14,8 @@ const UI_COMMAND_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
     '--repo-root': { key: 'targetRoot', type: 'string' },
     '--port': { key: 'port', type: 'string' },
-    '--read-only': { key: 'readOnly', type: 'boolean' }
+    '--read-only': { key: 'readOnly', type: 'boolean' },
+    '--actions': { key: 'actions', type: 'boolean' }
 };
 
 function shouldPrintUiHelp(commandArgv: string[]): boolean {
@@ -45,9 +46,13 @@ export async function handleUi(commandArgv: string[], _packageJson: PackageJsonL
         ? normalizePathValue(parsed.targetRoot)
         : normalizePathValue('.');
     const port = parsePort(parsed.port);
+    if (parsed.readOnly === true && parsed.actions === true) {
+        throw new Error('--actions cannot be combined with --read-only.');
+    }
     const server = await startLocalUiServer({
         repoRoot: targetRoot,
-        port
+        port,
+        actionsEnabled: parsed.actions === true
     });
     console.log(formatLocalUiServerOutput(server));
     await new Promise<void>((resolve) => {

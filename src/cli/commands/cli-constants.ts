@@ -47,7 +47,7 @@ export const COMMAND_SUMMARY = Object.freeze<readonly CommandSummaryEntry[]>([
     ['stats', 'Token-overhead and runtime analytics'],
     ['task', 'Inspect one task via stats or event timeline'],
     ['html', 'Write a static read-only HTML report and optional snapshots'],
-    ['ui', 'Start a read-only localhost UI with lazy task details'],
+    ['ui', 'Start a localhost UI with lazy task details'],
     ['bootstrap', 'Deploy bundle only'],
     ['install', 'Deploy or refresh the bundle and run the Node install pipeline'],
     ['init', 'Re-materialize live/ from an existing deployed bundle'],

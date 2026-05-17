@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
+import * as crypto from 'node:crypto';
 import { URL } from 'node:url';
 import { isCanonicalTaskId } from '../core/task-ids';
 import {
@@ -20,6 +22,8 @@ export interface StartLocalUiServerOptions {
     port?: number | null;
     portStart?: number;
     portEnd?: number;
+    actionsEnabled?: boolean;
+    actionRunner?: UiActionRunner;
 }
 
 export interface LocalUiServer {
@@ -27,12 +31,63 @@ export interface LocalUiServer {
     host: string;
     port: number;
     url: string;
+    actionsEnabled: boolean;
     close: () => Promise<void>;
 }
 
 interface ReportSnapshotCache {
     fingerprint: string | null;
     report: ReportDataContract | null;
+}
+
+type UiActionMode = 'preview' | 'execute';
+
+export interface UiActionCommand {
+    executable: string;
+    args: string[];
+    display: string;
+}
+
+export interface UiActionDefinition {
+    id: string;
+    label: string;
+    description: string;
+    mutates: boolean;
+    requires_confirmation: boolean;
+    confirmation_phrase: string | null;
+    command: UiActionCommand;
+}
+
+interface UiActionRequest {
+    action_id?: unknown;
+    mode?: unknown;
+    confirmation?: unknown;
+}
+
+export interface UiActionRunnerResult {
+    exit_code: number | null;
+    signal: string | null;
+    stdout: string;
+    stderr: string;
+}
+
+export type UiActionRunner = (action: UiActionDefinition, repoRoot: string) => Promise<UiActionRunnerResult>;
+
+interface UiActionAuditRecord {
+    timestamp_utc: string;
+    action_id: string;
+    mode: UiActionMode;
+    status: string;
+    command: string;
+    exit_code?: number | null;
+    signal?: string | null;
+    error?: string;
+}
+
+interface LocalUiServerRuntimeOptions {
+    actionsEnabled: boolean;
+    actionRunner: UiActionRunner;
+    actionToken: string;
 }
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown): void {
@@ -61,6 +116,334 @@ function sendText(response: http.ServerResponse, statusCode: number, body: strin
         'cache-control': 'no-store'
     });
     response.end(body);
+}
+
+function quoteCommandPart(value: string): string {
+    return /[\s"]/u.test(value) ? `"${value.replace(/"/gu, '\\"')}"` : value;
+}
+
+function resolveGardaCliPath(repoRoot: string): string {
+    const sourceCliPath = path.join(repoRoot, 'bin', 'garda.js');
+    if (fs.existsSync(sourceCliPath)) {
+        return sourceCliPath;
+    }
+    return path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js');
+}
+
+function displayGardaCommand(repoRoot: string, cliPath: string, args: string[]): string {
+    const relativeCliPath = path.relative(repoRoot, cliPath).replace(/\\/gu, '/') || cliPath;
+    const displayArgs = args.map((argument) => argument === repoRoot ? '.' : argument);
+    return ['node', relativeCliPath, ...displayArgs].map(quoteCommandPart).join(' ');
+}
+
+function buildUiActionDefinitions(repoRoot: string): UiActionDefinition[] {
+    const cliPath = resolveGardaCliPath(repoRoot);
+    const buildAction = (
+        id: string,
+        label: string,
+        description: string,
+        args: string[],
+        options: { mutates?: boolean; confirmationPhrase?: string } = {}
+    ): UiActionDefinition => ({
+        id,
+        label,
+        description,
+        mutates: options.mutates === true,
+        requires_confirmation: Boolean(options.confirmationPhrase),
+        confirmation_phrase: options.confirmationPhrase || null,
+        command: {
+            executable: process.execPath,
+            args: [cliPath, ...args],
+            display: displayGardaCommand(repoRoot, cliPath, args)
+        }
+    });
+    return [
+        buildAction(
+            'status',
+            'Status',
+            'Run the existing Garda status command for this workspace.',
+            ['status', '--target-root', repoRoot]
+        ),
+        buildAction(
+            'doctor',
+            'Doctor',
+            'Run the existing Garda doctor command for this workspace.',
+            ['doctor', '--target-root', repoRoot]
+        ),
+        buildAction(
+            'html-report',
+            'Generate HTML Report',
+            'Run the existing Garda html command with lazy task details.',
+            ['html', '--target-root', repoRoot, '--max-detailed-tasks', '0'],
+            { mutates: true, confirmationPhrase: 'RUN GARDA HTML' }
+        )
+    ];
+}
+
+function capOutput(value: string, maxChars = 32000): string {
+    if (value.length <= maxChars) {
+        return value;
+    }
+    return `${value.slice(0, maxChars)}\n[output truncated at ${maxChars} chars]`;
+}
+
+function buildUiActionEnv(): NodeJS.ProcessEnv {
+    const allowedKeys = [
+        'PATH',
+        'Path',
+        'PATHEXT',
+        'SystemRoot',
+        'WINDIR',
+        'COMSPEC',
+        'ComSpec',
+        'TEMP',
+        'TMP',
+        'HOME',
+        'USERPROFILE',
+        'LOCALAPPDATA',
+        'APPDATA',
+        'NO_COLOR',
+        'FORCE_COLOR',
+        'CI'
+    ];
+    const env: NodeJS.ProcessEnv = {};
+    for (const key of allowedKeys) {
+        const value = process.env[key];
+        if (value !== undefined) {
+            env[key] = value;
+        }
+    }
+    return env;
+}
+
+function runUiActionCommand(action: UiActionDefinition, repoRoot: string): Promise<UiActionRunnerResult> {
+    return new Promise((resolve, reject) => {
+        const child = childProcess.spawn(action.command.executable, action.command.args, {
+            cwd: repoRoot,
+            env: buildUiActionEnv(),
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        let stdout = '';
+        let stderr = '';
+        const timeout = setTimeout(() => {
+            child.kill();
+        }, 60000);
+        child.stdout?.on('data', (chunk) => {
+            stdout = capOutput(stdout + String(chunk));
+        });
+        child.stderr?.on('data', (chunk) => {
+            stderr = capOutput(stderr + String(chunk));
+        });
+        child.once('error', (error) => {
+            clearTimeout(timeout);
+            reject(error);
+        });
+        child.once('close', (exitCode, signal) => {
+            clearTimeout(timeout);
+            resolve({
+                exit_code: exitCode,
+                signal,
+                stdout,
+                stderr
+            });
+        });
+    });
+}
+
+function getUiActionAuditPath(repoRoot: string): string {
+    return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'ui-actions', 'audit.jsonl');
+}
+
+function appendUiActionAudit(repoRoot: string, record: UiActionAuditRecord): string {
+    const auditPath = getUiActionAuditPath(repoRoot);
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    fs.appendFileSync(auditPath, `${JSON.stringify(record)}\n`, 'utf8');
+    return auditPath;
+}
+
+function readJsonBody(request: http.IncomingMessage, maxBytes = 8192): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        let raw = '';
+        request.setEncoding('utf8');
+        request.on('data', (chunk) => {
+            raw += chunk;
+            if (raw.length > maxBytes) {
+                reject(new Error('Request body is too large.'));
+                request.destroy();
+            }
+        });
+        request.on('error', reject);
+        request.on('end', () => {
+            if (raw.trim() === '') {
+                resolve({});
+                return;
+            }
+            try {
+                resolve(JSON.parse(raw));
+            } catch {
+                reject(new Error('Request body must be valid JSON.'));
+            }
+        });
+    });
+}
+
+function isJsonRequest(request: http.IncomingMessage): boolean {
+    const contentType = request.headers['content-type'];
+    const value = Array.isArray(contentType) ? contentType[0] : contentType;
+    return typeof value === 'string' && value.toLowerCase().split(';', 1)[0].trim() === 'application/json';
+}
+
+function getRequestOrigin(request: http.IncomingMessage): string | null {
+    const origin = request.headers.origin;
+    if (Array.isArray(origin)) {
+        return origin[0] || null;
+    }
+    return typeof origin === 'string' && origin ? origin : null;
+}
+
+function getExpectedOrigin(request: http.IncomingMessage): string | null {
+    const host = request.headers.host;
+    if (Array.isArray(host) || typeof host !== 'string' || !host) {
+        return null;
+    }
+    return `http://${host}`;
+}
+
+function isValidActionRequestBoundary(request: http.IncomingMessage, actionToken: string): boolean {
+    const expectedOrigin = getExpectedOrigin(request);
+    const actualOrigin = getRequestOrigin(request);
+    const token = request.headers['x-garda-action-token'];
+    return expectedOrigin !== null
+        && actualOrigin === expectedOrigin
+        && token === actionToken
+        && isJsonRequest(request);
+}
+
+function normalizeActionRequest(payload: unknown): UiActionRequest {
+    return payload && typeof payload === 'object' ? payload as UiActionRequest : {};
+}
+
+function findAction(actions: UiActionDefinition[], actionId: unknown): UiActionDefinition | null {
+    if (typeof actionId !== 'string') {
+        return null;
+    }
+    return actions.find((action) => action.id === actionId) || null;
+}
+
+function formatPublicAction(action: UiActionDefinition): Record<string, unknown> {
+    return {
+        id: action.id,
+        label: action.label,
+        description: action.description,
+        mutates: action.mutates,
+        requires_confirmation: action.requires_confirmation,
+        confirmation_phrase: action.confirmation_phrase,
+        command: action.command.display
+    };
+}
+
+async function handleUiActionRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    if (!options.actionsEnabled) {
+        sendApiError(response, 403, 'UI actions are disabled. Restart with --actions to enable allow-listed commands.', 'actions_disabled');
+        return;
+    }
+    if (!isValidActionRequestBoundary(request, options.actionToken)) {
+        sendApiError(response, 403, 'UI action request failed origin, token, or content-type validation.', 'action_boundary_rejected');
+        return;
+    }
+    const payload = normalizeActionRequest(await readJsonBody(request));
+    const actions = buildUiActionDefinitions(repoRoot);
+    const action = findAction(actions, payload.action_id);
+    if (!action) {
+        sendApiError(response, 400, 'Unknown UI action.', 'unknown_action');
+        return;
+    }
+    const mode = payload.mode === 'execute' ? 'execute' : 'preview';
+    if (mode === 'preview') {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: action.id,
+            mode,
+            status: 'previewed',
+            command: action.command.display
+        });
+        sendJson(response, 200, {
+            action_id: action.id,
+            mode,
+            status: 'previewed',
+            command: action.command.display,
+            requires_confirmation: action.requires_confirmation,
+            confirmation_phrase: action.confirmation_phrase,
+            audit_path: auditPath
+        });
+        return;
+    }
+    if (action.requires_confirmation && payload.confirmation !== action.confirmation_phrase) {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: action.id,
+            mode,
+            status: 'confirmation_required',
+            command: action.command.display
+        });
+        sendJson(response, 409, {
+            action_id: action.id,
+            mode,
+            status: 'confirmation_required',
+            command: action.command.display,
+            requires_confirmation: true,
+            confirmation_phrase: action.confirmation_phrase,
+            audit_path: auditPath
+        });
+        return;
+    }
+    try {
+        const result = await options.actionRunner(action, repoRoot);
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: action.id,
+            mode,
+            status: 'executed',
+            command: action.command.display,
+            exit_code: result.exit_code,
+            signal: result.signal
+        });
+        sendJson(response, result.exit_code === 0 ? 200 : 500, {
+            action_id: action.id,
+            mode,
+            status: 'executed',
+            command: action.command.display,
+            exit_code: result.exit_code,
+            signal: result.signal,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            audit_path: auditPath
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: action.id,
+            mode,
+            status: 'failed_to_launch',
+            command: action.command.display,
+            error: message
+        });
+        sendJson(response, 500, {
+            action_id: action.id,
+            mode,
+            status: 'failed_to_launch',
+            command: action.command.display,
+            error: message,
+            audit_path: auditPath
+        });
+    }
 }
 
 function buildReport(repoRoot: string): ReportDataContract {
@@ -104,7 +487,7 @@ function findTask(report: ReportDataContract, taskId: string): boolean {
     return report.tasks_tab.rows.some((row) => row.task_id === taskId);
 }
 
-function renderLocalUiHtml(): string {
+function renderLocalUiHtml(actionsEnabled: boolean, actionToken: string): string {
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -128,6 +511,10 @@ pre { white-space: pre-wrap; word-break: break-word; overflow: auto; max-height:
 nav { display: flex; gap: 8px; padding: 10px 22px 0; border-bottom: 1px solid var(--line); background: #fbfcfe; }
 nav button { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
 nav button.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+.action-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.action-item { border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.action-item h3 { margin: 0 0 6px; font-size: 15px; }
+.action-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 main { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(360px, .85fr); gap: 16px; padding: 16px 22px 26px; }
 .tab[hidden] { display: none; }
 .notice, .panel { border: 1px solid var(--line); border-radius: 8px; background: #fff; }
@@ -178,9 +565,10 @@ th { background: var(--panel); color: #344054; position: sticky; top: 0; z-index
 <button type="button" class="active" data-tab="tasks-tab">Tasks</button>
 <button type="button" data-tab="workflow-tab">Workflow Config</button>
 <button type="button" data-tab="instructions-tab">Instructions</button>
+<button type="button" data-tab="actions-tab">Actions</button>
 </nav>
 <main>
-<section class="notice">Task details are loaded on demand from the local read-only server. The server is bound to 127.0.0.1 and stops when this CLI process exits.</section>
+<section class="notice">Task details are loaded on demand from the local server. The server is bound to 127.0.0.1 and stops when this CLI process exits. Controlled actions are ${actionsEnabled ? 'enabled for allow-listed commands only.' : 'disabled unless the server starts with --actions.'}</section>
 <section class="warnings" id="warnings" hidden></section>
 <section class="overview" id="overview"></section>
 <section class="panel tab" id="tasks-tab">
@@ -207,6 +595,13 @@ th { background: var(--panel); color: #344054; position: sticky; top: 0; z-index
 <div class="panel-head"><h2>Instructions</h2></div>
 <div class="detail" id="instructions"><p class="empty">Loading instructions...</p></div>
 </section>
+<section class="panel tab" id="actions-tab" hidden>
+<div class="panel-head"><h2>Actions</h2></div>
+<div class="detail">
+<div id="actions"><p class="empty">Loading actions...</p></div>
+<div id="action-status" class="empty"></div>
+</div>
+</section>
 <section class="panel tab" id="task-detail-panel">
 <div class="panel-head"><h2>Task Detail</h2></div>
 <div class="detail" id="detail"><p class="empty">Choose a task and click Load details.</p></div>
@@ -220,9 +615,12 @@ const warningsNode = document.getElementById('warnings');
 const overviewNode = document.getElementById('overview');
 const workflowNode = document.getElementById('workflow');
 const instructionsNode = document.getElementById('instructions');
+const actionsNode = document.getElementById('actions');
+const actionStatusNode = document.getElementById('action-status');
 const searchNode = document.getElementById('task-search');
 const statusFilterNode = document.getElementById('status-filter');
 const priorityFilterNode = document.getElementById('priority-filter');
+const actionToken = ${JSON.stringify(actionToken)};
 let currentReport = null;
 function safe(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -305,6 +703,43 @@ function artifactList(links) {
   }
   return '<ul class="list">' + links.map(link => '<li class="' + (link.exists ? 'artifact-ok' : 'artifact-missing') + '"><code>' + safe(link.kind) + '</code>: ' + safe(link.path) + (link.exists ? '' : ' (missing)') + '</li>').join('') + '</ul>';
 }
+function renderActionResult(result) {
+  actionStatusNode.innerHTML = '<h3>' + safe(result.action_id || 'Action') + '</h3>'
+    + '<p><strong>Status:</strong> ' + safe(result.status) + '</p>'
+    + '<p><strong>Command:</strong> <code>' + safe(result.command) + '</code></p>'
+    + (result.audit_path ? '<p><strong>Audit:</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')
+    + (result.stdout ? '<h3>stdout</h3><pre>' + safe(result.stdout) + '</pre>' : '')
+    + (result.stderr ? '<h3>stderr</h3><pre>' + safe(result.stderr) + '</pre>' : '');
+}
+async function runAction(actionId, mode, confirmation) {
+  const response = await fetch('/api/actions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
+    body: JSON.stringify({ action_id: actionId, mode, confirmation })
+  });
+  const result = await response.json();
+  renderActionResult(result);
+}
+function renderActions(payload) {
+  if (!payload.enabled) {
+    actionsNode.innerHTML = '<p class="empty">Actions are disabled. Restart with <code>garda ui --actions</code> to expose allow-listed commands.</p>';
+    return;
+  }
+  actionsNode.innerHTML = '<div class="action-grid">' + payload.actions.map(action => '<div class="action-item"><h3>' + safe(action.label) + '</h3><p>' + safe(action.description) + '</p><p><code>' + safe(action.command) + '</code></p><div class="action-buttons"><button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="preview">Preview</button><button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="execute">Run</button></div></div>').join('') + '</div>';
+  for (const button of actionsNode.querySelectorAll('button[data-action-id]')) {
+    button.addEventListener('click', () => {
+      const action = payload.actions.find(item => item.id === button.dataset.actionId);
+      const mode = button.dataset.actionMode;
+      const confirmation = mode === 'execute' && action && action.requires_confirmation
+        ? window.prompt('Type "' + action.confirmation_phrase + '" to run this action:')
+        : null;
+      if (mode === 'execute' && action && action.requires_confirmation && confirmation === null) {
+        return;
+      }
+      runAction(button.dataset.actionId, mode, confirmation);
+    });
+  }
+}
 function reviewSummary(audit) {
   const summary = audit && audit.review_attempt_summary && audit.review_attempt_summary.by_type;
   if (!summary || summary.length === 0) {
@@ -351,13 +786,21 @@ priorityFilterNode.addEventListener('change', renderTaskRows);
 fetch('/api/report').then(response => response.json()).then(renderTasks).catch(error => {
   tasksNode.innerHTML = '<tr><td colspan="6" class="error">' + safe(error && error.message ? error.message : error) + '</td></tr>';
 });
+fetch('/api/actions').then(response => response.json()).then(renderActions).catch(error => {
+  actionsNode.innerHTML = '<p class="error">' + safe(error && error.message ? error.message : error) + '</p>';
+});
 </script>
 </body>
 </html>`;
 }
 
-export function createLocalUiServer(repoRoot: string): http.Server {
+export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<LocalUiServerRuntimeOptions>): http.Server {
     const resolvedRepoRoot = path.resolve(repoRoot);
+    const options: LocalUiServerRuntimeOptions = {
+        actionsEnabled: runtimeOptions?.actionsEnabled === true,
+        actionRunner: runtimeOptions?.actionRunner || runUiActionCommand,
+        actionToken: crypto.randomBytes(32).toString('hex')
+    };
     const reportCache: ReportSnapshotCache = {
         fingerprint: null,
         report: null
@@ -369,6 +812,12 @@ export function createLocalUiServer(repoRoot: string): http.Server {
         }
         const parsedUrl = new URL(request.url, `http://${DEFAULT_UI_HOST}`);
         const pathname = parsedUrl.pathname;
+        if (request.method === 'POST' && pathname === '/api/actions') {
+            handleUiActionRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_action_request');
+            });
+            return;
+        }
         if (request.method !== 'GET') {
             if (pathname.startsWith('/api/')) {
                 sendApiError(response, 405, 'Only GET is supported.', 'method_not_allowed');
@@ -378,11 +827,21 @@ export function createLocalUiServer(repoRoot: string): http.Server {
             return;
         }
         if (pathname === '/') {
-            sendHtml(response, renderLocalUiHtml());
+            sendHtml(response, renderLocalUiHtml(options.actionsEnabled, options.actionToken));
             return;
         }
         if (pathname === '/api/report') {
             sendJson(response, 200, getCachedReport(resolvedRepoRoot, reportCache));
+            return;
+        }
+        if (pathname === '/api/actions') {
+            const actions = options.actionsEnabled
+                ? buildUiActionDefinitions(resolvedRepoRoot).map(formatPublicAction)
+                : [];
+            sendJson(response, 200, {
+                enabled: options.actionsEnabled,
+                actions
+            });
             return;
         }
         const detailMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/detail$/u);
@@ -480,7 +939,10 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
     let lastError: Error | null = null;
     for (const port of candidatePorts) {
         validatePort(port, 'port');
-        const server = createLocalUiServer(options.repoRoot);
+        const server = createLocalUiServer(options.repoRoot, {
+            actionsEnabled: options.actionsEnabled === true,
+            actionRunner: options.actionRunner
+        });
         try {
             const actualPort = await listenOnPort(server, host, port);
             return {
@@ -488,6 +950,7 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
                 host,
                 port: actualPort,
                 url: `http://${host}:${actualPort}/`,
+                actionsEnabled: options.actionsEnabled === true,
                 close: () => closeServer(server)
             };
         } catch (error: unknown) {
@@ -507,7 +970,7 @@ export function formatLocalUiServerOutput(server: LocalUiServer): string {
         `Url: ${server.url}`,
         `Host: ${server.host}`,
         `Port: ${server.port}`,
-        'Mode: read-only',
+        `Mode: ${server.actionsEnabled ? 'controlled-actions' : 'read-only'}`,
         'Stop: Ctrl+C'
     ].join('\n');
 }
