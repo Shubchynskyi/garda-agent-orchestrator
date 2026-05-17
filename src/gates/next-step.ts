@@ -18,6 +18,7 @@ import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+    REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION,
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../gate-runtime/reviewer-session-contract';
 import {
@@ -7603,7 +7604,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
                 reason:
                     `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch to persist the post-launch fields before recording the invocation. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
+                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch to persist the post-launch fields before recording the invocation. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
                 commands: [
                     buildCommand(
                         'Complete delegated reviewer launch metadata',

@@ -14,7 +14,8 @@ import {
 } from '../../../gate-runtime/review-context';
 import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
-    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
+    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
+    REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION
 } from '../../../gate-runtime/reviewer-session-contract';
 import {
     assertValidTaskId,
@@ -2681,7 +2682,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
-            console.log('NextAction: existing reviewer launch metadata is current; launch the delegated reviewer, then run complete-reviewer-launch.');
+            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer, then run complete-reviewer-launch. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
             return;
         }
         if (
@@ -2784,6 +2785,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         next_action: (
             'Launch a fresh delegated reviewer with prompt_template_path, reviewer_prompt_path, output_template_path, ' +
             'and evidence_manifest_path as opaque handoff artifacts; ' +
+            `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
             'do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
             'Run record_invocation_command after the real launch is recorded in this artifact.'
@@ -2874,7 +2876,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
     console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, prompt_template_sha256, output_template_sha256, evidence_manifest_sha256, review_tree_state_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
-    console.log('NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts, update after_launch_required_updates, then run RecordInvocationCommand.');
+    console.log(`NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Update after_launch_required_updates, then run RecordInvocationCommand.`);
 }
 
 export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {

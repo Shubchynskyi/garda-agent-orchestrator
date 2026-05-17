@@ -2965,6 +2965,9 @@ describe('gates/build-review-context', () => {
             assert.match(blockedLaunchError.message, /delegated reviewer launch is not attested/i);
             assert.match(blockedLaunchError.message, /provider-native\/internal agent or subagent tool/i);
             assert.match(blockedLaunchError.message, /not a shell command or hand-written artifact/i);
+            assert.match(blockedLaunchError.message, /Launch a real subagent using built-in tools/i);
+            assert.match(blockedLaunchError.message, /if for some reason that is impossible right now, you must stop and report this to the user/i);
+            assert.match(blockedLaunchError.message, /this is expected behavior in this repository/i);
             assert.match(blockedLaunchError.message, /stop and report that blocker/i);
             assert.match(blockedLaunchError.message, /instead of fabricating routing, launch, review, receipt, or telemetry evidence/i);
 

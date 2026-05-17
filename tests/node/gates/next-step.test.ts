@@ -5570,6 +5570,9 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('launch metadata'));
         assert.ok(result.reason.includes('Launch the delegated reviewer with the prepared prompt path as an opaque handoff'));
         assert.ok(result.reason.includes('Do not open or summarize'));
+        assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));
+        assert.ok(result.reason.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
+        assert.ok(result.reason.includes('this is expected behavior in this repository'));
         assert.ok(result.reason.includes('complete-reviewer-launch'));
         assertGateChainDecision(result.reason, {
             edgeId: 'review-launch-prepared-to-launch-completed',

@@ -850,6 +850,14 @@ describe('cli/commands/gates', () => {
         }
     });
 
+    it('includes real-subagent hard-stop guidance in complete-reviewer-launch help', () => {
+        const helpOutput = stripAnsi(buildGateHelpText('complete-reviewer-launch', path.resolve('.')));
+
+        assert.ok(helpOutput.includes('Launch a real subagent using built-in tools'));
+        assert.ok(helpOutput.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
+        assert.ok(helpOutput.includes('this is expected behavior in this repository'));
+    });
+
     it('does not treat --help as a standalone help request when it is a string option value', async () => {
         const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
         const result = await runCliWithCapturedOutput([
@@ -3608,6 +3616,9 @@ describe('cli/commands/gates', () => {
         ]);
         assert.ok(String(launchArtifact.record_invocation_command).includes('gate record-review-invocation'));
         assert.ok(String(launchArtifact.record_invocation_command).includes(`--reviewer-identity "${fixture.reviewerIdentity}"`));
+        assert.ok(String(launchArtifact.next_action).includes('Launch a real subagent using built-in tools'));
+        assert.ok(String(launchArtifact.next_action).includes('if for some reason that is impossible right now, you must stop and report this to the user'));
+        assert.ok(String(launchArtifact.next_action).includes('this is expected behavior in this repository'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
         const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
@@ -3631,6 +3642,9 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts')));
+        assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
+        assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
+        assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -4799,7 +4813,16 @@ describe('cli/commands/gates', () => {
         const firstPreparedEvents = readTaskTimelineEvents(repoRoot, taskId)
             .filter((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED').length;
 
-        assert.equal(await runPrepare(), 0);
+        const capturedLogs: string[] = [];
+        const originalConsoleLog = console.log;
+        console.log = (...args: unknown[]) => {
+            capturedLogs.push(args.map((value) => String(value)).join(' '));
+        };
+        try {
+            assert.equal(await runPrepare(), 0);
+        } finally {
+            console.log = originalConsoleLog;
+        }
 
         assert.equal(fs.readFileSync(launchArtifactPath, 'utf8'), firstArtifactText);
         assert.equal(createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex'), firstArtifactSha256);
@@ -4812,6 +4835,10 @@ describe('cli/commands/gates', () => {
             fs.readdirSync(path.dirname(launchArtifactPath)).some((entry) => entry.includes('-superseded-')),
             false
         );
+        assert.ok(capturedLogs.some((line) => line.includes('NextAction: existing reviewer launch metadata is current')));
+        assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
+        assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
+        assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

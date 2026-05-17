@@ -10,6 +10,7 @@ import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+    REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION,
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../gate-runtime/reviewer-session-contract';
 import {
@@ -1398,6 +1399,7 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         throw new Error(
             `Review context cannot be built for review '${reviewType}' because delegated reviewer launch is not attested. ` +
             `${launchReason}${launchRemediation} ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ` +
+            `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
             'Re-enter task mode, rerun handshake-diagnostics, and then rerun build-review-context.'
         );
     }
