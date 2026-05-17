@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added `garda ui` as a no-dependency read-only localhost server that prints a browser URL and loads per-task details lazily on demand
 - made `garda html` return promptly on large runtime histories by rendering the full task list with lazy/skipped deep task details by default, while adding `--max-detailed-tasks N` for explicit heavier snapshots
 - documented the Garda 1.1.x Node runtime support stance as Node 24-only, with Node 22 treated as best-effort local compatibility until engines, CI, diagnostics, and release validation explicitly cover it
 - added short `on`/`off` aliases for guarded `garda workflow set` boolean options while preserving canonical `--*-enabled` flags, audited confirmation requirements, and conflict diagnostics

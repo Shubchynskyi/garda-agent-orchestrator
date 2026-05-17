@@ -110,6 +110,7 @@ If you want persistent commands, install globally.
 | `garda doctor` | Run verify + manifest validation from existing answers |
 | `garda preprompt` | Build a read-only task brief with current context and canonical next commands |
 | `garda html` | Write a static read-only HTML report with optional snapshots |
+| `garda ui` | Start a read-only localhost UI with lazy task details |
 | `garda status why-blocked` | Explain why blocked or stalled tasks cannot progress, including task-event lock blockers |
 | `garda doctor explain` | Print remediation steps for known failure IDs |
 | `garda bootstrap` | Bundle-only deploy without install |

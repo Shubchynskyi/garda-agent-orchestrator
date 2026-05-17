@@ -58,7 +58,7 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
         const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
         return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
     }
-    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair', 'html'].includes(commandName)) {
+    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair', 'html', 'ui'].includes(commandName)) {
         return '.';
     }
     return resolveTargetOrBundleParityRoot(commandArgv);
@@ -131,7 +131,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'repair'].includes(commandName)) {
+    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'repair', 'ui'].includes(commandName)) {
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale && !(isHelpOnly && isMissingDeployedBundleOnlyParityBlock(parityResult.violations))) {
@@ -238,6 +238,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         case 'html': {
             const { handleHtml } = await import('./html-command');
             handleHtml(commandArgv, packageJson);
+            return;
+        }
+        case 'ui': {
+            const { handleUi } = await import('./ui-command');
+            await handleUi(commandArgv, packageJson);
             return;
         }
         case 'bootstrap': {

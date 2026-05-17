@@ -405,6 +405,7 @@ export type CommandHelpName =
     | 'stats'
     | 'task'
     | 'html'
+    | 'ui'
     | 'status'
     | 'doctor'
     | 'debug'
@@ -598,6 +599,24 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             'Open the printed file URL in a browser; no local server is started.'
         ])
     }),
+    ui: Object.freeze({
+        summary: 'Start a read-only localhost UI with lazy task-detail loading.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} ui [--target-root PATH] [--port PORT] [--read-only]`,
+            `${PRIMARY_CLI_NAME} ui --target-root "."`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} ui`,
+            `${PRIMARY_CLI_NAME} ui --target-root "."`,
+            `${PRIMARY_CLI_NAME} ui --port 17340`
+        ]),
+        hints: Object.freeze([
+            'The UI server binds only to 127.0.0.1 and prints a browser URL.',
+            'The process intentionally stays in the foreground; stop it with Ctrl+C.',
+            'Task details are loaded on demand through read-only local JSON endpoints.',
+            'No browser command can run shell commands, mutate workflow state, or edit settings.'
+        ])
+    }),
     status: Object.freeze({
         summary: 'Show current project status without changing files.',
         usage: Object.freeze([
@@ -719,7 +738,7 @@ function styleHelpToken(token: string): string {
         || normalized === 'node'
         || normalized.endsWith('garda.js')
         || [
-            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'bootstrap', 'install', 'init', 'reinit',
+            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'ui', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
             'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
@@ -837,6 +856,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  stats         Show token-overhead and runtime analytics per task or across all tasks.',
             '  task          Inspect one task via read-only stats and event timeline views.',
             '  html          Write a static read-only HTML report and print its browser link.',
+            '  ui            Start a read-only localhost UI with lazy task details.',
             '  bootstrap     Deploy the bundle only.',
             '  install       Deploy or refresh the bundle and run the Node install pipeline.',
             '  init          Re-materialize live/ from an existing deployed bundle.',

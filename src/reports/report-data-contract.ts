@@ -113,6 +113,13 @@ export interface BuildReportDataContractOptions {
     maxDetailedTasks?: number | null;
 }
 
+export interface BuildReportTaskDetailOptions {
+    taskId: string;
+    repoRoot: string;
+    eventsRoot?: string | null;
+    reviewsRoot?: string | null;
+}
+
 function normalizeHeaderCells(cells: string[]): string[] {
     return cells.map((cell) => cell.trim());
 }
@@ -275,7 +282,15 @@ function buildArtifactLinksFromAudit(audit: TaskAuditSummaryResult | null): Repo
     }));
 }
 
-function buildTaskDetail(taskId: string, repoRoot: string, eventsRoot: string, reviewsRoot: string): ReportTaskDetail {
+export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): ReportTaskDetail {
+    const repoRoot = path.resolve(options.repoRoot);
+    const eventsRoot = options.eventsRoot
+        ? path.resolve(options.eventsRoot)
+        : joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
+    const reviewsRoot = options.reviewsRoot
+        ? path.resolve(options.reviewsRoot)
+        : joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+    const taskId = options.taskId;
     const unavailable: ReportDataUnavailableEntry[] = [];
     let stats: TaskStatsResult | null = null;
     try {
@@ -299,6 +314,14 @@ function buildTaskDetail(taskId: string, repoRoot: string, eventsRoot: string, r
         artifact_links: buildArtifactLinksFromAudit(audit),
         unavailable
     };
+}
+
+export function isLazyReportDetailEntry(entry: ReportDataUnavailableEntry): boolean {
+    return /^task:[^:]+:detail$/u.test(entry.scope)
+        && (
+            entry.reason.includes('Deep task details are lazy')
+            || entry.reason.includes('detail collection is limited')
+        );
 }
 
 function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number): ReportTaskDetail {
@@ -492,14 +515,14 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
     const tasks = queue.rows.map((row) => ({
         ...row,
         detail: detailedTaskIds.has(row.task_id)
-            ? buildTaskDetail(row.task_id, repoRoot, eventsRoot, reviewsRoot)
+            ? buildReportTaskDetail({ taskId: row.task_id, repoRoot, eventsRoot, reviewsRoot })
             : buildSkippedTaskDetail(row.task_id, maxDetailedTasks)
     }));
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
     const unavailable = [
         ...queue.unavailable,
         ...workflowConfigTab.unavailable,
-        ...tasks.flatMap((task) => task.detail.unavailable)
+        ...tasks.flatMap((task) => task.detail.unavailable).filter((entry) => !isLazyReportDetailEntry(entry))
     ];
 
     return {

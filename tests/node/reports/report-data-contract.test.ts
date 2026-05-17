@@ -90,6 +90,7 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.workflow_config_tab.status, 'present');
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Task execution'));
     assert.ok(report.tasks_tab.rows[0].detail.unavailable.some((entry) => entry.scope === 'task:T-100:detail'));
+    assert.equal(report.unavailable.length, 0);
 });
 
 test('buildReportDataContract bounds deep task detail collection', () => {

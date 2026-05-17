@@ -215,6 +215,21 @@ Notes:
 - The command refreshes a stable latest HTML file and prints a `file://` URL. It does not start a server or mutate task lifecycle state.
 - `--snapshot` writes a timestamped copy under `runtime/reports/snapshots`; `--retain-snapshots N` keeps the newest N generated snapshots.
 
+### `garda ui`
+
+Start a foreground read-only localhost UI and print a browser URL.
+
+```text
+garda ui --target-root "."
+garda ui --target-root "." --port 17340
+```
+
+Notes:
+- The server uses Node built-ins only and binds to `127.0.0.1`; it does not add Express, Vite, React, or other runtime dependencies.
+- The terminal stays occupied while the UI is running. Stop it with Ctrl+C.
+- The Tasks page loads the canonical upper `TASK.md` queue immediately. Per-task details are fetched lazily from read-only local JSON endpoints when the user clicks `Load details`.
+- The UI does not run arbitrary shell commands, mutate task lifecycle state, edit workflow config, or write settings.
+
 ### `garda bootstrap`
 
 Deploy the bundle without running install.
