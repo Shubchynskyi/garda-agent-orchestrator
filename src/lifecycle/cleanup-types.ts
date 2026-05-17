@@ -22,6 +22,7 @@ export const GC_ALLOWLIST: readonly string[] = Object.freeze([
     'bundle-backups',
     'task-events',
     'reviews',
+    'plans',
     'update-rollbacks',
     'update-reports',
     'isolation-sandbox',
@@ -33,6 +34,7 @@ export interface RetentionPolicy {
     maxBackups: number;
     maxTaskEvents: number;
     maxReviews: number;
+    maxWorkingPlans: number;
     maxUpdateReports: number;
     maxUpdateRollbacks: number;
     maxBundleBackups: number;

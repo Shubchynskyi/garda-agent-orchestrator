@@ -379,7 +379,7 @@ Remove retained runtime artifacts under `garda-agent-orchestrator/runtime/` usin
 garda cleanup --target-root "."
 garda cleanup --target-root "." --dry-run
 garda cleanup --target-root "." --max-age-days 14 --max-backups 5 --max-task-events 30
-garda cleanup --target-root "." --max-reviews 20 --max-update-rollbacks 10 --max-update-reports 10 --max-bundle-backups 5
+garda cleanup --target-root "." --max-reviews 20 --max-working-plans 50 --max-update-rollbacks 10 --max-update-reports 10 --max-bundle-backups 5
 garda cleanup policy --target-root "."
 garda cleanup policy edit --target-root "."
 garda cleanup policy --edit --target-root "."
@@ -388,11 +388,12 @@ garda cleanup policy --retention-mode summary --compress-after-days 14 --target-
 ```
 
 Notes:
-- `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, update-rollbacks, and update-reports.
+- `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, Markdown working plans, update-rollbacks, and update-reports.
 - `--dry-run` reports projected removals and bytes reclaimed without mutating the filesystem.
-- Retention accepts both a global age limit (`--max-age-days`) and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
+- Retention accepts both a global age limit (`--max-age-days`) and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-working-plans`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
 - Count-based eviction uses **real filesystem recency** (file modification time), not task-id ordering. When the number of items exceeds the cap, the least recently modified entries are removed first. When modification times are equal, task-id / filename order is used as a deterministic tie-breaker.
 - For review artifacts, recency is determined per task group: the most recent `mtime` among all files in a `T-xxx-*` group represents that group's freshness.
+- Working-plan retention is limited to `garda-agent-orchestrator/runtime/plans/*.md` files named after canonical task IDs. Active task plans are preserved, and cleanup never targets user project `plans/` directories outside the Garda runtime path.
 - `runtime/task-events/all-tasks.jsonl` is subject to aggregate line-count retention (`--max-aggregate-lines` via cleanup/gc policy). Tail pruning keeps the most recent entries and discards the oldest when the aggregate exceeds the configured cap. The file is never deleted outright by cleanup.
 - `runtime/task-events/all-tasks.jsonl` is a derived aggregate index; the canonical task record remains `runtime/task-events/<task-id>.jsonl`.
 - Cleanup runs under the lifecycle operation lock to avoid concurrent mutation of the same runtime state.
@@ -431,12 +432,14 @@ Extended cleanup helper with dry-run default, category filters, and `clean` alia
 garda gc --target-root "."
 garda gc --target-root "." --dry-run
 garda gc --target-root "." --confirm --category reviews --category task-events
+garda gc --target-root "." --category plans --max-working-plans 25
 garda clean --target-root "." --confirm
 ```
 
 Notes:
 - `gc` is dry-run by default; pass `--confirm` to apply removals.
 - `clean` is a public alias for `gc`.
+- `--category plans` limits `gc` to retained Markdown working plans under `garda-agent-orchestrator/runtime/plans/*.md`; active task plans are preserved.
 
 ### Task Reset Aliases
 

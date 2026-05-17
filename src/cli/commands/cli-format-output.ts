@@ -661,7 +661,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
     cleanup: Object.freeze({
         summary: 'Remove stale runtime artifacts and manage review-artifact storage policy.',
         usage: Object.freeze([
-            `${PRIMARY_CLI_NAME} cleanup [--target-root PATH] [--dry-run] [--confirm] [--max-age-days N] [--max-backups N] [--max-aggregate-lines N]`,
+            `${PRIMARY_CLI_NAME} cleanup [--target-root PATH] [--dry-run] [--confirm] [--max-age-days N] [--max-backups N] [--max-working-plans N] [--max-aggregate-lines N]`,
             `${PRIMARY_CLI_NAME} cleanup policy [show|edit] [--target-root PATH]`
         ]),
         examples: Object.freeze([
@@ -671,6 +671,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
         ]),
         hints: Object.freeze([
             'Use dry-run first when removing runtime artifacts.',
+            'Working-plan cleanup is limited to runtime/plans/*.md and preserves active task plans.',
             'The policy subcommand is the human-facing review-artifact storage policy editor/viewer.'
         ])
     }),
@@ -698,7 +699,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
     gc: Object.freeze({
         summary: 'Extended cleanup with dry-run default, allowlist, stale locks, and isolation sandbox cleanup.',
         usage: Object.freeze([
-            `${PRIMARY_CLI_NAME} gc [--target-root PATH] [--category NAME] [--max-age-days N] [--max-aggregate-lines N] [--confirm]`,
+            `${PRIMARY_CLI_NAME} gc [--target-root PATH] [--category NAME] [--max-age-days N] [--max-working-plans N] [--max-aggregate-lines N] [--confirm]`,
             `${PRIMARY_CLI_NAME} clean [--target-root PATH] [--category NAME] [--confirm]`
         ]),
         examples: Object.freeze([
@@ -707,13 +708,14 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             `${PRIMARY_CLI_NAME} gc --confirm`
         ]),
         hints: Object.freeze([
-            'gc is dry-run by default; pass --confirm to delete.'
+            'gc is dry-run by default; pass --confirm to delete.',
+            'Use --category plans to limit cleanup to retained runtime working-plan files.'
         ])
     }),
     clean: Object.freeze({
         summary: 'Alias for gc extended cleanup.',
         usage: Object.freeze([
-            `${PRIMARY_CLI_NAME} clean [--target-root PATH] [--category NAME] [--max-age-days N] [--max-aggregate-lines N] [--confirm]`
+            `${PRIMARY_CLI_NAME} clean [--target-root PATH] [--category NAME] [--max-age-days N] [--max-working-plans N] [--max-aggregate-lines N] [--confirm]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} clean`,
@@ -915,9 +917,9 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  - update compares installed vs available bundle versions and prints a summary before applying changes.',
             '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
             '  - older snapshots created before rollback metadata persistence cannot be restored automatically.',
-            '  - cleanup uses retention defaults (30 days, 20 backups, 50 task events, 100 review sets, 10 update reports, 5 rollbacks, 5 bundle backups, 10000 aggregate task-event lines); override with --max-age-days, --max-backups, and --max-aggregate-lines.',
+            '  - cleanup uses retention defaults (30 days, 20 backups, 50 task events, 100 review sets, 100 working plans, 10 update reports, 5 rollbacks, 5 bundle backups, 10000 aggregate task-event lines); override with --max-age-days, --max-backups, --max-working-plans, and --max-aggregate-lines.',
             `  - use \`${PRIMARY_CLI_NAME} cleanup policy edit\` for the dialog-first review-artifact storage policy editor, or \`${PRIMARY_CLI_NAME} cleanup policy\` to inspect current settings.`,
-            '  - gc/clean is dry-run by default; pass --confirm to actually delete. Supports --category and --max-aggregate-lines.',
+            '  - gc/clean is dry-run by default; pass --confirm to actually delete. Supports --category, --max-working-plans, and --max-aggregate-lines.',
             `  - running \`${PRIMARY_CLI_NAME} profile create\` with no profile name in a TTY starts the full interactive profile builder.`,
             `  - use \`${PRIMARY_CLI_NAME} help <command>\` or \`${PRIMARY_CLI_NAME} <command> help\` for command-specific usage.`,
             `  - use \`${PRIMARY_CLI_NAME} gate help <gate-name>\` or \`${PRIMARY_CLI_NAME} gate <gate-name> --help\` for gate-specific usage.`,

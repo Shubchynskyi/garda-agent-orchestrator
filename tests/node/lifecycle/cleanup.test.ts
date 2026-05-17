@@ -136,6 +136,7 @@ describe('buildDefaultRetentionPolicy', () => {
         assert.equal(policy.maxTaskEvents, 50);
         assert.equal(policy.maxAggregateLines, 10000);
         assert.equal(policy.maxReviews, 100);
+        assert.equal(policy.maxWorkingPlans, 100);
         assert.equal(policy.maxUpdateReports, 10);
         assert.equal(policy.maxUpdateRollbacks, 5);
         assert.equal(policy.maxBundleBackups, 5);
@@ -239,6 +240,54 @@ describe('runCleanup', () => {
         assert.equal(fs.existsSync(inactiveEventPath), false, 'inactive task timeline should be removed');
         assert.equal(fs.existsSync(inactiveCachePath), false, 'inactive task completeness cache should be removed');
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'inactive task review artifacts should be removed');
+    });
+
+    it('previews and removes inactive Markdown working plans while preserving active task plans', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Active task' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' },
+            { id: 'T-003', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+
+        const plansDir = path.join(runtimeDir, 'plans');
+        fs.mkdirSync(plansDir, { recursive: true });
+        const activePlanPath = path.join(plansDir, 'T-001.md');
+        const inactivePlanPath = path.join(plansDir, 'T-002.md');
+        const secondInactivePlanPath = path.join(plansDir, 'T-003.md');
+        const nonTaskPlanPath = path.join(plansDir, 'scratch.md');
+        const taskNamedDirectoryPath = path.join(plansDir, 'T-004.md');
+        fs.writeFileSync(activePlanPath, '# active plan\n', 'utf8');
+        fs.writeFileSync(inactivePlanPath, '# inactive plan\n', 'utf8');
+        fs.writeFileSync(secondInactivePlanPath, '# second inactive plan\n', 'utf8');
+        fs.writeFileSync(nonTaskPlanPath, '# user scratch\n', 'utf8');
+        fs.mkdirSync(taskNamedDirectoryPath);
+        const past = daysAgo(45);
+        for (const entryPath of [activePlanPath, inactivePlanPath, secondInactivePlanPath, nonTaskPlanPath, taskNamedDirectoryPath]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const dryRun = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: true,
+            retentionPolicy: { maxAgeDays: 30, maxWorkingPlans: 100 }
+        });
+        assert.ok(dryRun.skipped.some((item) => item.category === 'plans' && item.path.endsWith('T-002.md')));
+        assert.ok(!dryRun.skipped.some((item) => item.path.endsWith('T-001.md')));
+        assert.equal(fs.existsSync(inactivePlanPath), true, 'dry run must not remove working plans');
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            retentionPolicy: { maxAgeDays: 30, maxWorkingPlans: 100 }
+        });
+        assert.ok(result.removed.some((item) => item.category === 'plans' && item.path.endsWith('T-002.md')));
+        assert.equal(fs.existsSync(activePlanPath), true, 'active task working plan should be preserved');
+        assert.equal(fs.existsSync(inactivePlanPath), false, 'inactive aged working plan should be removed');
+        assert.equal(fs.existsSync(secondInactivePlanPath), false, 'inactive aged working plan should be removed');
+        assert.equal(fs.existsSync(nonTaskPlanPath), true, 'non-task Markdown scratch file should be preserved');
+        assert.equal(fs.existsSync(taskNamedDirectoryPath), true, 'task-named directories are not working-plan files');
     });
 
     it('fails closed for task artifacts when TASK.md cannot be read', () => {
@@ -1017,6 +1066,7 @@ describe('GC_ALLOWLIST', () => {
     it('contains expected categories', () => {
         assert.ok(GC_ALLOWLIST.includes('backups'));
         assert.ok(GC_ALLOWLIST.includes('reviews'));
+        assert.ok(GC_ALLOWLIST.includes('plans'));
         assert.ok(GC_ALLOWLIST.includes('task-events'));
         assert.ok(GC_ALLOWLIST.includes('isolation-sandbox'));
         assert.ok(GC_ALLOWLIST.includes('stale-locks'));
@@ -1028,7 +1078,7 @@ describe('GC_ALLOWLIST', () => {
 
 describe('validateGcCategories', () => {
     it('accepts valid allowlist categories', () => {
-        assert.doesNotThrow(() => validateGcCategories(['backups', 'reviews']));
+        assert.doesNotThrow(() => validateGcCategories(['backups', 'reviews', 'plans']));
     });
 
     it('rejects unknown categories', () => {
@@ -1094,6 +1144,50 @@ describe('runGc', () => {
         assert.equal(result.dryRun, false);
         assert.ok(result.removed.length > 0, 'should remove items');
         assert.equal(fs.readdirSync(backupsDir).length, 0, 'all backups removed');
+    });
+
+    it('filters Markdown working-plan cleanup by plans category and preserves active tasks', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Active task' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+        const plansDir = path.join(runtimeDir, 'plans');
+        const backupsDir = path.join(runtimeDir, 'backups');
+        fs.mkdirSync(plansDir, { recursive: true });
+        fs.mkdirSync(backupsDir, { recursive: true });
+        const activePlanPath = path.join(plansDir, 'T-001.md');
+        const inactivePlanPath = path.join(plansDir, 'T-002.md');
+        fs.writeFileSync(activePlanPath, '# active\n', 'utf8');
+        fs.writeFileSync(inactivePlanPath, '# inactive\n', 'utf8');
+        createTimestampDir(backupsDir, daysAgo(45));
+        const past = daysAgo(45);
+        fs.utimesSync(activePlanPath, past, past);
+        fs.utimesSync(inactivePlanPath, past, past);
+
+        const dryRun = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            categories: ['plans'],
+            retentionPolicy: { maxAgeDays: 30, maxWorkingPlans: 100 }
+        });
+        assert.equal(dryRun.dryRun, true);
+        assert.ok(dryRun.skipped.some((item) => item.category === 'plans' && item.path.endsWith('T-002.md')));
+        assert.ok(!dryRun.skipped.some((item) => item.path.endsWith('T-001.md')));
+        assert.equal(fs.existsSync(inactivePlanPath), true, 'dry-run gc must not delete inactive working plan');
+        assert.equal(dryRun.categories.plans.count, 1);
+        assert.equal(dryRun.categories.backups, undefined);
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            categories: ['plans'],
+            retentionPolicy: { maxAgeDays: 30, maxWorkingPlans: 100 }
+        });
+        assert.ok(result.removed.some((item) => item.category === 'plans' && item.path.endsWith('T-002.md')));
+        assert.equal(fs.existsSync(activePlanPath), true, 'active working plan should be preserved');
+        assert.equal(fs.existsSync(inactivePlanPath), false, 'inactive working plan should be removed');
+        assert.equal(fs.readdirSync(backupsDir).length, 1, 'plans category must not remove backups');
     });
 
     it('prunes stale timeline summary entries when gc removes task-event files', () => {

@@ -309,6 +309,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
         '--max-aggregate-lines': { key: 'maxAggregateLines', type: 'string' },
         '--max-reviews': { key: 'maxReviews', type: 'string' },
+        '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
         '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
         '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
         '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' }
@@ -332,6 +333,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         ['maxTaskEvents', 'maxTaskEvents'],
         ['maxAggregateLines', 'maxAggregateLines'],
         ['maxReviews', 'maxReviews'],
+        ['maxWorkingPlans', 'maxWorkingPlans'],
         ['maxUpdateReports', 'maxUpdateReports'],
         ['maxUpdateRollbacks', 'maxUpdateRollbacks'],
         ['maxBundleBackups', 'maxBundleBackups']
@@ -411,6 +413,7 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
         '--max-aggregate-lines': { key: 'maxAggregateLines', type: 'string' },
         '--max-reviews': { key: 'maxReviews', type: 'string' },
+        '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
         '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
         '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
         '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' }
@@ -438,6 +441,7 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         ['maxTaskEvents', 'maxTaskEvents'],
         ['maxAggregateLines', 'maxAggregateLines'],
         ['maxReviews', 'maxReviews'],
+        ['maxWorkingPlans', 'maxWorkingPlans'],
         ['maxUpdateReports', 'maxUpdateReports'],
         ['maxUpdateRollbacks', 'maxUpdateRollbacks'],
         ['maxBundleBackups', 'maxBundleBackups']

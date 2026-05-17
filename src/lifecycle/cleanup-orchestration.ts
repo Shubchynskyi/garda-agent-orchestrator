@@ -27,6 +27,7 @@ const DEFAULT_MAX_AGE_DAYS = 30;
 const DEFAULT_MAX_BACKUPS = 20;
 const DEFAULT_MAX_TASK_EVENTS = 50;
 const DEFAULT_MAX_REVIEWS = 100;
+const DEFAULT_MAX_WORKING_PLANS = 100;
 const DEFAULT_MAX_UPDATE_REPORTS = 10;
 const DEFAULT_MAX_UPDATE_ROLLBACKS = 5;
 const DEFAULT_MAX_BUNDLE_BACKUPS = 5;
@@ -38,6 +39,7 @@ export function buildDefaultRetentionPolicy(): RetentionPolicy {
         maxBackups: DEFAULT_MAX_BACKUPS,
         maxTaskEvents: DEFAULT_MAX_TASK_EVENTS,
         maxReviews: DEFAULT_MAX_REVIEWS,
+        maxWorkingPlans: DEFAULT_MAX_WORKING_PLANS,
         maxUpdateReports: DEFAULT_MAX_UPDATE_REPORTS,
         maxUpdateRollbacks: DEFAULT_MAX_UPDATE_ROLLBACKS,
         maxBundleBackups: DEFAULT_MAX_BUNDLE_BACKUPS,

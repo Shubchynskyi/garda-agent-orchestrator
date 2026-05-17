@@ -1003,6 +1003,12 @@ test('buildHelpText documents aggregate retention override', () => {
     assert.ok(text.includes('aggregate task-event lines'));
 });
 
+test('buildHelpText documents working-plan retention override', () => {
+    const text = buildHelpText({ name: 'test', version: '1.0.0' });
+    assert.ok(text.includes('--max-working-plans'));
+    assert.ok(text.includes('working plans'));
+});
+
 test('runCliMain with --no-color sets NO_COLOR and disables supportsColor', async () => {
     const { runCliMain } = await import('../../../../src/cli/main');
     const savedNoColor = process.env.NO_COLOR;

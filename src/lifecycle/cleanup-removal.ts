@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { cleanupStaleTaskEventLocks, scanTaskEventLocks } from '../gate-runtime/task-events';
 import { KNOWN_SUFFIXES } from '../gate-runtime/reviews-index';
 import {
+    isCanonicalTaskId,
     parseActiveReviewArtifactTaskId,
     parseConventionalReviewArtifactTaskId,
     parseKnownReviewArtifactTaskId
@@ -261,6 +262,75 @@ function collectReviewArtifacts(
     return items;
 }
 
+function parseMarkdownWorkingPlanTaskId(fileName: string): string | null {
+    if (!fileName.endsWith('.md')) {
+        return null;
+    }
+    const taskId = fileName.slice(0, -'.md'.length).trim();
+    return /^T-\d+(?:-[A-Za-z0-9]+)*$/u.test(taskId) && isCanonicalTaskId(taskId) ? taskId : null;
+}
+
+function collectWorkingPlans(
+    plansDir: string,
+    maxWorkingPlans: number,
+    maxAgeDays: number,
+    now: Date,
+    activeTaskIds: ReadonlySet<string>
+): CleanupItem[] {
+    if (!fs.existsSync(plansDir)) return [];
+    const items: CleanupItem[] = [];
+    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
+
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(plansDir).filter((entry) => {
+            const taskId = parseMarkdownWorkingPlanTaskId(entry);
+            if (!taskId || activeTaskIdsLower.has(taskId.toLowerCase())) {
+                return false;
+            }
+            try {
+                return fs.statSync(path.join(plansDir, entry)).isFile();
+            } catch {
+                return false;
+            }
+        });
+    } catch {
+        return [];
+    }
+
+    entries.sort((a, b) => {
+        const mtimeA = fileMtimeMs(path.join(plansDir, a));
+        const mtimeB = fileMtimeMs(path.join(plansDir, b));
+        if (mtimeA !== mtimeB) return mtimeA - mtimeB;
+        return a.localeCompare(b);
+    });
+
+    const excessCount = Math.max(0, entries.length - maxWorkingPlans);
+    for (let i = 0; i < entries.length; i += 1) {
+        const entryName = entries[i];
+        const entryPath = path.join(plansDir, entryName);
+        let reason: string | null = null;
+        if (i < excessCount) {
+            reason = 'count';
+        } else {
+            try {
+                const stat = fs.statSync(entryPath);
+                if (stat.mtime < cutoff) {
+                    reason = 'age';
+                }
+            } catch {
+                // Skip unreadable files.
+            }
+        }
+        if (reason) {
+            items.push({ path: entryPath, category: 'plans', reason, sizeBytes: fileSizeBytes(entryPath) });
+        }
+    }
+
+    return items;
+}
+
 function collectTaskEventFiles(
     eventsDir: string,
     maxTaskEvents: number,
@@ -440,6 +510,7 @@ export function collectStandardCandidates(
     const backupsDir = path.join(runtimeDir, 'backups');
     const taskEventsDir = path.join(runtimeDir, 'task-events');
     const reviewsDir = path.join(runtimeDir, 'reviews');
+    const plansDir = path.join(runtimeDir, 'plans');
     const updateReportsDir = path.join(runtimeDir, 'update-reports');
     const updateRollbacksDir = path.join(runtimeDir, 'update-rollbacks');
     const bundleBackupsDir = path.join(runtimeDir, 'bundle-backups');
@@ -449,6 +520,7 @@ export function collectStandardCandidates(
         ...collectTimestampedDirs(bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
         ...collectTaskEventFiles(taskEventsDir, policy.maxTaskEvents, policy.maxAgeDays, now, activeTaskIds),
         ...collectReviewArtifacts(reviewsDir, policy.maxReviews, policy.maxAgeDays, now, activeTaskIds),
+        ...collectWorkingPlans(plansDir, policy.maxWorkingPlans, policy.maxAgeDays, now, activeTaskIds),
         ...collectUpdateNamedDirs(updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
         ...collectUpdateNamedDirs(updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
     ];
