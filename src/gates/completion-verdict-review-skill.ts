@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     normalizeCompatibilityReviewerExecutionMode,
+    normalizeReviewProvenanceUtcTimestamp,
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../gate-runtime/review-context';
@@ -33,6 +34,21 @@ import {
     resolveReviewerRoutingPolicy
 } from './reviewer-routing';
 import { isTrivialReview } from './completion-verdict-findings';
+
+function timestampProvenanceMatchesEventDetails(
+    details: Record<string, unknown> | null | undefined,
+    provenanceValue: string | null | undefined,
+    snakeKey: string,
+    camelKey: string
+): boolean {
+    const rawValue = details?.[snakeKey] ?? details?.[camelKey];
+    const rawText = String(rawValue || '').trim();
+    if (!rawText) {
+        return provenanceValue == null;
+    }
+    const eventValue = normalizeReviewProvenanceUtcTimestamp(rawText);
+    return !!eventValue && provenanceValue === eventValue;
+}
 
 export const REVIEW_CONTRACTS = [
     ['code', 'REVIEW PASSED'],
@@ -515,6 +531,30 @@ export function validateReviewSkillEvidence(
                                 && entry.integrity?.task_sequence === receiptReviewerProvenance.task_sequence
                                 && normalizeTimelineDetailString(entry.integrity?.event_sha256) === receiptReviewerProvenance.event_sha256
                                 && normalizeTimelineDetailString(entry.integrity?.prev_event_sha256) === receiptReviewerProvenance.prev_event_sha256
+                                && timestampProvenanceMatchesEventDetails(
+                                    details,
+                                    receiptReviewerProvenance.launch_prepared_at_utc,
+                                    'launch_prepared_at_utc',
+                                    'launchPreparedAtUtc'
+                                )
+                                && timestampProvenanceMatchesEventDetails(
+                                    details,
+                                    receiptReviewerProvenance.launched_at_utc,
+                                    'launched_at_utc',
+                                    'launchedAtUtc'
+                                )
+                                && timestampProvenanceMatchesEventDetails(
+                                    details,
+                                    receiptReviewerProvenance.launch_completed_at_utc,
+                                    'launch_completed_at_utc',
+                                    'launchCompletedAtUtc'
+                                )
+                                && timestampProvenanceMatchesEventDetails(
+                                    details,
+                                    receiptReviewerProvenance.invocation_attested_at_utc,
+                                    'invocation_attested_at_utc',
+                                    'invocationAttestedAtUtc'
+                                )
                             );
                         })
                         : null;

@@ -4,6 +4,7 @@ import {
     auditReviewArtifactCompaction,
     buildReviewVerdictTokenSet,
     normalizeCompatibilityReviewerExecutionMode,
+    normalizeReviewProvenanceUtcTimestamp,
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../gate-runtime/review-context';
@@ -111,6 +112,21 @@ function resolvePreflightPayloadForReviewValidation(options: {
 function normalizeSha256String(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized || null;
+}
+
+function timestampProvenanceMatchesEventDetails(
+    details: Record<string, unknown> | null | undefined,
+    provenanceValue: string | null | undefined,
+    snakeKey: string,
+    camelKey: string
+): boolean {
+    const rawValue = details?.[snakeKey] ?? details?.[camelKey];
+    const rawText = String(rawValue || '').trim();
+    if (!rawText) {
+        return provenanceValue == null;
+    }
+    const eventValue = normalizeReviewProvenanceUtcTimestamp(rawText);
+    return !!eventValue && provenanceValue === eventValue;
 }
 
 function resolveReviewContextTreeStateSha256(reviewContext?: Record<string, unknown>): string | null {
@@ -511,6 +527,30 @@ function findMatchingInvocationAttestationEvent(
             && (entry.integrity.prev_event_sha256 == null
                 ? null
                 : String(entry.integrity.prev_event_sha256).trim().toLowerCase() || null) === options.reviewerProvenance.prev_event_sha256
+            && timestampProvenanceMatchesEventDetails(
+                details,
+                options.reviewerProvenance.launch_prepared_at_utc,
+                'launch_prepared_at_utc',
+                'launchPreparedAtUtc'
+            )
+            && timestampProvenanceMatchesEventDetails(
+                details,
+                options.reviewerProvenance.launched_at_utc,
+                'launched_at_utc',
+                'launchedAtUtc'
+            )
+            && timestampProvenanceMatchesEventDetails(
+                details,
+                options.reviewerProvenance.launch_completed_at_utc,
+                'launch_completed_at_utc',
+                'launchCompletedAtUtc'
+            )
+            && timestampProvenanceMatchesEventDetails(
+                details,
+                options.reviewerProvenance.invocation_attested_at_utc,
+                'invocation_attested_at_utc',
+                'invocationAttestedAtUtc'
+            )
         ) {
             return entry;
         }

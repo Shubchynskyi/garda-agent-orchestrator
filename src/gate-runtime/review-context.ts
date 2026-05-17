@@ -404,6 +404,10 @@ export interface ReviewerInvocationAttestationReviewReceiptReviewerProvenance {
     review_context_sha256: string;
     review_tree_state_sha256?: string | null;
     routing_event_sha256: string;
+    launch_prepared_at_utc?: string | null;
+    launched_at_utc?: string | null;
+    launch_completed_at_utc?: string | null;
+    invocation_attested_at_utc?: string | null;
 }
 
 export interface ReviewContextRoutingMetadataUpdate {
@@ -460,6 +464,33 @@ function normalizeProvenanceText(value: unknown): string | null {
     return text || null;
 }
 
+const UTC_ISO_8601_TIMESTAMP_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?Z$/;
+
+export function normalizeReviewProvenanceUtcTimestamp(value: unknown): string | null {
+    const text = String(value || '').trim();
+    if (!text) {
+        return null;
+    }
+    const match = UTC_ISO_8601_TIMESTAMP_PATTERN.exec(text);
+    if (!match) {
+        return null;
+    }
+    const timestampMs = Date.parse(text);
+    if (!Number.isFinite(timestampMs)) {
+        return null;
+    }
+    const parsed = new Date(timestampMs);
+    const [, year, month, day, hour, minute, second] = match.map(Number);
+    return parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() + 1 === month
+        && parsed.getUTCDate() === day
+        && parsed.getUTCHours() === hour
+        && parsed.getUTCMinutes() === minute
+        && parsed.getUTCSeconds() === second
+        ? text
+        : null;
+}
+
 export function normalizeReviewReceiptReviewerProvenance(value: unknown): ReviewReceiptReviewerProvenance | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
@@ -488,6 +519,14 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             ? null
             : normalizeProvenanceSha256(rawReviewTreeStateSha256);
         const routingEventSha256 = normalizeProvenanceSha256(record.routing_event_sha256);
+        const rawLaunchPreparedAtUtc = record.launch_prepared_at_utc ?? record.launchPreparedAtUtc;
+        const rawLaunchedAtUtc = record.launched_at_utc ?? record.launchedAtUtc;
+        const rawLaunchCompletedAtUtc = record.launch_completed_at_utc ?? record.launchCompletedAtUtc;
+        const rawInvocationAttestedAtUtc = record.invocation_attested_at_utc ?? record.invocationAttestedAtUtc;
+        const launchPreparedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawLaunchPreparedAtUtc);
+        const launchedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawLaunchedAtUtc);
+        const launchCompletedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawLaunchCompletedAtUtc);
+        const invocationAttestedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawInvocationAttestedAtUtc);
         if (
             schemaVersion !== 1
             || controllerEventType !== 'REVIEWER_INVOCATION_ATTESTED'
@@ -502,6 +541,10 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             || !reviewContextSha256
             || (rawReviewTreeStateSha256 != null && !reviewTreeStateSha256)
             || !routingEventSha256
+            || (rawLaunchPreparedAtUtc != null && String(rawLaunchPreparedAtUtc).trim() !== '' && !launchPreparedAtUtc)
+            || (rawLaunchedAtUtc != null && String(rawLaunchedAtUtc).trim() !== '' && !launchedAtUtc)
+            || (rawLaunchCompletedAtUtc != null && String(rawLaunchCompletedAtUtc).trim() !== '' && !launchCompletedAtUtc)
+            || (rawInvocationAttestedAtUtc != null && String(rawInvocationAttestedAtUtc).trim() !== '' && !invocationAttestedAtUtc)
         ) {
             return null;
         }
@@ -518,7 +561,11 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             reviewer_identity: reviewerIdentity,
             review_context_sha256: reviewContextSha256,
             review_tree_state_sha256: reviewTreeStateSha256,
-            routing_event_sha256: routingEventSha256
+            routing_event_sha256: routingEventSha256,
+            launch_prepared_at_utc: launchPreparedAtUtc,
+            launched_at_utc: launchedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc,
+            invocation_attested_at_utc: invocationAttestedAtUtc
         };
     }
     if (
@@ -583,7 +630,11 @@ export function buildReviewReceiptReviewerInvocationProvenance(
         reviewer_identity: record.reviewer_identity ?? record.reviewerIdentity ?? record.reviewer_session_id ?? record.reviewerSessionId,
         review_context_sha256: record.review_context_sha256 ?? record.reviewContextSha256,
         review_tree_state_sha256: record.review_tree_state_sha256 ?? record.reviewTreeStateSha256,
-        routing_event_sha256: record.routing_event_sha256 ?? record.routingEventSha256
+        routing_event_sha256: record.routing_event_sha256 ?? record.routingEventSha256,
+        launch_prepared_at_utc: record.launch_prepared_at_utc ?? record.launchPreparedAtUtc,
+        launched_at_utc: record.launched_at_utc ?? record.launchedAtUtc,
+        launch_completed_at_utc: record.launch_completed_at_utc ?? record.launchCompletedAtUtc,
+        invocation_attested_at_utc: record.invocation_attested_at_utc ?? record.invocationAttestedAtUtc
     });
 }
 

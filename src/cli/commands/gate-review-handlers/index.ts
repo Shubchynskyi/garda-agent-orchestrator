@@ -116,7 +116,9 @@ interface ReviewerLaunchArtifactValidationResult {
     attestationSource: string;
     launchTool: string;
     providerInvocationId: string;
+    launchPreparedAtUtc: string | null;
     launchedAtUtc: string;
+    launchCompletedAtUtc: string | null;
 }
 
 interface ReviewerHandoffBindings {
@@ -1901,7 +1903,9 @@ function validateReviewerLaunchArtifact(options: {
         'controller_invocation_id',
         'controllerInvocationId'
     );
+    const launchPreparedAtUtc = getStringField(artifact, 'launch_prepared_at_utc', 'launchPreparedAtUtc') || null;
     const launchedAtUtc = getStringField(artifact, 'launched_at_utc', 'launchedAtUtc');
+    const launchCompletedAtUtc = getStringField(artifact, 'launch_completed_at_utc', 'launchCompletedAtUtc') || null;
     const preparedLaunchEventSha256 = getStringField(
         artifact,
         'prepared_launch_event_sha256',
@@ -2024,6 +2028,12 @@ function validateReviewerLaunchArtifact(options: {
     } else if (!isValidUtcIso8601Timestamp(launchedAtUtc)) {
         violations.push('launched_at_utc must be a valid UTC ISO-8601 timestamp');
     }
+    if (launchPreparedAtUtc && !isValidUtcIso8601Timestamp(launchPreparedAtUtc)) {
+        violations.push('launch_prepared_at_utc must be a valid UTC ISO-8601 timestamp');
+    }
+    if (launchCompletedAtUtc && !isValidUtcIso8601Timestamp(launchCompletedAtUtc)) {
+        violations.push('launch_completed_at_utc must be a valid UTC ISO-8601 timestamp');
+    }
     if (violations.length > 0) {
         throw new Error(
             'Reviewer launch artifact is not eligible for invocation attestation:\n' +
@@ -2039,7 +2049,9 @@ function validateReviewerLaunchArtifact(options: {
         attestationSource,
         launchTool,
         providerInvocationId,
-        launchedAtUtc
+        launchPreparedAtUtc,
+        launchedAtUtc,
+        launchCompletedAtUtc
     };
 }
 
@@ -2267,6 +2279,8 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerProvenance,
         trustLevel: 'INDEPENDENT_AUDITED'
     });
+    (receipt as unknown as Record<string, unknown>).review_result_recorded_at_utc =
+        (receipt as unknown as Record<string, unknown>).recorded_at_utc ?? new Date().toISOString();
     (receipt as unknown as Record<string, unknown>).review_output_path = options.rawReviewOutputPath
         ? normalizePath(options.rawReviewOutputPath)
         : null;
@@ -2725,6 +2739,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewContextPath: contextPath,
         reviewerLaunchArtifactPath: launchArtifactPath
     });
+    const launchPreparedAtUtc = new Date().toISOString();
     const preparedArtifact = {
         schema_version: 1,
         evidence_type: PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
@@ -2748,6 +2763,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         review_tree_state_sha256: reviewTreeStateSha256 || null,
         review_tree_state: reviewTreeStateSummary,
         launch_binding_sha256: launchBindingSha256,
+        launch_prepared_at_utc: launchPreparedAtUtc,
         provider: providerLaunch.provider,
         launch_tool: providerLaunch.launchTool,
         launch_instruction: providerLaunch.launchInstruction,
@@ -2761,6 +2777,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             launch_tool: providerLaunch.launchTool,
             provider_invocation_id_or_controller_invocation_id: '<actual delegated reviewer invocation id>',
             launched_at_utc: '<ISO-8601 launch timestamp>',
+            launch_completed_at_utc: '<gate-owned ISO-8601 completion timestamp>',
             fresh_context: true,
             isolated_context: true,
             fork_context: false
@@ -2781,7 +2798,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
         superseded_launch_artifact: supersededLaunchArtifact,
         generated_by: 'garda prepare-reviewer-launch',
-        generated_at_utc: new Date().toISOString(),
+        generated_at_utc: launchPreparedAtUtc,
         next_action: (
             'Launch a fresh delegated reviewer with prompt_template_path, reviewer_prompt_path, output_template_path, ' +
             'and evidence_manifest_path as opaque handoff artifacts; ' +
@@ -2813,6 +2830,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
                 evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
                 launch_tool: providerLaunch.launchTool,
+                launch_prepared_at_utc: launchPreparedAtUtc,
                 attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
             }
         }
@@ -2828,6 +2846,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const preparedLaunchEventTaskSequence = preparedEvent.integrity.task_sequence;
     writeReviewArtifactJson(launchArtifactPath, {
         ...preparedArtifact,
+        reviewer_launch_prepared_event_recorded_at_utc: launchPreparedAtUtc,
         prepared_launch_event_sha256: preparedLaunchEventSha256,
         prepared_launch_event_task_sequence: preparedLaunchEventTaskSequence
     });
@@ -3022,11 +3041,13 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     });
 
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const launchCompletedAtUtc = new Date().toISOString();
     const completedArtifact: Record<string, unknown> = {
         ...preparedArtifact,
         evidence_type: COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
         attestation_state: 'launched',
-        attestation_source: attestationSource
+        attestation_source: attestationSource,
+        launch_completed_at_utc: launchCompletedAtUtc
     };
     if (providerInvocationId) {
         completedArtifact.provider_invocation_id = providerInvocationId;
@@ -3052,6 +3073,7 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     console.log(`LaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
     console.log(`${invocationIdLabel}: ${invocationId}`);
     console.log(`LaunchedAtUtc: ${launchedAtUtc}`);
+    console.log(`LaunchCompletedAtUtc: ${launchCompletedAtUtc}`);
     console.log(`AttestationSource: ${attestationSource}`);
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
     const recordCommand = getStringField(preparedArtifact, 'record_invocation_command', 'recordInvocationCommand');
@@ -3202,6 +3224,7 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         timelineEvents,
         artifactPathValue: options.reviewerLaunchArtifactPath
     });
+    const invocationAttestedAtUtc = new Date().toISOString();
     const invocationEvent = await emitReviewerInvocationAttestedEventAsync(
         gateHelpers.joinOrchestratorPath(repoRoot, ''),
         taskId,
@@ -3217,7 +3240,10 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
                 reviewer_launch_attestation_source: launchArtifact.attestationSource,
                 reviewer_launch_tool: launchArtifact.launchTool,
                 provider_invocation_id: launchArtifact.providerInvocationId,
+                launch_prepared_at_utc: launchArtifact.launchPreparedAtUtc,
                 launched_at_utc: launchArtifact.launchedAtUtc,
+                launch_completed_at_utc: launchArtifact.launchCompletedAtUtc,
+                invocation_attested_at_utc: invocationAttestedAtUtc,
                 review_tree_state_sha256: getReviewTreeStateSha256(parsedReviewContext) || null
             }
         }

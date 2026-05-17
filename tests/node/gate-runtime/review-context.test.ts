@@ -441,6 +441,27 @@ test('buildReviewReceiptReviewerInvocationProvenance preserves review tree-state
     assert.equal(provenance?.routing_event_sha256, '3'.repeat(64));
 });
 
+test('normalizeReviewReceiptReviewerProvenance rejects malformed timing provenance', () => {
+    const provenance = normalizeReviewReceiptReviewerProvenance({
+        schema_version: 1,
+        attestation_type: 'reviewer_invocation_attestation',
+        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+        task_sequence: 11,
+        prev_event_sha256: 'e'.repeat(64),
+        event_sha256: 'f'.repeat(64),
+        task_id: 'T-1001',
+        review_type: 'code',
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: 'agent:reviewer-1',
+        review_context_sha256: '1'.repeat(64),
+        review_tree_state_sha256: '2'.repeat(64),
+        routing_event_sha256: '3'.repeat(64),
+        launch_prepared_at_utc: 'not-a-date'
+    });
+
+    assert.equal(provenance, null);
+});
+
 test('extractReviewVerdictToken prefers verdict section tokens', () => {
     const verdict = extractReviewVerdictToken([
         '# Review',

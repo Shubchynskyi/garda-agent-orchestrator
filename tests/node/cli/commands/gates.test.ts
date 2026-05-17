@@ -378,7 +378,11 @@ function attestReviewerInvocationForTest(options: {
         reviewer_identity: options.reviewerIdentity,
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
-        routing_event_sha256: routedIntegrity.event_sha256
+        routing_event_sha256: routedIntegrity.event_sha256,
+        launch_prepared_at_utc: '2026-07-01T00:00:00.000Z',
+        launched_at_utc: '2026-07-01T00:00:01.000Z',
+        launch_completed_at_utc: '2026-07-01T00:00:02.000Z',
+        invocation_attested_at_utc: '2026-07-01T00:00:03.000Z'
     });
 }
 
@@ -3589,10 +3593,15 @@ describe('cli/commands/gates', () => {
         assert.equal(launchArtifact.attestation_source, 'garda_prepare_reviewer_launch');
         assert.equal(typeof launchArtifact.launch_binding_sha256, 'string');
         assert.ok(launchArtifact.launch_binding_sha256.length > 0);
+        assert.equal(typeof launchArtifact.launch_prepared_at_utc, 'string');
+        assert.equal(Number.isNaN(Date.parse(launchArtifact.launch_prepared_at_utc)), false);
+        assert.equal(launchArtifact.generated_at_utc, launchArtifact.launch_prepared_at_utc);
         assert.equal(launchArtifact.launch_completion_token, undefined);
         assert.equal(launchArtifact.controller_launch_completion_token, undefined);
         assert.equal(typeof launchArtifact.prepared_launch_event_sha256, 'string');
         assert.ok(launchArtifact.prepared_launch_event_sha256.length > 0);
+        assert.equal(typeof launchArtifact.reviewer_launch_prepared_event_recorded_at_utc, 'string');
+        assert.equal(Number.isNaN(Date.parse(launchArtifact.reviewer_launch_prepared_event_recorded_at_utc)), false);
         assert.equal(typeof launchArtifact.launch_tool, 'string');
         assert.ok(String(launchArtifact.launch_tool).length > 0);
         assert.equal(
@@ -3602,6 +3611,7 @@ describe('cli/commands/gates', () => {
         assert.equal(launchArtifact.after_launch_required_updates.evidence_type, 'delegated_reviewer_launch');
         assert.equal(launchArtifact.after_launch_required_updates.attestation_state, 'launched');
         assert.equal(launchArtifact.after_launch_required_updates.provider_invocation_id_or_controller_invocation_id, '<actual delegated reviewer invocation id>');
+        assert.equal(launchArtifact.after_launch_required_updates.launch_completed_at_utc, '<gate-owned ISO-8601 completion timestamp>');
         assert.deepEqual(launchArtifact.preserve_prepared_fields, [
             'review_context_sha256',
             'routing_event_sha256',
@@ -3622,7 +3632,9 @@ describe('cli/commands/gates', () => {
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
         const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
+        const launchPreparedDetails = launchPreparedEvent?.details as Record<string, unknown> | undefined;
         assert.equal(launchPreparedIntegrity?.event_sha256, launchArtifact.prepared_launch_event_sha256);
+        assert.equal(launchPreparedDetails?.launch_prepared_at_utc, launchArtifact.launch_prepared_at_utc);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
         assert.ok(capturedLogs.some((line) => line.includes('REVIEWER_LAUNCH_PREPARED: code')));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
@@ -5047,6 +5059,16 @@ describe('cli/commands/gates', () => {
                 taskId: 'T-257-launch-invalid-timestamp',
                 artifactUpdates: { launched_at_utc: 'not-a-date' },
                 expectedError: 'launched_at_utc must be a valid UTC ISO-8601 timestamp'
+            },
+            {
+                taskId: 'T-564-1-launch-invalid-prepared-timestamp',
+                artifactUpdates: { launch_prepared_at_utc: 'not-a-date' },
+                expectedError: 'launch_prepared_at_utc must be a valid UTC ISO-8601 timestamp'
+            },
+            {
+                taskId: 'T-564-1-launch-invalid-completed-timestamp',
+                artifactUpdates: { launch_completed_at_utc: 'not-a-date' },
+                expectedError: 'launch_completed_at_utc must be a valid UTC ISO-8601 timestamp'
             }
         ];
 
@@ -5251,6 +5273,10 @@ describe('cli/commands/gates', () => {
         assert.equal(completedArtifact.attestation_source, 'claude_task_tool_launch', 'Attestation source should be set');
         assert.equal(completedArtifact.provider_invocation_id, 'test-invocation-305', 'Provider invocation ID should be set');
         assert.equal(completedArtifact.launched_at_utc, '2026-07-01T00:00:00.000Z', 'Launched timestamp should be set');
+        assert.equal(typeof completedArtifact.launch_prepared_at_utc, 'string');
+        assert.equal(Number.isNaN(Date.parse(completedArtifact.launch_prepared_at_utc)), false);
+        assert.equal(typeof completedArtifact.launch_completed_at_utc, 'string');
+        assert.equal(Number.isNaN(Date.parse(completedArtifact.launch_completed_at_utc)), false);
         assert.equal(completedArtifact.fork_context, false, 'Fork context should be false');
 
         const previousInvokeExitCode = process.exitCode;
@@ -5277,6 +5303,13 @@ describe('cli/commands/gates', () => {
         assert.equal(observedInvokeExitCode, 0, `record-review-invocation should accept the completed artifact, got exit code ${observedInvokeExitCode}`);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
+        const invocationEvent = events.find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+        const invocationDetails = invocationEvent?.details as Record<string, unknown> | undefined;
+        assert.equal(invocationDetails?.launch_prepared_at_utc, completedArtifact.launch_prepared_at_utc);
+        assert.equal(invocationDetails?.launched_at_utc, completedArtifact.launched_at_utc);
+        assert.equal(invocationDetails?.launch_completed_at_utc, completedArtifact.launch_completed_at_utc);
+        assert.equal(typeof invocationDetails?.invocation_attested_at_utc, 'string');
+        assert.equal(Number.isNaN(Date.parse(String(invocationDetails?.invocation_attested_at_utc))), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -6180,6 +6213,12 @@ describe('cli/commands/gates', () => {
         assert.equal(receipt.trust_level, 'INDEPENDENT_AUDITED');
         assert.equal(receipt.reviewer_provenance?.attestation_type, 'reviewer_invocation_attestation');
         assert.equal(receipt.reviewer_provenance?.controller_event_type, 'REVIEWER_INVOCATION_ATTESTED');
+        assert.equal(receipt.reviewer_provenance?.launch_prepared_at_utc, '2026-07-01T00:00:00.000Z');
+        assert.equal(receipt.reviewer_provenance?.launched_at_utc, '2026-07-01T00:00:01.000Z');
+        assert.equal(receipt.reviewer_provenance?.launch_completed_at_utc, '2026-07-01T00:00:02.000Z');
+        assert.equal(receipt.reviewer_provenance?.invocation_attested_at_utc, '2026-07-01T00:00:03.000Z');
+        assert.equal(typeof receipt.review_result_recorded_at_utc, 'string');
+        assert.equal(Number.isNaN(Date.parse(receipt.review_result_recorded_at_utc)), false);
         assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
         assert.equal(receipt.review_materialization_fidelity, 'exact');
         assert.equal(typeof receipt.review_output_sha256, 'string');
