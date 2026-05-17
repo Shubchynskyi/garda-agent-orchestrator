@@ -78,6 +78,7 @@ Important boundaries:
 - Missing, stale, or absent Markdown working plans are neutral for ordinary task execution.
 - When one exists, `next-step` and `enter-task-mode` print `MarkdownWorkingPlanPath` and `MarkdownWorkingPlanSha256` so the executor can inspect the optional plan deliberately.
 - `cleanup`, `gc`, and `clean` may remove old inactive Markdown working plans only from `garda-agent-orchestrator/runtime/plans/*.md`, using the `plans` category and `--max-working-plans` retention override. Active task plans and user project `plans/` directories outside the Garda runtime path are preserved.
+- Reviewer context treats a missing optional Markdown working plan, and a missing task-mode JSON plan in non-plan-guided execution, as neutral `not_provided` context. Reviewers must not turn that absence into an active finding, deferred finding, residual risk, or no-plan waiver requirement. If a JSON task plan was explicitly attached and is missing, stale, invalid, or contradictory, that attached-plan problem is still reviewable.
 - Do not create a retrospective Markdown plan only to satisfy a reviewer or completion gate.
 
 ### Example Plan

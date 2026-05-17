@@ -541,7 +541,63 @@ describe('gates/build-review-context', () => {
             assert.ok(promptText.includes('Reviewer should verify skeleton class presence, not runtime execution.'));
             assert.ok(promptText.includes('No test execution; lifecycle gates own command validation.'));
             assert.ok(promptText.includes('Full-suite execution by the reviewer.'));
-            assert.ok(promptText.includes('Missing, unavailable, stale, or invalid plan material is not acceptance evidence'));
+            assert.ok(promptText.includes('Missing, unavailable, stale, or invalid attached plan material is not acceptance evidence'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('renders absent task-mode plans as neutral for reviewers', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-no-plan-neutral-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-935 | IN_PROGRESS | P2 | workflow/review-context | Neutral missing optional plan | gpt-5.3 | 2026-05-17 | balanced | Missing optional working plan must not become a reviewer follow-up. |'
+            ].join('\n'), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-935', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved',
+                plan: null,
+                taskSummary: 'Stop optional plan absence from becoming reviewer findings'
+            });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'), JSON.stringify({
+                enabled: false
+            }, null, 2), 'utf8');
+            const preflightPath = path.join(reviewsRoot, 'T-935-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-935',
+                required_reviews: { refactor: true },
+                changed_files: []
+            }, null, 2), 'utf8');
+
+            const result = buildReviewContext({
+                reviewType: 'refactor',
+                depth: 2,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: '',
+                outputPath: path.join(reviewsRoot, 'T-935-refactor-review-context.json'),
+                repoRoot
+            });
+            const promptText = fs.readFileSync(String(result.rule_context.artifact_path), 'utf8');
+            const manifest = JSON.parse(fs.readFileSync(result.reviewer_handoff.evidence_manifest.artifact_path, 'utf8'));
+
+            assert.equal(result.task_criteria.plan.available, false);
+            assert.equal(result.task_criteria.plan.status, 'not_provided');
+            assert.deepEqual(result.task_criteria.plan.warnings, []);
+            assert.deepEqual(result.task_criteria.plan.violations, []);
+            assert.equal(manifest.task_evidence.plan.status, 'not_provided');
+            assert.deepEqual(manifest.task_evidence.plan.warnings, []);
+            assert.ok(promptText.includes('Plan status: not_provided (neutral; no task-mode plan was attached)'));
+            assert.ok(promptText.includes('No attached task-mode plan means no plan-guided criteria were provided'));
+            assert.ok(promptText.includes('absent task-mode JSON plans in non-plan-guided tasks are neutral'));
+            assert.ok(!promptText.includes('Plan warnings:'));
+            assert.ok(!promptText.includes('No approved plan was attached at task-mode entry'));
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
