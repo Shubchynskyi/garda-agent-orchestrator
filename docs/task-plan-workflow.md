@@ -6,6 +6,13 @@ The Garda orchestrator supports an optional **planner/executor split** where a s
 
 This pattern is sometimes called **expensive-planner + cheap-executor**. The idea is to front-load the hard reasoning (scope analysis, risk assessment, step ordering) into a single planning pass, then let a cost-efficient model carry out the plan under the orchestrator's existing gate infrastructure.
 
+Garda now recognizes two intentionally separate planning surfaces:
+
+| Surface | Location | Purpose | Enforcement |
+|---|---|---|---|
+| Structured JSON task plan | `<bundle>/runtime/reviews/<task-id>-task-plan.json` | Approved planner/executor handoff with scope drift checks | Enforced only when passed to `enter-task-mode --plan-path` |
+| Markdown working plan | `garda-agent-orchestrator/runtime/plans/<task-id>.md` | Optional human-readable executor guidance | Not schema-enforced; absence is neutral |
+
 ## When to Use a Plan
 
 | Scenario | Recommendation |
@@ -16,13 +23,15 @@ This pattern is sometimes called **expensive-planner + cheap-executor**. The ide
 | Cross-cutting refactor or migration | Author a plan — drift detection catches scope creep |
 | High-risk security or data change | Author a plan at depth ≥ 2 — reviewers see the plan context |
 
-## Artifact Schema
+## Structured JSON Task Plan
 
 A task plan is a JSON file stored at:
 
 ```
 <bundle>/runtime/reviews/<task-id>-task-plan.json
 ```
+
+This is the only plan artifact accepted by `enter-task-mode --plan-path`.
 
 Required fields:
 
@@ -37,6 +46,37 @@ Required fields:
 | `steps` | array | Ordered execution steps (each with `id` and `title`) |
 
 Optional fields: `validation_strategy`, `notes`, `created_by`, `created_at`, `plan_sha256`.
+
+## Optional Markdown Working Plans
+
+Agents and operators may also keep a lightweight Markdown working plan at:
+
+```text
+garda-agent-orchestrator/runtime/plans/<task-id>.md
+```
+
+This file is planner-authored or operator-authored working context for the executor. It is useful when a task has enough moving parts to benefit from a readable checklist, but does not need the strict JSON task-plan contract or drift enforcement.
+
+Markdown working plans are intentionally free-form. Recommended headings are:
+
+- `Goal`
+- `Scope`
+- `Out of Scope`
+- `Steps`
+- `Validation`
+- `Risks`
+- `Notes`
+
+These headings are examples, not a schema. The file may use any readable Markdown structure.
+
+Important boundaries:
+
+- A Markdown working plan is not passed as `--plan-path`.
+- It does not create `plan_guided=true`.
+- It does not enable compile-gate drift detection.
+- It is not reviewer provenance and must not be treated as a required review artifact.
+- Missing, stale, or absent Markdown working plans are neutral for ordinary task execution.
+- Do not create a retrospective Markdown plan only to satisfy a reviewer or completion gate.
 
 ### Example Plan
 
@@ -153,6 +193,8 @@ When `build-review-context` runs for each required review, it reads plan metadat
 
 Reviewers can use this context to evaluate whether the implementation matches the planned scope.
 
+Markdown working plans are different: they may help the executor understand task intent, but reviewer behavior must not depend on their presence.
+
 ### Completion Gate
 
 The completion gate surfaces the same plan evidence:
@@ -170,6 +212,7 @@ When no `--plan-path` is passed to `enter-task-mode`:
 - `plan` fields are `null` in all artifacts.
 - Drift detection returns `NO_PLAN` and imposes no constraints.
 - The full orchestrator lifecycle (preflight, compile gate, reviews, completion) runs identically to the pre-plan behavior.
+- An optional Markdown working plan at `runtime/plans/<task-id>.md` may still be read by the executor, but it does not change gate behavior.
 
 No configuration changes are needed to use freeform mode — it is the default.
 

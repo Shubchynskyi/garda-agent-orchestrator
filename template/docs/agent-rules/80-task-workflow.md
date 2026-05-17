@@ -44,6 +44,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - At fresh main-agent task start, show one English start marker from the repo-owned list once in the first relevant reply; this UX marker is not gate evidence.
 - Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
+- If `garda-agent-orchestrator/runtime/plans/<task-id>.md` exists for the selected task, read it as optional executor guidance. Missing Markdown working plans are normal: do not block, invent a waiver, pass them as `--plan-path`, or treat their absence as a reviewer/completion issue.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.
 
 ## Project Memory Task Entry Protocol
@@ -85,6 +86,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Baseline downstream rules must be opened and recorded before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --stage "TASK_ENTRY"`.
 - Baseline rule-pack evidence must produce `runtime/reviews/<task-id>-rule-pack.json` and task-timeline event `RULE_PACK_LOADED`.
+- Optional Markdown working plans live at `garda-agent-orchestrator/runtime/plans/<task-id>.md`. They are human-readable guidance only and do not replace the structured JSON task plan accepted by `enter-task-mode --plan-path`.
 - Handshake diagnostics must pass after task-mode entry and before preflight:
   `node garda-agent-orchestrator/bin/garda.js gate handshake-diagnostics`.
 - Handshake must fail closed when runtime identity is unresolved or the current runtime session does not attest launchable reviewer subagents.
