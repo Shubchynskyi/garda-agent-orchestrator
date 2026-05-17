@@ -237,6 +237,31 @@ Notes:
 - Action execution requires the page's per-process request token, exact localhost `Origin`, and JSON content type; cross-origin localhost posts are rejected.
 - The Actions tab does not accept arbitrary shell text; each action maps to a fixed existing Garda command.
 
+### `garda off`
+
+Hide managed Garda root instruction files while keeping the deployed bundle and `TASK.md` available.
+
+### `garda on`
+
+Restore managed Garda root instruction files after a previous `garda off`.
+
+Temporarily hide or restore Garda-owned root agent instruction files without uninstalling the deployed bundle.
+
+```text
+garda off --target-root "." --dry-run
+garda off --target-root "."
+garda on --target-root "." --dry-run
+garda on --target-root "."
+```
+
+Notes:
+- `garda off` moves managed root agent surfaces such as `AGENTS.md`, active provider entrypoints, provider bridge profiles, and `.agents/workflows/start-task.md` into `garda-agent-orchestrator/runtime/switch/off/`.
+- `garda on` restores those managed files from `runtime/switch/off/`.
+- User-owned root alternatives are moved into `runtime/switch/on/` when turning Garda back on, and restored when turning it off again.
+- `TASK.md` remains visible; the switch is for root agent instruction surfaces, not task queue removal.
+- `garda off` writes a managed `.agentignore` block pointing agents away from `garda-agent-orchestrator/`; `garda on` removes only that managed block.
+- Conflicts fail closed without overwriting user-authored files. Use `--dry-run` to inspect planned moves before changing a workspace.
+
 ### `garda bootstrap`
 
 Deploy the bundle without running install.

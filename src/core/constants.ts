@@ -165,6 +165,8 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'task',
     'html',
     'ui',
+    'off',
+    'on',
     'bootstrap',
     'install',
     'init',

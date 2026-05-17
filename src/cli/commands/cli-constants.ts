@@ -48,6 +48,8 @@ export const COMMAND_SUMMARY = Object.freeze<readonly CommandSummaryEntry[]>([
     ['task', 'Inspect one task via stats or event timeline'],
     ['html', 'Write a static read-only HTML report and optional snapshots'],
     ['ui', 'Start a localhost UI with lazy task details'],
+    ['off', 'Hide Garda root agent instructions without uninstalling'],
+    ['on', 'Restore Garda root agent instructions after off mode'],
     ['bootstrap', 'Deploy bundle only'],
     ['install', 'Deploy or refresh the bundle and run the Node install pipeline'],
     ['init', 'Re-materialize live/ from an existing deployed bundle'],

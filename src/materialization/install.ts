@@ -37,6 +37,7 @@ import {
     syncManagedBlockInContent
 } from './content-builders';
 import { withLifecycleOperationLock } from '../lifecycle/common';
+import { readSwitchModeState, runSwitchMode } from './switch-mode';
 
 interface RunInstallOptions {
     targetRoot: string;
@@ -181,6 +182,7 @@ export function runInstall(options: RunInstallOptions) {
     const enableClaudeOrchestratorFullAccess = initAnswers.ClaudeOrchestratorFullAccess;
     const tokenEconomyEnabled = initAnswers.TokenEconomyEnabled;
     const providerMinimalism = initAnswers.ProviderMinimalism;
+    const switchModeBeforeInstall = readSwitchModeState(targetRoot, bundleRoot);
 
     const canonicalEntryFile = getCanonicalEntrypointFile(initAnswers.SourceOfTruth);
     const activeEntryFilesSeed = initAnswers.ActiveAgentFiles
@@ -711,6 +713,13 @@ export function runInstall(options: RunInstallOptions) {
     let liveVersionWritten = false;
     let protectedControlPlaneManifestWritten = false;
     if (!dryRun) {
+        if (switchModeBeforeInstall === 'off') {
+            runSwitchMode({
+                targetRoot,
+                mode: 'off',
+                dryRun: false
+            });
+        }
         ensureDirectory(path.dirname(liveVersionPath));
         writeJsonFile(liveVersionPath, {
             Version: bundleVersion,

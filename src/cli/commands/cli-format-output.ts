@@ -406,6 +406,8 @@ export type CommandHelpName =
     | 'task'
     | 'html'
     | 'ui'
+    | 'off'
+    | 'on'
     | 'status'
     | 'doctor'
     | 'debug'
@@ -619,6 +621,36 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             '--actions exposes only allow-listed Garda commands with preview, confirmation for mutating actions, and runtime audit events.'
         ])
     }),
+    off: Object.freeze({
+        summary: 'Hide Garda root agent instruction files without uninstalling the deployed bundle.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} off [--target-root PATH] [--dry-run]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} off --dry-run`,
+            `${PRIMARY_CLI_NAME} off --target-root "."`
+        ]),
+        hints: Object.freeze([
+            'Moves Garda-owned root agent entrypoints into runtime/switch/off and restores user-owned alternatives from runtime/switch/on.',
+            'TASK.md remains visible. The deployed bundle remains installed.',
+            'Conflicts fail closed without overwriting user files; run --dry-run first when checking a workspace.'
+        ])
+    }),
+    on: Object.freeze({
+        summary: 'Restore Garda root agent instruction files after off mode.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} on [--target-root PATH] [--dry-run]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} on --dry-run`,
+            `${PRIMARY_CLI_NAME} on --target-root "."`
+        ]),
+        hints: Object.freeze([
+            'Moves user-owned root alternatives into runtime/switch/on and restores Garda-owned files from runtime/switch/off.',
+            'Removes the managed .agentignore block created by off mode.',
+            'Conflicts fail closed without overwriting user files; run --dry-run first when checking a workspace.'
+        ])
+    }),
     status: Object.freeze({
         summary: 'Show current project status without changing files.',
         usage: Object.freeze([
@@ -742,7 +774,7 @@ function styleHelpToken(token: string): string {
         || normalized === 'node'
         || normalized.endsWith('garda.js')
         || [
-            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'ui', 'bootstrap', 'install', 'init', 'reinit',
+            'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'ui', 'off', 'on', 'bootstrap', 'install', 'init', 'reinit',
             'update', 'rollback', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
             'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
@@ -861,6 +893,8 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  task          Inspect one task via read-only stats and event timeline views.',
             '  html          Write a static read-only HTML report and print its browser link.',
             '  ui            Start a read-only localhost UI with lazy task details.',
+            '  off           Hide Garda root agent instruction files without uninstalling.',
+            '  on            Restore Garda root agent instruction files after off mode.',
             '  bootstrap     Deploy the bundle only.',
             '  install       Deploy or refresh the bundle and run the Node install pipeline.',
             '  init          Re-materialize live/ from an existing deployed bundle.',

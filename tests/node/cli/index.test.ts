@@ -22,6 +22,8 @@ test('describeFoundation exposes the staged Node-only runtime', () => {
         'task',
         'html',
         'ui',
+        'off',
+        'on',
         'bootstrap',
         'install',
         'init',

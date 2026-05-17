@@ -58,7 +58,7 @@ function resolveParityRoot(commandName: string, commandArgv: string[]): string {
         const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
         return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
     }
-    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair', 'html', 'ui'].includes(commandName)) {
+    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair', 'html', 'ui', 'on', 'off'].includes(commandName)) {
         return '.';
     }
     return resolveTargetOrBundleParityRoot(commandArgv);
@@ -131,7 +131,7 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'repair', 'ui'].includes(commandName)) {
+    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'repair', 'ui', 'on', 'off'].includes(commandName)) {
         const parityRoot = resolveParityRoot(commandName, commandArgv);
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale && !(isHelpOnly && isMissingDeployedBundleOnlyParityBlock(parityResult.violations))) {
@@ -243,6 +243,12 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         case 'ui': {
             const { handleUi } = await import('./ui-command');
             await handleUi(commandArgv, packageJson);
+            return;
+        }
+        case 'on':
+        case 'off': {
+            const { handleSwitchMode } = await import('./switch-command');
+            handleSwitchMode(commandName, commandArgv, packageJson);
             return;
         }
         case 'bootstrap': {
