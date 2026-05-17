@@ -70,10 +70,33 @@ test('buildStaticHtmlReport writes default runtime report and returns a browser 
     });
 
     assert.equal(result.task_count, 2);
+    assert.equal(result.detailed_task_count, 0);
+    assert.equal(result.skipped_detail_count, 2);
+    assert.equal(result.max_detailed_tasks, 0);
     assert.match(result.url, /^file:\/\//);
     assert.ok(result.output_path.endsWith(path.join('garda-agent-orchestrator', 'runtime', 'reports', 'garda-report.html')));
     assert.ok(fs.existsSync(result.output_path));
     assert.match(fs.readFileSync(result.output_path, 'utf8'), /Garda HTML Report/);
+});
+
+test('buildStaticHtmlReport can skip deep task details for fast snapshots', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+
+    const result = buildStaticHtmlReport({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z',
+        maxDetailedTasks: 0
+    });
+
+    assert.equal(result.task_count, 2);
+    assert.equal(result.detailed_task_count, 0);
+    assert.equal(result.skipped_detail_count, 2);
+    assert.equal(result.max_detailed_tasks, 0);
+    const html = fs.readFileSync(result.output_path, 'utf8');
+    assert.ok(html.includes('Deep task details are lazy'));
+    assert.ok(html.includes('<td>skipped</td>'));
 });
 
 test('buildStaticHtmlReport can write timestamped snapshots', () => {

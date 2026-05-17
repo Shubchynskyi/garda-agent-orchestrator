@@ -15,8 +15,10 @@ import { buildTaskAuditSummary, type TaskAuditSummaryResult } from '../gates/tas
 import { validateWorkflowConfig } from '../schemas/config-artifacts';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
+export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
 
 const ACTIVE_QUEUE_HEADER = ['ID', 'Status', 'Priority', 'Area', 'Title', 'Owner', 'Updated', 'Profile', 'Notes'];
+const TERMINAL_TASK_STATUS_TOKENS = new Set(['DONE']);
 
 export interface ReportDataUnavailableEntry {
     scope: string;
@@ -45,6 +47,7 @@ export interface ReportArtifactLink {
 
 export interface ReportTaskDetail {
     task_id: string;
+    detail_status: 'loaded' | 'skipped';
     stats: TaskStatsResult | null;
     latest_cycle_events: CompactLatestCycleTaskEventsSummary | null;
     audit: {
@@ -107,6 +110,7 @@ export interface BuildReportDataContractOptions {
     generatedAtUtc?: string;
     eventsRoot?: string | null;
     reviewsRoot?: string | null;
+    maxDetailedTasks?: number | null;
 }
 
 function normalizeHeaderCells(cells: string[]): string[] {
@@ -223,30 +227,20 @@ function readLatestCycleEvents(
     }
 }
 
-function readTaskAudit(
+function readTaskAuditSummary(
     taskId: string,
     repoRoot: string,
     eventsRoot: string,
     reviewsRoot: string,
     unavailable: ReportDataUnavailableEntry[]
-): ReportTaskDetail['audit'] {
+): TaskAuditSummaryResult | null {
     try {
-        const audit = buildTaskAuditSummary({
+        return buildTaskAuditSummary({
             taskId,
             repoRoot,
             eventsRoot,
             reviewsRoot
         });
-        return {
-            status: audit.status,
-            gates: audit.gates,
-            blockers: audit.blockers,
-            required_reviews: audit.required_reviews,
-            changed_files: audit.changed_files,
-            review_attempt_summary: audit.review_attempt_summary,
-            final_report_contract_status: audit.final_report_contract.status,
-            final_closeout_artifact_state: audit.final_closeout.artifact_state
-        };
     } catch (error: unknown) {
         unavailable.push({
             scope: `task:${taskId}:audit`,
@@ -256,33 +250,29 @@ function readTaskAudit(
     }
 }
 
-function readArtifactLinks(
-    taskId: string,
-    repoRoot: string,
-    eventsRoot: string,
-    reviewsRoot: string,
-    unavailable: ReportDataUnavailableEntry[]
-): ReportArtifactLink[] {
-    try {
-        const audit = buildTaskAuditSummary({
-            taskId,
-            repoRoot,
-            eventsRoot,
-            reviewsRoot
-        });
-        return audit.evidence.map((artifact) => ({
-            kind: artifact.kind,
-            path: toPosix(artifact.path),
-            exists: artifact.exists,
-            sha256: artifact.sha256
-        }));
-    } catch (error: unknown) {
-        unavailable.push({
-            scope: `task:${taskId}:artifacts`,
-            reason: error instanceof Error ? error.message : String(error)
-        });
+function summarizeTaskAudit(audit: TaskAuditSummaryResult): ReportTaskDetail['audit'] {
+    return {
+        status: audit.status,
+        gates: audit.gates,
+        blockers: audit.blockers,
+        required_reviews: audit.required_reviews,
+        changed_files: audit.changed_files,
+        review_attempt_summary: audit.review_attempt_summary,
+        final_report_contract_status: audit.final_report_contract.status,
+        final_closeout_artifact_state: audit.final_closeout.artifact_state
+    };
+}
+
+function buildArtifactLinksFromAudit(audit: TaskAuditSummaryResult | null): ReportArtifactLink[] {
+    if (!audit) {
         return [];
     }
+    return audit.evidence.map((artifact) => ({
+        kind: artifact.kind,
+        path: toPosix(artifact.path),
+        exists: artifact.exists,
+        sha256: artifact.sha256
+    }));
 }
 
 function buildTaskDetail(taskId: string, repoRoot: string, eventsRoot: string, reviewsRoot: string): ReportTaskDetail {
@@ -298,15 +288,66 @@ function buildTaskDetail(taskId: string, repoRoot: string, eventsRoot: string, r
             reason: error instanceof Error ? error.message : String(error)
         });
     }
+    const audit = readTaskAuditSummary(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable);
 
     return {
         task_id: taskId,
+        detail_status: 'loaded',
         stats,
         latest_cycle_events: readLatestCycleEvents(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable),
-        audit: readTaskAudit(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable),
-        artifact_links: readArtifactLinks(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable),
+        audit: audit ? summarizeTaskAudit(audit) : null,
+        artifact_links: buildArtifactLinksFromAudit(audit),
         unavailable
     };
+}
+
+function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number): ReportTaskDetail {
+    const detailLimitReason = maxDetailedTasks === 0
+        ? 'Deep task details are lazy for static reports and are not collected by default'
+        : `Initial report detail collection is limited to ${maxDetailedTasks} task(s)`;
+    return {
+        task_id: taskId,
+        detail_status: 'skipped',
+        stats: null,
+        latest_cycle_events: null,
+        audit: null,
+        artifact_links: [],
+        unavailable: [{
+            scope: `task:${taskId}:detail`,
+            reason: `${detailLimitReason} to keep garda html responsive; use --max-detailed-tasks N for a heavier snapshot or garda task "${taskId}" stats/events for focused inspection.`
+        }]
+    };
+}
+
+function normalizeMaxDetailedTasks(value: number | null | undefined): number {
+    if (value === null || value === undefined) {
+        return DEFAULT_REPORT_MAX_DETAILED_TASKS;
+    }
+    if (!Number.isInteger(value) || value < 0) {
+        throw new Error('maxDetailedTasks must be a non-negative integer.');
+    }
+    return value;
+}
+
+function selectDetailedTaskIds(rows: ReportTaskQueueRow[], maxDetailedTasks: number): Set<string> {
+    const selected = new Set<string>();
+    if (maxDetailedTasks < 1) {
+        return selected;
+    }
+    const addIfRoom = (row: ReportTaskQueueRow): void => {
+        if (selected.size < maxDetailedTasks) {
+            selected.add(row.task_id);
+        }
+    };
+    for (const row of rows) {
+        if (!TERMINAL_TASK_STATUS_TOKENS.has(row.status_token || '')) {
+            addIfRoom(row);
+        }
+    }
+    for (const row of rows) {
+        addIfRoom(row);
+    }
+    return selected;
 }
 
 function getConfigValue(config: WorkflowConfigData, key: string): unknown {
@@ -446,9 +487,13 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
         ? path.resolve(options.reviewsRoot)
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const queue = readCanonicalActiveQueueRows(repoRoot);
+    const maxDetailedTasks = normalizeMaxDetailedTasks(options.maxDetailedTasks);
+    const detailedTaskIds = selectDetailedTaskIds(queue.rows, maxDetailedTasks);
     const tasks = queue.rows.map((row) => ({
         ...row,
-        detail: buildTaskDetail(row.task_id, repoRoot, eventsRoot, reviewsRoot)
+        detail: detailedTaskIds.has(row.task_id)
+            ? buildTaskDetail(row.task_id, repoRoot, eventsRoot, reviewsRoot)
+            : buildSkippedTaskDetail(row.task_id, maxDetailedTasks)
     }));
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
     const unavailable = [

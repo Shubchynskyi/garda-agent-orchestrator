@@ -86,7 +86,31 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.generated_at_utc, '2026-05-16T00:00:00.000Z');
     assert.equal(report.tasks_tab.parser, 'canonical_active_queue_9_columns');
     assert.deepEqual(report.tasks_tab.rows.map((row) => row.task_id), ['T-100', 'T-101']);
+    assert.equal(report.tasks_tab.rows[0].detail.detail_status, 'skipped');
     assert.equal(report.workflow_config_tab.status, 'present');
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Task execution'));
-    assert.ok(report.tasks_tab.rows[0].detail.unavailable.some((entry) => entry.scope === 'task:T-100:events'));
+    assert.ok(report.tasks_tab.rows[0].detail.unavailable.some((entry) => entry.scope === 'task:T-100:detail'));
+});
+
+test('buildReportDataContract bounds deep task detail collection', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z',
+        maxDetailedTasks: 1
+    });
+
+    assert.equal(report.tasks_tab.rows[0].detail.detail_status, 'loaded');
+    assert.equal(report.tasks_tab.rows[1].detail.detail_status, 'skipped');
+    assert.equal(report.tasks_tab.rows[1].detail.stats, null);
+    assert.equal(report.tasks_tab.rows[1].detail.latest_cycle_events, null);
+    assert.equal(report.tasks_tab.rows[1].detail.audit, null);
+    assert.deepEqual(report.tasks_tab.rows[1].detail.artifact_links, []);
+    assert.ok(report.tasks_tab.rows[1].detail.unavailable.some((entry) => {
+        return entry.scope === 'task:T-101:detail'
+            && entry.reason.includes('detail collection is limited');
+    }));
 });

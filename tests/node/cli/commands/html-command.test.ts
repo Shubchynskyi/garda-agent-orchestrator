@@ -55,6 +55,8 @@ test('handleHtml prints report path and file URL', async () => {
     assert.ok(text.includes('GARDA_HTML_REPORT'));
     assert.ok(text.includes(`OutputPath: ${outputPath}`));
     assert.match(text, /Url: file:\/\//);
+    assert.ok(text.includes('DetailedTasks: 0'));
+    assert.ok(text.includes('SkippedDetails: 1'));
     assert.ok(fs.existsSync(outputPath));
 });
 
@@ -67,6 +69,28 @@ test('handleHtml supports json output', async () => {
 
     assert.equal(parsed.task_count, 1);
     assert.match(parsed.url, /^file:\/\//);
+});
+
+test('handleHtml supports bounded detail collection', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+
+    const text = await captureOutput(() => handleHtml([
+        '--target-root', repoRoot,
+        '--max-detailed-tasks', '0',
+        '--json'
+    ], PACKAGE_JSON));
+    const parsed = JSON.parse(text) as {
+        task_count: number;
+        detailed_task_count: number;
+        skipped_detail_count: number;
+        max_detailed_tasks: number;
+    };
+
+    assert.equal(parsed.task_count, 1);
+    assert.equal(parsed.detailed_task_count, 0);
+    assert.equal(parsed.skipped_detail_count, 1);
+    assert.equal(parsed.max_detailed_tasks, 0);
 });
 
 test('handleHtml supports snapshot output and retention', async () => {
@@ -114,6 +138,21 @@ test('handleHtml rejects invalid snapshot retention values', async () => {
                 '--retain-snapshots', value
             ], PACKAGE_JSON)),
             /--retain-snapshots must be a positive integer/
+        );
+    }
+});
+
+test('handleHtml rejects invalid detailed task limit values', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+
+    for (const value of ['-1', '1.5', 'abc']) {
+        await assert.rejects(
+            () => captureOutput(() => handleHtml([
+                '--target-root', repoRoot,
+                '--max-detailed-tasks', value
+            ], PACKAGE_JSON)),
+            /--max-detailed-tasks must be a non-negative integer/
         );
     }
 });

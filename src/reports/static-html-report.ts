@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { resolveBundleName } from '../core/constants';
 import {
     buildReportDataContract,
+    DEFAULT_REPORT_MAX_DETAILED_TASKS,
     type ReportDataContract,
     type ReportTaskRow,
     type ReportWorkflowSetting
@@ -15,6 +16,7 @@ export interface BuildStaticHtmlReportOptions {
     generatedAtUtc?: string;
     snapshot?: boolean;
     snapshotRetention?: number | null;
+    maxDetailedTasks?: number | null;
 }
 
 export interface StaticHtmlReportResult {
@@ -27,6 +29,9 @@ export interface StaticHtmlReportResult {
     snapshot_retention: number | null;
     deleted_snapshot_paths: string[];
     task_count: number;
+    detailed_task_count: number;
+    skipped_detail_count: number;
+    max_detailed_tasks: number;
     workflow_setting_count: number;
     unavailable_count: number;
 }
@@ -75,8 +80,8 @@ function renderTaskRow(task: ReportTaskRow, index: number): string {
         `<td>${escapeHtml(task.area)}</td>`,
         `<td>${escapeHtml(task.title)}</td>`,
         `<td>${escapeHtml(task.profile)}</td>`,
-        `<td>${formatNumber(stats?.events_count)}</td>`,
-        `<td>${formatDuration(stats?.wall_clock_seconds)}</td>`,
+        `<td>${task.detail.detail_status === 'skipped' ? 'skipped' : formatNumber(stats?.events_count)}</td>`,
+        `<td>${task.detail.detail_status === 'skipped' ? 'skipped' : formatDuration(stats?.wall_clock_seconds)}</td>`,
         '</tr>'
     ].join('');
 }
@@ -333,12 +338,18 @@ export function renderStaticHtmlReport(report: ReportDataContract): string {
     return renderBaseHtml(report);
 }
 
+function resolveMaxDetailedTasks(value: number | null | undefined): number {
+    return value === null || value === undefined ? DEFAULT_REPORT_MAX_DETAILED_TASKS : value;
+}
+
 export function buildStaticHtmlReport(options: BuildStaticHtmlReportOptions): StaticHtmlReportResult {
     const repoRoot = path.resolve(options.repoRoot);
     const generatedAtUtc = options.generatedAtUtc;
+    const maxDetailedTasks = resolveMaxDetailedTasks(options.maxDetailedTasks);
     const report = buildReportDataContract({
         repoRoot,
-        generatedAtUtc
+        generatedAtUtc,
+        maxDetailedTasks
     });
     const outputPath = path.resolve(options.outputPath || resolveDefaultOutputPath(repoRoot));
     const html = renderStaticHtmlReport(report);
@@ -364,6 +375,9 @@ export function buildStaticHtmlReport(options: BuildStaticHtmlReportOptions): St
         snapshot_retention: typeof options.snapshotRetention === 'number' ? options.snapshotRetention : null,
         deleted_snapshot_paths: deletedSnapshotPaths,
         task_count: report.tasks_tab.rows.length,
+        detailed_task_count: report.tasks_tab.rows.filter((row) => row.detail.detail_status === 'loaded').length,
+        skipped_detail_count: report.tasks_tab.rows.filter((row) => row.detail.detail_status === 'skipped').length,
+        max_detailed_tasks: maxDetailedTasks,
         workflow_setting_count: report.workflow_config_tab.settings.length,
         unavailable_count: report.unavailable.length
     };
