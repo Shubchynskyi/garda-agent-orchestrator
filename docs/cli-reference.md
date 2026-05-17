@@ -227,7 +227,8 @@ garda ui --target-root "." --port 17340
 Notes:
 - The server uses Node built-ins only and binds to `127.0.0.1`; it does not add Express, Vite, React, or other runtime dependencies.
 - The terminal stays occupied while the UI is running. Stop it with Ctrl+C.
-- The Tasks page loads the canonical upper `TASK.md` queue immediately. Per-task details are fetched lazily from read-only local JSON endpoints when the user clicks `Load details`.
+- The dashboard loads the canonical upper `TASK.md` queue immediately, with overview counters, task search, status/priority filters, workflow config and instructions tabs, and a task detail panel.
+- Per-task details are fetched lazily from read-only local JSON endpoints when the user clicks `Load details`, including gate timeline, blockers, review summary, and artifact links.
 - The UI does not run arbitrary shell commands, mutate task lifecycle state, edit workflow config, or write settings.
 
 ### `garda bootstrap`
