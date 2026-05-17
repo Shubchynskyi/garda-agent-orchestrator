@@ -60,6 +60,7 @@ import {
     buildTaskModeArtifact,
     normalizeTaskModeEntryMode,
     parseTaskModeDepth,
+    readOptionalMarkdownWorkingPlan,
     resolveTaskModeArtifactPath,
     type TaskModePlanMetadata
 } from '../../../gates/task-mode';
@@ -609,6 +610,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             plan_summary: validated.goal
         };
     }
+    const markdownWorkingPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
 
     const taskQueueMetadata = readTaskQueueMetadata(repoRoot, taskId);
 
@@ -734,6 +736,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         routedTo: routingDecision.routedTo,
         actor: String(options.actor || 'orchestrator'),
         plan: planMetadata,
+        markdownWorkingPlan,
         plannedChangedFiles,
         taskProfile,
         profileSelectionSource,
@@ -764,6 +767,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         workflow_config_work: taskModeArtifact.workflow_config_work,
         actor: taskModeArtifact.actor,
         plan_guided: !!taskModeArtifact.plan,
+        markdown_working_plan_path: taskModeArtifact.markdown_working_plan?.working_plan_path ?? null,
+        markdown_working_plan_sha256: taskModeArtifact.markdown_working_plan?.working_plan_sha256 ?? null,
         task_profile: taskModeArtifact.task_profile,
         profile_selection_source: taskModeArtifact.profile_selection_source,
         active_profile: taskModeArtifact.active_profile,
@@ -812,6 +817,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
                 plan_guided: !!taskModeArtifact.plan,
                 plan_path: taskModeArtifact.plan?.plan_path ?? null,
                 plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
+                markdown_working_plan_path: taskModeArtifact.markdown_working_plan?.working_plan_path ?? null,
+                markdown_working_plan_sha256: taskModeArtifact.markdown_working_plan?.working_plan_sha256 ?? null,
                 task_profile: taskModeArtifact.task_profile,
                 profile_selection_source: taskModeArtifact.profile_selection_source,
                 active_profile: taskModeArtifact.active_profile,
@@ -849,6 +856,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         plan_guided: !!taskModeArtifact.plan,
         plan_path: taskModeArtifact.plan?.plan_path ?? null,
         plan_sha256: taskModeArtifact.plan?.plan_sha256 ?? null,
+        markdown_working_plan_path: taskModeArtifact.markdown_working_plan?.working_plan_path ?? null,
+        markdown_working_plan_sha256: taskModeArtifact.markdown_working_plan?.working_plan_sha256 ?? null,
         dirty_workspace_baseline_count: taskModeArtifact.dirty_workspace_baseline?.changed_files.length || 0,
         dirty_workspace_baseline_sha256: taskModeArtifact.dirty_workspace_baseline?.changed_files_sha256 || null,
         workflow_config_compatibility_baseline_count: taskModeArtifact.workflow_config_compatibility_baseline_files.length
@@ -888,6 +897,12 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             ...(routingDecision.reviewerSubagentLaunchStatus ? [`ReviewerSubagentLaunchStatus: ${routingDecision.reviewerSubagentLaunchStatus}`] : []),
             ...(routingDecision.reviewerSubagentLaunchRoute ? [`ReviewerSubagentLaunchRoute: ${routingDecision.reviewerSubagentLaunchRoute}`] : []),
             ...(taskModeArtifact.plan ? [`PlanGuided: true`, `PlanPath: ${taskModeArtifact.plan.plan_path}`] : [`PlanGuided: false`]),
+            ...(taskModeArtifact.markdown_working_plan
+                ? [
+                    `MarkdownWorkingPlanPath: ${taskModeArtifact.markdown_working_plan.working_plan_path}`,
+                    `MarkdownWorkingPlanSha256: ${taskModeArtifact.markdown_working_plan.working_plan_sha256}`
+                ]
+                : []),
             ...(taskModeArtifact.profile_selection_source
                 ? [`TaskProfile: ${taskModeArtifact.task_profile || 'default'} (${taskModeArtifact.profile_selection_source})`]
                 : []),

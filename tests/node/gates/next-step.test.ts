@@ -1123,6 +1123,25 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('AfterCommand: rerun'));
     });
 
+    it('surfaces optional Markdown working-plan metadata on next-step output', () => {
+        const repoRoot = makeTempRepo();
+        const workingPlanPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'plans', `${TASK_ID}.md`);
+        fs.mkdirSync(path.dirname(workingPlanPath), { recursive: true });
+        fs.writeFileSync(workingPlanPath, '# Executor working plan\n\n- Optional guidance only.\n', 'utf8');
+
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.equal(result.markdown_working_plan?.format, 'markdown');
+        assert.equal(result.markdown_working_plan?.working_plan_path, `garda-agent-orchestrator/runtime/plans/${TASK_ID}.md`);
+        assert.equal(result.markdown_working_plan?.working_plan_sha256.length, 64);
+        const text = formatNextStepText(result);
+        assert.ok(text.includes(`MarkdownWorkingPlanPath: garda-agent-orchestrator/runtime/plans/${TASK_ID}.md`));
+        assert.ok(text.includes('MarkdownWorkingPlanSha256:'));
+    });
+
     it('keeps Active Queue title when User Summary repeats the task id', () => {
         const repoRoot = makeTempRepo();
         const taskId = 'T-036';

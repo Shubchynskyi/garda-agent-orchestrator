@@ -76,6 +76,7 @@ Important boundaries:
 - It does not enable compile-gate drift detection.
 - It is not reviewer provenance and must not be treated as a required review artifact.
 - Missing, stale, or absent Markdown working plans are neutral for ordinary task execution.
+- When one exists, `next-step` and `enter-task-mode` print `MarkdownWorkingPlanPath` and `MarkdownWorkingPlanSha256` so the executor can inspect the optional plan deliberately.
 - Do not create a retrospective Markdown plan only to satisfy a reviewer or completion gate.
 
 ### Example Plan

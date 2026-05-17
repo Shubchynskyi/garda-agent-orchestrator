@@ -88,6 +88,10 @@ import {
     selectRulePackFiles
 } from './build-review-context';
 import {
+    readOptionalMarkdownWorkingPlan,
+    type TaskModeMarkdownWorkingPlanMetadata
+} from './task-mode';
+import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from './review-context-contract';
@@ -332,6 +336,7 @@ export interface NextStepResult {
     task_queue_status_contract: TaskQueueStatusContract;
     audit_status: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
+    markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
     warnings: string[];
     review_cycle_block: NextStepReviewCycleBlock | null;
     final_report: NextStepFinalReportSummary | null;
@@ -5534,6 +5539,7 @@ function buildResult(params: {
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
+    markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
     warnings?: string[];
     reviewCycleBlock?: NextStepReviewCycleBlock | null;
     finalReport?: NextStepFinalReportSummary | null;
@@ -5571,6 +5577,7 @@ function buildResult(params: {
         task_queue_status_contract: buildTaskQueueStatusContract(params.taskId),
         audit_status: params.auditStatus,
         profile: params.profile,
+        markdown_working_plan: params.markdownWorkingPlan || null,
         warnings: params.warnings || [],
         review_cycle_block: params.reviewCycleBlock || null,
         final_report: params.finalReport || null
@@ -5590,6 +5597,7 @@ function buildSourceRuntimeRemediationResult(params: {
     review: NextStepReviewSummary;
     auditStatus: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
+    markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
 }): NextStepResult {
     const violationSummary = params.staleness.violations.length > 0
         ? params.staleness.violations.join('; ')
@@ -5614,7 +5622,8 @@ function buildSourceRuntimeRemediationResult(params: {
         projectMemory: params.projectMemory || null,
         review: params.review,
         auditStatus: params.auditStatus,
-        profile: params.profile
+        profile: params.profile,
+        markdownWorkingPlan: params.markdownWorkingPlan || null
     });
 }
 
@@ -6058,6 +6067,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     const preflightCommandPath = buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`);
     const navigatorCommand = buildNavigatorCommand(cliPrefix, taskId);
+    const markdownWorkingPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
     const rulePackPath = path.join(reviewsRoot, `${taskId}-rule-pack.json`);
     const preflight = safeReadJson(preflightPath);
     const rulePack = safeReadJson(rulePackPath);
@@ -6120,6 +6130,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             },
             auditStatus: 'INCOMPLETE',
             profile: profileSummary,
+            markdownWorkingPlan,
             sourceRuntimeStaleness: detectSourceCheckoutRuntimeStaleness(repoRoot)
         });
     }
@@ -6230,6 +6241,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         projectMemory: projectMemorySummary,
         review: reviewSummary,
         profile: profileSummary,
+        markdownWorkingPlan,
         auditStatus: summary.status,
         warnings: [] as string[],
         sourceRuntimeStaleness
@@ -7938,6 +7950,10 @@ export function formatNextStepText(result: NextStepResult): string {
             }
             lines.push(`TokenBudget: ${tokenParts.join('; ')}`);
         }
+    }
+    if (result.markdown_working_plan) {
+        lines.push(`MarkdownWorkingPlanPath: ${result.markdown_working_plan.working_plan_path}`);
+        lines.push(`MarkdownWorkingPlanSha256: ${result.markdown_working_plan.working_plan_sha256}`);
     }
     lines.push(`FullSuite: enabled=${result.full_suite_validation.enabled}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`);
     if (result.full_suite_validation.timeout_forecast_note) {

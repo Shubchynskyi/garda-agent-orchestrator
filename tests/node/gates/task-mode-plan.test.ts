@@ -9,6 +9,7 @@ import {
     buildTaskModeArtifact,
     getTaskModeEvidence,
     getTaskModeEvidenceViolations,
+    resolveMarkdownWorkingPlanPath,
     type TaskModePlanMetadata
 } from '../../../src/gates/task-mode';
 import {runEnterTaskModeCommand} from '../../../src/cli/commands/gates';
@@ -142,6 +143,29 @@ test('buildTaskModeArtifact sets plan to null when not provided', () => {
         taskSummary: 'Implement the widget feature end to end'
     });
     assert.equal(artifact.plan, null);
+});
+
+test('buildTaskModeArtifact includes separate Markdown working-plan metadata', () => {
+    const artifact = buildTaskModeArtifact({
+        taskId: 'T-099',
+        entryMode: 'EXPLICIT_TASK_EXECUTION',
+        requestedDepth: 2,
+        effectiveDepth: 2,
+        taskSummary: 'Implement the widget feature end to end',
+        markdownWorkingPlan: {
+            format: 'markdown',
+            working_plan_path: 'garda-agent-orchestrator/runtime/plans/T-099.md',
+            working_plan_sha256: 'b'.repeat(64),
+            byte_count: 42
+        }
+    });
+    assert.equal(artifact.plan, null);
+    assert.deepEqual(artifact.markdown_working_plan, {
+        format: 'markdown',
+        working_plan_path: 'garda-agent-orchestrator/runtime/plans/T-099.md',
+        working_plan_sha256: 'b'.repeat(64),
+        byte_count: 42
+    });
 });
 
 test('buildTaskModeArtifact sets plan to null for incomplete plan metadata', () => {
@@ -819,6 +843,46 @@ test('runEnterTaskModeCommand without --plan-path produces plan: null', () => {
         const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.equal(artifact.plan, null);
         assert.equal(artifact.start_banner, null);
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand surfaces optional Markdown working plan without enabling plan-guided mode', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const eventsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+        fs.mkdirSync(bundleDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        const workingPlanPath = resolveMarkdownWorkingPlanPath(tmpDir, 'T-099');
+        fs.mkdirSync(path.dirname(workingPlanPath), { recursive: true });
+        fs.writeFileSync(workingPlanPath, '# T-099 working plan\n\n- Keep this optional.\n', 'utf8');
+
+        const result = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-099',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Implement the widget feature end to end',
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.some(l => l.includes('PlanGuided: false')));
+        assert.ok(result.outputLines.some(l => l.includes('MarkdownWorkingPlanPath: garda-agent-orchestrator/runtime/plans/T-099.md')));
+        assert.ok(result.outputLines.some(l => l.includes('MarkdownWorkingPlanSha256:')));
+
+        const artifactPath = path.join(bundleDir, 'T-099-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(artifact.plan, null);
+        assert.equal(artifact.markdown_working_plan.format, 'markdown');
+        assert.equal(artifact.markdown_working_plan.working_plan_path, 'garda-agent-orchestrator/runtime/plans/T-099.md');
+        assert.equal(artifact.markdown_working_plan.working_plan_sha256.length, 64);
+
+        const evidence = getTaskModeEvidence(tmpDir, 'T-099');
+        assert.equal(evidence.plan, null);
+        assert.equal(evidence.markdown_working_plan?.working_plan_path, 'garda-agent-orchestrator/runtime/plans/T-099.md');
     } finally {
         cleanupDir(tmpDir);
     }

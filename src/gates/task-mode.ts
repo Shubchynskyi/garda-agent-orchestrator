@@ -5,6 +5,7 @@ import {
     getProviderEntriesByEntrypointFile,
     normalizeProviderId
 } from '../core/provider-registry';
+import { resolveBundleNameForTarget } from '../core/constants';
 import {
     normalizeOrchestratorStartBanner,
     ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE
@@ -57,6 +58,13 @@ export interface TaskModePlanMetadata {
     plan_summary: string;
 }
 
+export interface TaskModeMarkdownWorkingPlanMetadata {
+    format: 'markdown';
+    working_plan_path: string;
+    working_plan_sha256: string;
+    byte_count: number;
+}
+
 export interface TaskModeArtifact {
     timestamp_utc: string;
     event_source: 'enter-task-mode';
@@ -86,6 +94,7 @@ export interface TaskModeArtifact {
     routed_to: string | null;
     actor: string;
     plan: TaskModePlanMetadata | null;
+    markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
     planned_changed_files: string[];
     task_profile: string | null;
     profile_selection_source: 'task_queue' | 'workspace_active' | null;
@@ -123,6 +132,7 @@ export interface BuildTaskModeArtifactOptions {
     routedTo?: string | null;
     actor?: string;
     plan?: TaskModePlanMetadata | null;
+    markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
     plannedChangedFiles?: string[] | null;
     taskProfile?: string | null;
     profileSelectionSource?: 'task_queue' | 'workspace_active' | null;
@@ -171,6 +181,7 @@ export interface TaskModeEvidenceResult {
     runtime_identity_violations: string[];
     routed_to: string | null;
     plan: TaskModePlanMetadata | null;
+    markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
     planned_changed_files: string[];
     task_profile: string | null;
     profile_selection_source: string | null;
@@ -235,6 +246,53 @@ export function resolveTaskModeArtifactPath(repoRoot: string, taskId: string, ar
         return resolvedPath;
     }
     return joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews', `${taskId}-task-mode.json`));
+}
+
+function getMarkdownWorkingPlanPathCandidates(repoRoot: string, taskId: string): string[] {
+    const normalizedRepoRoot = path.resolve(repoRoot);
+    const safeTaskId = assertValidTaskId(taskId);
+    const fileName = `${safeTaskId}.md`;
+    const candidates = [
+        path.resolve(normalizedRepoRoot, resolveBundleNameForTarget(normalizedRepoRoot), 'runtime', 'plans', fileName),
+        joinOrchestratorPath(normalizedRepoRoot, path.join('runtime', 'plans', fileName))
+    ];
+    return [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+}
+
+export function resolveMarkdownWorkingPlanPath(repoRoot: string, taskId: string): string {
+    const [firstCandidate] = getMarkdownWorkingPlanPathCandidates(repoRoot, taskId);
+    if (!firstCandidate) {
+        throw new Error('Unable to resolve Markdown working-plan path.');
+    }
+    return firstCandidate;
+}
+
+export function readOptionalMarkdownWorkingPlan(
+    repoRoot: string,
+    taskId: string
+): TaskModeMarkdownWorkingPlanMetadata | null {
+    const normalizedRepoRoot = path.resolve(repoRoot);
+    for (const candidatePath of getMarkdownWorkingPlanPathCandidates(normalizedRepoRoot, taskId)) {
+        if (!fs.existsSync(candidatePath) || !fs.statSync(candidatePath).isFile()) {
+            continue;
+        }
+        const workingPlanSha256 = fileSha256(candidatePath);
+        if (!workingPlanSha256) {
+            continue;
+        }
+        const relativePath = path.relative(normalizedRepoRoot, candidatePath);
+        return {
+            format: 'markdown',
+            working_plan_path: normalizePath(
+                relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+                    ? relativePath
+                    : candidatePath
+            ),
+            working_plan_sha256: workingPlanSha256,
+            byte_count: fs.statSync(candidatePath).size
+        };
+    }
+    return null;
 }
 
 function getTaskTimelinePath(repoRoot: string, taskId: string): string {
@@ -457,6 +515,19 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
             plan_summary: options.plan.plan_summary
         }
         : null;
+    const markdownWorkingPlan = options.markdownWorkingPlan
+        && options.markdownWorkingPlan.format === 'markdown'
+        && options.markdownWorkingPlan.working_plan_path
+        && options.markdownWorkingPlan.working_plan_sha256
+        ? {
+            format: 'markdown' as const,
+            working_plan_path: options.markdownWorkingPlan.working_plan_path,
+            working_plan_sha256: options.markdownWorkingPlan.working_plan_sha256,
+            byte_count: Number.isFinite(options.markdownWorkingPlan.byte_count)
+                ? Math.max(0, Math.trunc(options.markdownWorkingPlan.byte_count))
+                : 0
+        }
+        : null;
     const plannedChangedFiles = Array.isArray(options.plannedChangedFiles)
         ? [...new Set(options.plannedChangedFiles.map((entry) => String(entry || '').trim().replace(/\\/g, '/')).filter(Boolean))].sort()
         : [];
@@ -494,6 +565,7 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         routed_to: String(options.routedTo || '').trim() || null,
         actor,
         plan,
+        markdown_working_plan: markdownWorkingPlan,
         planned_changed_files: plannedChangedFiles,
         task_profile: String(options.taskProfile || '').trim() || null,
         profile_selection_source: options.profileSelectionSource || null,
@@ -544,6 +616,7 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         runtime_identity_violations: [],
         routed_to: null,
         plan: null,
+        markdown_working_plan: null,
         planned_changed_files: [],
         task_profile: null,
         profile_selection_source: null,
@@ -637,6 +710,22 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         const planSummary = String(planObj.plan_summary || '').trim();
         if (planPath && planSha256 && planSummary) {
             result.plan = { plan_path: planPath, plan_sha256: planSha256, plan_summary: planSummary };
+        }
+    }
+    const rawMarkdownWorkingPlan = artifactObject.markdown_working_plan;
+    if (rawMarkdownWorkingPlan && typeof rawMarkdownWorkingPlan === 'object' && !Array.isArray(rawMarkdownWorkingPlan)) {
+        const planObj = rawMarkdownWorkingPlan as Record<string, unknown>;
+        const format = String(planObj.format || '').trim();
+        const workingPlanPath = String(planObj.working_plan_path || '').trim();
+        const workingPlanSha256 = String(planObj.working_plan_sha256 || '').trim();
+        const byteCount = Number(planObj.byte_count);
+        if (format === 'markdown' && workingPlanPath && workingPlanSha256) {
+            result.markdown_working_plan = {
+                format,
+                working_plan_path: workingPlanPath,
+                working_plan_sha256: workingPlanSha256,
+                byte_count: Number.isFinite(byteCount) ? Math.max(0, Math.trunc(byteCount)) : 0
+            };
         }
     }
     result.planned_changed_files = Array.isArray(artifactObject.planned_changed_files)
