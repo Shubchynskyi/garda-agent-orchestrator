@@ -314,5 +314,118 @@ describe('gates/task-audit-summary', () => {
             assert.ok(formatTaskAuditSummaryText(result).includes(`TaskModeAuthorization: ${expectedLine}`));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(`Task-mode authorization: ${expectedLine}.`));
         });
+
+        it('surfaces reviewer timing provenance only in operator audit output', () => {
+            const taskId = 'T-AUDIT-TIMING';
+            writeWorkflowConfig(tmpDir, false);
+            writePreflight(reviewsDir, taskId, {
+                mode: 'FULL_PATH',
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: { code: true }
+            });
+            writeArtifact(reviewsDir, taskId, '-doc-impact.json', {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES'
+            });
+            const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${taskId}-preflight.json`));
+            const reviewerIdentity = 'agent:code-reviewer';
+            const fixture = writeCurrentIndependentReviewFixture({
+                reviewsDir,
+                taskId,
+                preflightSha256,
+                reviewerIdentity,
+                provenance: null
+            });
+            const timing = {
+                launch_prepared_at_utc: '2026-04-29T00:00:06.000Z',
+                launched_at_utc: '2026-04-29T00:00:07.000Z',
+                launch_completed_at_utc: '2026-04-29T00:00:42.000Z',
+                invocation_attested_at_utc: '2026-04-29T00:00:43.000Z',
+                review_result_recorded_at_utc: '2026-04-29T00:01:00.000Z',
+                review_output_source_mtime_utc: '2026-04-29T00:01:01.000Z'
+            };
+            const events = writeIntegrityEventSequence(eventsDir, taskId, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' },
+                {
+                    event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                    details: {
+                        task_id: taskId,
+                        review_type: 'code',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: reviewerIdentity,
+                        review_context_sha256: fixture.reviewContextSha256,
+                        routing_event_sha256: 'd'.repeat(64),
+                        reviewer_launch_tool: 'Codex',
+                        provider_invocation_id: 'codex-subagent-run-123',
+                        reviewer_launch_attestation_source: 'codex_subagent',
+                        ...timing
+                    }
+                },
+                { event_type: 'REVIEW_GATE_PASSED' },
+                { event_type: 'DOC_IMPACT_ASSESSED' },
+                { event_type: 'COMPLETION_GATE_PASSED' }
+            ]);
+            const invocationEvent = events.find((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED');
+            assert.ok(invocationEvent);
+            const invocationIntegrity = invocationEvent.integrity as Record<string, unknown>;
+            const reviewPath = path.join(reviewsDir, `${taskId}-code.md`);
+            const receiptPath = path.join(reviewsDir, `${taskId}-code-receipt.json`);
+            const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+            receipt.recorded_at_utc = timing.review_result_recorded_at_utc;
+            receipt.review_result_recorded_at_utc = timing.review_result_recorded_at_utc;
+            receipt.review_output_source_mtime_utc = timing.review_output_source_mtime_utc;
+            receipt.review_output_path = reviewPath;
+            receipt.review_output_sha256 = computeFileSha256(reviewPath);
+            receipt.reviewer_provenance = {
+                schema_version: 1,
+                attestation_type: 'reviewer_invocation_attestation',
+                controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                task_sequence: invocationIntegrity.task_sequence,
+                prev_event_sha256: invocationIntegrity.prev_event_sha256,
+                event_sha256: invocationIntegrity.event_sha256,
+                task_id: taskId,
+                review_type: 'code',
+                reviewer_execution_mode: 'delegated_subagent',
+                reviewer_identity: reviewerIdentity,
+                review_context_sha256: fixture.reviewContextSha256,
+                routing_event_sha256: 'd'.repeat(64),
+                launch_prepared_at_utc: timing.launch_prepared_at_utc,
+                launched_at_utc: timing.launched_at_utc,
+                launch_completed_at_utc: timing.launch_completed_at_utc,
+                invocation_attested_at_utc: timing.invocation_attested_at_utc
+            };
+            fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+
+            const result = buildTaskAuditSummary({
+                taskId,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.review_timing_audit?.entries.length, 1);
+            const [entry] = result.final_closeout.review_timing_audit?.entries || [];
+            assert.ok(entry);
+            assert.equal(entry.review_type, 'code');
+            assert.equal(entry.provider, 'Codex');
+            assert.equal(entry.provider_invocation_id, 'codex-subagent-run-123');
+            assert.equal(entry.launch_to_result_ms, 53000);
+            assert.equal(entry.launch_to_source_mtime_ms, 54000);
+            assert.equal(entry.hidden_timing_status, 'TRUSTED');
+            assert.equal(entry.hidden_timing_distrust_code, null);
+            const rendered = formatTaskAuditSummaryText(result);
+            assert.ok(rendered.includes('Review timing audit: code(TRUSTED, launch_to_result=53000ms'));
+            assert.ok(rendered.includes('provider=Codex provider_invocation=codex-subagent-run-123'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review timing audit: code(TRUSTED'));
+        });
     });
 });

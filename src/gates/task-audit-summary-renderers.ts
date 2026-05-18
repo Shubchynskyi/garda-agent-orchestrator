@@ -336,6 +336,10 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         lines.push(reviewAttemptSummaryLine);
     }
 
+    if (closeout.review_timing_audit?.visible_summary_line) {
+        lines.push(closeout.review_timing_audit.visible_summary_line);
+    }
+
     if (closeout.workflow?.visible_summary_line) {
         lines.push(closeout.workflow.visible_summary_line);
     }
@@ -534,6 +538,23 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.review_attempt_summary?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.review_attempt_summary.visible_summary_line}`);
+    }
+    if (summary.final_closeout.review_timing_audit?.visible_summary_line) {
+        lines.push(`  ${summary.final_closeout.review_timing_audit.visible_summary_line}`);
+        for (const entry of summary.final_closeout.review_timing_audit.entries) {
+            lines.push(
+                `    - ${entry.review_type}: reviewer=${entry.reviewer_identity || 'unknown'} ` +
+                `provider=${entry.provider || 'unknown'} ` +
+                `provider_invocation=${entry.provider_invocation_id || 'unknown'} ` +
+                `launched=${entry.launched_at_utc || 'unknown'} ` +
+                `result_recorded=${entry.review_result_recorded_at_utc || 'unknown'} ` +
+                `source_mtime=${entry.review_output_source_mtime_utc || 'unknown'} ` +
+                `launch_to_result=${entry.launch_to_result_ms == null ? 'unknown' : `${entry.launch_to_result_ms}ms`} ` +
+                `launch_to_source_mtime=${entry.launch_to_source_mtime_ms == null ? 'unknown' : `${entry.launch_to_source_mtime_ms}ms`} ` +
+                `hidden_timing_status=${entry.hidden_timing_status}` +
+                `${entry.hidden_timing_distrust_code ? `:${entry.hidden_timing_distrust_code}` : ''}`
+            );
+        }
     }
     lines.push(`  ${reviewIntegrityAttestation.visible_summary_line}`);
     if (reviewIntegrityAttestation.observed_issues.length > 0) {

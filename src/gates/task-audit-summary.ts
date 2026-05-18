@@ -24,6 +24,7 @@ import {
     getProjectMemoryImpactLifecycleEvidence,
     type ProjectMemoryImpactLifecycleEvidence
 } from './project-memory-impact';
+import { evaluateHiddenReviewTimingTrust } from './review-timing-trust';
 import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
     buildReviewExecutionPolicySummaryLine,
@@ -93,6 +94,7 @@ export interface FinalCloseoutArtifact {
     artifact_paths: FinalCloseoutArtifactPaths;
     implementation_summary: FinalCloseoutImplementationSummary;
     review_trust?: FinalCloseoutReviewTrustSummary | null;
+    review_timing_audit?: FinalCloseoutReviewTimingAuditSummary | null;
     review_integrity_attestation?: FinalCloseoutReviewIntegrityAttestation;
     review_attempt_summary?: ReviewAttemptSummary | null;
     optional_skills?: FinalCloseoutOptionalSkillsSummary | null;
@@ -156,6 +158,35 @@ export interface FinalCloseoutProjectMemorySummary {
     visible_summary_line: string;
 }
 
+export interface FinalCloseoutReviewTimingAuditEntry {
+    review_type: string;
+    reviewer_identity: string | null;
+    reviewer_execution_mode: string | null;
+    reused_existing_review: boolean;
+    receipt_path: string;
+    receipt_sha256: string | null;
+    review_output_path: string | null;
+    review_output_sha256: string | null;
+    provider: string | null;
+    provider_invocation_id: string | null;
+    reviewer_launch_attestation_source: string | null;
+    launch_prepared_at_utc: string | null;
+    launched_at_utc: string | null;
+    launch_completed_at_utc: string | null;
+    invocation_attested_at_utc: string | null;
+    review_result_recorded_at_utc: string | null;
+    review_output_source_mtime_utc: string | null;
+    launch_to_result_ms: number | null;
+    launch_to_source_mtime_ms: number | null;
+    hidden_timing_status: 'TRUSTED' | 'DISTRUSTED' | 'SKIPPED_REUSED';
+    hidden_timing_distrust_code: string | null;
+}
+
+export interface FinalCloseoutReviewTimingAuditSummary {
+    entries: FinalCloseoutReviewTimingAuditEntry[];
+    visible_summary_line: string;
+}
+
 export interface PointInTimeSnapshot {
     status: 'STABLE' | 'FINALIZATION_IN_FLIGHT';
     gate: 'completion-gate' | null;
@@ -198,6 +229,18 @@ interface PreflightSummary {
     scopeCategory: string | null;
     pathMode: string | null;
 }
+
+const REVIEW_TIMING_AUDIT_TYPES = [
+    'code',
+    'db',
+    'security',
+    'refactor',
+    'test',
+    'api',
+    'performance',
+    'infra',
+    'dependency'
+] as const;
 
 const BASE_LIFECYCLE_GATES: ReadonlyArray<LifecycleGateSpec> = [
     { gate: 'enter-task-mode', pass_event: 'TASK_MODE_ENTERED', fail_events: [] },
@@ -1116,6 +1159,195 @@ function collectEvidenceArtifacts(
     return evidence;
 }
 
+function asAuditRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readAuditString(value: unknown): string | null {
+    const text = String(value || '').trim();
+    return text || null;
+}
+
+function readAuditTimestamp(value: unknown): string | null {
+    const text = readAuditString(value);
+    if (!text) {
+        return null;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+function readAuditSequence(value: unknown): number | null {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function readAuditSha256(value: unknown): string | null {
+    const text = String(value || '').trim().toLowerCase();
+    return /^[0-9a-f]{64}$/u.test(text) ? text : null;
+}
+
+function elapsedMs(fromUtc: string | null, toUtc: string | null): number | null {
+    if (!fromUtc || !toUtc) {
+        return null;
+    }
+    const from = Date.parse(fromUtc);
+    const to = Date.parse(toUtc);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) {
+        return null;
+    }
+    return to - from;
+}
+
+function readEventIntegrity(event: TaskAuditEvent | null): Record<string, unknown> | null {
+    return asAuditRecord(event?.integrity);
+}
+
+function findReviewerInvocationEvent(
+    events: readonly TaskAuditEvent[],
+    provenance: Record<string, unknown> | null
+): TaskAuditEvent | null {
+    const expectedSequence = readAuditSequence(provenance?.task_sequence);
+    const expectedEventSha256 = readAuditSha256(provenance?.event_sha256);
+    const expectedPrevEventSha256 = provenance?.prev_event_sha256 == null
+        ? null
+        : readAuditSha256(provenance.prev_event_sha256);
+    if (!expectedSequence || !expectedEventSha256) {
+        return null;
+    }
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (String(event.event_type || '').trim().toUpperCase() !== 'REVIEWER_INVOCATION_ATTESTED') {
+            continue;
+        }
+        const integrity = readEventIntegrity(event);
+        if (
+            readAuditSequence(integrity?.task_sequence) === expectedSequence
+            && readAuditSha256(integrity?.event_sha256) === expectedEventSha256
+            && (integrity?.prev_event_sha256 == null
+                ? null
+                : readAuditSha256(integrity.prev_event_sha256)) === expectedPrevEventSha256
+        ) {
+            return event;
+        }
+    }
+    return null;
+}
+
+function latestCompileSequence(events: readonly TaskAuditEvent[]): number | null {
+    let latest: number | null = null;
+    for (const event of events) {
+        if (String(event.event_type || '').trim().toUpperCase() !== 'COMPILE_GATE_PASSED') {
+            continue;
+        }
+        const sequence = readAuditSequence(readEventIntegrity(event)?.task_sequence);
+        if (sequence != null && (latest == null || sequence > latest)) {
+            latest = sequence;
+        }
+    }
+    return latest;
+}
+
+function buildReviewTimingAuditSummary(
+    reviewsRoot: string,
+    taskId: string,
+    events: readonly TaskAuditEvent[]
+): FinalCloseoutReviewTimingAuditSummary | null {
+    const compileSequence = latestCompileSequence(events);
+    const entries: FinalCloseoutReviewTimingAuditEntry[] = [];
+
+    for (const reviewType of REVIEW_TIMING_AUDIT_TYPES) {
+        const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+        if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
+            continue;
+        }
+        const receipt = safeReadJson(receiptPath);
+        if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
+            continue;
+        }
+        const provenance = asAuditRecord(receipt.reviewer_provenance);
+        const invocationEvent = findReviewerInvocationEvent(events, provenance);
+        const invocationDetails = asAuditRecord(invocationEvent?.details);
+        const launchPreparedAtUtc = readAuditTimestamp(
+            provenance?.launch_prepared_at_utc ?? invocationDetails?.launch_prepared_at_utc
+        );
+        const launchedAtUtc = readAuditTimestamp(
+            provenance?.launched_at_utc ?? invocationDetails?.launched_at_utc
+        );
+        const launchCompletedAtUtc = readAuditTimestamp(
+            provenance?.launch_completed_at_utc ?? invocationDetails?.launch_completed_at_utc
+        );
+        const invocationAttestedAtUtc = readAuditTimestamp(
+            provenance?.invocation_attested_at_utc ?? invocationDetails?.invocation_attested_at_utc
+        );
+        const reviewResultRecordedAtUtc = readAuditTimestamp(
+            receipt.review_result_recorded_at_utc ?? receipt.recorded_at_utc
+        );
+        const reviewOutputSourceMtimeUtc = readAuditTimestamp(receipt.review_output_source_mtime_utc);
+        const reusedExistingReview = receipt.reused_existing_review === true;
+        const timingTrust = evaluateHiddenReviewTimingTrust({
+            reviewType,
+            reusedExistingReview,
+            reviewerProvenance: provenance,
+            reviewResultRecordedAtUtc,
+            recordedAtUtc: readAuditTimestamp(receipt.recorded_at_utc),
+            reviewOutputSourceMtimeUtc,
+            timelineEvents: events,
+            latestCompileSequence: compileSequence
+        });
+        entries.push({
+            review_type: reviewType,
+            reviewer_identity: readAuditString(receipt.reviewer_identity),
+            reviewer_execution_mode: readAuditString(receipt.reviewer_execution_mode),
+            reused_existing_review: reusedExistingReview,
+            receipt_path: toPosix(receiptPath),
+            receipt_sha256: fileSha256(receiptPath),
+            review_output_path: readAuditString(receipt.review_output_path),
+            review_output_sha256: readAuditSha256(receipt.review_output_sha256),
+            provider: readAuditString(
+                invocationDetails?.provider
+                ?? invocationDetails?.execution_provider
+                ?? invocationDetails?.provider_family
+                ?? invocationDetails?.reviewer_launch_tool
+            ),
+            provider_invocation_id: readAuditString(invocationDetails?.provider_invocation_id),
+            reviewer_launch_attestation_source: readAuditString(invocationDetails?.reviewer_launch_attestation_source),
+            launch_prepared_at_utc: launchPreparedAtUtc,
+            launched_at_utc: launchedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc,
+            invocation_attested_at_utc: invocationAttestedAtUtc,
+            review_result_recorded_at_utc: reviewResultRecordedAtUtc,
+            review_output_source_mtime_utc: reviewOutputSourceMtimeUtc,
+            launch_to_result_ms: elapsedMs(launchedAtUtc, reviewResultRecordedAtUtc),
+            launch_to_source_mtime_ms: elapsedMs(launchedAtUtc, reviewOutputSourceMtimeUtc),
+            hidden_timing_status: reusedExistingReview
+                ? 'SKIPPED_REUSED'
+                : timingTrust.trusted
+                    ? 'TRUSTED'
+                    : 'DISTRUSTED',
+            hidden_timing_distrust_code: timingTrust.code
+        });
+    }
+
+    if (entries.length === 0) {
+        return null;
+    }
+    const compactEntries = entries.map((entry) => {
+        const resultMs = entry.launch_to_result_ms == null ? 'unknown' : `${entry.launch_to_result_ms}ms`;
+        const sourceMs = entry.launch_to_source_mtime_ms == null ? 'unknown' : `${entry.launch_to_source_mtime_ms}ms`;
+        const flag = entry.hidden_timing_distrust_code
+            ? `${entry.hidden_timing_status}:${entry.hidden_timing_distrust_code}`
+            : entry.hidden_timing_status;
+        return `${entry.review_type}(${flag}, launch_to_result=${resultMs}, launch_to_source_mtime=${sourceMs})`;
+    });
+    return {
+        entries,
+        visible_summary_line: `Review timing audit: ${compactEntries.join('; ')}.`
+    };
+}
+
 function buildFinalCloseoutProjectMemorySummary(
     evidence: ProjectMemoryImpactLifecycleEvidence
 ): FinalCloseoutProjectMemorySummary {
@@ -1390,11 +1622,13 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             taskId: safeTaskId,
             timelineEvents: events
         });
+        const reviewTimingAudit = buildReviewTimingAuditSummary(reviewsRoot, safeTaskId, events);
         return {
             evidence,
             requiredReviewBlockers,
             reviewAttemptSummary,
             reviewIntegrityAttestation,
+            reviewTimingAudit,
             reviewTrustSummary,
             reviewVerdicts
         };
@@ -1541,6 +1775,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         reviewVerdicts,
         reviewTrustSummary,
         reviewAttemptSummary,
+        reviewTimingAudit,
         reviewIntegrityAttestation
     } = reviewSnapshot;
     const reviewIntegrityBlocker = hasCompletionPass && reviewIntegrityAttestation.completion_allowed === false
@@ -1652,6 +1887,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                 : null
         },
         review_trust: reviewTrustSummary,
+        review_timing_audit: reviewTimingAudit,
         review_integrity_attestation: reviewIntegrityAttestation,
         review_attempt_summary: reviewAttemptSummary,
         optional_skills: optionalSkillsSummary,
