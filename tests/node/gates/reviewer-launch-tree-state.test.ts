@@ -158,7 +158,6 @@ async function completeLaunch(repoRoot: string, taskId: string, launchArtifactPa
         '--reviewer-identity', REVIEWER_IDENTITY,
         '--reviewer-launch-artifact-path', launchArtifactPath,
         '--provider-invocation-id', REVIEWER_IDENTITY.slice('agent:'.length),
-        '--launched-at-utc', '2026-05-02T00:00:00.000Z',
         '--attestation-source', 'codex_spawn_agent',
         '--fork-context', 'false',
         '--repo-root', repoRoot

@@ -158,7 +158,7 @@ const REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS = Object.freeze([
     "attestation_state='launched'",
     'attestation_source=<provider/controller source, not garda_prepare_reviewer_launch/manual/mock>',
     'provider_invocation_id or controller_invocation_id=<actual delegated reviewer invocation id>',
-    'launched_at_utc=<ISO-8601 launch timestamp>',
+    'launched_at_utc=<gate-owned UTC timestamp recorded by complete-reviewer-launch>',
     'fresh_context=true, isolated_context=true, or fork_context=false'
 ]);
 
@@ -2786,7 +2786,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             attestation_source: '<provider/controller source, not garda_prepare_reviewer_launch/manual/mock>',
             launch_tool: providerLaunch.launchTool,
             provider_invocation_id_or_controller_invocation_id: '<actual delegated reviewer invocation id>',
-            launched_at_utc: '<ISO-8601 launch timestamp>',
+            launched_at_utc: '<gate-owned UTC timestamp recorded by complete-reviewer-launch>',
             launch_completed_at_utc: '<gate-owned ISO-8601 completion timestamp>',
             fresh_context: true,
             isolated_context: true,
@@ -2959,13 +2959,13 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     if (providerInvocationId && controllerInvocationId) {
         throw new Error('Provide either --provider-invocation-id or --controller-invocation-id, not both.');
     }
-    const launchedAtUtc = String(options.launchedAtUtc || '').trim();
-    if (!launchedAtUtc) {
-        throw new Error('LaunchedAtUtc is required (ISO-8601 launch timestamp).');
+    if (Object.prototype.hasOwnProperty.call(options, 'launchedAtUtc')) {
+        throw new Error(
+            'Caller-supplied --launched-at-utc is not accepted for complete-reviewer-launch. ' +
+            'This is spoof-like launch freshness input; omit the flag so the gate records its own UTC timestamp.'
+        );
     }
-    if (!isValidUtcIso8601Timestamp(launchedAtUtc)) {
-        throw new Error('LaunchedAtUtc must be a valid UTC ISO-8601 timestamp.');
-    }
+    const launchedAtUtc = new Date().toISOString();
     const attestationSource = normalizeReviewerLaunchAttestationSource(options.attestationSource);
     if (!attestationSource) {
         throw new Error('AttestationSource is required (provider/controller source).');

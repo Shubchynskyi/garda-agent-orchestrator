@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made `complete-reviewer-launch` own `launched_at_utc` inside the gate, reject caller-supplied `--launched-at-utc` as spoof-like freshness input, and remove that flag from generated reviewer-launch guidance
 - added a guarded `garda ui --actions` settings editor for allow-listed safe workflow knobs, using preview/confirmation, the audited `workflow set` command path, and local UI action logging instead of direct config JSON writes
 - added opt-in `garda ui --actions` for allow-listed local UI actions with preview, confirmation for mutating commands, and runtime audit logging
 - expanded `garda ui` into a richer read-only dashboard with overview counters, task search/filter controls, workflow and instructions tabs, and clearer lazy task details

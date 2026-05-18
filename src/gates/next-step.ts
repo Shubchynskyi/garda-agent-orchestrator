@@ -7741,11 +7741,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
                 reason:
                     `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch to persist the post-launch fields before recording the invocation. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
+                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, including its own launch timestamp, before invocation attestation. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
                 commands: [
                     buildCommand(
                         'Complete delegated reviewer launch metadata',
-                            `${cliPrefix} gate complete-reviewer-launch --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --provider-invocation-id "<actual-invocation-id>" --launched-at-utc "<ISO-8601>" --attestation-source "<provider-source>" --fork-context false --repo-root "."`
+                            `${cliPrefix} gate complete-reviewer-launch --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --provider-invocation-id "<actual-invocation-id>" --attestation-source "<provider-source>" --fork-context false --repo-root "."`
                         )
                     ]
                 });
@@ -7833,7 +7833,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ? `Required review '${reviewType}' evidence is not sufficiently trustworthy. ${hiddenTimingTrustRemediation}`
                 : state.reusedExistingReview && !currentReviewReuseRecorded
                 ? `Required review '${reviewType}' is reused, but current-cycle REVIEW_RECORDED reuse telemetry is missing or does not match the receipt, review artifact, review context, and tree-state provenance, so rerun review reuse materialization or record a fresh delegated review result.`
-                : `Required review '${reviewType}' has stale or invalid reviewer_provenance; matching REVIEWER_INVOCATION_ATTESTED launch telemetry is missing for the current receipt, so rerun reviewer output materialization after valid launch telemetry exists.`;
+                : `Required review '${reviewType}' has stale or invalid reviewer_provenance; fresh delegated-review launch evidence is missing, stale, or spoof-like for the current receipt, so launch a fresh delegated reviewer with the printed handoff artifacts and record the exact reviewer output again.`;
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',

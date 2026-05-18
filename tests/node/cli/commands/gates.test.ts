@@ -4066,7 +4066,6 @@ describe('cli/commands/gates', () => {
             '--reviewer-identity', fixture.reviewerIdentity,
             '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
             '--provider-invocation-id', 'test-invocation-265-complete',
-            '--launched-at-utc', '2026-04-28T00:00:00.000Z',
             '--attestation-source', 'test_provider_controller',
             '--fork-context', 'false'
         ], { cwd: repoRoot });
@@ -5269,7 +5268,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fork-context', 'false'
             ]);
@@ -5288,7 +5286,8 @@ describe('cli/commands/gates', () => {
         assert.equal(completedArtifact.evidence_type, 'delegated_reviewer_launch', 'Evidence type should be updated');
         assert.equal(completedArtifact.attestation_source, 'claude_task_tool_launch', 'Attestation source should be set');
         assert.equal(completedArtifact.provider_invocation_id, 'test-invocation-305', 'Provider invocation ID should be set');
-        assert.equal(completedArtifact.launched_at_utc, '2026-07-01T00:00:00.000Z', 'Launched timestamp should be set');
+        assert.equal(typeof completedArtifact.launched_at_utc, 'string', 'Launched timestamp should be set by the gate');
+        assert.equal(Number.isNaN(Date.parse(completedArtifact.launched_at_utc)), false);
         assert.equal(typeof completedArtifact.launch_prepared_at_utc, 'string');
         assert.equal(Number.isNaN(Date.parse(completedArtifact.launch_prepared_at_utc)), false);
         assert.equal(typeof completedArtifact.launch_completed_at_utc, 'string');
@@ -5356,7 +5355,6 @@ describe('cli/commands/gates', () => {
             '--reviewer-identity', fixture.reviewerIdentity,
             '--reviewer-launch-artifact-path', fixture.launchArtifactPath,
             '--provider-invocation-id', 'test-invocation-265-binding',
-            '--launched-at-utc', '2026-04-28T00:00:00.000Z',
             '--attestation-source', 'test_provider_controller',
             '--fork-context', 'false'
         ], { cwd: repoRoot });
@@ -5416,7 +5414,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-execution-mode', 'delegated_subagent',
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fork-context', 'false'
             ]);
@@ -5482,7 +5479,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fork-context', 'false'
             ]);
@@ -5555,7 +5551,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fork-context', 'false'
             ]);
@@ -5622,7 +5617,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'provider-id-305',
                 '--controller-invocation-id', 'controller-id-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fork-context', 'false'
             ]);
@@ -5685,7 +5679,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'Manual',
                 '--fork-context', 'false'
             ]);
@@ -5748,7 +5741,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch'
             ]);
             observedExitCode = process.exitCode ?? 0;
@@ -5807,7 +5799,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--controller-invocation-id', 'ctrl-invocation-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fork-context', 'false'
             ]);
@@ -5867,7 +5858,6 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
-                '--launched-at-utc', '2026-07-01T00:00:00.000Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fresh-context',
                 '--isolated-context'
@@ -5887,7 +5877,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('complete-reviewer-launch rejects missing launched-at-utc and leaves artifact unchanged', async () => {
+    it('complete-reviewer-launch records gate-owned launched-at-utc when the flag is omitted', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-no-utc';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
@@ -5941,17 +5931,18 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.ok(capturedErrors.some((line) => line.includes('LaunchedAtUtc is required')));
+        assert.equal(observedExitCode, 0, `Expected complete-reviewer-launch to succeed, got ${observedExitCode}: ${capturedErrors.join('\n')}`);
         const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-        assert.equal(artifact.attestation_state, 'prepared', 'Artifact should remain in prepared state after failed complete');
+        assert.equal(artifact.attestation_state, 'launched', 'Artifact should be completed');
+        assert.equal(typeof artifact.launched_at_utc, 'string', 'Gate should write launched_at_utc');
+        assert.equal(Number.isNaN(Date.parse(artifact.launched_at_utc)), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('complete-reviewer-launch rejects malformed launched-at-utc and leaves artifact unchanged', async () => {
+    it('complete-reviewer-launch rejects caller-supplied launched-at-utc as spoof-like input', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-257-complete-launch-bad-utc';
+        const taskId = 'T-257-complete-launch-spoof-utc';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
         const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
 
@@ -5993,7 +5984,7 @@ describe('cli/commands/gates', () => {
                 '--reviewer-identity', fixture.reviewerIdentity,
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
-                '--launched-at-utc', '2026-02-30T00:00:00.000Z',
+                '--launched-at-utc', '2026-05-18T12:34:56.789Z',
                 '--attestation-source', 'claude_task_tool_launch',
                 '--fork-context', 'false'
             ]);
@@ -6004,10 +5995,8 @@ describe('cli/commands/gates', () => {
             process.exitCode = previousExitCode;
         }
 
-        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
-        assert.ok(capturedErrors.some((line) => line.includes('LaunchedAtUtc must be a valid UTC ISO-8601 timestamp')));
-        const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-        assert.equal(artifact.attestation_state, 'prepared', 'Artifact should remain in prepared state after failed complete');
+        assert.notEqual(observedExitCode, 0, 'Expected complete-reviewer-launch to reject caller-owned launched-at-utc');
+        assert.match(capturedErrors.join('\n'), /spoof-like launch freshness input/i);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

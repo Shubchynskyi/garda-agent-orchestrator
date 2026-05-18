@@ -5691,6 +5691,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
         assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        assert.ok(!result.commands[0].command.includes('--launched-at-utc'));
     });
 
     it('routes to record-review-invocation after current completed launch metadata is present', () => {
@@ -6021,7 +6022,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-result');
         assert.equal(result.review.next_review_type, 'code');
-        assert.ok(result.reason.includes('matching REVIEWER_INVOCATION_ATTESTED launch telemetry'));
+        assert.ok(result.reason.includes('fresh delegated-review launch evidence is missing, stale, or spoof-like'));
     });
 
     it('blocks downstream review when current receipt provenance omits tree-state binding', () => {
