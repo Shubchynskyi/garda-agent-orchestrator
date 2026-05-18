@@ -6126,7 +6126,7 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result materializes delegated reviewer output into canonical artifact and receipt when controller routing telemetry already exists', async () => {
+    it('record-review-result preserves --review-output-path compatibility while materializing canonical raw artifacts', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result';
         seedTaskQueue(repoRoot, taskId);
@@ -6256,6 +6256,7 @@ describe('cli/commands/gates', () => {
         assert.equal(receipt.reviewer_provenance?.event_sha256, invocationIntegrity?.event_sha256);
         assert.equal(receipt.reviewer_provenance?.prev_event_sha256 ?? null, invocationIntegrity?.prev_event_sha256 ?? null);
         assert.ok(capturedLogs.some((line) => line.includes('ReviewOutputMode: path')));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewOutputPath: ${rawReviewOutputPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes('VerdictToken: REVIEW PASSED')));
         assert.ok(capturedLogs.some((line) => line.includes('ReviewMaterializationFidelity: exact')));
         assert.ok(capturedLogs.some((line) => line.includes('ReviewerCleanup: After the review receipt is persisted')));

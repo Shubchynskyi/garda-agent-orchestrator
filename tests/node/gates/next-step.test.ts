@@ -5865,6 +5865,8 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-result');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
+        assert.ok(result.commands[0].command.includes('--review-output-stdin'));
+        assert.ok(!result.commands[0].command.includes('--review-output-path'));
         assertGateChainDecision(result.reason, {
             edgeId: 'review-invocation-to-result',
             status: 'pass'

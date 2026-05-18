@@ -7624,12 +7624,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         const contextReviewerIdentity = state.contextReviewerIdentity || '';
-        const reviewOutputPath = buildDefaultReviewScratchCommandPath(
-            repoRoot,
-            taskId,
-            reviewType,
-            'review-output.md'
-        );
         if (
             !currentReviewReuseRecorded
             && (
@@ -7814,7 +7808,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
                             `--review-type "${reviewType}"`,
                             `--preflight-path "${preflightCommandPath}"`,
-                            `--review-output-path "${reviewOutputPath}"`,
+                            '--review-output-stdin',
                             '--reviewer-execution-mode "delegated_subagent"',
                             `--reviewer-identity "${reviewerIdentity}"`
                         ], taskModePath)
@@ -7846,7 +7840,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
                             `--review-type "${reviewType}"`,
                             `--preflight-path "${preflightCommandPath}"`,
-                            `--review-output-path "${reviewOutputPath}"`,
+                            '--review-output-stdin',
                             '--reviewer-execution-mode "delegated_subagent"',
                             `--reviewer-identity "${reviewerIdentity}"`
                         ], taskModePath)

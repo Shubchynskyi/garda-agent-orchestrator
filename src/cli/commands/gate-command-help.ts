@@ -281,8 +281,8 @@ function buildReviewGateHelpEntries(
         },
         'record-review-result': {
             ...createSingleUsageEntry(
-                'Materialize reviewer output into canonical artifacts, receipts, and routing telemetry; close or release the delegated reviewer after the receipt persists.',
-                `${cliPrefix} gate record-review-result --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-output-path "${buildBundleRelativePath(bundleName, `runtime/tmp/reviews/${TASK_ID_PLACEHOLDER}/<review-type>/review-output.md`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
+                'Materialize exact delegated reviewer output from stdin into canonical raw-output artifacts, receipts, and routing telemetry; close or release the delegated reviewer after the receipt persists.',
+                `${cliPrefix} gate record-review-result --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --review-output-stdin --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --repo-root "."`,
                 true
             )
         },
