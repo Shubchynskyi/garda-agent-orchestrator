@@ -22,6 +22,8 @@ import {
     hasMaterializedWorkflowConfigBaseline,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES,
+    normalizeFullSuiteValidationPlacement,
+    type FullSuiteValidationPlacement,
     type ProjectMemoryMaintenanceConfig,
     type ProjectMemoryMaintenanceMode,
     type ProjectMemoryReadStrategy,
@@ -153,6 +155,7 @@ const WORKFLOW_SET_DEFINITIONS = {
     '--full-suite-green-summary-max-lines': { key: 'fullSuiteGreenSummaryMaxLines', type: 'string' },
     '--full-suite-red-failure-chunk-lines': { key: 'fullSuiteRedFailureChunkLines', type: 'string' },
     '--full-suite-out-of-scope-failure-policy': { key: 'fullSuiteOutOfScopeFailurePolicy', type: 'string' },
+    '--full-suite-placement': { key: 'fullSuitePlacement', type: 'string' },
     '--review-execution-policy': { key: 'reviewExecutionPolicy', type: 'string' },
     '--scope-budget': { key: 'scopeBudgetAlias', type: 'string' },
     '--scope-budget-enabled': { key: 'scopeBudgetEnabled', type: 'string' },
@@ -279,7 +282,7 @@ function readWorkflowConfigState(configPath: string, bundleRoot: string): Workfl
 }
 
 function buildMandatoryFullSuiteLine(config: { full_suite_validation: WorkflowConfigData['full_suite_validation'] }): string {
-    return `Mandatory full-suite: ${config.full_suite_validation.enabled ? 'true' : 'false'}`;
+    return `Mandatory full-suite: ${config.full_suite_validation.enabled ? 'true' : 'false'} placement=${config.full_suite_validation.placement}`;
 }
 
 function buildReviewExecutionPolicyView(state: WorkflowConfigState): WorkflowReviewExecutionPolicyView {
@@ -399,6 +402,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`FullSuiteGreenSummaryMaxLines: ${fullSuiteValidation.green_summary_max_lines}`);
     lines.push(`FullSuiteRedFailureChunkLines: ${fullSuiteValidation.red_failure_chunk_lines}`);
     lines.push(`FullSuiteOutOfScopeFailurePolicy: ${fullSuiteValidation.out_of_scope_failure_policy}`);
+    lines.push(`FullSuitePlacement: ${fullSuiteValidation.placement}`);
     lines.push(`ReviewExecutionPolicy: ${reviewExecutionPolicy.mode}`);
     lines.push(`ReviewExecutionPolicyConfigured: ${reviewExecutionPolicy.configured}`);
     lines.push(`ReviewExecutionPolicyDescription: ${reviewExecutionPolicy.description}`);
@@ -507,6 +511,13 @@ function parseOutOfScopeFailurePolicy(value: string): OutOfScopeFailurePolicy {
         );
     }
     return normalized as OutOfScopeFailurePolicy;
+}
+
+function parseFullSuitePlacement(value: string): FullSuiteValidationPlacement {
+    return normalizeFullSuiteValidationPlacement(value, {
+        rejectInvalidExplicit: true,
+        errorPath: '--full-suite-placement'
+    });
 }
 
 function parseScopeBudgetAction(value: string): ScopeBudgetGuardConfig['action'] {
@@ -738,6 +749,10 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         );
         changedFields.push('full_suite_validation.out_of_scope_failure_policy');
     }
+    if (typeof options.fullSuitePlacement === 'string') {
+        nextFullSuiteValidation.placement = parseFullSuitePlacement(options.fullSuitePlacement);
+        changedFields.push('full_suite_validation.placement');
+    }
     nextConfig.full_suite_validation = nextFullSuiteValidation;
     if (typeof options.reviewExecutionPolicy === 'string') {
         nextConfig.review_execution_policy = {
@@ -903,7 +918,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             "Workflow setting flags are required for 'workflow set'. "
             + 'Use --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
-            + '--full-suite-out-of-scope-failure-policy, --review-execution-policy, '
+            + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
             + '--task-reset-enabled, their short on/off aliases, or --garda-self-guard.'
         );

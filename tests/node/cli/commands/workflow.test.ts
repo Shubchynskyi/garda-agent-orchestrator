@@ -30,6 +30,7 @@ function createBundleRoot(
                 green_summary_max_lines: 5,
                 red_failure_chunk_lines: 50,
                 out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                placement: 'before_test_review',
                 ...fullSuiteOverrides
             },
             review_execution_policy: {
@@ -73,6 +74,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Mandatory full-suite: false'));
         assert.ok(output.includes('Review execution policy: code_first_optional'));
         assert.ok(output.includes('FullSuiteCommand: npm test'));
+        assert.ok(output.includes('FullSuitePlacement: before_test_review'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(output.includes('max_failed_non_test_reviews=15 max_total_non_test_reviews=30'));
@@ -308,6 +310,23 @@ test('workflow set rejects invalid boolean tokens for short aliases and canonica
     }
 });
 
+test('workflow set rejects invalid full-suite placement values', () => {
+    const bundleRoot = createBundleRoot();
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--full-suite-placement', 'after lunch',
+                ...buildOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /--full-suite-placement must be one of: after_compile_before_reviews, before_test_review, before_completion/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow set enables garda self-guard without operator confirmation', () => {
     const bundleRoot = createBundleRoot({}, {
         orchestrator_work_policy: {
@@ -439,6 +458,7 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
     assert.ok(helpText.includes('workflow set --full-suite on --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('workflow set --full-suite-placement before_test_review'));
     assert.ok(helpText.includes('--scope-budget on|off|--scope-budget-enabled true|false'));
     assert.ok(helpText.includes('--review-cycle on|off|--review-cycle-enabled true|false'));
     assert.ok(helpText.includes('--review-cycle-auto-split on|off|--review-cycle-auto-split-enabled true|false'));
@@ -505,13 +525,14 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.action, 'show');
         assert.equal(parsed.scope, 'repo-local');
         assert.equal(parsed.full_suite_validation.enabled, true);
+        assert.equal(parsed.full_suite_validation.placement, 'before_test_review');
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');
         assert.equal(parsed.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(parsed.review_cycle_guard.max_total_non_test_reviews, 30);
         assert.equal(parsed.project_memory_maintenance.enabled, true);
         assert.equal(parsed.project_memory_maintenance.mode, 'update');
         assert.equal(parsed.task_reset.enabled, false);
-        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
+        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=false');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
@@ -538,9 +559,10 @@ test('workflow set --json returns valid JSON for machine-readable automation', (
         assert.equal(parsed.action, 'set');
         assert.equal(parsed.status, 'CHANGED');
         assert.equal(parsed.full_suite_validation.enabled, true);
+        assert.equal(parsed.full_suite_validation.placement, 'before_test_review');
         assert.equal(parsed.review_execution_policy.mode, 'strict_sequential');
         assert.equal(parsed.task_reset.enabled, false);
-        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
+        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
         assert.ok(parsed.changed_fields.includes('full_suite_validation.enabled'));
         assert.ok(parsed.changed_fields.includes('review_execution_policy.mode'));
@@ -566,6 +588,7 @@ test('workflow set updates repo-local full-suite config deterministically', () =
             '--full-suite-command', 'npm run test:full',
             '--full-suite-timeout-ms', '123456',
             '--full-suite-out-of-scope-failure-policy', 'audit_and_warn',
+            '--full-suite-placement', 'before completion',
             '--review-execution-policy', 'parallel_all',
             ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
@@ -580,6 +603,7 @@ test('workflow set updates repo-local full-suite config deterministically', () =
         assert.equal(parsedConfig.full_suite_validation.command, 'npm run test:full');
         assert.equal(parsedConfig.full_suite_validation.timeout_ms, 123456);
         assert.equal(parsedConfig.full_suite_validation.out_of_scope_failure_policy, 'AUDIT_AND_WARN');
+        assert.equal(parsedConfig.full_suite_validation.placement, 'before_completion');
         assert.equal(parsedConfig.review_execution_policy.mode, 'parallel_all');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });

@@ -567,7 +567,7 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
         assert.equal(parsed.status, 'CHANGED');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.review_execution_policy.mode, 'strict_sequential');
-        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true');
+        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
 
         const configPath = path.join(targetDir, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
