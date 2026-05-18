@@ -2073,6 +2073,154 @@ describe('gates/required-reviews-check', () => {
             )));
         });
 
+        it('rejects receipts when latest current routing telemetry conflicts with the review context', () => {
+            const contextSha = '1'.repeat(64);
+            const treeStateSha = '2'.repeat(64);
+            const originalRoutingEventSha = '3'.repeat(64);
+            const lateRoutingEventSha = '4'.repeat(64);
+            const invocationEventSha = '5'.repeat(64);
+            const artifactSha = '6'.repeat(64);
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-574',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-574-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                timelineEvents: [
+                    { event_type: 'COMPILE_GATE_PASSED', sequence: 0, details: {}, integrity: null },
+                    { event_type: 'REVIEW_PHASE_STARTED', sequence: 1, details: { review_type: 'code' }, integrity: null },
+                    {
+                        event_type: 'REVIEWER_DELEGATION_ROUTED',
+                        sequence: 2,
+                        details: {
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:original-reviewer'
+                        },
+                        integrity: {
+                            schema_version: 1,
+                            task_sequence: 10,
+                            prev_event_sha256: null,
+                            event_sha256: originalRoutingEventSha
+                        }
+                    },
+                    {
+                        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        sequence: 3,
+                        details: {
+                            task_id: 'T-574',
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:original-reviewer',
+                            review_context_sha256: contextSha,
+                            review_tree_state_sha256: treeStateSha,
+                            routing_event_sha256: originalRoutingEventSha
+                        },
+                        integrity: {
+                            schema_version: 1,
+                            task_sequence: 11,
+                            prev_event_sha256: originalRoutingEventSha,
+                            event_sha256: invocationEventSha
+                        }
+                    },
+                    {
+                        event_type: 'REVIEWER_DELEGATION_ROUTED',
+                        sequence: 4,
+                        details: {
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:late-reviewer'
+                        },
+                        integrity: {
+                            schema_version: 1,
+                            task_sequence: 12,
+                            prev_event_sha256: invocationEventSha,
+                            event_sha256: lateRoutingEventSha
+                        }
+                    }
+                ],
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-574-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated review gate provenance parity with completion using concrete late-routing telemetry and receipt provenance evidence.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-574-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-574',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-574-preflight.json',
+                        preflight_sha256: 'abc123',
+                        tree_state: {
+                            tree_state_sha256: treeStateSha
+                        },
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'explicit_provider',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:original-reviewer'
+                        }
+                    },
+                    reviewContextSha256: contextSha,
+                    artifactSha256: artifactSha,
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-574',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: contextSha,
+                        review_tree_state_sha256: treeStateSha,
+                        review_artifact_sha256: artifactSha,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:original-reviewer',
+                        reviewer_fallback_reason: null,
+                        reviewer_provenance: {
+                            schema_version: 1,
+                            attestation_type: 'reviewer_invocation_attestation',
+                            controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                            task_sequence: 11,
+                            prev_event_sha256: originalRoutingEventSha,
+                            event_sha256: invocationEventSha,
+                            task_id: 'T-574',
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:original-reviewer',
+                            review_context_sha256: contextSha,
+                            review_tree_state_sha256: treeStateSha,
+                            routing_event_sha256: originalRoutingEventSha
+                        },
+                        trust_level: 'INDEPENDENT_AUDITED',
+                        recorded_at_utc: '2026-05-18T00:00:00.000Z'
+                    }
+                }
+            });
+
+            assert.ok(result.violations.some((violation) => (
+                violation.includes('inconsistent reviewer identity between REVIEWER_DELEGATION_ROUTED telemetry') &&
+                violation.includes('agent:late-reviewer') &&
+                violation.includes('agent:original-reviewer')
+            )));
+        });
+
         it('rejects hidden timing distrust with generic remediation only', () => {
             const contextSha = '1'.repeat(64);
             const treeStateSha = '2'.repeat(64);

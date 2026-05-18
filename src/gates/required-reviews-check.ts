@@ -466,6 +466,45 @@ function findMatchingRoutingEvent(
     return null;
 }
 
+function findLatestRoutingEventForReviewType(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    reviewType: string
+): ReviewDependencyTimelineEvent | null {
+    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
+    const latestCompilePassSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
+    );
+    const latestReviewPhaseSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => (
+            entry.event_type === 'REVIEW_PHASE_STARTED'
+            && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+        )
+    );
+    const cycleFloorSequence = latestCompilePassSequence == null
+        ? latestReviewPhaseSequence
+        : latestReviewPhaseSequence == null
+            ? latestCompilePassSequence
+            : Math.max(latestCompilePassSequence, latestReviewPhaseSequence);
+    if (cycleFloorSequence == null) {
+        return null;
+    }
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+        const entry = timelineEvents[index];
+        if (entry.sequence <= cycleFloorSequence) {
+            break;
+        }
+        if (
+            entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
+            && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+        ) {
+            return entry;
+        }
+    }
+    return null;
+}
+
 function findMatchingInvocationAttestationEvent(
     timelineEvents: readonly ReviewDependencyTimelineEvent[],
     options: {
@@ -1010,6 +1049,7 @@ export function validateReviewArtifactGateEligibility(options: {
                         reviewerFallbackReason,
                         reviewerProvenance
                     );
+                    const latestRoutingEvent = findLatestRoutingEventForReviewType(options.timelineEvents, reviewKey);
                     if (!routingEvent) {
                         errors.push(
                             `Review '${reviewKey}' is missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle for reviewer '${reviewerIdentity}'.`
@@ -1074,6 +1114,34 @@ export function validateReviewArtifactGateEligibility(options: {
                                     );
                                 }
                             }
+                        }
+                    }
+                    if (latestRoutingEvent?.details) {
+                        const latestRoutingExecutionMode = normalizeCompatibilityReviewerExecutionMode(
+                            latestRoutingEvent.details.reviewer_execution_mode ?? latestRoutingEvent.details.reviewerExecutionMode
+                        );
+                        const latestRoutingSessionId = String(
+                            (latestRoutingEvent.details.reviewer_session_id ?? latestRoutingEvent.details.reviewerSessionId) || ''
+                        ).trim();
+                        if (
+                            latestRoutingExecutionMode
+                            && contextExecutionMode
+                            && latestRoutingExecutionMode !== contextExecutionMode
+                        ) {
+                            errors.push(
+                                `Review '${reviewKey}' has inconsistent execution mode between REVIEWER_DELEGATION_ROUTED telemetry ` +
+                                `(${latestRoutingExecutionMode}) and review-context (${contextExecutionMode}).`
+                            );
+                        }
+                        if (
+                            latestRoutingSessionId
+                            && contextReviewerSessionId
+                            && latestRoutingSessionId !== contextReviewerSessionId
+                        ) {
+                            errors.push(
+                                `Review '${reviewKey}' has inconsistent reviewer identity between REVIEWER_DELEGATION_ROUTED telemetry ` +
+                                `(${latestRoutingSessionId}) and review-context (${contextReviewerSessionId}).`
+                            );
                         }
                     }
                 }
