@@ -1388,6 +1388,55 @@ function findMatchingRoutingEvent(
     return null;
 }
 
+function resolveReviewCycleFloorSequence(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    reviewType: string
+): number | null {
+    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
+    const latestCompilePassSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
+    );
+    const latestReviewPhaseSequence = findLatestTimelineSequence(
+        timelineEvents,
+        (entry) => (
+            entry.event_type === 'REVIEW_PHASE_STARTED'
+            && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+        )
+    );
+    if (latestCompilePassSequence == null) {
+        return latestReviewPhaseSequence;
+    }
+    if (latestReviewPhaseSequence == null) {
+        return latestCompilePassSequence;
+    }
+    return Math.max(latestCompilePassSequence, latestReviewPhaseSequence);
+}
+
+function assertNoCurrentCycleReviewRecordedBeforeRouting(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    reviewType: string
+): void {
+    const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
+    const cycleFloorSequence = resolveReviewCycleFloorSequence(timelineEvents, normalizedReviewType);
+    if (cycleFloorSequence == null) {
+        return;
+    }
+    const recordedReview = [...timelineEvents].reverse().find((entry) => (
+        entry.sequence > cycleFloorSequence
+        && entry.event_type === 'REVIEW_RECORDED'
+        && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+    ));
+    if (!recordedReview) {
+        return;
+    }
+    throw new Error(
+        `Review routing for '${normalizedReviewType}' is locked because current-cycle REVIEW_RECORDED telemetry already exists. ` +
+        'Do not record a new REVIEWER_DELEGATION_ROUTED event after a review result has been recorded for the same review type. ' +
+        'If a fresh reviewer is required, run restart-review-cycle or restart-coherent-cycle first so downstream review evidence is explicitly invalidated; this does not require a full task reset.'
+    );
+}
+
 function findMatchingReviewerInvocationAttestationEvent(
     timelineEvents: readonly ReviewDependencyTimelineEvent[],
     options: {
@@ -2412,14 +2461,16 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
     assertRequiredUpstreamReviewDependencies({
         taskId,
         preflightPath,
         preflightPayload,
         reviewType,
-        timelineEvents: readDependencyTimelineEvents(timelinePath),
+        timelineEvents,
         taskModePath: String(options.taskModePath || '').trim()
     });
+    assertNoCurrentCycleReviewRecordedBeforeRouting(timelineEvents, reviewType);
 
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
     assertReviewContextContractOrThrow({
