@@ -5,6 +5,7 @@ import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../core/consta
 import { LIFECYCLE_EVENT_TYPES } from '../../../gate-runtime/lifecycle-events';
 import { appendTaskEventAsync } from '../../../gate-runtime/task-events';
 import * as gateHelpers from '../../../gates/helpers';
+import { redactSecretText, redactSensitiveData } from '../../../core/redaction';
 import {
     buildFullSuiteValidationOutputTelemetry,
     buildFullSuiteTimeoutForecast,
@@ -198,7 +199,7 @@ async function writeArtifactThenEmitMandatoryFullSuiteEvent(
     const pendingMetaPath = `${artifactPath}.pending.meta.json`;
     recoverPendingFullSuiteValidationArtifact(eventsRoot, taskId, artifactPath, pendingArtifactPath, pendingMetaPath);
     const transactionId = randomUUID();
-    fs.writeFileSync(pendingArtifactPath, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+    fs.writeFileSync(pendingArtifactPath, `${JSON.stringify(redactSensitiveData(artifact), null, 2)}\n`, 'utf8');
     fs.writeFileSync(
         pendingMetaPath,
         `${JSON.stringify({ transaction_id: transactionId }, null, 2)}\n`,
@@ -584,6 +585,7 @@ export async function runFullSuiteValidationCommand(
             ...generatedLockCleanup.map(formatGeneratedLockCleanupObservation)
         ];
     }
+    outputLines = outputLines.map((line) => redactSecretText(line));
 
     fs.writeFileSync(
         outputArtifactPath,

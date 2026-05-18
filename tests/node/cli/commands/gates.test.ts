@@ -32,6 +32,7 @@ import {
 import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
+import { formatCompileOutputEntry } from '../../../../src/cli/commands/gates-formatter';
 import { runCompletionGate } from '../../../../src/gates/completion';
 import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
@@ -965,7 +966,7 @@ describe('cli/commands/gates', () => {
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
-            'node -e "console.log(\'build ok\')"',
+            'node -e "console.log(\'build ok\'); console.log(\'ACCESS_TOKEN=compile-secret-value\')"',
             '```'
         ].join('\n'), 'utf8');
 
@@ -997,6 +998,10 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_PASSED');
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'compile-gate');
+        const compileOutputPath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-output.log`);
+        const compileOutput = fs.readFileSync(compileOutputPath, 'utf8');
+        assert.ok(!compileOutput.includes('compile-secret-value'));
+        assert.ok(compileOutput.includes('ACCESS_TOKEN=<redacted>'));
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'IMPLEMENTATION_STARTED'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -12969,6 +12974,56 @@ describe('executeCommand timeout protection', () => {
         assert.equal(result.exitCode, 0);
         assert.ok(result.outputLines.some(line => line.includes('hello')));
         assert.equal(result.timedOut, false);
+    });
+
+    it('redacts secrets from synchronous command output', () => {
+        const result = executeCommand(`node -e "console.log('Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456')"`, {
+            cwd: process.cwd()
+        });
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.some(line => line.includes('Authorization: Bearer <redacted>')));
+        assert.ok(result.outputLines.every(line => !line.includes('abcdefghijklmnopqrstuvwxyz123456')));
+    });
+
+    it('redacts multiline quoted secrets from synchronous command output', () => {
+        const result = executeCommand(`node -e "process.stdout.write(Buffer.from('QVBJX1RPS0VOPSJsaW5lIG9uZQpsaW5lIHR3byIK', 'base64').toString())"`, {
+            cwd: process.cwd()
+        });
+        assert.equal(result.exitCode, 0);
+        assert.deepEqual(result.outputLines, ['API_TOKEN="<redacted>"']);
+        assert.ok(result.outputLines.every(line => !line.includes('line one') && !line.includes('line two')));
+    });
+
+    it('redacts secrets from asynchronous command output', async () => {
+        const result = await executeCommandAsync(`node -e "console.error('NPM_TOKEN=npm_abcdefghijklmnopqrstuvwxyz123456')"`, {
+            cwd: process.cwd(),
+            timeoutMs: 10_000
+        });
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.some(line => line.includes('NPM_TOKEN=<redacted>')));
+        assert.ok(result.outputLines.every(line => !line.includes('abcdefghijklmnopqrstuvwxyz123456')));
+    });
+
+    it('redacts multiline quoted secrets from asynchronous command output', async () => {
+        const result = await executeCommandAsync(`node -e "process.stderr.write(Buffer.from('QVBJX1RPS0VOPSJsaW5lIG9uZQpsaW5lIHR3byIK', 'base64').toString())"`, {
+            cwd: process.cwd(),
+            timeoutMs: 10_000
+        });
+        assert.equal(result.exitCode, 0);
+        assert.deepEqual(result.outputLines, ['API_TOKEN="<redacted>"']);
+        assert.ok(result.outputLines.every(line => !line.includes('line one') && !line.includes('line two')));
+    });
+
+    it('redacts secrets from compile output command headers', () => {
+        const text = formatCompileOutputEntry(
+            1,
+            1,
+            'npm test -- TOKEN=compile-command-secret',
+            ['ok']
+        );
+
+        assert.ok(!text.includes('compile-command-secret'));
+        assert.ok(text.includes('COMMAND: npm test -- TOKEN=<redacted>'));
     });
 
     it('reports timedOut when command exceeds specified timeout', () => {

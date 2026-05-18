@@ -391,6 +391,38 @@ test('appendTaskEvent creates chain with correct integrity', () => {
     }
 });
 
+test('appendTaskEvent redacts secrets from durable event message and details', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-task-events-redaction-'));
+    try {
+        const result = appendTaskEvent(
+            tempDir,
+            'T-SECRET',
+            'COMMAND_OUTPUT_RECORDED',
+            'INFO',
+            'command printed Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456',
+            {
+                env: {
+                    API_TOKEN: 'tok-live-value'
+                },
+                output: 'DATABASE_URL=postgres://app:db-password@example.test/app'
+            },
+            { passThru: true }
+        );
+        assert.ok(result?.canonical_committed);
+
+        const eventFile = path.join(tempDir, 'runtime', 'task-events', 'T-SECRET.jsonl');
+        const event = JSON.parse(fs.readFileSync(eventFile, 'utf8').trim()) as Record<string, unknown>;
+        const serialized = JSON.stringify(event);
+
+        assert.doesNotMatch(serialized, /abcdefghijklmnopqrstuvwxyz123456/);
+        assert.doesNotMatch(serialized, /tok-live-value/);
+        assert.doesNotMatch(serialized, /db-password/);
+        assert.match(serialized, /<redacted>/);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('appendTaskEvent returns null for empty taskId', () => {
     assert.equal(appendTaskEvent('/tmp', '', 'test', 'PASS', 'msg', null), null);
 });

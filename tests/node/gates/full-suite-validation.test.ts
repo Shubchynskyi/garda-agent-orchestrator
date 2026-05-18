@@ -353,6 +353,24 @@ describe('gates/full-suite-validation', () => {
             assert.ok(text.includes('CycleBinding: task_id=T-123;'));
         });
 
+        it('formatFullSuiteValidationResult redacts secrets from configured command output', () => {
+            const config = {
+                ...loadFullSuiteValidationConfig('/nonexistent'),
+                enabled: true,
+                command: 'npm test -- ACCESS_TOKEN=full-suite-command-secret'
+            };
+            const result = buildValidationResult(config, 0, false, ['# pass 1'], null, ['src/changed.ts'], {
+                task_id: 'T-123',
+                preflight_path: 'runtime/reviews/T-123-preflight.json',
+                preflight_sha256: 'abc123',
+                compile_gate_timestamp: null
+            });
+            const text = formatFullSuiteValidationResult(result);
+
+            assert.ok(!text.includes('full-suite-command-secret'));
+            assert.ok(text.includes('Command: npm test -- ACCESS_TOKEN=<redacted>'));
+        });
+
         it('buildFullSuiteValidationOutputTelemetry measures savings against compacted visible output', () => {
             const config = loadFullSuiteValidationConfig('/nonexistent');
             const rawOutputLines = [
@@ -480,6 +498,30 @@ describe('gates/full-suite-validation', () => {
             assert.equal(forecast.safety_margin_seconds, 30);
             assert.equal(forecast.recommendation_source, 'history');
             assert.match(formatFullSuiteTimeoutForecast(forecast), /Recommended full-suite command timeout: 70s/);
+        });
+
+        it('redacts secrets from recorded duration history command fields', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-redacted-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig('npm test -- ACCESS_TOKEN=duration-secret');
+
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:00.000Z',
+                task_id: 'T-SECRET',
+                status: 'PASSED',
+                duration_ms: 10_000,
+                timed_out: false,
+                exit_code: 0
+            });
+
+            const historyText = fs.readFileSync(resolveFullSuiteDurationHistoryPath(repoRoot), 'utf8');
+            assert.ok(!historyText.includes('duration-secret'));
+            assert.ok(historyText.includes('ACCESS_TOKEN=<redacted>'));
+
+            const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 1);
+            fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
         it('uses the configured timeout when duration history is missing, corrupt, or for another workflow config signature', () => {
@@ -678,6 +720,8 @@ describe('gates/full-suite-validation', () => {
                     'for (let index = 0; index < 40; index += 1) {',
                     '  process.stdout.write(`detail line ${index} with verbose raw output that should not survive compaction\\n`);',
                     '}',
+                    'process.stdout.write("ACCESS_TOKEN=full-suite-secret-value\\n");',
+                    'process.stdout.write("API_TOKEN=\\"full suite line one\\nfull suite line two\\"\\n");',
                     'process.stdout.write("# tests 20\\n# pass 20\\n# fail 0\\n# duration_ms 1234\\n");',
                     'process.exit(0);'
                 ].join('\n'),
@@ -716,6 +760,16 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.timeout_forecast.recommendation_source, 'history');
             assert.ok(artifact.output_telemetry);
             assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
+            const outputArtifactPath = path.join(reviewsDir, 'T-PASS-full-suite-output.log');
+            const outputArtifact = fs.readFileSync(outputArtifactPath, 'utf8');
+            assert.ok(!outputArtifact.includes('full-suite-secret-value'));
+            assert.ok(!outputArtifact.includes('full suite line one'));
+            assert.ok(!outputArtifact.includes('full suite line two'));
+            assert.ok(outputArtifact.includes('ACCESS_TOKEN=<redacted>'));
+            assert.ok(outputArtifact.includes('API_TOKEN="<redacted>"'));
+            assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full-suite-secret-value'));
+            assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full suite line one'));
+            assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full suite line two'));
             const timelinePath = path.join(eventsDir, 'T-PASS.jsonl');
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');

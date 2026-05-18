@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../core/constants';
+import { redactSecretText } from '../core/redaction';
 import {
     normalizeFullSuiteValidationPlacement,
     type FullSuiteValidationPlacement
@@ -248,7 +249,7 @@ export function recordFullSuiteValidationDuration(
         ...history.entries.filter((candidate) => candidate.config_signature_sha256 === signature),
         {
             ...entry,
-            command: config.command,
+            command: redactSecretText(config.command),
             config_signature_sha256: signature
         }
     ].slice(-FULL_SUITE_DURATION_HISTORY_LIMIT);
@@ -705,7 +706,7 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
     const lines: string[] = [];
     lines.push(`FULL_SUITE_VALIDATION_${result.status}`);
     lines.push(`Enabled: ${result.enabled}`);
-    lines.push(`Command: ${result.command}`);
+    lines.push(`Command: ${redactSecretText(result.command)}`);
     if (typeof result.required === 'boolean') {
         lines.push(`Required: ${result.required}`);
     }

@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { writeFileAtomically } from '../core/filesystem';
+import { redactSecretText, redactSensitiveData } from '../core/redaction';
 import {
     acquireFilesystemLock,
     acquireFilesystemLockAsync,
@@ -507,8 +508,9 @@ function writeReviewArtifactTextUnlocked(
     const rollbackState = shouldRequireIndexUpdate(options)
         ? captureReviewArtifactRollbackState(artifactPath)
         : null;
+    const redactedContent = redactSecretText(content);
     const { lock_path, telemetry } = withReviewArtifactLock(artifactPath, () => {
-        writeArtifactFileAtomically(artifactPath, content);
+        writeArtifactFileAtomically(artifactPath, redactedContent);
     }, options);
     const reviewsDir = path.dirname(artifactPath);
     const indexUpdate = updateIndex
@@ -559,7 +561,7 @@ export function writeReviewArtifactJson(
     payload: unknown,
     options: ReviewArtifactLockOptions = {}
 ): ReviewArtifactWriteResult {
-    return writeReviewArtifactText(artifactPath, `${JSON.stringify(payload, null, 2)}\n`, options);
+    return writeReviewArtifactText(artifactPath, `${JSON.stringify(redactSensitiveData(payload), null, 2)}\n`, options);
 }
 
 export type ReviewArtifactTransactionalWrite =
@@ -630,9 +632,9 @@ function restoreReviewArtifactFromRollbackStateUnlocked(
 
 function getReviewArtifactTransactionEntryContent(entry: ReviewArtifactTransactionalWrite): string {
     if (entry.contentType === 'json') {
-        return `${JSON.stringify(entry.payload, null, 2)}\n`;
+        return `${JSON.stringify(redactSensitiveData(entry.payload), null, 2)}\n`;
     }
-    return entry.content;
+    return redactSecretText(entry.content);
 }
 
 function createReviewArtifactTransactionStagingDir(reviewsDir: string): string {

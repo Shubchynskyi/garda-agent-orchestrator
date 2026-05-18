@@ -1,5 +1,6 @@
 import * as os from 'node:os';
 import * as gateHelpers from '../../gates/helpers';
+import { redactSecretText } from '../../core/redaction';
 
 export interface OutputTelemetrySummary extends Record<string, unknown> {
     filter_mode: string;
@@ -45,7 +46,7 @@ export function formatCompileOutputEntry(
 ): string {
     const lines = [
         `==== COMMAND ${commandIndex}/${totalCommands} ====`,
-        `COMMAND: ${command}`,
+        `COMMAND: ${redactSecretText(command)}`,
         `TIMESTAMP_UTC: ${new Date().toISOString()}`,
         '---- OUTPUT START ----',
         ...outputLines,

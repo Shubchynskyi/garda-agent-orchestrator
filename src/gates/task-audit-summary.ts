@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
+import { redactSensitiveData } from '../core/redaction';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
 import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
@@ -1943,10 +1944,10 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
     const markdownPath = summary.final_closeout.artifact_paths.markdown;
 
     if (summary.final_closeout.status === 'READY') {
-        const closeout = {
+        const closeout = redactSensitiveData({
             ...summary.final_closeout,
             artifact_state: 'MATERIALIZED' as const
-        };
+        }) as typeof summary.final_closeout;
         writeFileAtomically(jsonPath, JSON.stringify(closeout, null, 2) + '\n', { encoding: 'utf8' });
         writeFileAtomically(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', { encoding: 'utf8' });
         cleanupTerminalReviewTempOutputs(path.resolve(path.dirname(jsonPath), '..', '..', '..'), summary.task_id);

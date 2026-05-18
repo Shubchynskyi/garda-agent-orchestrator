@@ -128,6 +128,26 @@ test('writeReviewArtifactJson writes JSON and cleans up the transient lock', () 
     fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+test('writeReviewArtifactJson redacts secret values before persisting artifacts', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-redaction-'));
+    const artifactPath = path.join(tempDir, 'T-001-security.json');
+
+    try {
+        writeReviewArtifactJson(artifactPath, {
+            task_id: 'T-001',
+            auth_token: 'tok-live-value',
+            command_output: 'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456'
+        });
+
+        const artifactText = fs.readFileSync(artifactPath, 'utf8');
+        assert.doesNotMatch(artifactText, /tok-live-value/);
+        assert.doesNotMatch(artifactText, /abcdefghijklmnopqrstuvwxyz123456/);
+        assert.match(artifactText, /<redacted>/);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
 test('writeReviewArtifactText replaces existing content without leaving temp files', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-'));
     const artifactPath = path.join(tempDir, 'T-002-review-output.log');
@@ -140,6 +160,20 @@ test('writeReviewArtifactText replaces existing content without leaving temp fil
     assert.deepEqual(listTempArtifacts(tempDir), []);
 
     fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('writeReviewArtifactText redacts secrets from free-form output', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-artifact-text-redaction-'));
+    const artifactPath = path.join(tempDir, 'T-002-review-output.log');
+
+    try {
+        writeReviewArtifactText(artifactPath, 'NPM_TOKEN=npm_abcdefghijklmnopqrstuvwxyz123456\n');
+        const artifactText = fs.readFileSync(artifactPath, 'utf8');
+        assert.doesNotMatch(artifactText, /abcdefghijklmnopqrstuvwxyz123456/);
+        assert.equal(artifactText, 'NPM_TOKEN=<redacted>\n');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 });
 
 test('writeReviewArtifactText reports review index update status', () => {

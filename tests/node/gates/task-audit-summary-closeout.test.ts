@@ -664,6 +664,7 @@ describe('gates/task-audit-summary', () => {
                 eventsRoot: eventsDir,
                 reviewsRoot: reviewsDir
             });
+            result.final_closeout.commit_command_suggestion = 'git commit -m "ACCESS_TOKEN=closeout-secret-value"';
 
             synchronizeFinalCloseoutArtifacts(result);
 
@@ -678,7 +679,13 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.artifact_state, 'MATERIALIZED');
             assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, true);
             const closeoutJson = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+            const closeoutJsonText = fs.readFileSync(jsonPath, 'utf8');
+            const closeoutMarkdownText = fs.readFileSync(markdownPath, 'utf8');
             assert.equal(closeoutJson.artifact_state, 'MATERIALIZED');
+            assert.ok(!closeoutJsonText.includes('closeout-secret-value'));
+            assert.ok(!closeoutMarkdownText.includes('closeout-secret-value'));
+            assert.ok(closeoutJsonText.includes('ACCESS_TOKEN=<redacted>'));
+            assert.ok(closeoutMarkdownText.includes('ACCESS_TOKEN=<redacted>'));
             assert.equal(closeoutJson.workflow.visible_summary_line, 'Mandatory full-suite: false');
             assert.equal(closeoutJson.task_queue_status_contract.authority, 'gate_owned_status_sync');
             assert.deepEqual(closeoutJson.task_queue_status_contract.agent_blocked_statuses, ['IN_PROGRESS', 'IN_REVIEW', 'DONE', 'BLOCKED', 'SPLIT_REQUIRED']);

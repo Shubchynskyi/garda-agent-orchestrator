@@ -10,6 +10,7 @@ import {
     spawnSyncWithTimeout
 } from '../../core/subprocess';
 import { assertDependentValidationChainReady } from '../../core/dependent-validation-chains';
+import { redactSecretText } from '../../core/redaction';
 
 export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 600_000;
 
@@ -43,6 +44,10 @@ function splitOutputLines(text: unknown): string[] {
         lines.pop();
     }
     return lines;
+}
+
+function redactOutputLines(lines: string[]): string[] {
+    return splitOutputLines(redactSecretText(lines.join('\n')));
 }
 
 function buildSubprocessEnv(overrides?: Record<string, string | undefined>): NodeJS.ProcessEnv | undefined {
@@ -202,11 +207,11 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
     if (result.timedOut) {
         return {
             exitCode: EXIT_GENERAL_FAILURE,
-            outputLines: [
+            outputLines: redactOutputLines([
                 ...splitOutputLines(result.stdout),
                 ...splitOutputLines(result.stderr),
                 `Process timed out after ${timeoutMs} ms.`
-            ],
+            ]),
             timedOut: true,
             cancelled: false
         };
@@ -215,11 +220,11 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
     if (result.cancelled) {
         return {
             exitCode: EXIT_GENERAL_FAILURE,
-            outputLines: [
+            outputLines: redactOutputLines([
                 ...splitOutputLines(result.stdout),
                 ...splitOutputLines(result.stderr),
                 'Process was cancelled.'
-            ],
+            ]),
             timedOut: false,
             cancelled: true
         };
@@ -227,10 +232,10 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
 
     return {
         exitCode: result.exitCode,
-        outputLines: [
+        outputLines: redactOutputLines([
             ...splitOutputLines(result.stdout),
             ...splitOutputLines(result.stderr)
-        ],
+        ]),
         timedOut: false,
         cancelled: false
     };
@@ -268,10 +273,10 @@ export function executeCommand(commandText: string, options: ExecuteCommandOptio
             timeoutMs
         });
 
-    const outputLines = [
+    const outputLines = redactOutputLines([
         ...splitOutputLines(result.stdout),
         ...splitOutputLines(result.stderr)
-    ];
+    ]);
 
     if (result.timedOut) {
         return {

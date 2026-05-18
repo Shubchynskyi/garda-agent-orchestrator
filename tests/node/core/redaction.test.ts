@@ -7,6 +7,8 @@ import {
     redactPath,
     redactEnvObject,
     redactDiagnosticText,
+    redactSecretText,
+    redactSensitiveData,
     createRedactionContext,
     _resetCachedValues
 } from '../../../src/core/redaction';
@@ -126,6 +128,164 @@ test('redactEnvObject skips undefined values', () => {
 test('redactEnvObject handles empty object', () => {
     const result = redactEnvObject({});
     assert.deepEqual(result, {});
+});
+
+test('redactSecretText masks common command and log secret shapes', () => {
+    const text = [
+        'Authorization: Bearer ghp_abcdefghijklmnopqrstuvwxyz123456',
+        'NPM_TOKEN=npm_abcdefghijklmnopqrstuvwxyz123456',
+        '"databasePassword": "plain-text-password"',
+        'postgres://app:super-secret@db.example/app',
+        '-----BEGIN PRIVATE KEY-----',
+        'abc123',
+        '-----END PRIVATE KEY-----'
+    ].join('\n');
+
+    const result = redactSecretText(text);
+
+    assert.doesNotMatch(result, /abcdefghijklmnopqrstuvwxyz123456/);
+    assert.doesNotMatch(result, /plain-text-password/);
+    assert.doesNotMatch(result, /super-secret/);
+    assert.doesNotMatch(result, /abc123/);
+    assert.match(result, /Authorization: Bearer <redacted>/);
+    assert.match(result, /NPM_TOKEN=<redacted>/);
+    assert.match(result, /"databasePassword": "<redacted>"/);
+    assert.match(result, /postgres:\/\/app:<redacted>@db\.example\/app/);
+    assert.match(result, /<redacted-private-key>/);
+});
+
+test('redactSensitiveData recursively masks secret-bearing keys and text values', () => {
+    const result = redactSensitiveData({
+        safe: 'visible',
+        nested: {
+            apiToken: 'tok-live-value',
+            output: 'curl -H "Authorization: Basic abcdef123456" https://example.test'
+        },
+        list: ['PASSWORD=from-output']
+    });
+
+    assert.deepEqual(result, {
+        safe: 'visible',
+        nested: {
+            apiToken: '<redacted>',
+            output: 'curl -H "Authorization: Basic <redacted>" https://example.test'
+        },
+        list: ['PASSWORD=<redacted>']
+    });
+});
+
+test('redactSensitiveData masks multiline secrets split across output line arrays', () => {
+    const result = redactSensitiveData({
+        outputLines: [
+            'before',
+            'API_TOKEN="line one',
+            'line two"',
+            'after'
+        ]
+    });
+
+    assert.deepEqual(result, {
+        outputLines: [
+            'before',
+            'API_TOKEN="<redacted>"',
+            'after'
+        ]
+    });
+});
+
+test('redactSensitiveData preserves token telemetry keys while masking real token secrets', () => {
+    const result = redactSensitiveData({
+        token: 'bare-token-secret',
+        tokens: 'bare-tokens-secret',
+        token_economy: {
+            estimated_saved_tokens: 12,
+            estimated_saved_tokens_chars_per_4: 48,
+            raw_token_count_estimate: 100,
+            token_estimator: 'hybrid_text_v1',
+            legacy_token_estimator: 'chars_per_4'
+        },
+        token_economy_active_for_depth: true,
+        total_output_token_count_estimate: 25,
+        VerdictToken: 'REVIEW PASSED',
+        access_token: 'secret-access-token',
+        authToken: 'secret-auth-token',
+        TOKEN_ECONOMY: 'enabled'
+    });
+
+    assert.deepEqual(result, {
+        token: '<redacted>',
+        tokens: '<redacted>',
+        token_economy: {
+            estimated_saved_tokens: 12,
+            estimated_saved_tokens_chars_per_4: 48,
+            raw_token_count_estimate: 100,
+            token_estimator: 'hybrid_text_v1',
+            legacy_token_estimator: 'chars_per_4'
+        },
+        token_economy_active_for_depth: true,
+        total_output_token_count_estimate: 25,
+        VerdictToken: 'REVIEW PASSED',
+        access_token: '<redacted>',
+        authToken: '<redacted>',
+        TOKEN_ECONOMY: 'enabled'
+    });
+});
+
+test('redactSecretText preserves token telemetry assignments and JSON fields', () => {
+    const text = [
+        '"token_estimator": "hybrid_text_v1"',
+        '"estimated_saved_tokens": "12"',
+        '"estimated_saved_tokens_chars_per_4": "48"',
+        'TOKEN_ECONOMY=enabled',
+        'TOKEN=plain-secret-value',
+        'ACCESS_TOKEN=super-secret',
+        '"apiToken": "secret-token"'
+    ].join('\n');
+
+    const result = redactSecretText(text);
+
+    assert.match(result, /"token_estimator": "hybrid_text_v1"/);
+    assert.match(result, /"estimated_saved_tokens": "12"/);
+    assert.match(result, /"estimated_saved_tokens_chars_per_4": "48"/);
+    assert.match(result, /TOKEN_ECONOMY=enabled/);
+    assert.match(result, /TOKEN=<redacted>/);
+    assert.match(result, /ACCESS_TOKEN=<redacted>/);
+    assert.match(result, /"apiToken": "<redacted>"/);
+});
+
+test('redactSecretText masks quoted env assignments with spaces and multiline values', () => {
+    const text = [
+        'PASSWORD="secret with spaces"',
+        'API_TOKEN="line one',
+        'line two"',
+        "ACCESS_TOKEN='single quoted secret value'"
+    ].join('\n');
+
+    const result = redactSecretText(text);
+
+    assert.doesNotMatch(result, /secret with spaces/);
+    assert.doesNotMatch(result, /line one/);
+    assert.doesNotMatch(result, /line two/);
+    assert.doesNotMatch(result, /single quoted secret value/);
+    assert.match(result, /PASSWORD="<redacted>"/);
+    assert.match(result, /API_TOKEN="<redacted>"/);
+    assert.match(result, /ACCESS_TOKEN='<redacted>'/);
+});
+
+test('redactSecretText masks secrets embedded in stack-trace-shaped output', () => {
+    const text = [
+        'Error: failed to connect postgres://app:stack-secret@db.example/app',
+        '    at connect (src/db.ts:10:5)',
+        '    at main (src/index.ts:2:1)',
+        'Caused by: ACCESS_TOKEN="stack trace token"'
+    ].join('\n');
+
+    const result = redactSecretText(text);
+
+    assert.doesNotMatch(result, /stack-secret/);
+    assert.doesNotMatch(result, /stack trace token/);
+    assert.match(result, /postgres:\/\/app:<redacted>@db\.example\/app/);
+    assert.match(result, /ACCESS_TOKEN="<redacted>"/);
 });
 
 

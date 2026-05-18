@@ -21,6 +21,7 @@ import {
     toTrimmedString
 } from './task-events-helpers';
 import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
+import { redactSecretText, redactSensitiveData } from '../core/redaction';
 
 const TAIL_READ_CHUNK_SIZE = 4096;
 const SUMMARY_REFRESH_EVENT_TYPES = new Set<string>([
@@ -599,8 +600,8 @@ export function appendTaskEvent(
         event_type: eventType,
         outcome,
         actor,
-        message,
-        details
+        message: redactSecretText(message),
+        details: redactSensitiveData(details)
     };
     const result = createAppendResult(paths);
     let line: string | null = null;
@@ -681,8 +682,8 @@ export async function appendTaskEventAsync(
         event_type: eventType,
         outcome,
         actor,
-        message,
-        details
+        message: redactSecretText(message),
+        details: redactSensitiveData(details)
     };
     const result = createAppendResult(paths);
     let line: string | null = null;
