@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
 import { buildGuardedCommandHelpText } from '../../../../src/cli/commands/cli-format-output';
 import { isGardaSelfGuardDenyAgentEntryForBundle } from '../../../../src/core/workflow-config';
+import { OPERATOR_CONFIRMATION_MAX_AGE_MS } from '../../../../src/core/operator-confirmation';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator', version: '1.0.0' };
 function buildOperatorConfirmationArgs(): string[] {
@@ -448,6 +449,58 @@ test('workflow set rejects stale operator confirmation timestamps', () => {
             /workflow set operator confirmation is stale/
         );
     } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set accepts operator confirmation timestamp exactly at freshness cutoff', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    const nowMs = Date.parse('2026-01-01T00:00:00.000Z');
+    const dateNow = mock.method(Date, 'now', () => nowMs);
+    const boundaryConfirmation = new Date(nowMs - OPERATOR_CONFIRMATION_MAX_AGE_MS).toISOString();
+
+    try {
+        const { result } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--task-reset-enabled', 'true',
+            '--operator-confirmed', 'yes',
+            '--operator-confirmed-at-utc', boundaryConfirmation
+        ], PACKAGE_JSON));
+
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.task_reset.enabled, true);
+    } finally {
+        dateNow.mock.restore();
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set rejects operator confirmation timestamp just beyond freshness cutoff', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    const originalConfig = fs.readFileSync(configPath, 'utf8');
+    const nowMs = Date.parse('2026-01-01T00:00:00.000Z');
+    const dateNow = mock.method(Date, 'now', () => nowMs);
+    const staleByOneMs = new Date(nowMs - OPERATOR_CONFIRMATION_MAX_AGE_MS - 1).toISOString();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--task-reset-enabled', 'true',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', staleByOneMs
+            ], PACKAGE_JSON),
+            /workflow set operator confirmation is stale/
+        );
+        assert.equal(fs.readFileSync(configPath, 'utf8'), originalConfig);
+    } finally {
+        dateNow.mock.restore();
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
 });
