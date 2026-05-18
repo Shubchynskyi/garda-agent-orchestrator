@@ -30,6 +30,7 @@ function findRepoRoot(startDir: string): string {
 const REPO_ROOT = findRepoRoot(__dirname);
 const CLI_PATH = path.join(REPO_ROOT, 'bin', 'garda.js');
 const TEST_PACKAGE_JSON = { name: 'garda-agent-orchestrator-test', version: '1.0.0' };
+const WORKFLOW_CLI_REGRESSION_TIMEOUT_MS = process.platform === 'win32' ? 60000 : 30000;
 
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
     const filePath = path.join(root, relativePath);
@@ -575,6 +576,183 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.full_suite_validation.enabled, true);
         assert.equal(parsedConfig.review_execution_policy.mode, 'strict_sequential');
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('workflow set human output separates requested fields from no-op changed fields', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-human-set-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-human-set-target-'));
+    try {
+        fs.mkdirSync(path.join(callerDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(callerDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(callerDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(callerDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const seedResult = childProcess.spawnSync(
+            process.execPath,
+            [
+                CLI_PATH,
+                'workflow',
+                'set',
+                '--target-root', targetDir,
+                '--task-reset', 'off',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString(),
+                '--json'
+            ],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS }
+        );
+        assert.equal(seedResult.status, 0, 'workflow set seed should create target config');
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [
+                CLI_PATH,
+                'workflow',
+                'set',
+                '--target-root', targetDir,
+                '--task-reset', 'off'
+            ],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, 0, 'workflow set no-op should succeed without operator confirmation');
+        assert.ok(combined.includes('Status: NO_CHANGE'));
+        assert.ok(combined.includes('RequestedFields: task_reset.enabled'));
+        assert.ok(combined.includes('ChangedFields: none'));
+        assert.ok(combined.includes('NoOpFields: task_reset.enabled'));
+        assert.ok(!combined.includes('ChangedFields: task_reset.enabled'));
+        assert.ok(!combined.includes('AuditPath:'));
+
+        const jsonResult = childProcess.spawnSync(
+            process.execPath,
+            [
+                CLI_PATH,
+                'workflow',
+                'set',
+                '--target-root', targetDir,
+                '--task-reset', 'off',
+                '--json'
+            ],
+            {
+                cwd: callerDir,
+                windowsHide: true,
+                encoding: 'utf8',
+                timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS,
+                env: { ...process.env, FORCE_COLOR: '1' }
+            }
+        );
+        const jsonCombined = (jsonResult.stdout || '') + (jsonResult.stderr || '');
+        assert.equal(jsonResult.status, 0, 'workflow set no-op JSON should succeed under FORCE_COLOR');
+        assert.doesNotMatch(jsonCombined, /\u001b\[[0-9;]+m/u);
+        const parsed = JSON.parse(jsonResult.stdout || '');
+        assert.equal(parsed.action, 'set');
+        assert.equal(parsed.status, 'NO_CHANGE');
+        assert.deepEqual(parsed.requested_fields, ['task_reset.enabled']);
+        assert.deepEqual(parsed.changed_fields, []);
+        assert.deepEqual(parsed.noop_fields, ['task_reset.enabled']);
+        assert.equal(parsed.audit_path, null);
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('workflow set human output colorizes statuses and honors no-color', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-color-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-color-target-'));
+    try {
+        fs.mkdirSync(path.join(callerDir, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'bin'), { recursive: true });
+        fs.mkdirSync(path.join(callerDir, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+        fs.writeFileSync(path.join(callerDir, 'package.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'src', 'index.ts'), '', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'VERSION'), '1.0.0', 'utf8');
+        fs.writeFileSync(path.join(callerDir, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+        const rootLauncher = path.join(callerDir, 'bin', 'garda.js');
+        const bundleLauncher = path.join(callerDir, 'garda-agent-orchestrator', 'bin', 'garda.js');
+        fs.writeFileSync(rootLauncher, 'new', 'utf8');
+        fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+
+        const oldTime = new Date(Date.now() - 10000);
+        fs.utimesSync(bundleLauncher, oldTime, oldTime);
+
+        const seedResult = childProcess.spawnSync(
+            process.execPath,
+            [
+                CLI_PATH,
+                'workflow',
+                'set',
+                '--target-root', targetDir,
+                '--task-reset', 'off',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', new Date().toISOString(),
+                '--json'
+            ],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS }
+        );
+        assert.equal(seedResult.status, 0, 'workflow set seed should create target config');
+
+        const colorResult = childProcess.spawnSync(
+            process.execPath,
+            [
+                CLI_PATH,
+                'workflow',
+                'set',
+                '--target-root', targetDir,
+                '--task-reset', 'off'
+            ],
+            {
+                cwd: callerDir,
+                windowsHide: true,
+                encoding: 'utf8',
+                timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS,
+                env: { ...process.env, FORCE_COLOR: '1' }
+            }
+        );
+        assert.equal(colorResult.status, 0, 'workflow set no-op should succeed with FORCE_COLOR');
+        assert.match(colorResult.stdout || '', /\u001b\[[0-9;]+m/u);
+
+        const noColorResult = childProcess.spawnSync(
+            process.execPath,
+            [
+                CLI_PATH,
+                '--no-color',
+                'workflow',
+                'set',
+                '--target-root', targetDir,
+                '--task-reset', 'off'
+            ],
+            {
+                cwd: callerDir,
+                windowsHide: true,
+                encoding: 'utf8',
+                timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS,
+                env: { ...process.env, FORCE_COLOR: '1' }
+            }
+        );
+        const noColorCombined = (noColorResult.stdout || '') + (noColorResult.stderr || '');
+        assert.equal(noColorResult.status, 0, 'workflow set no-op should honor --no-color');
+        assert.ok(noColorCombined.includes('Status: NO_CHANGE'));
+        assert.doesNotMatch(noColorCombined, /\u001b\[[0-9;]+m/u);
     } finally {
         fs.rmSync(callerDir, { recursive: true, force: true });
         fs.rmSync(targetDir, { recursive: true, force: true });

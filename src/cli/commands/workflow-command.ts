@@ -50,10 +50,17 @@ import {
 } from '../../gates/full-suite-validation';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
+    bold,
     buildGuardedCommandHelpText,
+    cyan,
+    dim,
+    green,
     normalizePathValue,
     parseOptions,
-    PackageJsonLike
+    PackageJsonLike,
+    red,
+    supportsColor,
+    yellow
 } from './cli-helpers';
 
 type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
@@ -125,7 +132,9 @@ interface WorkflowSetResult extends WorkflowCommandResultBase {
     action: 'set';
     status: 'CHANGED' | 'NO_CHANGE';
     changed: boolean;
+    requested_fields: string[];
     changed_fields: string[];
+    noop_fields: string[];
     audit_path: string | null;
 }
 
@@ -369,6 +378,38 @@ function buildWorkflowShowResult(
     };
 }
 
+function colorWorkflowValue(key: string, value: string): string {
+    const normalized = value.trim().toUpperCase();
+    if (key === 'Status') {
+        if (normalized === 'CHANGED' || normalized === 'PASS') return green(value);
+        if (normalized === 'NO_CHANGE') return yellow(value);
+        return red(value);
+    }
+    if (value === 'true' || value === 'enabled') return green(value);
+    if (value === 'false' || value === 'disabled' || value === 'none' || value === 'n/a') return dim(value);
+    return value;
+}
+
+function colorizeWorkflowLine(line: string): string {
+    if (!supportsColor() || !line.trim()) return line;
+    if (line === 'GARDA_WORKFLOW') return bold(cyan(line));
+    if (!line.includes(':')) return bold(line);
+    const match = line.match(/^([A-Za-z][A-Za-z0-9]*):(.*)$/u);
+    if (!match) return line;
+    const [, key, rest] = match;
+    const spacing = rest.match(/^\s*/u)?.[0] ?? ' ';
+    const value = rest.slice(spacing.length);
+    return `${bold(`${key}:`)}${spacing}${colorWorkflowValue(key, value)}`;
+}
+
+function colorizeWorkflowHumanOutput(rendered: string): string {
+    return rendered.split('\n').map((line) => colorizeWorkflowLine(line)).join('\n');
+}
+
+function formatWorkflowFieldList(fields: readonly string[]): string {
+    return fields.length > 0 ? fields.join(', ') : 'none';
+}
+
 function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 'show' | 'set' }, jsonMode: boolean): string {
     if (jsonMode) {
         return JSON.stringify(result, null, 2);
@@ -384,11 +425,15 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
     lines.push(`Action: ${result.action}`);
+    lines.push('');
+    lines.push('Target');
     lines.push(`Scope: ${result.scope}`);
     lines.push(`TargetRoot: ${result.target_root}`);
     lines.push(`Bundle: ${result.bundle_root}`);
     lines.push(`ConfigPath: ${result.config_path}`);
     lines.push(`ConfigExists: ${result.config_exists}`);
+    lines.push('');
+    lines.push('Settings summary');
     lines.push(result.visible_summary_line);
     lines.push(result.review_execution_policy_summary_line);
     lines.push(result.scope_budget_guard_summary_line);
@@ -396,6 +441,8 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(result.project_memory_maintenance_summary_line);
     lines.push(result.task_reset_summary_line);
     lines.push(result.orchestrator_work_policy_summary_line);
+    lines.push('');
+    lines.push('Full suite validation');
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
@@ -403,10 +450,14 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`FullSuiteRedFailureChunkLines: ${fullSuiteValidation.red_failure_chunk_lines}`);
     lines.push(`FullSuiteOutOfScopeFailurePolicy: ${fullSuiteValidation.out_of_scope_failure_policy}`);
     lines.push(`FullSuitePlacement: ${fullSuiteValidation.placement}`);
+    lines.push('');
+    lines.push('Review execution');
     lines.push(`ReviewExecutionPolicy: ${reviewExecutionPolicy.mode}`);
     lines.push(`ReviewExecutionPolicyConfigured: ${reviewExecutionPolicy.configured}`);
     lines.push(`ReviewExecutionPolicyDescription: ${reviewExecutionPolicy.description}`);
     lines.push(`ReviewExecutionPolicyAllowedModes: ${reviewExecutionPolicy.allowed_modes.join(', ')}`);
+    lines.push('');
+    lines.push('Scope budget guard');
     lines.push(`ScopeBudgetGuardEnabled: ${scopeBudgetGuard.enabled}`);
     lines.push(`ScopeBudgetGuardProfiles: ${scopeBudgetGuard.profiles.join(', ')}`);
     lines.push(`ScopeBudgetGuardAction: ${scopeBudgetGuard.action}`);
@@ -414,12 +465,16 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ScopeBudgetGuardMaxChangedLines: ${scopeBudgetGuard.max_changed_lines}`);
     lines.push(`ScopeBudgetGuardMaxRequiredReviews: ${scopeBudgetGuard.max_required_reviews}`);
     lines.push(`ScopeBudgetGuardMaxReviewTokens: ${scopeBudgetGuard.max_review_tokens}`);
+    lines.push('');
+    lines.push('Review cycle guard');
     lines.push(`ReviewCycleGuardEnabled: ${reviewCycleGuard.enabled}`);
     lines.push(`ReviewCycleGuardAction: ${reviewCycleGuard.action}`);
     lines.push(`ReviewCycleGuardMaxFailedNonTestReviews: ${reviewCycleGuard.max_failed_non_test_reviews}`);
     lines.push(`ReviewCycleGuardMaxTotalNonTestReviews: ${reviewCycleGuard.max_total_non_test_reviews}`);
     lines.push(`ReviewCycleGuardExcludedReviewTypes: ${reviewCycleGuard.excluded_review_types.join(', ')}`);
     lines.push(`ReviewCycleGuardAutoSplitEnabled: ${reviewCycleGuard.auto_split_enabled}`);
+    lines.push('');
+    lines.push('Project memory maintenance');
     lines.push(`ProjectMemoryMaintenanceEnabled: ${projectMemoryMaintenance.enabled}`);
     lines.push(`ProjectMemoryMaintenanceMode: ${projectMemoryMaintenance.mode}`);
     lines.push(`ProjectMemoryMaintenanceRunBeforeFinalCloseout: ${projectMemoryMaintenance.run_before_final_closeout}`);
@@ -427,9 +482,13 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ProjectMemoryMaintenanceMaxCompactSummaryChars: ${projectMemoryMaintenance.max_compact_summary_chars}`);
     lines.push(`ProjectMemoryMaintenanceReadStrategy: ${projectMemoryMaintenance.read_strategy}`);
     lines.push(`ProjectMemoryMaintenanceImpactArtifactRetentionDays: ${projectMemoryMaintenance.impact_artifact_retention_days}`);
+    lines.push('');
+    lines.push('Task reset and self-guard');
     lines.push(`TaskResetEnabled: ${taskReset.enabled}`);
     lines.push(`GardaSelfGuard: ${orchestratorWorkPolicy.mode === 'deny_agent_entry' ? 'on' : 'off'}`);
     lines.push(`OrchestratorWorkPolicy: ${orchestratorWorkPolicy.mode}`);
+    lines.push('');
+    lines.push('Hints');
     lines.push('Tip: run "workflow set --full-suite on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
     lines.push('Tip: run "workflow set --scope-budget on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');
@@ -437,7 +496,51 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push('Tip: run "workflow set --project-memory on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');
     lines.push('Tip: run "workflow set --task-reset on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
     lines.push('Tip: run "workflow set --garda-self-guard on|off" to control agent self-entry into protected orchestrator work; off requires explicit operator approval.');
-    return lines.join('\n');
+    return colorizeWorkflowHumanOutput(lines.join('\n'));
+}
+
+function getWorkflowConfigField(config: WorkflowFileConfigData, fieldPath: string): unknown {
+    return fieldPath.split('.').reduce<unknown>((current, segment) => {
+        if (current && typeof current === 'object' && segment in current) {
+            return (current as Record<string, unknown>)[segment];
+        }
+        return undefined;
+    }, config);
+}
+
+function workflowConfigValuesEqual(left: unknown, right: unknown): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function resolveActualChangedFields(
+    requestedFields: readonly string[],
+    currentConfig: WorkflowFileConfigData,
+    nextConfig: WorkflowFileConfigData,
+    configExists: boolean
+): string[] {
+    if (!configExists) {
+        return [...requestedFields];
+    }
+    return requestedFields.filter((field) => !workflowConfigValuesEqual(
+        getWorkflowConfigField(currentConfig, field),
+        getWorkflowConfigField(nextConfig, field)
+    ));
+}
+
+function formatWorkflowSetSummaryOutput(result: WorkflowSetResult): string {
+    const lines = [
+        `Status: ${result.status}`,
+        `RequestedFields: ${formatWorkflowFieldList(result.requested_fields)}`,
+        `ChangedFields: ${formatWorkflowFieldList(result.changed_fields)}`,
+        `NoOpFields: ${formatWorkflowFieldList(result.noop_fields)}`
+    ];
+    if (result.audit_path) {
+        lines.push(`AuditPath: ${result.audit_path}`);
+    }
+    if (result.status === 'NO_CHANGE') {
+        lines.push('Hint: requested workflow settings already matched the current config; no audit record was written.');
+    }
+    return colorizeWorkflowHumanOutput(lines.join('\n'));
 }
 
 function parseBooleanText(value: string, flagName: string): boolean {
@@ -924,26 +1027,29 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         );
     }
 
-    const currentSerialized = JSON.stringify(
-        normalizeWorkflowFileConfig(validateWorkflowConfig(state.rawConfig ?? {
+    const currentValidated = normalizeWorkflowFileConfig(validateWorkflowConfig(state.rawConfig ?? {
             full_suite_validation: state.config.full_suite_validation,
             scope_budget_guard: state.config.scope_budget_guard,
             review_cycle_guard: state.config.review_cycle_guard,
             project_memory_maintenance: state.config.project_memory_maintenance,
             task_reset: state.config.task_reset,
             orchestrator_work_policy: state.config.orchestrator_work_policy
-        }) as WorkflowFileConfigData),
-        null,
-        2
-    ) + '\n';
+        }) as WorkflowFileConfigData);
+    const currentSerialized = JSON.stringify(currentValidated, null, 2) + '\n';
     const nextValidated = normalizeWorkflowFileConfig(validateWorkflowConfig(nextConfig) as WorkflowFileConfigData);
     const nextSerialized = JSON.stringify(nextValidated, null, 2) + '\n';
     const changed = !state.exists || nextSerialized !== currentSerialized;
+    const requestedFields = [...changedFields];
+    const actualChangedFields = changed
+        ? resolveActualChangedFields(requestedFields, currentValidated, nextValidated, state.exists)
+        : [];
+    const actualChangedFieldSet = new Set(actualChangedFields);
+    const noopFields = requestedFields.filter((field) => !actualChangedFieldSet.has(field));
 
     let auditPath: string | null = null;
     if (changed) {
-        const safeSelfGuardHardening = changedFields.length === 1
-            && changedFields[0] === 'orchestrator_work_policy.mode'
+        const safeSelfGuardHardening = requestedFields.length === 1
+            && requestedFields[0] === 'orchestrator_work_policy.mode'
             && nextValidated.orchestrator_work_policy?.mode === 'deny_agent_entry';
         if (!safeSelfGuardHardening) {
             requireWorkflowSetOperatorConfirmation(options);
@@ -952,7 +1058,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         auditPath = writeWorkflowConfigAuditRecord(
             roots.bundleRoot,
             roots.configPath,
-            changedFields,
+            actualChangedFields,
             currentSerialized,
             nextSerialized
         );
@@ -968,16 +1074,14 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         action: 'set',
         status: changed ? 'CHANGED' : 'NO_CHANGE',
         changed,
-        changed_fields: changedFields,
+        requested_fields: requestedFields,
+        changed_fields: actualChangedFields,
+        noop_fields: noopFields,
         audit_path: auditPath ? normalizeOutputPath(auditPath) : null
     };
     console.log(formatWorkflowShowOutput(result, options.json === true));
     if (options.json !== true) {
-        console.log(`Status: ${result.status}`);
-        console.log(`ChangedFields: ${result.changed_fields.join(', ')}`);
-        if (result.audit_path) {
-            console.log(`AuditPath: ${result.audit_path}`);
-        }
+        console.log(formatWorkflowSetSummaryOutput(result));
     }
     return result;
 }
@@ -993,14 +1097,16 @@ function handleValidate(options: ParsedOptionsRecord): WorkflowValidateResult {
     if (options.json === true) {
         console.log(JSON.stringify(result, null, 2));
     } else {
-        console.log('GARDA_WORKFLOW');
-        console.log('Action: validate');
-        console.log('Status: PASS');
-        console.log(`ConfigPath: ${roots.configPath}`);
-        console.log(result.scope_budget_guard_summary_line);
-        console.log(result.review_cycle_guard_summary_line);
-        console.log(result.project_memory_maintenance_summary_line);
-        console.log(result.task_reset_summary_line);
+        console.log(colorizeWorkflowHumanOutput([
+            'GARDA_WORKFLOW',
+            'Action: validate',
+            'Status: PASS',
+            `ConfigPath: ${roots.configPath}`,
+            result.scope_budget_guard_summary_line,
+            result.review_cycle_guard_summary_line,
+            result.project_memory_maintenance_summary_line,
+            result.task_reset_summary_line
+        ].join('\n')));
     }
     return result;
 }
