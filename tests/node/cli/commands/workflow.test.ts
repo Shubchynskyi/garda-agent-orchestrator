@@ -452,6 +452,29 @@ test('workflow set rejects stale operator confirmation timestamps', () => {
     }
 });
 
+test('workflow set rejects future-skewed operator confirmation timestamps', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    const originalConfig = fs.readFileSync(configPath, 'utf8');
+    const futureConfirmation = new Date(Date.now() + 2 * 60 * 1000).toISOString();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--task-reset-enabled', 'true',
+                '--operator-confirmed', 'yes',
+                '--operator-confirmed-at-utc', futureConfirmation
+            ], PACKAGE_JSON),
+            /workflow set operator confirmation timestamp is in the future/
+        );
+        assert.equal(fs.readFileSync(configPath, 'utf8'), originalConfig);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow help describes project-memory update as the default policy', () => {
     const helpText = buildGuardedCommandHelpText('workflow');
 
