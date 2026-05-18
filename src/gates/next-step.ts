@@ -101,6 +101,9 @@ import {
     type ReviewReuseTelemetryEventLike
 } from './review-reuse-telemetry';
 import {
+    evaluateHiddenReviewTimingTrust
+} from './review-timing-trust';
+import {
     getClassificationConfig,
     isDocumentationLikePath,
     isRuntimeCodeLikePath,
@@ -1930,7 +1933,14 @@ interface ReviewArtifactState {
         review_context_sha256?: string;
         review_tree_state_sha256?: string | null;
         routing_event_sha256?: string;
+        launch_prepared_at_utc?: string | null;
+        launched_at_utc?: string | null;
+        launch_completed_at_utc?: string | null;
+        invocation_attested_at_utc?: string | null;
     } | null;
+    reviewResultRecordedAtUtc: string | null;
+    recordedAtUtc: string | null;
+    reviewOutputSourceMtimeUtc: string | null;
 }
 
 const REVIEW_LAUNCH_PACKAGE_FAILURE_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
@@ -2215,6 +2225,9 @@ function readReviewArtifactState(
     let failed = false;
     let failureKind: ReviewArtifactState['failureKind'] = null;
     let failureReason: string | null = null;
+    let reviewResultRecordedAtUtc: string | null = null;
+    let recordedAtUtc: string | null = null;
+    let reviewOutputSourceMtimeUtc: string | null = null;
 
     if (!contextExists) {
         violations.push('review context artifact is missing');
@@ -2380,6 +2393,15 @@ function readReviewArtifactState(
         receiptReviewTreeStateSha256 = typeof receipt.review_tree_state_sha256 === 'string'
             ? receipt.review_tree_state_sha256.trim().toLowerCase() || null
             : null;
+        reviewResultRecordedAtUtc = typeof receipt.review_result_recorded_at_utc === 'string'
+            ? receipt.review_result_recorded_at_utc.trim() || null
+            : null;
+        recordedAtUtc = typeof receipt.recorded_at_utc === 'string'
+            ? receipt.recorded_at_utc.trim() || null
+            : null;
+        reviewOutputSourceMtimeUtc = typeof receipt.review_output_source_mtime_utc === 'string'
+            ? receipt.review_output_source_mtime_utc.trim() || null
+            : null;
         const normalizedProvenance = receipt.reviewer_provenance == null
             ? null
             : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
@@ -2398,7 +2420,11 @@ function readReviewArtifactState(
                 reviewer_identity: 'reviewer_identity' in normalizedProvenance ? normalizedProvenance.reviewer_identity : undefined,
                 review_context_sha256: 'review_context_sha256' in normalizedProvenance ? normalizedProvenance.review_context_sha256 : undefined,
                 review_tree_state_sha256: 'review_tree_state_sha256' in normalizedProvenance ? normalizedProvenance.review_tree_state_sha256 : undefined,
-                routing_event_sha256: 'routing_event_sha256' in normalizedProvenance ? normalizedProvenance.routing_event_sha256 : undefined
+                routing_event_sha256: 'routing_event_sha256' in normalizedProvenance ? normalizedProvenance.routing_event_sha256 : undefined,
+                launch_prepared_at_utc: 'launch_prepared_at_utc' in normalizedProvenance ? normalizedProvenance.launch_prepared_at_utc : undefined,
+                launched_at_utc: 'launched_at_utc' in normalizedProvenance ? normalizedProvenance.launched_at_utc : undefined,
+                launch_completed_at_utc: 'launch_completed_at_utc' in normalizedProvenance ? normalizedProvenance.launch_completed_at_utc : undefined,
+                invocation_attested_at_utc: 'invocation_attested_at_utc' in normalizedProvenance ? normalizedProvenance.invocation_attested_at_utc : undefined
             }
             : null;
         if (receipt.task_id !== taskId) {
@@ -2508,7 +2534,10 @@ function readReviewArtifactState(
         receiptCodeScopeSha256,
         contextReviewTreeStateSha256,
         receiptReviewTreeStateSha256,
-        reviewerProvenance
+        reviewerProvenance,
+        reviewResultRecordedAtUtc,
+        recordedAtUtc,
+        reviewOutputSourceMtimeUtc
     };
 }
 
@@ -3415,10 +3444,33 @@ function reviewStateHasSatisfiedEvidence(
     if (!state.ready) {
         return false;
     }
+    if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
+        return false;
+    }
     if (state.reusedExistingReview) {
         return timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state);
     }
     return timelineHasDelegatedReviewInvocationAttestation(repoRoot, eventsRoot, taskId, state);
+}
+
+function getHiddenReviewTimingTrustRemediation(
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): string | null {
+    const timelineEvents = readTaskTimelineEventLikes(eventsRoot, taskId);
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(eventsRoot, taskId, ['COMPILE_GATE_PASSED']);
+    const timingTrust = evaluateHiddenReviewTimingTrust({
+        reviewType: state.reviewType,
+        reusedExistingReview: state.reusedExistingReview,
+        reviewerProvenance: state.reviewerProvenance,
+        reviewResultRecordedAtUtc: state.reviewResultRecordedAtUtc,
+        recordedAtUtc: state.recordedAtUtc,
+        reviewOutputSourceMtimeUtc: state.reviewOutputSourceMtimeUtc,
+        timelineEvents,
+        latestCompileSequence
+    });
+    return timingTrust.trusted ? null : timingTrust.message;
 }
 
 function isReviewFailTokenViolation(state: ReviewArtifactState, violation: string): boolean {
@@ -3442,6 +3494,9 @@ function reviewStateHasCurrentRecordedEvidence(
         (violation) => !isReviewFailTokenViolation(state, violation)
     );
     if (nonVerdictViolations.length > 0) {
+        return false;
+    }
+    if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
         return false;
     }
     if (state.reusedExistingReview) {
@@ -7691,7 +7746,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             const acceptedVerdictTokens = formatAcceptedReviewVerdictTokens(
                 buildReviewVerdictTokenSet(reviewType, state.passToken || null, state.failToken || null)
             );
-            const missingEvidenceReason = state.reusedExistingReview && !currentReviewReuseRecorded
+            const hiddenTimingTrustRemediation = getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state);
+            const missingEvidenceReason = hiddenTimingTrustRemediation
+                ? `Required review '${reviewType}' evidence is not sufficiently trustworthy. ${hiddenTimingTrustRemediation}`
+                : state.reusedExistingReview && !currentReviewReuseRecorded
                 ? `Required review '${reviewType}' is reused, but current-cycle REVIEW_RECORDED reuse telemetry is missing or does not match the receipt, review artifact, review context, and tree-state provenance, so rerun review reuse materialization or record a fresh delegated review result.`
                 : `Required review '${reviewType}' has stale or invalid reviewer_provenance; matching REVIEWER_INVOCATION_ATTESTED launch telemetry is missing for the current receipt, so rerun reviewer output materialization after valid launch telemetry exists.`;
             return buildResult({

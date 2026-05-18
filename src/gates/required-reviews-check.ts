@@ -29,6 +29,7 @@ import {
     validateStrictReusedReviewEvidence
 } from './review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from './review-trust-policy';
+import { evaluateHiddenReviewTimingTrust } from './review-timing-trust';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from './reviewer-routing';
 import { resolveBundleName } from '../core/constants';
 
@@ -939,11 +940,11 @@ export function validateReviewArtifactGateEligibility(options: {
                 }
             }
             if (reviewerExecutionMode === 'delegated_subagent' && reviewerIdentity && options.timelineEvents && options.timelineEvents.length > 0) {
+                const latestCompilePassSequence = findLatestTimelineSequence(
+                    options.timelineEvents,
+                    (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
+                );
                 if (reusedExistingReview) {
-                    const latestCompilePassSequence = findLatestTimelineSequence(
-                        options.timelineEvents,
-                        (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
-                    );
                     if (latestCompilePassSequence == null) {
                         errors.push(
                             `Review '${reviewKey}' cannot validate reused evidence because COMPILE_GATE_PASSED telemetry is missing.`
@@ -1050,6 +1051,28 @@ export function validateReviewArtifactGateEligibility(options: {
                                 errors.push(
                                     `Review receipt for '${reviewKey}' reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
                                 );
+                            } else {
+                                const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
+                                    reviewType: reviewKey,
+                                    reusedExistingReview,
+                                    reviewerProvenance,
+                                    reviewResultRecordedAtUtc: typeof validatedReceipt?.review_result_recorded_at_utc === 'string'
+                                        ? validatedReceipt.review_result_recorded_at_utc
+                                        : null,
+                                    recordedAtUtc: typeof validatedReceipt?.recorded_at_utc === 'string'
+                                        ? validatedReceipt.recorded_at_utc
+                                        : null,
+                                    reviewOutputSourceMtimeUtc: typeof validatedReceipt?.review_output_source_mtime_utc === 'string'
+                                        ? validatedReceipt.review_output_source_mtime_utc
+                                        : null,
+                                    timelineEvents: options.timelineEvents,
+                                    latestCompileSequence: latestCompilePassSequence
+                                });
+                                if (!hiddenTimingTrust.trusted && hiddenTimingTrust.message) {
+                                    errors.push(
+                                        `Review receipt for '${reviewKey}' is not sufficiently trustworthy. ${hiddenTimingTrust.message}`
+                                    );
+                                }
                             }
                         }
                     }

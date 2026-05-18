@@ -2073,6 +2073,151 @@ describe('gates/required-reviews-check', () => {
             )));
         });
 
+        it('rejects hidden timing distrust with generic remediation only', () => {
+            const contextSha = '1'.repeat(64);
+            const treeStateSha = '2'.repeat(64);
+            const routingEventSha = '4'.repeat(64);
+            const invocationEventSha = '5'.repeat(64);
+            const artifactSha = '6'.repeat(64);
+            const result = validateReviewArtifactGateEligibility({
+                resolvedTaskId: 'T-564-1',
+                reviewKey: 'code',
+                required: true,
+                skippedByOverride: false,
+                preflightPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-564-1-preflight.json',
+                preflightSha256: 'abc123',
+                canonicalSourceOfTruth: 'Codex',
+                executionProvider: 'Codex',
+                executionProviderSource: 'explicit_provider',
+                timelineEvents: [
+                    { event_type: 'COMPILE_GATE_PASSED', sequence: 0, details: {}, integrity: null },
+                    {
+                        event_type: 'REVIEWER_DELEGATION_ROUTED',
+                        sequence: 1,
+                        details: {
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:code-reviewer'
+                        },
+                        integrity: {
+                            schema_version: 1,
+                            task_sequence: 10,
+                            prev_event_sha256: null,
+                            event_sha256: routingEventSha
+                        }
+                    },
+                    {
+                        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        sequence: 2,
+                        details: {
+                            task_id: 'T-564-1',
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            review_context_sha256: contextSha,
+                            review_tree_state_sha256: treeStateSha,
+                            routing_event_sha256: routingEventSha,
+                            launch_prepared_at_utc: '2026-05-17T21:00:00.000Z',
+                            launched_at_utc: '2026-05-17T21:00:01.000Z',
+                            launch_completed_at_utc: '2026-05-17T21:00:02.000Z',
+                            invocation_attested_at_utc: '2026-05-17T21:00:03.000Z',
+                            provider_invocation_id: 'provider-run-required',
+                            reviewer_launch_attestation_source: 'codex.spawn_agent'
+                        },
+                        integrity: {
+                            schema_version: 1,
+                            task_sequence: 11,
+                            prev_event_sha256: routingEventSha,
+                            event_sha256: invocationEventSha
+                        }
+                    }
+                ],
+                reviewArtifact: {
+                    path: '/repo/garda-agent-orchestrator/runtime/reviews/T-564-1-code.md',
+                    content: [
+                        '# Review',
+                        '',
+                        'Validated hidden timing distrust acceptance surface with concrete implementation detail and a non-trivial receipt fixture.',
+                        '',
+                        '## Findings by Severity',
+                        'none',
+                        '',
+                        '## Residual Risks',
+                        'none',
+                        '',
+                        '## Verdict',
+                        'REVIEW PASSED'
+                    ].join('\n'),
+                    reviewContextPath: '/repo/garda-agent-orchestrator/runtime/reviews/T-564-1-code-review-context.json',
+                    reviewContext: {
+                        schema_version: 2,
+                        task_id: 'T-564-1',
+                        review_type: 'code',
+                        preflight_path: '/repo/garda-agent-orchestrator/runtime/reviews/T-564-1-preflight.json',
+                        preflight_sha256: 'abc123',
+                        tree_state: {
+                            tree_state_sha256: treeStateSha
+                        },
+                        reviewer_routing: {
+                            source_of_truth: 'Codex',
+                            canonical_source_of_truth: 'Codex',
+                            execution_provider: 'Codex',
+                            execution_provider_source: 'explicit_provider',
+                            identity_status: 'resolved',
+                            actual_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: 'agent:code-reviewer'
+                        }
+                    },
+                    reviewContextSha256: contextSha,
+                    artifactSha256: artifactSha,
+                    receipt: {
+                        schema_version: 2,
+                        task_id: 'T-564-1',
+                        review_type: 'code',
+                        preflight_sha256: 'abc123',
+                        scope_sha256: null,
+                        review_context_sha256: contextSha,
+                        review_tree_state_sha256: treeStateSha,
+                        review_artifact_sha256: artifactSha,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:code-reviewer',
+                        reviewer_fallback_reason: null,
+                        reviewer_provenance: {
+                            schema_version: 1,
+                            attestation_type: 'reviewer_invocation_attestation',
+                            controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                            task_sequence: 11,
+                            prev_event_sha256: routingEventSha,
+                            event_sha256: invocationEventSha,
+                            task_id: 'T-564-1',
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: 'agent:code-reviewer',
+                            review_context_sha256: contextSha,
+                            review_tree_state_sha256: treeStateSha,
+                            routing_event_sha256: routingEventSha,
+                            launch_prepared_at_utc: '2026-05-17T21:00:00.000Z',
+                            launched_at_utc: '2026-05-17T21:00:01.000Z',
+                            launch_completed_at_utc: '2026-05-17T21:00:02.000Z',
+                            invocation_attested_at_utc: '2026-05-17T21:00:03.000Z'
+                        },
+                        trust_level: 'INDEPENDENT_AUDITED',
+                        reused_existing_review: false,
+                        recorded_at_utc: '2026-05-17T21:01:00.000Z',
+                        review_result_recorded_at_utc: '2026-05-17T21:01:00.000Z',
+                        review_output_source_mtime_utc: '2026-05-17T20:59:59.000Z'
+                    }
+                }
+            });
+
+            const hiddenViolation = result.violations.find((violation) => (
+                violation.includes("Review receipt for 'code' is not sufficiently trustworthy")
+            ));
+            assert.ok(hiddenViolation, JSON.stringify(result, null, 2));
+            assert.match(hiddenViolation, /Launch a real subagent using built-in tools/);
+            assert.equal(/timing|threshold|elapsed|duration|seconds|impossible_ordering|missing_timing/i.test(hiddenViolation), false);
+        });
+
         it('rejects receipts whose fallback reason diverges from review-context routing metadata', () => {
             const result = validateReviewArtifactGateEligibility({
                 resolvedTaskId: 'T-105',

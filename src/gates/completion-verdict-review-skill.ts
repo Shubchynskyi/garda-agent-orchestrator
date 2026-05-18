@@ -34,6 +34,7 @@ import {
     resolveReviewerRoutingPolicy
 } from './reviewer-routing';
 import { isTrivialReview } from './completion-verdict-findings';
+import { evaluateHiddenReviewTimingTrust } from './review-timing-trust';
 
 function timestampProvenanceMatchesEventDetails(
     details: Record<string, unknown> | null | undefined,
@@ -745,6 +746,28 @@ export function validateReviewSkillEvidence(
                                 result.violations.push(
                                     `Required review '${key}' receipt reviewer_provenance does not match REVIEWER_INVOCATION_ATTESTED launch telemetry.`
                                 );
+                            } else {
+                                const hiddenTimingTrust = evaluateHiddenReviewTimingTrust({
+                                    reviewType: key,
+                                    reusedExistingReview,
+                                    reviewerProvenance: receiptReviewerProvenance,
+                                    reviewResultRecordedAtUtc: typeof receipt.review_result_recorded_at_utc === 'string'
+                                        ? receipt.review_result_recorded_at_utc
+                                        : null,
+                                    recordedAtUtc: typeof receipt.recorded_at_utc === 'string'
+                                        ? receipt.recorded_at_utc
+                                        : null,
+                                    reviewOutputSourceMtimeUtc: typeof receipt.review_output_source_mtime_utc === 'string'
+                                        ? receipt.review_output_source_mtime_utc
+                                        : null,
+                                    timelineEvents: events,
+                                    latestCompileSequence: compilePassSequence
+                                });
+                                if (!hiddenTimingTrust.trusted && hiddenTimingTrust.message) {
+                                    result.violations.push(
+                                        `Required review '${key}' evidence is not sufficiently trustworthy. ${hiddenTimingTrust.message}`
+                                    );
+                                }
                             }
                         } else if (!attestedRoutingEvent) {
                             result.violations.push(

@@ -661,6 +661,11 @@ function writeReviewEvidence(
         reviewer_execution_mode: 'delegated_subagent',
         reviewer_session_id: `agent:${reviewType}-reviewer`
     });
+    const launchPreparedAtUtc = '2026-04-28T00:00:00.000Z';
+    const launchedAtUtc = '2026-04-28T00:00:01.000Z';
+    const launchCompletedAtUtc = '2026-04-28T00:00:02.000Z';
+    const invocationAttestedAtUtc = '2026-04-28T00:00:03.000Z';
+    const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
     let reviewerLaunchArtifactSha256 = '';
     if (options.includeLaunchArtifact !== false) {
         const launchBindingSha256 = 'c'.repeat(64);
@@ -699,7 +704,9 @@ function writeReviewEvidence(
             prepared_launch_event_sha256: preparedIntegrity.event_sha256,
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: `test-${reviewType}-invocation`,
-            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            launch_prepared_at_utc: launchPreparedAtUtc,
+            launched_at_utc: launchedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc,
             fork_context: false
         });
         reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
@@ -729,7 +736,10 @@ function writeReviewEvidence(
                 reviewer_launch_attestation_source: 'test-subagent-spawn',
                 reviewer_launch_tool: 'test-subagent-spawn',
                 provider_invocation_id: `test-${reviewType}-invocation`,
-                launched_at_utc: '2026-04-28T00:00:00.000Z'
+                launch_prepared_at_utc: launchPreparedAtUtc,
+                launched_at_utc: launchedAtUtc,
+                launch_completed_at_utc: launchCompletedAtUtc,
+                invocation_attested_at_utc: invocationAttestedAtUtc
             }
             : {})
     });
@@ -755,8 +765,15 @@ function writeReviewEvidence(
             reviewer_identity: `agent:${reviewType}-reviewer`,
             review_context_sha256: sha256Text(reviewContextText),
             review_tree_state_sha256: reviewTreeStateSha256,
-            routing_event_sha256: routeIntegrity.event_sha256
-        }
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_prepared_at_utc: launchPreparedAtUtc,
+            launched_at_utc: launchedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc,
+            invocation_attested_at_utc: invocationAttestedAtUtc
+        },
+        recorded_at_utc: reviewResultRecordedAtUtc,
+        review_result_recorded_at_utc: reviewResultRecordedAtUtc,
+        review_output_source_mtime_utc: reviewResultRecordedAtUtc
     });
 }
 
@@ -6056,6 +6073,27 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'record-review-result', result.reason);
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('current-cycle REVIEW_RECORDED reuse telemetry'), result.reason);
+    });
+
+    it('routes hidden timing distrust back to review result with generic remediation only', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        receipt.review_output_source_mtime_utc = '2026-04-27T23:59:59.000Z';
+        writeJson(receiptPath, receipt);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
+        assert.equal(result.review.next_review_type, 'code');
+        assert.ok(result.reason.includes("Required review 'code' evidence is not sufficiently trustworthy"), result.reason);
+        assert.ok(result.reason.includes('Launch a real subagent using built-in tools'), result.reason);
+        assert.equal(/timing|threshold|elapsed|duration|seconds|impossible_ordering|missing_timing/i.test(result.reason), false);
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
     it('routes to completion when full-suite validation is disabled after docs pass', () => {
