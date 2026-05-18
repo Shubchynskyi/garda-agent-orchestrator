@@ -13,7 +13,7 @@ import {
     runRequiredReviewsCheckCommand
 } from '../../../../src/cli/commands/gates';
 import { formatCompletionGateResult, runCompletionGate } from '../../../../src/gates/completion';
-import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
+import { fileSha256, normalizePath, writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import { serializeTaskPlan, validateTaskPlan } from '../../../../src/schemas/task-plan';
 import { buildReviewContext } from '../../../../src/gates/build-review-context';
 import { buildScopedDiff } from '../../../../src/gates/build-scoped-diff';
@@ -3139,13 +3139,27 @@ describe('cli/commands/gates – review-cycle suites', () => {
         });
         assert.equal(compileResult.exitCode, 0);
 
+        const expectedReviewContextPath = path.join(getReviewsRoot(repoRoot), `${taskId}-code-review-context.json`);
+        fs.mkdirSync(path.dirname(expectedReviewContextPath), { recursive: true });
+        fs.writeFileSync(expectedReviewContextPath, '{"stale":true}\n', 'utf8');
+
         const buildResult = await runBuildReviewContextCommand({
             repoRoot,
             reviewType: 'code',
             depth: '2',
             preflightPath
         });
+        const expectedReviewContextSha256 = fileSha256(expectedReviewContextPath);
+        const expectedReviewContextDisplayPath = normalizePath(expectedReviewContextPath);
+        assert.equal(fs.existsSync(expectedReviewContextPath), true);
+        assert.equal(buildResult.outputLines.includes(`ReviewContextPath: ${expectedReviewContextDisplayPath}`), true);
+        assert.equal(buildResult.outputLines.includes(`ReviewContextSha256: ${expectedReviewContextSha256}`), true);
+        assert.equal(buildResult.outputLines.includes(`OutputPath: ${expectedReviewContextDisplayPath}`), true);
         assert.ok(buildResult.outputLines.some((line) => /^TokenEconomyActive: (True|False)$/.test(line)));
+        const reviewContext = JSON.parse(fs.readFileSync(expectedReviewContextPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(reviewContext.stale, undefined);
+        assert.equal(reviewContext.task_id, taskId);
+        assert.equal(reviewContext.review_type, 'code');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

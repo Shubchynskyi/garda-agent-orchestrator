@@ -1217,7 +1217,10 @@ export async function runBuildReviewContextCommand(
         })
         : null;
     if (currentPassReviewEvidence?.accepted) {
+        const reviewContextSha256 = gateHelpers.fileSha256(currentPassReviewEvidence.reviewContextPath) || '';
         const outputKV: Record<string, unknown> = {
+            reviewContextPath: currentPassReviewEvidence.reviewContextPath,
+            reviewContextSha256,
             outputPath: currentPassReviewEvidence.reviewContextPath,
             ruleContextArtifactPath: currentPassReviewEvidence.ruleContextArtifactPath,
             handoffInstruction: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
@@ -1228,6 +1231,8 @@ export async function runBuildReviewContextCommand(
             currentPassReviewEvidence: true
         };
         const orderedKeys = [
+            'reviewContextPath',
+            'reviewContextSha256',
             'outputPath',
             'ruleContextArtifactPath',
             'handoffInstruction',
@@ -1370,7 +1375,10 @@ export async function runBuildReviewContextCommand(
         }
     }
 
+    const reviewContextSha256 = gateHelpers.fileSha256(result.output_path) || '';
     const outputKV: Record<string, unknown> = {
+        reviewContextPath: result.output_path,
+        reviewContextSha256,
         outputPath: result.output_path,
         ruleContextArtifactPath: result.rule_context.artifact_path,
         handoffInstruction: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
@@ -1382,6 +1390,8 @@ export async function runBuildReviewContextCommand(
         currentPassReviewEvidenceReason: reviewReuseBlockedReason || currentPassReviewEvidence?.reason || 'current PASS reuse check not run'
     };
     const orderedKeys = [
+        'reviewContextPath',
+        'reviewContextSha256',
         'outputPath',
         'ruleContextArtifactPath',
         'handoffInstruction',
