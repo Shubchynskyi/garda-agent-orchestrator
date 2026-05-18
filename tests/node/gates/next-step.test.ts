@@ -4826,6 +4826,94 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
+    it('runs after-compile full-suite validation before launching any reviewer', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.equal(result.full_suite_validation.placement, 'after_compile_before_reviews');
+        assert.match(result.title, /after compile before reviews/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(text.includes('FullSuite: enabled=true; placement=after_compile_before_reviews;'));
+    });
+
+    it('blocks reviewer launch after current after-compile full-suite failure', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.match(result.title, /Fix full-suite failures/);
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(!result.commands[0].command.includes('--review-type'));
+    });
+
+    it('allows mandatory test review before full-suite when placement is before completion', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'before_completion'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.full_suite_validation.placement, 'before_completion');
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
+    });
+
     it('surfaces recent full-suite duration timeout guidance before running the suite', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
@@ -5459,7 +5547,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_completion'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -5478,6 +5567,8 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'full-suite-validation');
         assert.equal(result.full_suite_validation.enabled, true);
         assert.equal(result.full_suite_validation.command, 'npm test');
+        assert.equal(result.full_suite_validation.placement, 'before_completion');
+        assert.match(result.title, /before completion/);
         assert.ok(result.reason.includes('workflow-config.json'));
     });
 
@@ -6120,7 +6211,8 @@ describe('gates/next-step', () => {
             full_suite_validation: {
                 ...defaultWorkflowConfig.full_suite_validation,
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -6166,6 +6258,7 @@ describe('gates/next-step', () => {
 
         const beforeSkip = resolveNextStep({ taskId: TASK_ID, repoRoot });
         assert.equal(beforeSkip.next_gate, 'full-suite-validation', beforeSkip.reason);
+        assert.equal(beforeSkip.full_suite_validation.placement, 'after_compile_before_reviews');
         assert.match(beforeSkip.title, /not required/i);
         assert.ok(beforeSkip.commands[0].command.includes('gate full-suite-validation'));
         assert.equal(beforeSkip.commands[0].label, 'Record full-suite not required');

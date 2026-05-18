@@ -65,7 +65,8 @@ import {
     buildGardaSelfGuardPolicyChangeCommand,
     buildDefaultWorkflowConfig,
     formatGardaSelfGuardProtectedControlPlaneGuidance,
-    isGardaSelfGuardDenyAgentEntryForBundle
+    isGardaSelfGuardDenyAgentEntryForBundle,
+    type FullSuiteValidationPlacement
 } from '../core/workflow-config';
 import {
     isOrchestratorSourceCheckout
@@ -218,6 +219,7 @@ export interface NextStepArtifactState {
 export interface NextStepFullSuiteSummary {
     enabled: boolean;
     command: string;
+    placement: FullSuiteValidationPlacement;
     config_path: string;
     config_source: 'effective_workflow_config';
     note: string;
@@ -3394,10 +3396,14 @@ function getReviewLaunchPlan(
 function applyFullSuiteReadinessToReviewLaunchPlan(
     launchPlan: ReviewLaunchPlan,
     fullSuiteEnabled: boolean,
+    fullSuitePlacement: FullSuiteValidationPlacement,
+    fullSuiteNotRequiredForDocsOnly: boolean,
     fullSuiteGateStatus: GateOutcome['status'] | null
 ): ReviewLaunchPlan {
     if (
         !fullSuiteEnabled
+        || fullSuitePlacement !== 'before_test_review'
+        || fullSuiteNotRequiredForDocsOnly
         || fullSuiteGateStatus === 'PASS'
         || launchPlan.failed_review_type
         || !launchPlan.launchable_review_types.includes('test')
@@ -3421,6 +3427,26 @@ function applyFullSuiteReadinessToReviewLaunchPlan(
             ? []
             : ['full-suite-validation']
     };
+}
+
+function shouldRunFullSuiteAfterCompileBeforeReviews(
+    enabled: boolean,
+    placement: FullSuiteValidationPlacement,
+    fullSuiteNotRequiredForDocsOnly: boolean
+): boolean {
+    return enabled
+        && placement === 'after_compile_before_reviews'
+        && !fullSuiteNotRequiredForDocsOnly;
+}
+
+function shouldRunFullSuiteBeforeTestReview(
+    enabled: boolean,
+    placement: FullSuiteValidationPlacement,
+    fullSuiteNotRequiredForDocsOnly: boolean
+): boolean {
+    return enabled
+        && placement === 'before_test_review'
+        && !fullSuiteNotRequiredForDocsOnly;
 }
 
 function toNextStepBlockedReviewLanes(launchPlan: ReviewLaunchPlan): NextStepBlockedReviewLane[] {
@@ -6167,6 +6193,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             fullSuite: {
                 enabled: fallbackFullSuiteConfig.enabled,
                 command: fallbackFullSuiteConfig.command,
+                placement: fallbackFullSuiteConfig.placement,
                 config_path: toRepoDisplayPath(repoRoot, resolveWorkflowConfigPath(repoRoot)),
                 config_source: 'effective_workflow_config',
                 note: 'Full-suite validation is unavailable until workflow config validation passes.'
@@ -6218,6 +6245,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const fullSuiteSummary: NextStepFullSuiteSummary = {
         enabled: fullSuiteConfig.enabled,
         command: fullSuiteConfig.command,
+        placement: fullSuiteConfig.placement,
         config_path: toRepoDisplayPath(repoRoot, resolveWorkflowConfigPath(repoRoot)),
         config_source: 'effective_workflow_config',
         recommended_timeout_seconds: fullSuiteTimeoutForecast?.recommended_timeout_seconds ?? null,
@@ -6251,6 +6279,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskId
         ),
         fullSuiteConfig.enabled,
+        fullSuiteConfig.placement,
+        fullSuiteNotRequiredForDocsOnly,
         fullSuiteGateStatus
     );
     const reviewTrust = readReviewTrust(reviewsRoot, taskId, requiredReviewTypes, summary.scope_category);
@@ -7295,7 +7325,59 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (fullSuiteConfig.enabled && !fullSuiteNotRequiredForDocsOnly && reviewLaunchPlan.next_review_type === 'test') {
+    if (shouldRunFullSuiteAfterCompileBeforeReviews(
+        fullSuiteConfig.enabled,
+        fullSuiteConfig.placement,
+        fullSuiteNotRequiredForDocsOnly
+    )) {
+        if (fullSuiteGateStatus === 'FAIL') {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'implementation',
+                title: 'Fix full-suite failures before reviewer launch.',
+                reason:
+                    `Full-suite validation is configured for placement '${fullSuiteConfig.placement}' and already failed for the current compiled scope. ` +
+                    `Do not launch independent reviewers until the configured full-suite command passes; ` +
+                    `fix the failures, rerun compile-gate if implementation changed, then rerun full-suite-validation.`,
+                commands: [
+                    buildCommand(
+                        'Rerun navigator after fixing implementation',
+                        navigatorCommand
+                    )
+                ]
+            });
+        }
+        if (!fullSuiteGatePassed) {
+            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'full-suite-validation',
+                title: 'Run full-suite validation after compile before reviews.',
+                reason:
+                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path} with placement '${fullSuiteConfig.placement}'. ` +
+                    `Run it after compile-gate and before launching independent reviewers so suite failures fail fast on the same compiled scope. ` +
+                    `The final closeout can reuse this artifact only if no relevant task scope changes occur afterward. ` +
+                    `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
+                commands: [
+                    buildCommand(
+                        'Run full-suite validation',
+                        fullSuiteCommand
+                    )
+                ]
+            });
+        }
+    }
+
+    if (
+        shouldRunFullSuiteBeforeTestReview(
+            fullSuiteConfig.enabled,
+            fullSuiteConfig.placement,
+            fullSuiteNotRequiredForDocsOnly
+        )
+        && reviewLaunchPlan.next_review_type === 'test'
+    ) {
         if (fullSuiteGateStatus === 'FAIL') {
             return buildResult({
                 ...resultBase,
@@ -7322,7 +7404,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 nextGate: 'full-suite-validation',
                 title: 'Run full-suite validation before test review.',
                 reason:
-                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}. ` +
+                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path} with placement '${fullSuiteConfig.placement}'. ` +
                     `Run it before launching the mandatory test reviewer so suite failures fail fast on the same compiled scope. ` +
                     `The final closeout can reuse this artifact only if no relevant task scope changes occur afterward. ` +
                     `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
@@ -7862,9 +7944,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             ...resultBase,
             status: 'BLOCKED',
             nextGate: 'full-suite-validation',
-            title: 'Run full-suite validation.',
+            title: fullSuiteConfig.placement === 'before_completion'
+                ? 'Run full-suite validation before completion.'
+                : 'Run full-suite validation.',
             reason:
-                `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}. ` +
+                `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path} with placement '${fullSuiteConfig.placement}'. ` +
                 `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
             commands: [
                 buildCommand(
@@ -8014,7 +8098,7 @@ export function formatNextStepText(result: NextStepResult): string {
         lines.push(`MarkdownWorkingPlanPath: ${result.markdown_working_plan.working_plan_path}`);
         lines.push(`MarkdownWorkingPlanSha256: ${result.markdown_working_plan.working_plan_sha256}`);
     }
-    lines.push(`FullSuite: enabled=${result.full_suite_validation.enabled}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`);
+    lines.push(`FullSuite: enabled=${result.full_suite_validation.enabled}; placement=${result.full_suite_validation.placement}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`);
     if (result.full_suite_validation.timeout_forecast_note) {
         lines.push(`FullSuiteTimeout: ${result.full_suite_validation.timeout_forecast_note}`);
     }
