@@ -83,7 +83,7 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
                 const severityLabel = severity.charAt(0).toUpperCase() + severity.slice(1);
                 result.violations.push(
                     `Review artifact '${artifactPathNormalized}' still contains active ${severityLabel} findings. ` +
-                    "Resolve them or move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:'."
+                    "Resolve active defects. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:'; validation-boundary or command/log notes must stay out of strict follow-up sections."
                 );
             }
         }
@@ -103,7 +103,7 @@ export function getReviewArtifactFindingsEvidence(artifactPath: string, content:
         if (residualRisks.length > 0) {
             result.violations.push(
                 `Review artifact '${artifactPathNormalized}' still contains active residual risks. ` +
-                "Move accepted non-blocking follow-up to 'Deferred Findings' with 'Justification:' before DONE."
+                "For validation-boundary or command/log notes, set 'Residual Risks' and 'Deferred Findings' to 'none' and keep the note in prose. Only real accepted actionable follow-ups belong in 'Deferred Findings' with 'Justification:' and will require follow-up tracking."
             );
         }
     }
