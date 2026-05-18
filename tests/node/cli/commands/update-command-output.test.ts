@@ -110,6 +110,12 @@ function makeTempBundleFixture(): { workspaceRoot: string; bundleUpdateModulePat
         ].join('\n'),
         'utf8'
     );
+    fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.1.0\n', 'utf8');
+    fs.writeFileSync(
+        path.join(bundleRoot, 'live', 'version.json'),
+        JSON.stringify({ Version: '1.1.0', UpdatedAt: '2026-05-18T00:00:00.000Z' }, null, 2),
+        'utf8'
+    );
 
     return {
         workspaceRoot,
@@ -253,6 +259,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.match(plainTextLines[0], /\u001b\[1mUPDATE STATUS\u001b\[0m/);
             assert.match(plainTextLines[1], /\u001b\[32mUpdated successfully\u001b\[0m/);
             assert.match(plainTextLines[2], /\u001b\[2mThe available update was applied to this workspace\.\u001b\[0m/);
+            assert.match(plainTextLines[4], /\u001b\[1mVersion applied\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[32m1\.1\.0\u001b\[0m/);
             assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
             assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
             assert.equal(plainTextLines.includes('RequestedPackageSpec: garda-agent-orchestrator@latest'), true);
@@ -391,6 +398,7 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
 
             assert.match(plainTextLines[0], /\u001b\[1mUPDATE STATUS\u001b\[0m/);
             assert.match(plainTextLines[1], /\u001b\[32mUpdated successfully\u001b\[0m/);
+            assert.match(plainTextLines[4], /\u001b\[1mVersion applied\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[32m1\.1\.0\u001b\[0m/);
             assert.equal(plainTextLines.includes('UpdateApplied: True'), true);
             assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
             assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
@@ -431,6 +439,131 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
         } finally {
             reloaded.restore();
             restoreCachedModule(fixture.bundleUpdateModulePath, originalBundleModule);
+        }
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test('handleCheckUpdate --apply corrects stale lifecycle UpdatedVersion after deferred version sync', async () => {
+    const packageJson: PackageJsonLike = {
+        name: 'garda-agent-orchestrator',
+        version: '1.0.0'
+    };
+    const checkUpdateModulePath = require.resolve('../../../../src/lifecycle/check-update');
+    const fixture = makeTempBundleFixture();
+    const bundleRoot = path.join(fixture.workspaceRoot, 'garda-agent-orchestrator');
+    const updateReportRelativePath = 'garda-agent-orchestrator/runtime/update-reports/update-stale.md';
+    const updateReportPath = path.join(fixture.workspaceRoot, updateReportRelativePath);
+
+    try {
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n', 'utf8');
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'version.json'),
+            JSON.stringify({ Version: '1.0.0', UpdatedAt: '2026-05-18T00:00:00.000Z' }, null, 2),
+            'utf8'
+        );
+        fs.writeFileSync(
+            fixture.bundleUpdateModulePath,
+            [
+                'module.exports.runUpdate = function runUpdate() {',
+                '    return {',
+                "        previousVersion: '1.0.0',",
+                "        updatedVersion: '1.0.0',",
+                "        rollbackSnapshotPath: 'garda-agent-orchestrator/runtime/update-rollbacks/update-stale',",
+                "        rollbackStatus: 'NOT_TRIGGERED',",
+                `        updateReportPath: ${JSON.stringify(updateReportRelativePath)}`,
+                '    };',
+                '};'
+            ].join('\n'),
+            'utf8'
+        );
+        fs.mkdirSync(path.dirname(updateReportPath), { recursive: true });
+        fs.writeFileSync(
+            updateReportPath,
+            [
+                '# Update Report',
+                '',
+                'PreviousVersion: 1.0.0',
+                'BundleVersion: 1.0.0',
+                'UpdatedVersion: 1.0.0'
+            ].join('\n'),
+            'utf8'
+        );
+
+        const reloaded = loadFreshUpdateCommandWithStubs({
+            [checkUpdateModulePath]: {
+                async runCheckUpdate(options: { updateRunner?: (runnerOptions: Record<string, unknown>) => void }) {
+                    if (typeof options.updateRunner === 'function') {
+                        options.updateRunner({
+                            targetRoot: fixture.workspaceRoot,
+                            initAnswersPath: 'garda-agent-orchestrator/runtime/init-answers.json',
+                            skipVerify: false,
+                            skipManifestValidation: false,
+                            trustPolicy: 'explicit',
+                            trustOverrideUsed: true,
+                            trustOverrideSource: 'cli',
+                            sourceType: 'path',
+                            sourceReference: 'fixture',
+                            requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                            exactPackageSpec: 'garda-agent-orchestrator@1.1.0',
+                            resolvedPackageVersion: '1.1.0',
+                            resolvedPackageIntegrity: 'sha512-check'
+                        });
+                    }
+                    fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.1.0\n', 'utf8');
+                    fs.writeFileSync(
+                        path.join(bundleRoot, 'live', 'version.json'),
+                        JSON.stringify({ Version: '1.1.0', UpdatedAt: '2026-05-18T01:00:00.000Z' }, null, 2),
+                        'utf8'
+                    );
+                    return {
+                        targetRoot: fixture.workspaceRoot,
+                        sourceType: 'path',
+                        sourceReference: 'fixture',
+                        requestedPackageSpec: 'garda-agent-orchestrator@latest',
+                        exactPackageSpec: 'garda-agent-orchestrator@1.1.0',
+                        resolvedPackageVersion: '1.1.0',
+                        resolvedPackageIntegrity: 'sha512-check',
+                        currentVersion: '1.0.0',
+                        latestVersion: '1.1.0',
+                        updateAvailable: true,
+                        updateApplied: true,
+                        checkUpdateResult: 'UPDATED',
+                        trustPolicy: 'explicit',
+                        trustOverrideUsed: true,
+                        trustOverrideSource: 'cli'
+                    };
+                }
+            }
+        });
+
+        try {
+            const plainTextLines = await captureConsoleLogsWithNoColor(async () => {
+                await reloaded.module.handleCheckUpdate([
+                    '--target-root', fixture.workspaceRoot,
+                    '--apply',
+                    '--no-prompt',
+                    '--trust-override'
+                ], packageJson);
+            });
+            assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
+            assert.equal(plainTextLines.includes('UpdatedVersion: 1.0.0'), false);
+            assert.match(fs.readFileSync(updateReportPath, 'utf8'), /^UpdatedVersion: 1\.1\.0$/m);
+
+            const jsonLines = await captureConsoleLogs(async () => {
+                await reloaded.module.handleCheckUpdate([
+                    '--target-root', fixture.workspaceRoot,
+                    '--apply',
+                    '--no-prompt',
+                    '--trust-override',
+                    '--json'
+                ], packageJson);
+            });
+            const parsed = JSON.parse(jsonLines.join('\n'));
+            assert.equal(parsed.updatedVersion, '1.1.0');
+        } finally {
+            reloaded.restore();
         }
     } finally {
         fixture.cleanup();
@@ -539,6 +672,7 @@ test('handleCheckUpdate surfaces a yellow update-available banner in color mode 
             assert.match(colorLines[0], /\u001b\[1mUPDATE STATUS\u001b\[0m/);
             assert.match(colorLines[1], /\u001b\[33mUpdate available\u001b\[0m/);
             assert.match(colorLines[2], /\u001b\[2mA newer version is available for this workspace\.\u001b\[0m/);
+            assert.match(colorLines[4], /\u001b\[1mVersion available\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[36m1\.1\.0\u001b\[0m/);
 
             const noColorLines = await captureConsoleLogsWithNoColor(async () => {
                 await reloaded.module.handleCheckUpdate([
@@ -614,6 +748,7 @@ test('handleCheckUpdate surfaces a yellow dry-run banner without changing json o
             assert.match(plainTextLines[0], /\u001b\[1mUPDATE STATUS\u001b\[0m/);
             assert.match(plainTextLines[1], /\u001b\[33mDry run: update available\u001b\[0m/);
             assert.match(plainTextLines[2], /\u001b\[2mA newer version is available, but dry-run did not apply it\.\u001b\[0m/);
+            assert.match(plainTextLines[4], /\u001b\[1mVersion available\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[36m1\.1\.0\u001b\[0m/);
 
             const noColorLines = await captureConsoleLogsWithNoColor(async () => {
                 await reloaded.module.handleCheckUpdate([
@@ -719,6 +854,7 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
             assert.match(plainTextLines[0], /\u001b\[1mUPDATE STATUS\u001b\[0m/);
             assert.match(plainTextLines[1], /\u001b\[32mUpdated successfully\u001b\[0m/);
             assert.match(plainTextLines[2], /\u001b\[2mThe available update was applied to this workspace\.\u001b\[0m/);
+            assert.match(plainTextLines[4], /\u001b\[1mVersion applied\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[32m1\.1\.0\u001b\[0m/);
             assert.equal(plainTextLines.includes('RepoUrl: https://example.test/repo.git'), true);
             assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
             assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);

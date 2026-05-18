@@ -4,6 +4,7 @@ import { runUpdateFromGit } from '../../lifecycle/update-git';
 import { runRollback } from '../../lifecycle/rollback';
 import {
     bold,
+    cyan,
     dim,
     green,
     ensureDirectoryExists,
@@ -11,12 +12,13 @@ import {
     PackageJsonLike,
     parseOptions,
     printHelp,
+    supportsColor,
     yellow
 } from './cli-helpers';
 import {
     buildUpdateLifecycleRunner,
-    enrichUpdateOutputWithCurrentBundleAnnouncements,
     ensureBundleExists,
+    finalizeAppliedUpdateOutput,
     formatKeyValueOutput,
     getDefaultInitAnswersPath,
     invalidateBundleRuntimeModuleCache,
@@ -81,6 +83,34 @@ function printUpdateStatusBanner(result: Record<string, unknown>): void {
     console.log('');
 }
 
+function getUpdateVersionDelta(result: Record<string, unknown>): { fromVersion: string; toVersion: string; applied: boolean } | null {
+    const applied = result.updateApplied === true || String(result.checkUpdateResult || '').trim().toUpperCase() === 'UPDATED';
+    const fromVersion = String(result.previousVersion || result.currentVersion || '').trim();
+    const toVersion = String(
+        applied
+            ? result.updatedVersion || result.latestVersion || ''
+            : result.latestVersion || result.updatedVersion || ''
+    ).trim();
+    if (!fromVersion || !toVersion || fromVersion === toVersion) {
+        return null;
+    }
+    return { fromVersion, toVersion, applied };
+}
+
+function printColoredVersionDelta(result: Record<string, unknown>): void {
+    if (!supportsColor()) {
+        return;
+    }
+    const delta = getUpdateVersionDelta(result);
+    if (!delta) {
+        return;
+    }
+    const toColor = delta.applied ? green : cyan;
+    const label = delta.applied ? 'Version applied' : 'Version available';
+    console.log(`${bold(label)} ${yellow(delta.fromVersion)} ${dim('->')} ${toColor(delta.toVersion)}`);
+    console.log('');
+}
+
 export async function handleUpdate(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
     if (commandArgv.length > 0 && String(commandArgv[0] || '').trim().toLowerCase() === 'git') {
         await handleUpdateGit(commandArgv.slice(1), packageJson);
@@ -140,7 +170,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
     });
     const mergedUpdateResultBase = mergeUpdateLifecycleOutput(toKeyValueRecord(updateResult), lifecycleResult);
     const mergedUpdateResult = updateResult.updateApplied
-        ? enrichUpdateOutputWithCurrentBundleAnnouncements(
+        ? finalizeAppliedUpdateOutput(
             (() => {
                 invalidateBundleRuntimeModuleCache(bundlePath);
                 return mergedUpdateResultBase;
@@ -152,6 +182,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
         console.log(JSON.stringify(mergedUpdateResult, null, 2));
     } else {
         printUpdateStatusBanner(mergedUpdateResult);
+        printColoredVersionDelta(mergedUpdateResult);
         formatKeyValueOutput(mergedUpdateResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
@@ -219,7 +250,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
     }) as Record<string, unknown>;
     const mergedUpdateGitResultBase = mergeUpdateLifecycleOutput(updateResult, lifecycleResult);
     const mergedUpdateGitResult = updateResult.updateApplied === true
-        ? enrichUpdateOutputWithCurrentBundleAnnouncements(
+        ? finalizeAppliedUpdateOutput(
             (() => {
                 invalidateBundleRuntimeModuleCache(bundlePath);
                 return mergedUpdateGitResultBase;
@@ -231,6 +262,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
         console.log(JSON.stringify(mergedUpdateGitResult, null, 2));
     } else {
         printUpdateStatusBanner(mergedUpdateGitResult);
+        printColoredVersionDelta(mergedUpdateGitResult);
         formatKeyValueOutput(mergedUpdateGitResult, [
             'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
@@ -297,7 +329,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
     });
     const mergedCheckResultBase = mergeUpdateLifecycleOutput(toKeyValueRecord(checkResult), lifecycleResult);
     const mergedCheckResult = checkResult.updateApplied
-        ? enrichUpdateOutputWithCurrentBundleAnnouncements(
+        ? finalizeAppliedUpdateOutput(
             (() => {
                 invalidateBundleRuntimeModuleCache(bundlePath);
                 return mergedCheckResultBase;
@@ -309,6 +341,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
         console.log(JSON.stringify(mergedCheckResult, null, 2));
     } else {
         printUpdateStatusBanner(mergedCheckResult);
+        printColoredVersionDelta(mergedCheckResult);
         formatKeyValueOutput(mergedCheckResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',

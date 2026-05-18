@@ -420,6 +420,53 @@ export function mergeUpdateLifecycleOutput(
     };
 }
 
+function readCurrentBundleVersion(bundlePath: string): string | null {
+    const versionPath = path.join(bundlePath, 'VERSION');
+    try {
+        if (!fs.existsSync(versionPath)) {
+            return null;
+        }
+        const version = fs.readFileSync(versionPath, 'utf8').trim();
+        return version || null;
+    } catch {
+        return null;
+    }
+}
+
+function resolveUpdateReportPath(result: Record<string, unknown>): string | null {
+    const updateReportPath = String(result.updateReportPath || '').trim();
+    if (!updateReportPath || updateReportPath === 'not-generated-in-dry-run') {
+        return null;
+    }
+    if (path.isAbsolute(updateReportPath)) {
+        return updateReportPath;
+    }
+    const targetRoot = String(result.targetRoot || '').trim();
+    return targetRoot ? path.join(targetRoot, updateReportPath) : null;
+}
+
+function rewriteUpdateReportUpdatedVersion(result: Record<string, unknown>, updatedVersion: string): void {
+    const updateReportPath = resolveUpdateReportPath(result);
+    if (!updateReportPath) {
+        return;
+    }
+    try {
+        if (!fs.existsSync(updateReportPath) || !fs.statSync(updateReportPath).isFile()) {
+            return;
+        }
+        const reportText = fs.readFileSync(updateReportPath, 'utf8');
+        const nextReportText = reportText.replace(
+            /^UpdatedVersion:\s.*$/m,
+            `UpdatedVersion: ${updatedVersion}`
+        );
+        if (nextReportText !== reportText) {
+            fs.writeFileSync(updateReportPath, nextReportText, 'utf8');
+        }
+    } catch {
+        // Reporting correction is best-effort; primary update success stays authoritative.
+    }
+}
+
 export function enrichUpdateOutputWithCurrentBundleAnnouncements(
     baseResult: Record<string, unknown>,
     bundlePath: string
@@ -441,6 +488,24 @@ export function enrichUpdateOutputWithCurrentBundleAnnouncements(
         releaseNotes: announcements.releaseNotes,
         updateAnnouncementWarnings: announcements.warnings
     };
+}
+
+export function finalizeAppliedUpdateOutput(
+    baseResult: Record<string, unknown>,
+    bundlePath: string
+): Record<string, unknown> {
+    if (baseResult.updateApplied !== true) {
+        return baseResult;
+    }
+
+    const finalVersion = readCurrentBundleVersion(bundlePath);
+    const versionCorrectedResult = finalVersion
+        ? { ...baseResult, updatedVersion: finalVersion }
+        : baseResult;
+    if (finalVersion) {
+        rewriteUpdateReportUpdatedVersion(versionCorrectedResult, finalVersion);
+    }
+    return enrichUpdateOutputWithCurrentBundleAnnouncements(versionCorrectedResult, bundlePath);
 }
 
 export function isFailedValidationResult(result: unknown): result is { passed: false } {
