@@ -21,6 +21,10 @@ import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-he
 
 const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
 function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
     while (true) {
@@ -902,7 +906,7 @@ test('buildSetupHandoffText includes agent initialization section', () => {
         bundlePath: '/workspace/garda-agent-orchestrator',
         activeAgentFiles: 'CLAUDE.md, AGENTS.md'
     };
-    const text = buildSetupHandoffText(snapshot as unknown as StatusSnapshot);
+    const text = stripAnsi(buildSetupHandoffText(snapshot as unknown as StatusSnapshot));
     assert.ok(text.includes('GARDA_AGENT_REPORT'));
     assert.ok(text.includes('Agent Initialization'));
     assert.ok(text.includes('Primary setup is complete'));
@@ -968,11 +972,12 @@ test('buildSetupHandoffText honors NO_COLOR over FORCE_COLOR', () => {
         assistantLanguageConfirmed: true,
         mandatoryFullSuiteEnabled: true
     } as unknown as StatusSnapshot));
+    const normalizedText = stripAnsi(text);
 
     assert.equal(hasAnsi(text), false);
-    assert.ok(text.includes('Primary setup is complete.'));
-    assert.ok(text.includes('Next stage: launch your agent and give it the init prompt.'));
-    assert.ok(text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+    assert.ok(normalizedText.includes('Primary setup is complete.'));
+    assert.ok(normalizedText.includes('Next stage: launch your agent and give it the init prompt.'));
+    assert.ok(normalizedText.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
 });
 
 test('buildSetupHandoffText renders compact report labels in English while preserving assistant language', () => {

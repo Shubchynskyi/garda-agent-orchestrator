@@ -10,6 +10,11 @@ import { isGardaSelfGuardDenyAgentEntryForBundle } from '../../../../src/core/wo
 import { OPERATOR_CONFIRMATION_MAX_AGE_MS } from '../../../../src/core/operator-confirmation';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator', version: '1.0.0' };
+
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
 function buildOperatorConfirmationArgs(): string[] {
     return ['--operator-confirmed', 'yes', '--operator-confirmed-at-utc', new Date().toISOString()];
 }
@@ -529,7 +534,7 @@ test('workflow set rejects future-skewed operator confirmation timestamps', () =
 });
 
 test('workflow help describes project-memory update as the default policy', () => {
-    const helpText = buildGuardedCommandHelpText('workflow');
+    const helpText = stripAnsi(buildGuardedCommandHelpText('workflow'));
 
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
