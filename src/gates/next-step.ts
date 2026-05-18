@@ -3432,21 +3432,21 @@ function applyFullSuiteReadinessToReviewLaunchPlan(
 function shouldRunFullSuiteAfterCompileBeforeReviews(
     enabled: boolean,
     placement: FullSuiteValidationPlacement,
-    fullSuiteNotRequiredForDocsOnly: boolean
+    fullSuiteNotRequiredForCurrentScope: boolean
 ): boolean {
     return enabled
         && placement === 'after_compile_before_reviews'
-        && !fullSuiteNotRequiredForDocsOnly;
+        && !fullSuiteNotRequiredForCurrentScope;
 }
 
 function shouldRunFullSuiteBeforeTestReview(
     enabled: boolean,
     placement: FullSuiteValidationPlacement,
-    fullSuiteNotRequiredForDocsOnly: boolean
+    fullSuiteNotRequiredForCurrentScope: boolean
 ): boolean {
     return enabled
         && placement === 'before_test_review'
-        && !fullSuiteNotRequiredForDocsOnly;
+        && !fullSuiteNotRequiredForCurrentScope;
 }
 
 function toNextStepBlockedReviewLanes(launchPlan: ReviewLaunchPlan): NextStepBlockedReviewLane[] {
@@ -6232,6 +6232,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ? formatFullSuiteTimeoutForecast(fullSuiteTimeoutForecast)
         : null;
     const fullSuiteNotRequiredForDocsOnly = isFullSuiteNotRequiredForDocsOnlyScope(preflight || {});
+    const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
+    const fullSuiteNotRequiredForZeroDiffNoReviewableScope = hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes);
+    const fullSuiteNotRequiredForCurrentScope = fullSuiteNotRequiredForDocsOnly || fullSuiteNotRequiredForZeroDiffNoReviewableScope;
     const fullSuiteGatePassed = fullSuiteNotRequiredForDocsOnly
         ? hasAcceptedDocsOnlyFullSuiteSkipArtifact(
                 reviewsRoot,
@@ -6241,7 +6244,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 preflightSha256,
                 summary
             )
-        : isGatePassed(summary, 'full-suite-validation');
+        : fullSuiteNotRequiredForZeroDiffNoReviewableScope
+            ? true
+            : isGatePassed(summary, 'full-suite-validation');
     const fullSuiteSummary: NextStepFullSuiteSummary = {
         enabled: fullSuiteConfig.enabled,
         command: fullSuiteConfig.command,
@@ -6252,6 +6257,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         timeout_forecast_note: fullSuiteTimeoutForecastLine,
         note: fullSuiteConfig.enabled && fullSuiteNotRequiredForDocsOnly
             ? 'Full-suite validation is enabled, but this docs-only scope only requires a NOT_REQUIRED artifact.'
+            : fullSuiteConfig.enabled && fullSuiteNotRequiredForZeroDiffNoReviewableScope
+            ? 'Full-suite validation is enabled, but this BASELINE_ONLY pre-implementation scope has no reviewable diff and requires audited no-op evidence instead.'
             : fullSuiteConfig.enabled
             ? 'Full-suite validation is mandatory because the effective workflow config enables it.'
             : 'Full-suite validation is disabled in the effective workflow config.'
@@ -6262,7 +6269,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         preflightPath
     });
     const projectMemorySummary = buildProjectMemoryNextStepSummary(projectMemoryEvidence);
-    const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
     const reviewPolicy = resolveReviewPolicy(preflight);
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
@@ -6280,7 +6286,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ),
         fullSuiteConfig.enabled,
         fullSuiteConfig.placement,
-        fullSuiteNotRequiredForDocsOnly,
+        fullSuiteNotRequiredForCurrentScope,
         fullSuiteGateStatus
     );
     const reviewTrust = readReviewTrust(reviewsRoot, taskId, requiredReviewTypes, summary.scope_category);
@@ -7328,7 +7334,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     if (shouldRunFullSuiteAfterCompileBeforeReviews(
         fullSuiteConfig.enabled,
         fullSuiteConfig.placement,
-        fullSuiteNotRequiredForDocsOnly
+        fullSuiteNotRequiredForCurrentScope
     )) {
         if (fullSuiteGateStatus === 'FAIL') {
             return buildResult({
@@ -7374,7 +7380,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         shouldRunFullSuiteBeforeTestReview(
             fullSuiteConfig.enabled,
             fullSuiteConfig.placement,
-            fullSuiteNotRequiredForDocsOnly
+            fullSuiteNotRequiredForCurrentScope
         )
         && reviewLaunchPlan.next_review_type === 'test'
     ) {

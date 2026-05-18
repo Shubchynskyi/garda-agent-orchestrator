@@ -6423,6 +6423,16 @@ describe('gates/next-step', () => {
     it('routes zero-diff no-review closeout to audited no-op before required reviews check', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'strict_sequential'
+            }
+        });
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
@@ -6447,6 +6457,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('audited no-op evidence'));
         assert.ok(!result.reason.includes('All required review artifacts appear present'));
         assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(result.commands[0].command.includes('--classification "AUDIT_ONLY"'));
         assert.ok(result.commands[0].command.includes('--preflight-path'));
     });
