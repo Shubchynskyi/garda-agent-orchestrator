@@ -312,7 +312,7 @@ Notes:
 - Task timeline completeness is surfaced by `status` and `doctor`, not just completion-gate.
 - Human-readable timeline can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-events-summary`; summary output includes `IntegrityStatus`.
 - Compact task audit summary can be generated with `node garda-agent-orchestrator/bin/garda.js gate task-audit-summary --task-id "<task-id>"`; it shows status, gates, changed files, evidence paths, blockers, and final closeout contract data. Use `--as-json` for structured output; on `PASS` it also materializes canonical `runtime/reviews/<task-id>-final-closeout.{json,md}` artifacts. Non-zero exit when status is not `PASS`.
-- Deterministic next-step guidance can be generated with `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`; it reports the next gate command, effective `full_suite_validation` config path/value, review execution policy, missing artifacts, and review trust status. This is the default task loop, not only a diagnostic fallback.
+- Deterministic next-step guidance can be generated with `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."`; it reports the next gate command, effective `full_suite_validation` config path/enabled/placement/command, review execution policy, missing artifacts, and review trust status. This is the default task loop, not only a diagnostic fallback.
 
 ## Project Discovery Snapshot
 - Discovery source: git_index_and_worktree

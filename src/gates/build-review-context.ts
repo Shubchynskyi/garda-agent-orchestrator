@@ -6,6 +6,7 @@ import { buildReviewContextSections, type ReviewContextSectionsResult } from '..
 import { stringSha256 } from '../gate-runtime/hash';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from '../gate-runtime/review-artifacts';
 import { computeTaskPlanDigest, validateTaskPlan, type TaskPlan } from '../schemas/task-plan';
+import { type FullSuiteValidationPlacement } from '../core/workflow-config';
 import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
@@ -934,6 +935,7 @@ export interface TokenEconomyConfig {
 
 export interface ReviewContextFullSuiteValidationEvidence {
     required_for_review: boolean;
+    placement: FullSuiteValidationPlacement | null;
     artifact_path: string | null;
     artifact_sha256: string | null;
     available: boolean;
@@ -1073,7 +1075,11 @@ function buildFullSuiteValidationEvidence(options: {
         return null;
     }
     const fullSuiteValidationConfig = loadFullSuiteValidationConfig(options.repoRoot);
-    const requiredForReview = fullSuiteValidationConfig.enabled === true;
+    const requiredForReview = fullSuiteValidationConfig.enabled === true
+        && (
+            fullSuiteValidationConfig.placement === 'before_test_review'
+            || fullSuiteValidationConfig.placement === 'after_compile_before_reviews'
+        );
 
     const compileGateEvidence = readCurrentCompileGateEvidence(options.repoRoot, options.taskId);
     const artifactPath = options.taskId
@@ -1082,6 +1088,7 @@ function buildFullSuiteValidationEvidence(options: {
     if (!artifactPath) {
         return {
             required_for_review: requiredForReview,
+            placement: fullSuiteValidationConfig.placement,
             artifact_path: null,
             artifact_sha256: null,
             available: false,
@@ -1111,6 +1118,7 @@ function buildFullSuiteValidationEvidence(options: {
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
         return {
             required_for_review: requiredForReview,
+            placement: fullSuiteValidationConfig.placement,
             artifact_path: normalizedArtifactPath,
             artifact_sha256: null,
             available: false,
@@ -1189,6 +1197,7 @@ function buildFullSuiteValidationEvidence(options: {
 
         return {
             required_for_review: requiredForReview,
+            placement: fullSuiteValidationConfig.placement,
             artifact_path: normalizedArtifactPath,
             artifact_sha256: fileSha256(artifactPath),
             available: true,
@@ -1208,11 +1217,12 @@ function buildFullSuiteValidationEvidence(options: {
             compile_gate_status: compileGateEvidence.status,
             matches_current_compile_gate: matchesCurrentCompileGate,
             cycle_binding_valid: cycleBindingValid,
-            mismatch_reason: mismatchReason
+            mismatch_reason: requiredForReview ? mismatchReason : null
         };
     } catch (error) {
         return {
             required_for_review: requiredForReview,
+            placement: fullSuiteValidationConfig.placement,
             artifact_path: normalizedArtifactPath,
             artifact_sha256: fileSha256(artifactPath),
             available: false,
@@ -1232,7 +1242,9 @@ function buildFullSuiteValidationEvidence(options: {
             compile_gate_status: compileGateEvidence.status,
             matches_current_compile_gate: null,
             cycle_binding_valid: null,
-            mismatch_reason: 'Full-suite validation evidence artifact could not be parsed.',
+            mismatch_reason: requiredForReview
+                ? 'Full-suite validation evidence artifact could not be parsed.'
+                : null,
             parse_error: error instanceof Error ? error.message : String(error)
         };
     }
@@ -1242,6 +1254,7 @@ function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContextFullSui
     const lines = [
         '## Full-Suite Validation Evidence',
         `- Required before this review: ${evidence.required_for_review ? 'yes' : 'no'}`,
+        `- Placement: ${evidence.placement || 'unknown'}`,
         `- Evidence artifact: ${evidence.artifact_path || 'unavailable'}`,
         `- Evidence sha256: ${evidence.artifact_sha256 || 'unavailable'}`,
         `- Status: ${evidence.status || 'unavailable'}`,
@@ -1257,6 +1270,13 @@ function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContextFullSui
         `- Matches current compile gate: ${evidence.matches_current_compile_gate == null ? 'unknown' : String(evidence.matches_current_compile_gate)}`,
         `- Cycle binding valid: ${evidence.cycle_binding_valid == null ? 'unknown' : String(evidence.cycle_binding_valid)}`
     ];
+    if (
+        evidence.enabled === true
+        && evidence.required_for_review === false
+        && evidence.placement === 'before_completion'
+    ) {
+        lines.push('- Reviewer note: this placement does not require full-suite evidence before this review; completion still enforces full-suite validation later.');
+    }
     if (evidence.mismatch_reason) {
         lines.push(`- Mismatch reason: ${evidence.mismatch_reason}`);
     }

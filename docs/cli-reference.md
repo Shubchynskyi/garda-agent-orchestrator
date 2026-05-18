@@ -136,7 +136,7 @@ garda gate next-step --preflight-path "garda-agent-orchestrator/runtime/reviews/
 ```
 
 Notes:
-- `next-step` reads current task events and review artifacts, then prints the current status, effective full-suite config, review policy, missing artifacts, and the single next command to run.
+- `next-step` reads current task events and review artifacts, then prints the current status, effective full-suite config including placement, review policy, missing artifacts, and the single next command to run.
 - The command accepts either a positional task id (`T-137`), `--task-id`, or a `--preflight-path` that ends in `<task-id>-preflight.json`.
 - Before the first preflight, `next-step` reuses task-mode `planned_changed_files` to print concrete `classify-change --changed-file` arguments; agents should not invent placeholder paths.
 - After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
@@ -144,7 +144,7 @@ Notes:
 - In materialized/application workspaces the `garda-agent-orchestrator/` bundle is vendor/control-plane. With `garda_self_guard=on`, agents cannot self-escalate into `--orchestrator-work`; operators must run update/repair/maintenance or deliberately relax the policy with `workflow set --garda-self-guard off`.
 - Review navigation uses the launch batch, not only the legacy single-review field. Human output can include `ReviewLaunchableBatch`, `BlockedReviewLanes`, and `ReviewFailedCurrent`; JSON includes `review.launchable_review_types`, `review.blocked_review_lanes`, and `review.failed_review_type`.
 - `NextReview` / `review.next_review_type` remain compatibility fields for older single-lane consumers. When a launch batch contains multiple independent lanes, agents may launch those reviewers in parallel only after `next-step` says they are launchable.
-- `BlockedReviewLanes` names dependency reasons such as upstream review types or `full-suite-validation`. When full-suite validation is enabled, the `test` reviewer must wait for current full-suite PASS evidence even under a parallel-capable review policy; unrelated non-test lanes can remain launchable.
+- `BlockedReviewLanes` names dependency reasons such as upstream review types or `full-suite-validation`. Full-suite placement controls when that dependency appears: `after_compile_before_reviews` blocks reviewer launch after compile until current full-suite evidence exists, `before_test_review` blocks only the `test` reviewer, and `before_completion` leaves reviewer context neutral while completion still enforces the suite later.
 - A failed current-cycle review takes remediation priority over downstream launch work. Fix and rerun or validly reuse the failed review as PASS before treating blocked downstream lanes as ready.
 - For mandatory reviews, `next-step`, rule packs, orchestration skills, review contexts, and provider bridges expect a newly spawned clean-context reviewer for the current review context; do not reuse an existing reviewer session, and close or release the reviewer sub-agent after `record-review-result` or `record-review-receipt` persists the receipt.
 
@@ -490,7 +490,7 @@ Show or change repo-local workflow configuration.
 ```text
 garda workflow --target-root "."
 garda workflow show --target-root "." --json
-garda workflow set --target-root "." --full-suite-enabled true --full-suite-command "npm test" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --full-suite-enabled true --full-suite-placement before_test_review --full-suite-command "npm test" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --review-execution-policy strict_sequential --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
@@ -507,7 +507,7 @@ Notes:
 - `workflow set` requires explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
 - `--garda-self-guard on` maps to `orchestrator_work_policy.mode=deny_agent_entry`; `off` maps to `require_operator_confirmation` and requires explicit operator approval.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.
-- `parallel_all` can make code, security, refactor, API, and other specialist lanes independent, but enabled full-suite validation still gates `test` review launch until current full-suite PASS evidence exists.
+- `parallel_all` can make code, security, refactor, API, and other specialist lanes independent. Full-suite placement still applies: `before_test_review` gates only `test`, `after_compile_before_reviews` gates all reviewers after compile, and `before_completion` defers enforcement until completion.
 - Fresh materialization writes the recommended default `review_execution_policy.mode=code_first_optional`.
 - Existing repos that still omit `review_execution_policy` stay on the legacy compatibility path (`test` waits for all required upstream reviews, other review types remain independent) until an operator explicitly sets one of the supported modes.
 - Scope budget guard settings can be changed with `--scope-budget-enabled true|false`, `--scope-budget-action BLOCK_FOR_SPLIT|WARN_ONLY`, `--scope-budget-profiles strict,balanced`, `--scope-budget-max-files N`, `--scope-budget-max-changed-lines N`, `--scope-budget-max-required-reviews N`, and `--scope-budget-max-review-tokens N`.
@@ -659,7 +659,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
 | Human commit | `garda gate human-commit --operator-confirmed yes --message "<message>"` |
 
-Use `garda next-step "T-001"` as the task-loop command before and after gates; it reports the effective full-suite config, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+Use `garda next-step "T-001"` as the task-loop command before and after gates; it reports the effective full-suite config including placement, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 
 Task-start identity and preflight notes:
 - `enter-task-mode` and related runtime identity checks normalize explicit provider aliases such as `github-copilot-cli` to the canonical provider id `GitHubCopilot`; artifacts record the canonical id.
