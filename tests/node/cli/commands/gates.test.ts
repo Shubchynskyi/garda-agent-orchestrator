@@ -107,9 +107,17 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'task-audit-summary',
     'next-step'
 ]);
+const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
+const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
+const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:02.000Z';
+const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:03.000Z';
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
+function fileSha256(pathToFile: string): string {
+    return createHash('sha256').update(fs.readFileSync(pathToFile)).digest('hex');
 }
 
 function assertCompileFailureIncludesNextStepHint(outputLines: string[]): void {
@@ -379,10 +387,10 @@ function attestReviewerInvocationForTest(options: {
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedIntegrity.event_sha256,
-        launch_prepared_at_utc: '2026-07-01T00:00:00.000Z',
-        launched_at_utc: '2026-07-01T00:00:01.000Z',
-        launch_completed_at_utc: '2026-07-01T00:00:02.000Z',
-        invocation_attested_at_utc: '2026-07-01T00:00:03.000Z'
+        launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     });
 }
 
@@ -6147,6 +6155,7 @@ describe('cli/commands/gates', () => {
             '## Verdict',
             'REVIEW PASSED'
         ].join('\n'), 'utf8');
+        const expectedReviewOutputSourceMtimeUtc = fs.statSync(reviewOutputPath).mtime.toISOString();
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'Delegated review routed by controller.', {
             review_type: 'code',
             reviewer_execution_mode: 'delegated_subagent',
@@ -6213,16 +6222,19 @@ describe('cli/commands/gates', () => {
         assert.equal(receipt.trust_level, 'INDEPENDENT_AUDITED');
         assert.equal(receipt.reviewer_provenance?.attestation_type, 'reviewer_invocation_attestation');
         assert.equal(receipt.reviewer_provenance?.controller_event_type, 'REVIEWER_INVOCATION_ATTESTED');
-        assert.equal(receipt.reviewer_provenance?.launch_prepared_at_utc, '2026-07-01T00:00:00.000Z');
-        assert.equal(receipt.reviewer_provenance?.launched_at_utc, '2026-07-01T00:00:01.000Z');
-        assert.equal(receipt.reviewer_provenance?.launch_completed_at_utc, '2026-07-01T00:00:02.000Z');
-        assert.equal(receipt.reviewer_provenance?.invocation_attested_at_utc, '2026-07-01T00:00:03.000Z');
+        assert.equal(receipt.reviewer_provenance?.launch_prepared_at_utc, TEST_REVIEW_LAUNCH_PREPARED_AT_UTC);
+        assert.equal(receipt.reviewer_provenance?.launched_at_utc, TEST_REVIEW_LAUNCHED_AT_UTC);
+        assert.equal(receipt.reviewer_provenance?.launch_completed_at_utc, TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC);
+        assert.equal(receipt.reviewer_provenance?.invocation_attested_at_utc, TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC);
         assert.equal(typeof receipt.review_result_recorded_at_utc, 'string');
         assert.equal(Number.isNaN(Date.parse(receipt.review_result_recorded_at_utc)), false);
         assert.equal(receipt.review_output_path, rawReviewOutputPath.replace(/\\/g, '/'));
         assert.equal(receipt.review_materialization_fidelity, 'exact');
         assert.equal(typeof receipt.review_output_sha256, 'string');
         assert.ok(receipt.review_output_sha256.length > 0);
+        assert.equal(typeof receipt.review_output_source_mtime_utc, 'string');
+        assert.equal(Number.isNaN(Date.parse(receipt.review_output_source_mtime_utc)), false);
+        assert.equal(receipt.review_output_source_mtime_utc, expectedReviewOutputSourceMtimeUtc);
         assert.equal(typeof receipt.review_artifact_sha256, 'string');
         assert.ok(receipt.review_artifact_sha256.length > 0);
 
@@ -9668,6 +9680,7 @@ describe('cli/commands/gates', () => {
             reviewContextPath,
             reviewerIdentity: 'agent:test-reviewer'
         });
+        const expectedReviewOutputSourceMtimeUtc = fs.statSync(artifactPath).mtime.toISOString();
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -9698,6 +9711,9 @@ describe('cli/commands/gates', () => {
         assert.equal(receipt.reviewer_execution_mode, 'delegated_subagent');
         assert.equal(receipt.reviewer_identity, 'agent:test-reviewer');
         assert.equal(receipt.reviewer_fallback_reason, null);
+        assert.equal(receipt.review_output_path, artifactPath.replace(/\\/g, '/'));
+        assert.equal(receipt.review_output_sha256, fileSha256(artifactPath));
+        assert.equal(receipt.review_output_source_mtime_utc, expectedReviewOutputSourceMtimeUtc);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.expected_execution_mode, 'delegated_subagent');
         assert.equal(reviewContext.reviewer_routing.fallback_allowed, false);

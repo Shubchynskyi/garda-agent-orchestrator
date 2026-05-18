@@ -375,6 +375,8 @@ export interface ReviewReceipt {
     reused_from_review_scope_sha256?: string | null;
     reused_from_code_scope_sha256?: string | null;
     recorded_at_utc: string;
+    review_result_recorded_at_utc?: string | null;
+    review_output_source_mtime_utc?: string | null;
 }
 
 export type ReviewReceiptReviewerProvenance =

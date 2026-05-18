@@ -443,6 +443,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         ]);
 
         assertNextGate(workspaceRoot, 'complete-reviewer-launch');
+        const reviewerLaunchedAtUtc = new Date().toISOString();
         await runReviewGateCommand(workspaceRoot, [
             'complete-reviewer-launch',
             '--task-id', TASK_ID,
@@ -452,7 +453,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--reviewer-identity', 'agent:e2e-test-reviewer',
             '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
             '--provider-invocation-id', 'codex-e2e-test-reviewer-001',
-            '--launched-at-utc', '2026-05-16T00:00:00.000Z',
+            '--launched-at-utc', reviewerLaunchedAtUtc,
             '--attestation-source', 'codex_agent_launch',
             '--fresh-context'
         ]);

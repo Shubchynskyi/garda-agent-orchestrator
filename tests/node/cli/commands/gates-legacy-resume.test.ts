@@ -72,6 +72,16 @@ const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
     Antigravity: '.antigravity/agents/orchestrator.md'
 };
 
+const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
+const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
+const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:02.000Z';
+const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:03.000Z';
+
+function buildTestProviderInvocationId(taskId: string, reviewKey: string, reviewerIdentity: string): string {
+    const normalizedIdentity = reviewerIdentity.replace(/^agent:/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
+    return `test-${taskId}-${reviewKey}-${normalizedIdentity}`;
+}
+
 function resolveAttestedTaskModeRoute(provider: string): string | null {
     const normalizedProvider = String(provider || '').trim();
     if (!normalizedProvider) {
@@ -666,7 +676,13 @@ function refreshReviewReceiptProvenance(
         reviewer_identity: reviewerIdentity,
         review_context_sha256: String(receipt.review_context_sha256 || '').trim(),
         review_tree_state_sha256: String(receipt.review_tree_state_sha256 || '').trim() || null,
-        routing_event_sha256: String(routedIntegrity.event_sha256 || '').trim()
+        routing_event_sha256: String(routedIntegrity.event_sha256 || '').trim(),
+        reviewer_launch_attestation_source: 'codex.spawn_agent',
+        provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, reviewerIdentity),
+        launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     };
     const invocationEvent = appendTaskEvent(
         getOrchestratorRoot(repoRoot),
@@ -687,6 +703,11 @@ function refreshReviewReceiptProvenance(
     assert.ok(provenance, `Expected reviewer provenance for ${taskId}/${reviewKey}.`);
     receipt.reviewer_provenance = provenance;
     receipt.trust_level = 'INDEPENDENT_AUDITED';
+    receipt.review_result_recorded_at_utc = receipt.recorded_at_utc;
+    const reviewArtifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-${reviewKey}.md`);
+    if (fs.existsSync(reviewArtifactPath) && fs.statSync(reviewArtifactPath).isFile()) {
+        receipt.review_output_source_mtime_utc = fs.statSync(reviewArtifactPath).mtime.toISOString();
+    }
     fs.writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n', 'utf8');
 }
 

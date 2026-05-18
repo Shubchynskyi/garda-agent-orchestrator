@@ -138,6 +138,16 @@ const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
     Antigravity: '.antigravity/agents/orchestrator.md'
 };
 
+const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
+const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
+const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:02.000Z';
+const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:03.000Z';
+
+function buildTestProviderInvocationId(taskId: string, reviewKey: string, reviewerIdentity: string): string {
+    const normalizedIdentity = reviewerIdentity.replace(/^agent:/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
+    return `test-${taskId}-${reviewKey}-${normalizedIdentity}`;
+}
+
 function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
     if (String(options.provider || '').trim() || String(options.routedTo || '').trim()) {
         return options;
@@ -535,6 +545,9 @@ function writeReceiptBackedReviewArtifact(
             reviewerProvenance,
             trustLevel: execution.trustLevel
         });
+        const receiptRecord = receipt as unknown as Record<string, unknown>;
+        receiptRecord.review_result_recorded_at_utc = receipt.recorded_at_utc;
+        receiptRecord.review_output_source_mtime_utc = fs.statSync(artifactPath).mtime.toISOString();
         const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
         const receiptSha256 = crypto.createHash('sha256').update(receiptText).digest('hex');
         const receiptSnapshotPath = artifactPath.replace(/\.md$/, `-receipt-${receiptSha256}.json`);
@@ -568,7 +581,13 @@ function writeReceiptBackedReviewArtifact(
             reviewer_identity: execution.reviewerIdentity,
             review_context_sha256: reviewContextHash,
             review_tree_state_sha256: reviewTreeStateSha256,
-            routing_event_sha256: routedEvent?.integrity?.event_sha256
+            routing_event_sha256: routedEvent?.integrity?.event_sha256,
+            reviewer_launch_attestation_source: 'codex.spawn_agent',
+            provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, execution.reviewerIdentity),
+            launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+            launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+            launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+            invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
         };
         const invocationEvent = appendTaskEvent(
             orchestratorRoot,
@@ -718,7 +737,13 @@ function seedReusableReviewEvidence(
         reviewer_identity: execution.reviewerIdentity,
         review_context_sha256: reviewContextHash,
         review_tree_state_sha256: reviewTreeStateSha256,
-        routing_event_sha256: routedEvent?.integrity?.event_sha256
+        routing_event_sha256: routedEvent?.integrity?.event_sha256,
+        reviewer_launch_attestation_source: 'codex.spawn_agent',
+        provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, execution.reviewerIdentity),
+        launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     };
     const invocationEvent = appendTaskEvent(
         orchestratorRoot,
@@ -752,6 +777,9 @@ function seedReusableReviewEvidence(
         ),
         trustLevel: execution.trustLevel
     });
+    const receiptRecord = receipt as unknown as Record<string, unknown>;
+    receiptRecord.review_result_recorded_at_utc = receipt.recorded_at_utc;
+    receiptRecord.review_output_source_mtime_utc = fs.statSync(artifactPath).mtime.toISOString();
     const receiptText = `${JSON.stringify(receipt, null, 2)}\n`;
     const receiptSha256 = crypto.createHash('sha256').update(receiptText).digest('hex');
     const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');

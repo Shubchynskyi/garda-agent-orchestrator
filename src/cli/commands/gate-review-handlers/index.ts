@@ -108,6 +108,7 @@ interface ResolvedReviewOutputInput {
     reviewOutputPath: string;
     reviewOutputMode: 'path' | 'stdin';
     reviewOutputSourcePath: string | null;
+    reviewOutputSourceMtimeUtc: string | null;
 }
 
 interface ReviewerLaunchArtifactValidationResult {
@@ -539,6 +540,7 @@ async function resolveReviewOutputInput(
     const reviewOutputArtifactPath = getCanonicalReviewOutputArtifactPath(reviewsRoot, taskId, reviewType);
     let reviewContent = '';
     let reviewOutputSourcePath: string | null = null;
+    let reviewOutputSourceMtimeUtc: string | null = null;
     if (useReviewOutputStdin) {
         reviewContent = await readReviewOutputFromStdin();
     } else {
@@ -546,7 +548,10 @@ async function resolveReviewOutputInput(
         if (!resolvedReviewOutputPath) {
             throw new Error('ReviewOutputPath is required.');
         }
-        if (!fs.existsSync(resolvedReviewOutputPath) || !fs.statSync(resolvedReviewOutputPath).isFile()) {
+        const reviewOutputStat = fs.existsSync(resolvedReviewOutputPath)
+            ? fs.statSync(resolvedReviewOutputPath)
+            : null;
+        if (!reviewOutputStat?.isFile()) {
             throw new Error(`Review output not found: ${normalizePath(resolvedReviewOutputPath)}.`);
         }
         if (!gateHelpers.isPathRealpathInsideRoot(resolvedReviewOutputPath, repoRoot)) {
@@ -589,6 +594,7 @@ async function resolveReviewOutputInput(
             );
         }
         reviewOutputSourcePath = resolvedReviewOutputPath;
+        reviewOutputSourceMtimeUtc = reviewOutputStat.mtime.toISOString();
         reviewContent = fs.readFileSync(resolvedReviewOutputPath, 'utf8');
     }
 
@@ -604,7 +610,8 @@ async function resolveReviewOutputInput(
         reviewOutputMode: useReviewOutputStdin ? 'stdin' : 'path',
         reviewOutputSourcePath: reviewOutputSourcePath && normalizePath(reviewOutputSourcePath) !== normalizePath(reviewOutputArtifactPath)
             ? reviewOutputSourcePath
-            : null
+            : null,
+        reviewOutputSourceMtimeUtc
     };
 }
 
@@ -2113,6 +2120,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     contextPath: string;
     rawReviewOutputPath?: string | null;
     rawReviewOutputSha256?: string | null;
+    rawReviewOutputSourceMtimeUtc?: string | null;
     reviewMaterializationFidelity?: string | null;
     taskModePath?: string | null;
     reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
@@ -2285,6 +2293,8 @@ async function recordReviewReceiptFromArtifacts(options: {
         ? normalizePath(options.rawReviewOutputPath)
         : null;
     (receipt as unknown as Record<string, unknown>).review_output_sha256 = options.rawReviewOutputSha256 || null;
+    (receipt as unknown as Record<string, unknown>).review_output_source_mtime_utc =
+        options.rawReviewOutputSourceMtimeUtc || null;
     (receipt as unknown as Record<string, unknown>).review_materialization_fidelity = options.reviewMaterializationFidelity || 'exact';
 
     const receiptPayloadSha256 = createHash('sha256')
@@ -3490,6 +3500,7 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             contextPath,
             rawReviewOutputPath: reviewOutput.reviewOutputPath,
             rawReviewOutputSha256,
+            rawReviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
             reviewMaterializationFidelity,
             taskModePath: String(options.taskModePath || '').trim(),
             reviewerExecutionMode,
@@ -3581,6 +3592,9 @@ export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<voi
         preflightPath,
         artifactPath,
         contextPath,
+        rawReviewOutputPath: artifactPath,
+        rawReviewOutputSha256: fileSha256(artifactPath),
+        rawReviewOutputSourceMtimeUtc: fs.statSync(artifactPath).mtime.toISOString(),
         taskModePath: String(options.taskModePath || '').trim(),
         reviewerExecutionMode,
         reviewerIdentity,
