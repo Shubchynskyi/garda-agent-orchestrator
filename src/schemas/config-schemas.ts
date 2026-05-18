@@ -17,6 +17,7 @@ import {
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
 import {
+    FULL_SUITE_VALIDATION_PLACEMENTS,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES
 } from '../core/workflow-config';
@@ -267,6 +268,7 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                 green_summary_max_lines:    { type: 'integer', minimum: 1, description: 'Max lines for pass summary.' },
                 red_failure_chunk_lines:    { type: 'integer', minimum: 10, description: 'Chunk size for failure output.' },
                 out_of_scope_failure_policy: { type: 'string', enum: [...OUT_OF_SCOPE_FAILURE_POLICIES], description: 'Policy for handling out-of-scope failures.' },
+                placement: { type: 'string', enum: [...FULL_SUITE_VALIDATION_PLACEMENTS], description: 'Lifecycle point where enabled full-suite validation should run.' },
                 out_of_scope_failure_policies: { type: 'array', items: { type: 'string', enum: [...OUT_OF_SCOPE_FAILURE_POLICIES] }, uniqueItems: true, description: 'Available failure policies.' }
             },
             required: ['enabled', 'command', 'timeout_ms', 'green_summary_max_lines', 'red_failure_chunk_lines', 'out_of_scope_failure_policy']

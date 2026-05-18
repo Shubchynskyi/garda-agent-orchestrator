@@ -53,7 +53,8 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
             timeout_ms: 600000,
             green_summary_max_lines: 5,
             red_failure_chunk_lines: 50,
-            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+            placement: 'before completion'
         },
         review_execution_policy: {
             mode: 'code_first_optional'
@@ -117,6 +118,42 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
 
     const taskReset = normalized.task_reset as Record<string, unknown>;
     assert.equal(taskReset.enabled, true);
+
+    const fullSuiteValidation = normalized.full_suite_validation as Record<string, unknown>;
+    assert.equal(fullSuiteValidation.placement, 'before_completion');
+});
+
+test('validateWorkflowConfig defaults missing full-suite placement but rejects invalid values', () => {
+    const baseConfig = {
+        full_suite_validation: {
+            enabled: false,
+            command: 'npm test',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        }
+    };
+
+    const normalized = validateWorkflowConfig(baseConfig);
+    assert.equal(
+        (normalized.full_suite_validation as Record<string, unknown>).placement,
+        'before_test_review'
+    );
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            full_suite_validation: {
+                ...baseConfig.full_suite_validation,
+                placement: 'after lunch'
+            }
+        }),
+        /full_suite_validation\.placement must be one of/
+    );
 });
 
 test('validateWorkflowConfig rejects unknown task reset keys', () => {

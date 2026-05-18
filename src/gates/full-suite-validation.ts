@@ -3,6 +3,10 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../core/constants';
+import {
+    normalizeFullSuiteValidationPlacement,
+    type FullSuiteValidationPlacement
+} from '../core/workflow-config';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../gate-runtime/token-telemetry';
 import { joinOrchestratorPath, normalizePath } from './helpers';
 
@@ -20,6 +24,7 @@ export interface FullSuiteValidationConfig {
     readonly green_summary_max_lines: number;
     readonly red_failure_chunk_lines: number;
     readonly out_of_scope_failure_policy: OutOfScopeFailurePolicy;
+    readonly placement: FullSuiteValidationPlacement;
 }
 
 export interface FullSuiteValidationCycleBinding {
@@ -73,7 +78,8 @@ const DEFAULT_CONFIG: FullSuiteValidationConfig = Object.freeze({
     timeout_ms: 600_000,
     green_summary_max_lines: 5,
     red_failure_chunk_lines: 50,
-    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+    placement: 'before_test_review'
 });
 
 export interface FullSuiteValidationResult {
@@ -111,32 +117,41 @@ export function loadFullSuiteValidationConfig(repoRoot: string): FullSuiteValida
         return { ...DEFAULT_CONFIG };
     }
 
+    let raw: unknown;
     try {
-        const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>;
-        const section = raw.full_suite_validation;
-        if (!section || typeof section !== 'object' || Array.isArray(section)) {
-            return { ...DEFAULT_CONFIG };
-        }
-        const record = section as Record<string, unknown>;
-        return {
-            enabled: record.enabled === true,
-            command: typeof record.command === 'string' && record.command.trim()
-                ? record.command.trim()
-                : DEFAULT_CONFIG.command,
-            timeout_ms: typeof record.timeout_ms === 'number' && record.timeout_ms > 0
-                ? record.timeout_ms
-                : DEFAULT_CONFIG.timeout_ms,
-            green_summary_max_lines: typeof record.green_summary_max_lines === 'number' && record.green_summary_max_lines > 0
-                ? record.green_summary_max_lines
-                : DEFAULT_CONFIG.green_summary_max_lines,
-            red_failure_chunk_lines: typeof record.red_failure_chunk_lines === 'number' && record.red_failure_chunk_lines > 0
-                ? record.red_failure_chunk_lines
-                : DEFAULT_CONFIG.red_failure_chunk_lines,
-            out_of_scope_failure_policy: normalizeOutOfScopePolicy(record.out_of_scope_failure_policy)
-        };
+        raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     } catch {
         return { ...DEFAULT_CONFIG };
     }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return { ...DEFAULT_CONFIG };
+    }
+    const config = raw as Record<string, unknown>;
+    const section = config.full_suite_validation;
+    if (!section || typeof section !== 'object' || Array.isArray(section)) {
+        return { ...DEFAULT_CONFIG };
+    }
+    const record = section as Record<string, unknown>;
+    return {
+        enabled: record.enabled === true,
+        command: typeof record.command === 'string' && record.command.trim()
+            ? record.command.trim()
+            : DEFAULT_CONFIG.command,
+        timeout_ms: typeof record.timeout_ms === 'number' && record.timeout_ms > 0
+            ? record.timeout_ms
+            : DEFAULT_CONFIG.timeout_ms,
+        green_summary_max_lines: typeof record.green_summary_max_lines === 'number' && record.green_summary_max_lines > 0
+            ? record.green_summary_max_lines
+            : DEFAULT_CONFIG.green_summary_max_lines,
+        red_failure_chunk_lines: typeof record.red_failure_chunk_lines === 'number' && record.red_failure_chunk_lines > 0
+            ? record.red_failure_chunk_lines
+            : DEFAULT_CONFIG.red_failure_chunk_lines,
+        out_of_scope_failure_policy: normalizeOutOfScopePolicy(record.out_of_scope_failure_policy),
+        placement: normalizeFullSuiteValidationPlacement(record.placement, {
+            rejectInvalidExplicit: true,
+            errorPath: 'workflow-config.full_suite_validation.placement'
+        })
+    };
 }
 
 function normalizeOutOfScopePolicy(value: unknown): OutOfScopeFailurePolicy {
@@ -157,7 +172,8 @@ export function buildFullSuiteConfigSignature(config: FullSuiteValidationConfig)
         timeout_ms: config.timeout_ms,
         green_summary_max_lines: config.green_summary_max_lines,
         red_failure_chunk_lines: config.red_failure_chunk_lines,
-        out_of_scope_failure_policy: config.out_of_scope_failure_policy
+        out_of_scope_failure_policy: config.out_of_scope_failure_policy,
+        placement: config.placement
     };
     return createHash('sha256').update(JSON.stringify(relevantConfig)).digest('hex');
 }

@@ -24,7 +24,40 @@ export interface FullSuiteValidationConfig {
     green_summary_max_lines: number;
     red_failure_chunk_lines: number;
     out_of_scope_failure_policy: string;
+    placement: FullSuiteValidationPlacement;
     [key: string]: unknown;
+}
+
+export const FULL_SUITE_VALIDATION_PLACEMENTS = Object.freeze([
+    'after_compile_before_reviews',
+    'before_test_review',
+    'before_completion'
+] as const);
+export type FullSuiteValidationPlacement = typeof FULL_SUITE_VALIDATION_PLACEMENTS[number];
+
+export interface NormalizeFullSuiteValidationPlacementOptions {
+    rejectInvalidExplicit?: boolean;
+    errorPath?: string;
+}
+
+export function normalizeFullSuiteValidationPlacement(
+    value: unknown,
+    options: NormalizeFullSuiteValidationPlacementOptions = {}
+): FullSuiteValidationPlacement {
+    if (value === undefined) {
+        return 'before_test_review';
+    }
+    const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    if (FULL_SUITE_VALIDATION_PLACEMENTS.includes(normalized as FullSuiteValidationPlacement)) {
+        return normalized as FullSuiteValidationPlacement;
+    }
+    if (options.rejectInvalidExplicit === true) {
+        const pathLabel = options.errorPath || 'full_suite_validation.placement';
+        throw new Error(
+            `${pathLabel} must be one of: ${[...FULL_SUITE_VALIDATION_PLACEMENTS].join(', ')}.`
+        );
+    }
+    return 'before_test_review';
 }
 
 export const PROJECT_MEMORY_MAINTENANCE_MODES = Object.freeze(['off', 'check', 'update', 'strict'] as const);
@@ -103,7 +136,8 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         timeout_ms: 600_000,
         green_summary_max_lines: 5,
         red_failure_chunk_lines: 50,
-        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+        placement: 'before_test_review'
     }),
     review_execution_policy: Object.freeze(buildDefaultReviewExecutionPolicyConfig()),
     scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,

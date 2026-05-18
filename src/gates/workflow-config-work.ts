@@ -17,7 +17,8 @@ import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../core/constants';
 import {
     buildDefaultWorkflowConfig,
-    isExactLegacyProjectMemoryGeneratedDefault
+    isExactLegacyProjectMemoryGeneratedDefault,
+    normalizeFullSuiteValidationPlacement
 } from '../core/workflow-config';
 
 export interface WorkflowConfigWorkEvidence {
@@ -214,13 +215,18 @@ const COMPATIBILITY_ALLOWED_TOP_LEVEL_KEY_SETS = Array.from(
         return optionalIndex < 0 || (mask & (1 << optionalIndex)) === 0;
     })
 );
-const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
+const COMPATIBILITY_FULL_SUITE_VALIDATION_REQUIRED_KEYS = [
     'command',
     'enabled',
     'green_summary_max_lines',
     'out_of_scope_failure_policy',
     'red_failure_chunk_lines',
     'timeout_ms'
+];
+const COMPATIBILITY_FULL_SUITE_VALIDATION_OPTIONAL_KEYS = ['placement'];
+const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
+    ...COMPATIBILITY_FULL_SUITE_VALIDATION_REQUIRED_KEYS,
+    ...COMPATIBILITY_FULL_SUITE_VALIDATION_OPTIONAL_KEYS
 ];
 const COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS = ['mode'];
 const COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS = [
@@ -257,6 +263,17 @@ function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly
     const sortedExpectedKeys = [...expectedKeys].sort();
     return actualKeys.length === sortedExpectedKeys.length
         && sortedExpectedKeys.every((key, index) => actualKeys[index] === key);
+}
+
+function hasRequiredOwnKeysAndOnlyOptionalKeys(
+    record: Record<string, unknown>,
+    requiredKeys: readonly string[],
+    optionalKeys: readonly string[]
+): boolean {
+    const allowedKeys = new Set([...requiredKeys, ...optionalKeys]);
+    const actualKeys = Object.keys(record);
+    return requiredKeys.every((key) => hasOwnKey(record, key))
+        && actualKeys.every((key) => allowedKeys.has(key));
 }
 
 function hasOwnKey(record: Record<string, unknown>, key: string): boolean {
@@ -315,7 +332,11 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
     const defaultFullSuiteValidation = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.full_suite_validation as unknown as Record<string, unknown>;
     if (
         !hasExactOwnKeys(defaultFullSuiteValidation, COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS)
-        || !hasExactOwnKeys(fullSuiteValidation, COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS)
+        || !hasRequiredOwnKeysAndOnlyOptionalKeys(
+            fullSuiteValidation,
+            COMPATIBILITY_FULL_SUITE_VALIDATION_REQUIRED_KEYS,
+            COMPATIBILITY_FULL_SUITE_VALIDATION_OPTIONAL_KEYS
+        )
         || typeof fullSuiteValidation.enabled !== 'boolean'
         || outOfScopeFailurePolicy !== 'AUDIT_AND_BLOCK'
         || !numberEquals(fullSuiteValidation, 'timeout_ms', defaultFullSuiteValidation.timeout_ms)
@@ -326,6 +347,18 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
     }
     if (!SAFE_FULL_SUITE_COMPATIBILITY_COMMANDS.has(command)) {
         return false;
+    }
+    if (hasOwnKey(fullSuiteValidation, 'placement')) {
+        try {
+            const placement = normalizeFullSuiteValidationPlacement(fullSuiteValidation.placement, {
+                rejectInvalidExplicit: true
+            });
+            if (placement !== defaultFullSuiteValidation.placement) {
+                return false;
+            }
+        } catch {
+            return false;
+        }
     }
     if (fullSuiteValidation.enabled === true && command !== 'npm test') {
         return false;

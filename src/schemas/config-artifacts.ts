@@ -29,6 +29,7 @@ import {
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES,
     buildDefaultWorkflowConfig,
+    normalizeFullSuiteValidationPlacement,
     type OrchestratorWorkPolicyMode
 } from '../core/workflow-config';
 
@@ -607,7 +608,8 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         'timeout_ms',
         'green_summary_max_lines',
         'red_failure_chunk_lines',
-        'out_of_scope_failure_policy'
+        'out_of_scope_failure_policy',
+        'placement'
     ]);
     assertNoCaseMismatchedKnownKeys(
         section,
@@ -617,7 +619,8 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
             'timeout_ms',
             'green_summary_max_lines',
             'red_failure_chunk_lines',
-            'out_of_scope_failure_policy'
+            'out_of_scope_failure_policy',
+            'placement'
         ],
         'workflow-config.full_suite_validation'
     );
@@ -657,6 +660,10 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         );
     }
     normalizedSection.out_of_scope_failure_policy = policy;
+    normalizedSection.placement = normalizeFullSuiteValidationPlacement(section.placement, {
+        rejectInvalidExplicit: true,
+        errorPath: 'workflow-config.full_suite_validation.placement'
+    });
 
     normalized.full_suite_validation = normalizedSection;
     if (raw.review_execution_policy === undefined) {

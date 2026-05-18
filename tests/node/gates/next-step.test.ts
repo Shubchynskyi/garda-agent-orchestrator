@@ -32,7 +32,8 @@ const NEXT_STEP_FULL_SUITE_TEST_CONFIG: FullSuiteValidationConfig = Object.freez
     timeout_ms: 300_000,
     green_summary_max_lines: 5,
     red_failure_chunk_lines: 50,
-    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+    placement: 'before_test_review'
 });
 
 const ALL_REVIEW_FLAGS = Object.freeze({

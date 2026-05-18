@@ -223,6 +223,22 @@ test('workflow-config schema allows future full_suite_validation knobs', () => {
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('workflow-config schema accepts legacy full_suite_validation without placement', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    delete (clone.full_suite_validation as Record<string, unknown>).placement;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config template carries the full-suite placement default for generated configs', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    assert.equal(
+        (data.full_suite_validation as Record<string, unknown>).placement,
+        'before_test_review'
+    );
+});
+
 test('workflow-config schema accepts project memory maintenance and task reset defaults', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     const result = validateAgainstSchema(data, workflowConfigSchema);

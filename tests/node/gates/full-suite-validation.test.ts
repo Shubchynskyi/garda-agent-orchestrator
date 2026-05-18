@@ -69,7 +69,8 @@ function buildFullSuiteDurationTestConfig(command = 'npm test'): FullSuiteValida
         timeout_ms: 300_000,
         green_summary_max_lines: 5,
         red_failure_chunk_lines: 50,
-        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+        placement: 'before_test_review'
     };
 }
 
@@ -83,6 +84,7 @@ describe('gates/full-suite-validation', () => {
             assert.equal(config.green_summary_max_lines, 5);
             assert.equal(config.red_failure_chunk_lines, 50);
             assert.equal(config.out_of_scope_failure_policy, 'AUDIT_AND_BLOCK');
+            assert.equal(config.placement, 'before_test_review');
         });
 
         it('loads enabled config from valid JSON', () => {
@@ -96,7 +98,8 @@ describe('gates/full-suite-validation', () => {
                     timeout_ms: 300000,
                     green_summary_max_lines: 3,
                     red_failure_chunk_lines: 25,
-                    out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    out_of_scope_failure_policy: 'AUDIT_AND_WARN',
+                    placement: 'before completion'
                 }
             }));
 
@@ -107,6 +110,7 @@ describe('gates/full-suite-validation', () => {
             assert.equal(config.green_summary_max_lines, 3);
             assert.equal(config.red_failure_chunk_lines, 25);
             assert.equal(config.out_of_scope_failure_policy, 'AUDIT_AND_WARN');
+            assert.equal(config.placement, 'before_completion');
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -118,6 +122,41 @@ describe('gates/full-suite-validation', () => {
             const config = loadFullSuiteValidationConfig(tempDir);
             assert.equal(config.enabled, false);
             assert.equal(config.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('returns defaults for parseable non-object JSON', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), 'null');
+            const config = loadFullSuiteValidationConfig(tempDir);
+            assert.equal(config.enabled, false);
+            assert.equal(config.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
+            assert.equal(config.placement, 'before_test_review');
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('rejects invalid explicit placement values', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test',
+                    timeout_ms: 300000,
+                    green_summary_max_lines: 3,
+                    red_failure_chunk_lines: 25,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after lunch'
+                }
+            }));
+
+            assert.throws(
+                () => loadFullSuiteValidationConfig(tempDir),
+                /workflow-config\.full_suite_validation\.placement must be one of/
+            );
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
     });
