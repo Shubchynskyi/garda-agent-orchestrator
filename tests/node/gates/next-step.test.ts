@@ -4121,6 +4121,66 @@ describe('gates/next-step', () => {
         assert.match(missingShellSmoke.reason, /latest HANDSHAKE_DIAGNOSTICS_RECORDED event/);
     });
 
+    it('ignores late TASK_ENTRY after review phase when the pre-review startup cycle is coherent', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:code-reviewer';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        const lateRulePackPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-late-task-entry-rule-pack.json`);
+        writeJson(lateRulePackPath, buildRulePackArtifact({
+            repoRoot,
+            taskId: TASK_ID,
+            stage: 'TASK_ENTRY',
+            taskModePath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`),
+            loadedRuleFiles: [
+                '00-core.md',
+                '15-project-memory.md',
+                '40-commands.md',
+                '80-task-workflow.md',
+                '90-skill-catalog.md'
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOADED', 'PASS', {
+            stage: 'TASK_ENTRY',
+            artifact_path: normalizeForTimeline(lateRulePackPath)
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-routing');
+        assert.ok(result.commands[0].command.includes('gate record-review-routing'));
+        assert.ok(!result.commands[0].command.includes('handshake-diagnostics'));
+        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+    });
+
+    it('fails closed for invalid late TASK_ENTRY evidence after review phase', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:code-reviewer';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code'
+        });
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOADED', 'PASS', {
+            stage: 'TASK_ENTRY',
+            artifact_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-missing-late-task-entry-rule-pack.json`))
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'load-rule-pack');
+        assert.match(result.reason, /stale or invalid/);
+        assert.ok(result.commands[0].command.includes('gate load-rule-pack'));
+        assert.ok(!result.commands[0].command.includes('record-review-routing'));
+    });
+
     it('preserves planned changed files when refreshing a stale scoped preflight', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({

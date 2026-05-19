@@ -4291,6 +4291,64 @@ function readStartupCycleReadiness(
         events,
         (entry) => isStartupRulePackEvent(entry) && entry.sequence > latestTaskMode.sequence
     );
+    const latestReviewPhaseStarted = findLatestTimelineEvent(
+        events,
+        (entry) => entry.event_type === 'REVIEW_PHASE_STARTED' && entry.sequence > latestTaskMode.sequence
+    );
+
+    if (
+        latestRulePack
+        && latestReviewPhaseStarted
+        && latestRulePack.sequence > latestReviewPhaseStarted.sequence
+    ) {
+        const latestPreReviewShellSmoke = findLatestTimelineEvent(
+            events,
+            (entry) =>
+                entry.event_type === 'SHELL_SMOKE_PREFLIGHT_RECORDED'
+                && entry.sequence > latestTaskMode.sequence
+                && entry.sequence < latestReviewPhaseStarted.sequence
+        );
+        const latestPreReviewHandshake = latestPreReviewShellSmoke
+            ? findLatestTimelineEvent(
+                events,
+                (entry) =>
+                    entry.event_type === 'HANDSHAKE_DIAGNOSTICS_RECORDED'
+                    && entry.sequence > latestTaskMode.sequence
+                    && entry.sequence < latestPreReviewShellSmoke.sequence
+            )
+            : null;
+        const latestPreReviewRulePack = latestPreReviewHandshake
+            ? findLatestTimelineEvent(
+                events,
+                (entry) =>
+                    isStartupRulePackEvent(entry)
+                    && entry.sequence > latestTaskMode.sequence
+                    && entry.sequence < latestPreReviewHandshake.sequence
+            )
+            : null;
+
+        if (latestPreReviewRulePack && latestPreReviewHandshake && latestPreReviewShellSmoke) {
+            const rulePackArtifactPath = getTimelineEventDetailString(latestRulePack, 'artifact_path')
+                || getTimelineEventDetailString(latestRulePack, 'artifactPath');
+            const rulePackEvidence = getRulePackEvidence(repoRoot, taskId, 'TASK_ENTRY', {
+                artifactPath: rulePackArtifactPath,
+                taskModePath
+            });
+            const rulePackViolations = getRulePackEvidenceViolations(rulePackEvidence);
+            if (rulePackViolations.length === 0) {
+                return {
+                    ready: true,
+                    nextGate: null,
+                    title: 'Startup cycle is current.',
+                    reason:
+                        `Existing startup cycle before REVIEW_PHASE_STARTED is current; ignoring late startup rule-pack event ` +
+                        `seq ${latestRulePack.sequence} recorded after review phase seq ${latestReviewPhaseStarted.sequence} ` +
+                        `so review/preflight bindings are not invalidated without explicit task-mode restart or scope change.`
+                };
+            }
+        }
+    }
+
     if (!latestRulePack) {
         return {
             ready: false,
