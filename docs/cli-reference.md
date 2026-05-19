@@ -222,12 +222,17 @@ Start a foreground localhost UI and print a browser URL.
 ```text
 garda ui --target-root "."
 garda ui --target-root "." --port 17340
+garda ui --target-root "." --idle-minutes 15 --idle-warning-seconds 60
+garda ui --target-root "." --no-idle-shutdown
 garda ui --target-root "." --actions
 ```
 
 Notes:
 - The server uses Node built-ins only and binds to `127.0.0.1`; it does not add Express, Vite, React, or other runtime dependencies.
-- The terminal stays occupied while the UI is running. Stop it with Ctrl+C.
+- The terminal stays occupied while the UI is running. Stop it with Ctrl+C, or use the guarded Server Status stop action in the browser.
+- Idle shutdown is enabled by default. The browser sends throttled activity pings, the server owns the authoritative `last_activity_at`, idle threshold, warning countdown, and shutdown deadline, and closed tabs or sleeping browsers still let the foreground process stop after the deadline.
+- During the warning window the Server Status panel shows a countdown slider. Any real user activity before the deadline resets the server-side timer.
+- After the local server shuts down, in-page Launch cannot work because no process remains to receive the request. Rerun `garda ui --target-root "."` from a terminal.
 - The dashboard loads the canonical upper `TASK.md` queue immediately, with overview counters, task search, status/priority filters, workflow config and instructions tabs, and a task detail panel.
 - Per-task details are fetched lazily from read-only local JSON endpoints when the user clicks `Load details`, including gate timeline, blockers, review summary, and artifact links.
 - By default the UI does not run shell commands, mutate task lifecycle state, edit workflow config, or write settings.

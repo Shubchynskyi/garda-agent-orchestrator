@@ -3,6 +3,7 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { URL } from 'node:url';
+import { performance } from 'node:perf_hooks';
 import { isCanonicalTaskId } from '../core/task-ids';
 import {
     buildReportDataContract,
@@ -35,6 +36,8 @@ export type {
 export const DEFAULT_UI_HOST = '127.0.0.1';
 export const DEFAULT_UI_PORT_START = 17340;
 export const DEFAULT_UI_PORT_END = 17359;
+export const DEFAULT_UI_IDLE_MINUTES = 15;
+export const DEFAULT_UI_IDLE_WARNING_SECONDS = 60;
 
 export interface StartLocalUiServerOptions {
     repoRoot: string;
@@ -43,6 +46,9 @@ export interface StartLocalUiServerOptions {
     portStart?: number;
     portEnd?: number;
     actionsEnabled?: boolean;
+    idleShutdownEnabled?: boolean;
+    idleMinutes?: number | null;
+    idleWarningSeconds?: number | null;
     actionRunner?: UiActionRunner;
 }
 
@@ -52,12 +58,35 @@ export interface LocalUiServer {
     port: number;
     url: string;
     actionsEnabled: boolean;
+    idleShutdownEnabled: boolean;
+    idleMinutes: number;
+    idleWarningSeconds: number;
     close: () => Promise<void>;
 }
 
 interface ReportSnapshotCache {
     fingerprint: string | null;
     report: ReportDataContract | null;
+}
+
+interface LocalUiSessionSnapshot {
+    enabled: boolean;
+    state: 'active' | 'warning' | 'stopping' | 'disabled';
+    last_activity_at: string;
+    idle_minutes: number;
+    warning_seconds: number;
+    idle_deadline_at: string | null;
+    shutdown_deadline_at: string | null;
+    seconds_until_warning: number | null;
+    seconds_until_shutdown: number | null;
+    stop_message: string;
+}
+
+interface LocalUiSessionController {
+    snapshot: () => LocalUiSessionSnapshot;
+    recordActivity: () => LocalUiSessionSnapshot;
+    requestShutdown: () => LocalUiSessionSnapshot;
+    dispose: () => void;
 }
 
 function sendJson(response: http.ServerResponse, statusCode: number, payload: unknown): void {
@@ -125,7 +154,153 @@ function findTask(report: ReportDataContract, taskId: string): boolean {
     return report.tasks_tab.rows.some((row) => row.task_id === taskId);
 }
 
-export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<LocalUiServerRuntimeOptions>): http.Server {
+function buildLocalUiSessionController(options: {
+    idleShutdownEnabled: boolean;
+    idleMinutes: number;
+    idleWarningSeconds: number;
+    closeServer: () => void;
+}): LocalUiSessionController {
+    const startedEpochMs = Date.now();
+    const startedMonotonicMs = performance.now();
+    const idleTimeoutMs = options.idleMinutes * 60 * 1000;
+    const warningDurationMs = options.idleWarningSeconds * 1000;
+    const stopMessage = 'The local Garda UI server has stopped. Rerun `garda ui --target-root "."` from a terminal to launch it again.';
+    let lastActivityAtMs = currentTimeMs();
+    let warningStartedAtMs: number | null = null;
+    let shutdownDeadlineAtMs: number | null = null;
+    let stopping = false;
+    let timer: NodeJS.Timeout | null = null;
+
+    function currentTimeMs(): number {
+        return startedEpochMs + performance.now() - startedMonotonicMs;
+    }
+
+    function iso(ms: number | null): string | null {
+        return ms === null ? null : new Date(ms).toISOString();
+    }
+
+    function secondsUntil(targetMs: number | null, nowMs: number): number | null {
+        if (targetMs === null) {
+            return null;
+        }
+        return Math.max(0, Math.ceil((targetMs - nowMs) / 1000));
+    }
+
+    function enterWarning(nowMs: number): void {
+        if (!options.idleShutdownEnabled || stopping || warningStartedAtMs !== null) {
+            return;
+        }
+        warningStartedAtMs = nowMs;
+        shutdownDeadlineAtMs = nowMs + warningDurationMs;
+    }
+
+    function schedule(): void {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
+        if (!options.idleShutdownEnabled || stopping) {
+            return;
+        }
+        const nowMs = currentTimeMs();
+        const nextTargetMs = shutdownDeadlineAtMs ?? lastActivityAtMs + idleTimeoutMs;
+        const delayMs = Math.max(50, Math.min(nextTargetMs - nowMs, 2 ** 31 - 1));
+        timer = setTimeout(checkExpiry, delayMs);
+        timer.unref();
+    }
+
+    function checkExpiry(): void {
+        if (!options.idleShutdownEnabled || stopping) {
+            return;
+        }
+        const nowMs = currentTimeMs();
+        if (shutdownDeadlineAtMs !== null && nowMs >= shutdownDeadlineAtMs) {
+            requestShutdown();
+            return;
+        }
+        if (nowMs >= lastActivityAtMs + idleTimeoutMs) {
+            enterWarning(nowMs);
+        }
+        schedule();
+    }
+
+    function requestShutdown(): LocalUiSessionSnapshot {
+        if (!stopping) {
+            stopping = true;
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            setImmediate(options.closeServer);
+        }
+        return snapshot();
+    }
+
+    function snapshot(): LocalUiSessionSnapshot {
+        const nowMs = currentTimeMs();
+        if (options.idleShutdownEnabled && !stopping && nowMs >= lastActivityAtMs + idleTimeoutMs) {
+            enterWarning(nowMs);
+        }
+        if (options.idleShutdownEnabled && !stopping && shutdownDeadlineAtMs !== null && nowMs >= shutdownDeadlineAtMs) {
+            return requestShutdown();
+        }
+        const idleDeadlineAtMs = options.idleShutdownEnabled ? lastActivityAtMs + idleTimeoutMs : null;
+        return {
+            enabled: options.idleShutdownEnabled,
+            state: !options.idleShutdownEnabled ? 'disabled' : stopping ? 'stopping' : warningStartedAtMs === null ? 'active' : 'warning',
+            last_activity_at: new Date(lastActivityAtMs).toISOString(),
+            idle_minutes: options.idleMinutes,
+            warning_seconds: options.idleWarningSeconds,
+            idle_deadline_at: iso(idleDeadlineAtMs),
+            shutdown_deadline_at: iso(shutdownDeadlineAtMs),
+            seconds_until_warning: warningStartedAtMs === null ? secondsUntil(idleDeadlineAtMs, nowMs) : 0,
+            seconds_until_shutdown: secondsUntil(shutdownDeadlineAtMs, nowMs),
+            stop_message: stopMessage
+        };
+    }
+
+    function recordActivity(): LocalUiSessionSnapshot {
+        if (!stopping) {
+            lastActivityAtMs = currentTimeMs();
+            warningStartedAtMs = null;
+            shutdownDeadlineAtMs = null;
+            schedule();
+        }
+        return snapshot();
+    }
+
+    schedule();
+    return {
+        snapshot,
+        recordActivity,
+        requestShutdown,
+        dispose: () => {
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+        }
+    };
+}
+
+function assertUiPostBoundary(request: http.IncomingMessage, actionToken: string): void {
+    const contentType = String(request.headers['content-type'] || '').toLowerCase();
+    const origin = String(request.headers.origin || '');
+    const host = String(request.headers.host || '');
+    const token = String(request.headers['x-garda-action-token'] || '');
+    if (!contentType.startsWith('application/json') || token !== actionToken) {
+        throw new Error('Session request rejected by local UI boundary.');
+    }
+    if (!host.startsWith(`${DEFAULT_UI_HOST}:`) || (origin && origin !== `http://${host}`)) {
+        throw new Error('Session request rejected by local UI boundary.');
+    }
+}
+
+export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<LocalUiServerRuntimeOptions> & {
+    idleShutdownEnabled?: boolean;
+    idleMinutes?: number | null;
+    idleWarningSeconds?: number | null;
+}): http.Server {
     const resolvedRepoRoot = path.resolve(repoRoot);
     const options: LocalUiServerRuntimeOptions = {
         actionsEnabled: runtimeOptions?.actionsEnabled === true,
@@ -136,13 +311,38 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         fingerprint: null,
         report: null
     };
-    return http.createServer((request, response) => {
+    let server: http.Server;
+    const session = buildLocalUiSessionController({
+        idleShutdownEnabled: runtimeOptions?.idleShutdownEnabled !== false,
+        idleMinutes: runtimeOptions?.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
+        idleWarningSeconds: runtimeOptions?.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
+        closeServer: () => server.close()
+    });
+    server = http.createServer((request, response) => {
         if (!request.url) {
             sendText(response, 405, 'Only GET is supported.');
             return;
         }
         const parsedUrl = new URL(request.url, `http://${DEFAULT_UI_HOST}`);
         const pathname = parsedUrl.pathname;
+        if (request.method === 'POST' && pathname === '/api/session/activity') {
+            try {
+                assertUiPostBoundary(request, options.actionToken);
+                sendJson(response, 200, session.recordActivity());
+            } catch (error: unknown) {
+                sendApiError(response, 403, error instanceof Error ? error.message : String(error), 'session_boundary_rejected');
+            }
+            return;
+        }
+        if (request.method === 'POST' && pathname === '/api/session/shutdown') {
+            try {
+                assertUiPostBoundary(request, options.actionToken);
+                sendJson(response, 200, session.requestShutdown());
+            } catch (error: unknown) {
+                sendApiError(response, 403, error instanceof Error ? error.message : String(error), 'session_boundary_rejected');
+            }
+            return;
+        }
         if (request.method === 'POST' && pathname === '/api/actions') {
             handleUiActionRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
                 sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_action_request');
@@ -165,6 +365,10 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         }
         if (pathname === '/') {
             sendHtml(response, renderLocalUiHtml(options.actionsEnabled, options.actionToken));
+            return;
+        }
+        if (pathname === '/api/session') {
+            sendJson(response, 200, session.snapshot());
             return;
         }
         if (pathname === '/api/report') {
@@ -204,6 +408,8 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         }
         sendText(response, 404, 'Not found.');
     });
+    server.once('close', () => session.dispose());
+    return server;
 }
 
 function decodeTaskIdSegment(segment: string): string | null {
@@ -272,7 +478,10 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
         validatePort(port, 'port');
         const server = createLocalUiServer(options.repoRoot, {
             actionsEnabled: options.actionsEnabled === true,
-            actionRunner: options.actionRunner
+            actionRunner: options.actionRunner,
+            idleShutdownEnabled: options.idleShutdownEnabled !== false,
+            idleMinutes: options.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
+            idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS
         });
         try {
             const actualPort = await listenOnPort(server, host, port);
@@ -282,6 +491,9 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
                 port: actualPort,
                 url: `http://${host}:${actualPort}/`,
                 actionsEnabled: options.actionsEnabled === true,
+                idleShutdownEnabled: options.idleShutdownEnabled !== false,
+                idleMinutes: options.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
+                idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
                 close: () => closeServer(server)
             };
         } catch (error: unknown) {
@@ -302,6 +514,7 @@ export function formatLocalUiServerOutput(server: LocalUiServer): string {
         `Host: ${server.host}`,
         `Port: ${server.port}`,
         `Mode: ${server.actionsEnabled ? 'controlled-actions' : 'read-only'}`,
+        `IdleShutdown: ${server.idleShutdownEnabled ? `enabled; idle=${server.idleMinutes}m; warning=${server.idleWarningSeconds}s` : 'disabled'}`,
         'Stop: Ctrl+C'
     ].join('\n');
 }

@@ -27,6 +27,9 @@ test('handleUi prints no-dependency localhost server help', async () => {
     assert.match(text, /127\.0\.0\.1/);
     assert.match(text, /read-only/i);
     assert.match(text, /--actions/);
+    assert.match(text, /--idle-minutes/);
+    assert.match(text, /--idle-warning-seconds/);
+    assert.match(text, /--no-idle-shutdown/);
     assert.match(text, /allow-listed/i);
     assert.match(text, /Ctrl\+C/);
 });
@@ -42,5 +45,16 @@ test('handleUi rejects conflicting read-only and actions flags', async () => {
     await assert.rejects(
         () => captureOutput(() => handleUi(['--read-only', '--actions'], PACKAGE_JSON)),
         /--actions cannot be combined with --read-only/
+    );
+});
+
+test('handleUi rejects invalid idle settings', async () => {
+    await assert.rejects(
+        () => captureOutput(() => handleUi(['--idle-minutes', '0'], PACKAGE_JSON)),
+        /--idle-minutes must be a positive number/
+    );
+    await assert.rejects(
+        () => captureOutput(() => handleUi(['--idle-warning-seconds', '-1'], PACKAGE_JSON)),
+        /--idle-warning-seconds must be a positive number/
     );
 });

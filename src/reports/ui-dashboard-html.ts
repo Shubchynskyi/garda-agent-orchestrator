@@ -62,6 +62,12 @@ th { background: var(--panel); color: #344054; position: sticky; top: 0; z-index
 .list { margin: 8px 0 0; padding-left: 18px; }
 .artifact-ok { color: var(--blue); }
 .artifact-missing { color: var(--muted); }
+.session-panel { grid-column: 2; }
+.session-state { display: grid; gap: 8px; }
+.session-countdown { width: 100%; accent-color: var(--warn); }
+.session-warning { color: var(--warn); font-weight: 700; }
+.session-stopping { color: var(--danger); font-weight: 700; }
+.session-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .overview { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .toolbar { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { header, main, nav { padding-left: 14px; padding-right: 14px; } th, td { padding: 8px; } }
@@ -82,6 +88,18 @@ th { background: var(--panel); color: #344054; position: sticky; top: 0; z-index
 <section class="notice">Task details are loaded on demand from the local server. The server is bound to 127.0.0.1 and stops when this CLI process exits. Controlled actions are ${actionsEnabled ? 'enabled for allow-listed commands only.' : 'disabled unless the server starts with --actions.'}</section>
 <section class="warnings" id="warnings" hidden></section>
 <section class="overview" id="overview"></section>
+<section class="panel session-panel" id="server-status-panel">
+<div class="panel-head"><h2>Server Status</h2></div>
+<div class="detail session-state">
+<div id="server-status"><p class="empty">Loading server session...</p></div>
+<input id="session-countdown" class="session-countdown" type="range" min="0" max="60" value="60" disabled>
+<div class="session-actions">
+<button type="button" id="session-activity">I'm here</button>
+<button type="button" id="session-shutdown">Stop server</button>
+</div>
+<p class="empty">When this server stops, the page cannot relaunch it. Rerun <code>garda ui --target-root "."</code> in a terminal.</p>
+</div>
+</section>
 <section class="panel tab" id="tasks-tab">
 <div class="panel-head"><h2>Tasks</h2></div>
 <div class="panel-head">
@@ -130,11 +148,17 @@ const settingsEditorNode = document.getElementById('settings-editor');
 const instructionsNode = document.getElementById('instructions');
 const actionsNode = document.getElementById('actions');
 const actionStatusNode = document.getElementById('action-status');
+const serverStatusNode = document.getElementById('server-status');
+const sessionCountdownNode = document.getElementById('session-countdown');
+const sessionActivityNode = document.getElementById('session-activity');
+const sessionShutdownNode = document.getElementById('session-shutdown');
 const searchNode = document.getElementById('task-search');
 const statusFilterNode = document.getElementById('status-filter');
 const priorityFilterNode = document.getElementById('priority-filter');
 const actionToken = ${JSON.stringify(actionToken)};
 let currentReport = null;
+let lastActivityPingAt = 0;
+let sessionPollTimer = null;
 function safe(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
@@ -261,6 +285,63 @@ function artifactList(links) {
   }
   return '<ul class="list">' + links.map(link => '<li class="' + (link.exists ? 'artifact-ok' : 'artifact-missing') + '"><code>' + safe(link.kind) + '</code>: ' + safe(link.path) + (link.exists ? '' : ' (missing)') + '</li>').join('') + '</ul>';
 }
+async function postSession(path) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
+    body: JSON.stringify({})
+  });
+  return response.json();
+}
+function renderSession(session) {
+  if (!session || !session.enabled) {
+    serverStatusNode.innerHTML = '<p><strong>Status:</strong> idle shutdown disabled.</p><p class="empty">Stop with Ctrl+C in the terminal.</p>';
+    sessionCountdownNode.max = '1';
+    sessionCountdownNode.value = '1';
+    return;
+  }
+  const stateClass = session.state === 'warning' ? 'session-warning' : session.state === 'stopping' ? 'session-stopping' : '';
+  const stateLabel = session.state === 'warning'
+    ? 'Idle warning'
+    : session.state === 'stopping'
+      ? 'Stopping'
+      : 'Active';
+  const warningSeconds = session.seconds_until_warning;
+  const shutdownSeconds = session.seconds_until_shutdown;
+  sessionCountdownNode.max = String(Math.max(1, Number(session.warning_seconds || 1)));
+  sessionCountdownNode.value = String(session.state === 'warning' ? Math.max(0, Number(shutdownSeconds || 0)) : Number(session.warning_seconds || 1));
+  serverStatusNode.innerHTML = '<p><strong>Status:</strong> <span class="' + stateClass + '">' + safe(stateLabel) + '</span></p>'
+    + '<p><strong>Idle threshold:</strong> ' + safe(session.idle_minutes) + ' min</p>'
+    + '<p><strong>Last activity:</strong> <code>' + safe(session.last_activity_at) + '</code></p>'
+    + (session.state === 'warning'
+      ? '<p class="session-warning">Shutdown in ' + safe(shutdownSeconds) + ' seconds. Move, type, click, or press "I\\'m here" to keep it running.</p>'
+      : '<p>Warning starts in ' + safe(warningSeconds) + ' seconds.</p>')
+    + (session.state === 'stopping' ? '<p class="session-stopping">' + safe(session.stop_message) + '</p>' : '');
+}
+async function refreshSession() {
+  try {
+    const response = await fetch('/api/session');
+    renderSession(await response.json());
+  } catch (error) {
+    serverStatusNode.innerHTML = '<p class="session-stopping">The local server is unavailable. Rerun <code>garda ui --target-root "."</code> from a terminal.</p>';
+    if (sessionPollTimer) {
+      clearInterval(sessionPollTimer);
+      sessionPollTimer = null;
+    }
+  }
+}
+async function markActivity(force) {
+  const now = Date.now();
+  if (!force && now - lastActivityPingAt < 10000) {
+    return;
+  }
+  lastActivityPingAt = now;
+  try {
+    renderSession(await postSession('/api/session/activity'));
+  } catch {
+    await refreshSession();
+  }
+}
 function renderActionResult(result) {
   actionStatusNode.innerHTML = '<h3>' + safe(result.action_id || 'Action') + '</h3>'
     + '<p><strong>Status:</strong> ' + safe(result.status) + '</p>'
@@ -341,6 +422,15 @@ for (const tabButton of document.querySelectorAll('nav button[data-tab]')) {
 searchNode.addEventListener('input', renderTaskRows);
 statusFilterNode.addEventListener('change', renderTaskRows);
 priorityFilterNode.addEventListener('change', renderTaskRows);
+for (const eventName of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+  window.addEventListener(eventName, () => markActivity(false), { passive: true });
+}
+sessionActivityNode.addEventListener('click', () => markActivity(true));
+sessionShutdownNode.addEventListener('click', async () => {
+  renderSession(await postSession('/api/session/shutdown'));
+});
+refreshSession();
+sessionPollTimer = setInterval(refreshSession, 1000);
 fetch('/api/report').then(response => response.json()).then(renderTasks).catch(error => {
   tasksNode.innerHTML = '<tr><td colspan="6" class="error">' + safe(error && error.message ? error.message : error) + '</td></tr>';
 });

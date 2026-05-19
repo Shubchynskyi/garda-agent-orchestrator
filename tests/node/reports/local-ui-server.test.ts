@@ -128,6 +128,10 @@ function createFakeDocument(): {
         'instructions',
         'actions',
         'action-status',
+        'server-status',
+        'session-countdown',
+        'session-activity',
+        'session-shutdown',
         'task-search',
         'status-filter',
         'priority-filter',
@@ -287,6 +291,9 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /id="priority-filter"/u);
         assert.match(html, /id="actions"/u);
         assert.match(html, /id="settings-editor"/u);
+        assert.match(html, /Server Status/u);
+        assert.match(html, /id="session-countdown"/u);
+        assert.match(html, /api\/session/u);
         assert.match(html, /Gate Timeline/u);
         assert.match(html, /Artifacts/u);
     } finally {
@@ -409,16 +416,34 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 }
             ]
         };
+        const session = {
+            enabled: true,
+            state: 'active',
+            last_activity_at: '2026-05-19T00:00:00.000Z',
+            idle_minutes: 15,
+            warning_seconds: 60,
+            idle_deadline_at: '2026-05-19T00:15:00.000Z',
+            shutdown_deadline_at: null,
+            seconds_until_warning: 900,
+            seconds_until_shutdown: null,
+            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui --target-root "."` from a terminal to launch it again.'
+        };
 
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
             window: {
-                prompt: () => null
+                prompt: () => null,
+                addEventListener: () => undefined
             },
+            setInterval: () => 1,
+            clearInterval: () => undefined,
             fetch: async (url: string) => ({
                 ok: true,
                 status: 200,
                 json: async () => {
+                    if (url === '/api/session' || url === '/api/session/activity' || url === '/api/session/shutdown') {
+                        return session;
+                    }
                     if (url === '/api/report') {
                         return report;
                     }
@@ -469,6 +494,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-green-summary-max-lines/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
         assert.match(fakeDocument.elements.actions.innerHTML, /node bin\/garda\.js status/u);
+        assert.match(fakeDocument.elements['server-status'].innerHTML, /Warning starts in 900 seconds/u);
 
         const taskButton = tasksNode.querySelectorAll('button[data-task-id]')[0];
         await taskButton.dispatch('click');
@@ -517,6 +543,133 @@ test('local UI server returns JSON errors for API method and route failures', as
     } finally {
         await server.close();
     }
+});
+
+test('local UI server exposes server-owned idle session state and activity reset', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        idleMinutes: 0.001,
+        idleWarningSeconds: 30
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const headers = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+        const initialResponse = await fetch(`${server.url}api/session`);
+        assert.equal(initialResponse.status, 200);
+        const initial = await initialResponse.json() as {
+            enabled: boolean;
+            state: string;
+            idle_minutes: number;
+            warning_seconds: number;
+            seconds_until_warning: number | null;
+        };
+        assert.equal(initial.enabled, true);
+        assert.equal(initial.state, 'active');
+        assert.equal(initial.idle_minutes, 0.001);
+        assert.equal(initial.warning_seconds, 30);
+        assert.ok((initial.seconds_until_warning || 0) <= 1);
+
+        await new Promise<void>((resolve) => setTimeout(resolve, 90));
+        const warning = await (await fetch(`${server.url}api/session`)).json() as {
+            state: string;
+            seconds_until_shutdown: number | null;
+        };
+        assert.equal(warning.state, 'warning');
+        assert.ok((warning.seconds_until_shutdown || 0) <= 30);
+
+        const activityResponse = await fetch(`${server.url}api/session/activity`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({})
+        });
+        assert.equal(activityResponse.status, 200);
+        const activity = await activityResponse.json() as {
+            state: string;
+            seconds_until_shutdown: number | null;
+        };
+        assert.equal(activity.state, 'active');
+        assert.equal(activity.seconds_until_shutdown, null);
+    } finally {
+        await server.close().catch(() => undefined);
+    }
+});
+
+test('local UI session posts require the page token and localhost boundary', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0 });
+    try {
+        const missingToken = await fetch(`${server.url}api/session/activity`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': server.url.slice(0, -1)
+            },
+            body: JSON.stringify({})
+        });
+        assert.equal(missingToken.status, 403);
+        assert.equal((await missingToken.json() as { code: string }).code, 'session_boundary_rejected');
+
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const crossOrigin = await fetch(`${server.url}api/session/activity`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': 'http://example.test',
+                'x-garda-action-token': actionToken
+            },
+            body: JSON.stringify({})
+        });
+        assert.equal(crossOrigin.status, 403);
+        assert.equal((await crossOrigin.json() as { code: string }).code, 'session_boundary_rejected');
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI manual session shutdown closes the foreground server', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0 });
+    const actionToken = extractActionToken(await (await fetch(server.url)).text());
+    const closePromise = new Promise<void>((resolve) => server.server.once('close', resolve));
+    const response = await fetch(`${server.url}api/session/shutdown`, {
+        method: 'POST',
+        headers: {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        },
+        body: JSON.stringify({})
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { state: string; stop_message: string };
+    assert.equal(payload.state, 'stopping');
+    assert.match(payload.stop_message, /Rerun `garda ui --target-root "\."`/u);
+    await closePromise;
+});
+
+test('local UI idle expiry closes the server without browser heartbeat', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        idleMinutes: 0.001,
+        idleWarningSeconds: 0.001
+    });
+    const closePromise = new Promise<void>((resolve) => server.server.once('close', resolve));
+    await Promise.race([
+        closePromise,
+        new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error('server did not close after idle expiry')), 1500))
+    ]);
 });
 
 test('local UI actions are disabled unless explicitly enabled', async () => {
