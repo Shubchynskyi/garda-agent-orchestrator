@@ -26,6 +26,11 @@ import {
     type UiActionRunnerResult
 } from './ui-action-registry';
 import { renderLocalUiHtml } from './ui-dashboard-html';
+import {
+    DEFAULT_LOCAL_UI_LANGUAGE,
+    normalizeLocalUiLanguage,
+    type LocalUiLanguage
+} from './ui-i18n';
 
 export type {
     UiActionDefinition,
@@ -49,6 +54,7 @@ export interface StartLocalUiServerOptions {
     idleShutdownEnabled?: boolean;
     idleMinutes?: number | null;
     idleWarningSeconds?: number | null;
+    language?: LocalUiLanguage | null;
     actionRunner?: UiActionRunner;
 }
 
@@ -61,6 +67,7 @@ export interface LocalUiServer {
     idleShutdownEnabled: boolean;
     idleMinutes: number;
     idleWarningSeconds: number;
+    language: LocalUiLanguage;
     close: () => Promise<void>;
 }
 
@@ -300,6 +307,7 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
     idleShutdownEnabled?: boolean;
     idleMinutes?: number | null;
     idleWarningSeconds?: number | null;
+    language?: LocalUiLanguage | null;
 }): http.Server {
     const resolvedRepoRoot = path.resolve(repoRoot);
     const options: LocalUiServerRuntimeOptions = {
@@ -311,6 +319,7 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         fingerprint: null,
         report: null
     };
+    const language = normalizeLocalUiLanguage(runtimeOptions?.language || DEFAULT_LOCAL_UI_LANGUAGE);
     let server: http.Server;
     const session = buildLocalUiSessionController({
         idleShutdownEnabled: runtimeOptions?.idleShutdownEnabled !== false,
@@ -364,7 +373,7 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
             return;
         }
         if (pathname === '/') {
-            sendHtml(response, renderLocalUiHtml(options.actionsEnabled, options.actionToken));
+            sendHtml(response, renderLocalUiHtml(options.actionsEnabled, options.actionToken, language));
             return;
         }
         if (pathname === '/api/session') {
@@ -481,7 +490,8 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
             actionRunner: options.actionRunner,
             idleShutdownEnabled: options.idleShutdownEnabled !== false,
             idleMinutes: options.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
-            idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS
+            idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
+            language: normalizeLocalUiLanguage(options.language || DEFAULT_LOCAL_UI_LANGUAGE)
         });
         try {
             const actualPort = await listenOnPort(server, host, port);
@@ -494,6 +504,7 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
                 idleShutdownEnabled: options.idleShutdownEnabled !== false,
                 idleMinutes: options.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
                 idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
+                language: normalizeLocalUiLanguage(options.language || DEFAULT_LOCAL_UI_LANGUAGE),
                 close: () => closeServer(server)
             };
         } catch (error: unknown) {
@@ -514,6 +525,7 @@ export function formatLocalUiServerOutput(server: LocalUiServer): string {
         `Host: ${server.host}`,
         `Port: ${server.port}`,
         `Mode: ${server.actionsEnabled ? 'controlled-actions' : 'read-only'}`,
+        `Language: ${server.language}`,
         `IdleShutdown: ${server.idleShutdownEnabled ? `enabled; idle=${server.idleMinutes}m; warning=${server.idleWarningSeconds}s` : 'disabled'}`,
         'Stop: Ctrl+C'
     ].join('\n');

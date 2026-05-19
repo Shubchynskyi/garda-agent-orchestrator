@@ -132,6 +132,8 @@ function createFakeDocument(): {
         'session-countdown',
         'session-activity',
         'session-shutdown',
+        'language-select',
+        'ui-notice',
         'task-search',
         'status-filter',
         'priority-filter',
@@ -286,6 +288,8 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /Workflow Config/u);
         assert.match(html, /Instructions/u);
         assert.match(html, /Actions/u);
+        assert.match(html, /Language/u);
+        assert.match(html, /id="language-select"/u);
         assert.match(html, /id="task-search"/u);
         assert.match(html, /id="status-filter"/u);
         assert.match(html, /id="priority-filter"/u);
@@ -296,6 +300,20 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /api\/session/u);
         assert.match(html, /Gate Timeline/u);
         assert.match(html, /Artifacts/u);
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI server applies initial language option to rendered dashboard', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0, language: 'ru' });
+    try {
+        const html = await (await fetch(server.url)).text();
+        assert.match(html, /<html lang="ru">/u);
+        assert.match(html, /Статус сервера/u);
+        assert.equal(server.language, 'ru');
     } finally {
         await server.close();
     }
@@ -429,11 +447,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
             stop_message: 'The local Garda UI server has stopped. Rerun `garda ui --target-root "."` from a terminal to launch it again.'
         };
 
+        const storedLanguageCalls: Array<[string, string]> = [];
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
             window: {
                 prompt: () => null,
-                addEventListener: () => undefined
+                addEventListener: () => undefined,
+                localStorage: {
+                    getItem: () => null,
+                    setItem: (key: string, value: string) => {
+                        storedLanguageCalls.push([key, value]);
+                    }
+                }
             },
             setInterval: () => 1,
             clearInterval: () => undefined,
@@ -495,6 +520,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
         assert.match(fakeDocument.elements.actions.innerHTML, /node bin\/garda\.js status/u);
         assert.match(fakeDocument.elements['server-status'].innerHTML, /Warning starts in 900 seconds/u);
+        assert.match(fakeDocument.elements['language-select'].innerHTML, /Русский/u);
+        assert.match(fakeDocument.elements['ui-notice'].textContent, /127\.0\.0\.1/u);
 
         const taskButton = tasksNode.querySelectorAll('button[data-task-id]')[0];
         await taskButton.dispatch('click');
@@ -502,6 +529,94 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Gate Timeline/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /blocked item/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-code\.md/u);
+
+        fakeDocument.elements['language-select'].value = 'ru';
+        await fakeDocument.elements['language-select'].dispatch('change');
+        assert.deepEqual(storedLanguageCalls.at(-1), ['garda.ui.language', 'ru']);
+        assert.match(fakeDocument.elements.detail.innerHTML, /События/u);
+        assert.match(fakeDocument.elements['server-status'].innerHTML, /Предупреждение начнётся через 900 секунд/u);
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI dashboard restores persisted browser language on page load', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0 });
+    try {
+        const html = await (await fetch(server.url)).text();
+        const fakeDocument = createFakeDocument();
+        const report = {
+            repo_root: repoRoot,
+            unavailable: [],
+            tasks_tab: {
+                rows: [
+                    {
+                        task_id: 'T-100',
+                        status: 'TODO',
+                        status_token: 'TODO',
+                        priority: 'P2',
+                        area: 'ui/report',
+                        title: 'Build UI',
+                        owner: 'gpt-5.4',
+                        notes: 'Uses lazy details'
+                    }
+                ]
+            },
+            workflow_config_tab: { settings: [] },
+            instructions_tab: { entries: [] }
+        };
+        const session = {
+            enabled: true,
+            state: 'active',
+            last_activity_at: '2026-05-19T00:00:00.000Z',
+            idle_minutes: 15,
+            warning_seconds: 60,
+            idle_deadline_at: '2026-05-19T00:15:00.000Z',
+            shutdown_deadline_at: null,
+            seconds_until_warning: 900,
+            seconds_until_shutdown: null,
+            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui --target-root "."` from a terminal to launch it again.'
+        };
+
+        vm.runInNewContext(extractDashboardScript(html), {
+            document: fakeDocument,
+            window: {
+                prompt: () => null,
+                addEventListener: () => undefined,
+                localStorage: {
+                    getItem: (key: string) => key === 'garda.ui.language' ? 'ru' : null,
+                    setItem: () => undefined
+                }
+            },
+            setInterval: () => 1,
+            clearInterval: () => undefined,
+            fetch: async (url: string) => ({
+                ok: true,
+                status: 200,
+                json: async () => {
+                    if (url === '/api/session') {
+                        return session;
+                    }
+                    if (url === '/api/report') {
+                        return report;
+                    }
+                    if (url === '/api/actions') {
+                        return { enabled: false, actions: [] };
+                    }
+                    if (url === '/api/settings') {
+                        return { enabled: false, settings: [] };
+                    }
+                    return {};
+                }
+            })
+        });
+        await flushPromises();
+
+        assert.equal(fakeDocument.elements['language-select'].value, 'ru');
+        assert.match(fakeDocument.elements.overview.innerHTML, /Активные/u);
+        assert.match(fakeDocument.elements['server-status'].innerHTML, /Предупреждение начнётся через 900 секунд/u);
     } finally {
         await server.close();
     }

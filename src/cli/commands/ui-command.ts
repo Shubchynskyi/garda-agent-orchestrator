@@ -9,6 +9,7 @@ import {
     formatLocalUiServerOutput,
     startLocalUiServer
 } from '../../reports/local-ui-server';
+import { normalizeLocalUiLanguage } from '../../reports/ui-i18n';
 
 const UI_COMMAND_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
@@ -16,6 +17,7 @@ const UI_COMMAND_DEFINITIONS = {
     '--port': { key: 'port', type: 'string' },
     '--idle-minutes': { key: 'idleMinutes', type: 'string' },
     '--idle-warning-seconds': { key: 'idleWarningSeconds', type: 'string' },
+    '--language': { key: 'language', type: 'string' },
     '--no-idle-shutdown': { key: 'noIdleShutdown', type: 'boolean' },
     '--read-only': { key: 'readOnly', type: 'boolean' },
     '--actions': { key: 'actions', type: 'boolean' }
@@ -48,6 +50,20 @@ function parsePositiveNumber(value: unknown, flagName: string): number | null {
     return parsed;
 }
 
+export function parseLanguage(value: unknown): 'en' | 'ru' {
+    if (value === undefined || value === null) {
+        return 'en';
+    }
+    if (typeof value !== 'string' || value.trim() === '') {
+        throw new Error('--language must be en or ru.');
+    }
+    const normalized = normalizeLocalUiLanguage(value.trim().toLowerCase());
+    if (normalized !== value.trim().toLowerCase()) {
+        throw new Error('--language must be en or ru.');
+    }
+    return normalized;
+}
+
 export async function handleUi(commandArgv: string[], _packageJson: PackageJsonLike): Promise<void> {
     if (shouldPrintUiHelp(commandArgv)) {
         console.log(buildCommandHelpText('ui'));
@@ -69,7 +85,8 @@ export async function handleUi(commandArgv: string[], _packageJson: PackageJsonL
         actionsEnabled: parsed.actions === true,
         idleShutdownEnabled: parsed.noIdleShutdown !== true,
         idleMinutes: parsePositiveNumber(parsed.idleMinutes, '--idle-minutes'),
-        idleWarningSeconds: parsePositiveNumber(parsed.idleWarningSeconds, '--idle-warning-seconds')
+        idleWarningSeconds: parsePositiveNumber(parsed.idleWarningSeconds, '--idle-warning-seconds'),
+        language: parseLanguage(parsed.language)
     });
     console.log(formatLocalUiServerOutput(server));
     await new Promise<void>((resolve) => {

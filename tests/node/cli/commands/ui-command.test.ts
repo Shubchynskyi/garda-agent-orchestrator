@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleUi } from '../../../../src/cli/commands/ui-command';
+import { handleUi, parseLanguage } from '../../../../src/cli/commands/ui-command';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator-test', version: '0.0.0-test' };
 
@@ -30,6 +30,7 @@ test('handleUi prints no-dependency localhost server help', async () => {
     assert.match(text, /--idle-minutes/);
     assert.match(text, /--idle-warning-seconds/);
     assert.match(text, /--no-idle-shutdown/);
+    assert.match(text, /--language en\|ru/);
     assert.match(text, /allow-listed/i);
     assert.match(text, /Ctrl\+C/);
 });
@@ -57,4 +58,18 @@ test('handleUi rejects invalid idle settings', async () => {
         () => captureOutput(() => handleUi(['--idle-warning-seconds', '-1'], PACKAGE_JSON)),
         /--idle-warning-seconds must be a positive number/
     );
+});
+
+test('handleUi rejects unsupported language', async () => {
+    await assert.rejects(
+        () => captureOutput(() => handleUi(['--language', 'de'], PACKAGE_JSON)),
+        /--language must be en or ru/
+    );
+});
+
+test('parseLanguage accepts supported UI languages and falls back to English by default', () => {
+    assert.equal(parseLanguage(undefined), 'en');
+    assert.equal(parseLanguage('en'), 'en');
+    assert.equal(parseLanguage('ru'), 'ru');
+    assert.equal(parseLanguage('RU'), 'ru');
 });
