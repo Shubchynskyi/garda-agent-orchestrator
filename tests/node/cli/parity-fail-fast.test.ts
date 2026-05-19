@@ -582,6 +582,10 @@ test('workflow set routes through the CLI dispatcher for --target-root and prese
     }
 });
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
 test('workflow set human output separates requested fields from no-op changed fields', () => {
     const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-human-set-caller-'));
     const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-workflow-human-set-target-'));
@@ -631,7 +635,7 @@ test('workflow set human output separates requested fields from no-op changed fi
             { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS }
         );
 
-        const combined = (result.stdout || '') + (result.stderr || '');
+        const combined = stripAnsi((result.stdout || '') + (result.stderr || ''));
         assert.equal(result.status, 0, 'workflow set no-op should succeed without operator confirmation');
         assert.ok(combined.includes('Status: NO_CHANGE'));
         assert.ok(combined.includes('RequestedFields: task_reset.enabled'));

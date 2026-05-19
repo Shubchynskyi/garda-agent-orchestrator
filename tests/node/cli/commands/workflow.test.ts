@@ -56,7 +56,7 @@ function captureConsole<T>(run: () => T): { result: T; output: string } {
     const originalConsoleLog = console.log;
     const lines: string[] = [];
     console.log = (...items: unknown[]) => {
-        lines.push(items.join(' '));
+        lines.push(stripAnsi(items.join(' ')));
     };
     try {
         return {
