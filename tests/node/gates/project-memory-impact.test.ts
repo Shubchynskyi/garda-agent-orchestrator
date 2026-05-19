@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
 
 import {
     assessProjectMemoryImpact,
@@ -34,6 +35,14 @@ function seedProjectMemory(repoRoot: string): void {
             'utf8'
         );
     }
+}
+
+function initializeGitRepo(repoRoot: string): void {
+    childProcess.execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['config', 'user.email', 'garda-tests@example.com'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['config', 'user.name', 'Garda Tests'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['add', '.'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['commit', '-m', 'seed'], { cwd: repoRoot, stdio: 'ignore' });
 }
 
 function writeProjectMemoryWorkflowConfig(repoRoot: string): void {
@@ -177,6 +186,54 @@ describe('assessProjectMemoryImpact', () => {
             assert.equal(result.artifact.status, 'BLOCKED');
             assert.equal(result.artifact.outcome, 'FAIL');
             assert.ok(result.artifact.violations.some((violation) => violation.includes('Update evidence')));
+        });
+    });
+
+    it('infers updated memory files from the current workspace diff when it exactly matches the affected set', () => {
+        withTempRepo((repoRoot) => {
+            initializeGitRepo(repoRoot);
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            for (const fileName of ['commands.md', 'compact.md', 'decisions.md', 'risks.md']) {
+                fs.appendFileSync(path.join(memoryRoot, fileName), '\nUpdated for T-583.\n', 'utf8');
+            }
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-111',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true
+            });
+
+            assert.equal(result.artifact.status, 'UPDATED');
+            assert.deepEqual(result.artifact.update_evidence.updated_memory_files, [
+                'garda-agent-orchestrator/live/docs/project-memory/commands.md',
+                'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+                'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+                'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+            ]);
+            assert.ok(result.updateEvidenceToWrite);
+        });
+    });
+
+    it('rejects bare confirm-updated when changed project-memory files do not exactly match the affected set', () => {
+        withTempRepo((repoRoot) => {
+            initializeGitRepo(repoRoot);
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.appendFileSync(path.join(memoryRoot, 'commands.md'), '\nUpdated for T-583.\n', 'utf8');
+            fs.appendFileSync(path.join(memoryRoot, 'compact.md'), '\nUpdated for T-583.\n', 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('do not exactly match the affected list')));
+            assert.equal(result.updateEvidenceToWrite, null);
         });
     });
 

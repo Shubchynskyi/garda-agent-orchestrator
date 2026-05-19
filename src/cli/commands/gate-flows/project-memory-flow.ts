@@ -2,13 +2,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { appendMandatoryTaskEvent } from '../../../gate-runtime/task-events';
 import { EXIT_GATE_FAILURE } from '../../exit-codes';
+import { getBundleCliCommand, getSourceCliCommand, resolveBundleNameForTarget } from '../../../core/constants';
 import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
     PROJECT_MEMORY_IMPACT_BLOCKED_EVENT,
     assessProjectMemoryImpact
 } from '../../../gates/project-memory-impact';
 import type { ProjectMemoryMaintenanceMode } from '../../../core/workflow-config';
-import { normalizePath } from '../../../gates/helpers';
+import { isOrchestratorSourceCheckout, normalizePath } from '../../../gates/helpers';
 import { writeJsonArtifact } from '../gates-artifacts';
 import { expandValueList, parseBooleanOption } from '../gates-parser';
 import { getErrorMessage, resolveOrchestratorRoot } from './gate-flow-helpers';
@@ -25,7 +26,54 @@ export interface ProjectMemoryImpactCommandOptions {
     updateArtifactPath?: string;
 }
 
+function quoteCliValue(value: string): string {
+    return `"${String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+function toRepoDisplayPath(repoRoot: string, filePath: string): string {
+    const resolvedRepoRoot = path.resolve(repoRoot);
+    const resolvedPath = path.resolve(filePath);
+    const relative = path.relative(resolvedRepoRoot, resolvedPath);
+    if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        return normalizePath(relative);
+    }
+    return normalizePath(resolvedPath);
+}
+
+function buildProjectMemoryRemediationCommand(
+    repoRoot: string,
+    artifact: ReturnType<typeof assessProjectMemoryImpact>['artifact']
+): string | null {
+    if (artifact.status !== 'BLOCKED' || artifact.affected_memory_files.length === 0) {
+        return null;
+    }
+    const cliPrefix = isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(repoRoot));
+    const parts = [
+        `${cliPrefix} gate project-memory-impact`,
+        `--task-id ${quoteCliValue(artifact.task_id)}`,
+        `--mode ${quoteCliValue(artifact.mode)}`
+    ];
+    if (artifact.changed_files_source === 'preflight' && artifact.preflight_path) {
+        parts.push(`--preflight-path ${quoteCliValue(toRepoDisplayPath(repoRoot, artifact.preflight_path))}`);
+    } else if (artifact.changed_files.length > 0) {
+        for (const changedFile of artifact.changed_files) {
+            parts.push(`--changed-file ${quoteCliValue(changedFile)}`);
+        }
+    } else if (artifact.preflight_path) {
+        parts.push(`--preflight-path ${quoteCliValue(toRepoDisplayPath(repoRoot, artifact.preflight_path))}`);
+    }
+    parts.push('--confirm-updated');
+    for (const file of artifact.affected_memory_files) {
+        parts.push(`--updated-memory-file ${quoteCliValue(file)}`);
+    }
+    parts.push('--repo-root "."');
+    return parts.join(' ');
+}
+
 function formatProjectMemoryImpactOutput(input: {
+    repoRoot: string;
     artifact: ReturnType<typeof assessProjectMemoryImpact>['artifact'];
     artifactPath: string;
     updateArtifactPath: string;
@@ -62,6 +110,10 @@ function formatProjectMemoryImpactOutput(input: {
         for (const violation of artifact.violations) {
             lines.push(`- ${violation}`);
         }
+    }
+    const remediationCommand = buildProjectMemoryRemediationCommand(input.repoRoot, artifact);
+    if (remediationCommand) {
+        lines.push(`RemediationCommand: ${remediationCommand}`);
     }
     lines.push(`Next: ${artifact.next_step}`);
     return lines;
@@ -114,6 +166,7 @@ export function runProjectMemoryImpactCommand(
 
     return {
         outputLines: formatProjectMemoryImpactOutput({
+            repoRoot,
             artifact: result.artifact,
             artifactPath: result.artifactPath,
             updateArtifactPath: result.updateArtifactPath

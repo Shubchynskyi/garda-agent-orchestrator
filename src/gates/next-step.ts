@@ -4602,6 +4602,7 @@ function buildProjectMemoryImpactCommand(
     const parts = [
         `${cliPrefix} gate project-memory-impact`,
         `--task-id "${taskId}"`,
+        `--mode ${quoteCommandValue(projectMemory.mode)}`,
         `--preflight-path "${preflightCommandPath}"`
     ];
     if (projectMemory.evidence_status === 'BLOCKED' && projectMemory.affected_memory_files.length > 0) {

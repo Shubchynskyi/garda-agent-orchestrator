@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId } from '../gate-runtime/task-events';
+import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 import {
     PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH,
     PROJECT_MEMORY_REQUIRED_FILE_NAMES,
@@ -27,6 +28,7 @@ import { fileSha256, normalizePath } from './helpers';
 export type ProjectMemoryImpactStatus = 'OFF' | 'NO_UPDATE_NEEDED' | 'UPDATE_NEEDED' | 'UPDATED' | 'BLOCKED';
 export type ProjectMemoryUpdateEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'VALID' | 'STALE' | 'TAMPERED' | 'INVALID';
 export type ProjectMemoryImpactEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'CURRENT' | 'STALE' | 'BLOCKED' | 'INVALID';
+export type ProjectMemoryChangedFilesSource = 'preflight' | 'explicit';
 
 export const PROJECT_MEMORY_IMPACT_ASSESSED_EVENT = 'PROJECT_MEMORY_IMPACT_ASSESSED';
 export const PROJECT_MEMORY_IMPACT_BLOCKED_EVENT = 'PROJECT_MEMORY_IMPACT_BLOCKED';
@@ -73,6 +75,7 @@ export interface ProjectMemoryImpactArtifact {
     update_needed: boolean;
     writes_allowed: false;
     require_user_approval_for_writes: boolean;
+    changed_files_source: ProjectMemoryChangedFilesSource;
     preflight_path: string | null;
     preflight_hash_sha256: string | null;
     changed_files: string[];
@@ -348,6 +351,7 @@ function compareImpactArtifactToExpected(
             actual: actual.require_user_approval_for_writes,
             expected: expected.require_user_approval_for_writes
         },
+        { field: 'changed_files_source', actual: actual.changed_files_source, expected: expected.changed_files_source },
         { field: 'preflight_path', actual: actual.preflight_path, expected: expected.preflight_path },
         { field: 'preflight_hash_sha256', actual: actual.preflight_hash_sha256, expected: expected.preflight_hash_sha256 },
         { field: 'changed_files', actual: actual.changed_files, expected: expected.changed_files },
@@ -397,6 +401,10 @@ function isUpdateEvidenceStatus(value: unknown): value is ProjectMemoryUpdateEvi
     return ['NOT_REQUIRED', 'MISSING', 'VALID', 'STALE', 'TAMPERED', 'INVALID'].includes(String(value || ''));
 }
 
+function isChangedFilesSource(value: unknown): value is ProjectMemoryChangedFilesSource {
+    return value === 'preflight' || value === 'explicit';
+}
+
 function validateImpactArtifactShape(parsed: Record<string, unknown>): string[] {
     const violations: string[] = [];
     const require = (condition: boolean, field: string, expected: string): void => {
@@ -416,6 +424,7 @@ function validateImpactArtifactShape(parsed: Record<string, unknown>): string[] 
     require(typeof parsed.update_needed === 'boolean', 'update_needed', 'a boolean');
     require(typeof parsed.writes_allowed === 'boolean', 'writes_allowed', 'a boolean');
     require(typeof parsed.require_user_approval_for_writes === 'boolean', 'require_user_approval_for_writes', 'a boolean');
+    require(isChangedFilesSource(parsed.changed_files_source), 'changed_files_source', 'preflight or explicit');
     require(isNullableString(parsed.preflight_path), 'preflight_path', 'a string or null');
     require(isNullableString(parsed.preflight_hash_sha256), 'preflight_hash_sha256', 'a string or null');
     require(isStringArray(parsed.changed_files), 'changed_files', 'an array of strings');
@@ -828,6 +837,102 @@ function buildMissingUpdatedFiles(
     return affectedMemoryFiles.filter((file) => !updated.has(file));
 }
 
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function collectChangedProjectMemoryFiles(repoRoot: string, bundleRoot: string): { files: string[]; error: string | null } {
+    const liveMemoryDir = resolveLiveProjectMemoryDir(bundleRoot);
+    const repoRelativeMemoryDir = toRepoPath(path.relative(repoRoot, liveMemoryDir));
+    const result = spawnSyncWithTimeout('git', [
+        '-C',
+        repoRoot,
+        'status',
+        '--porcelain=v1',
+        '-z',
+        '--untracked-files=all',
+        '--',
+        `:(literal)${repoRelativeMemoryDir}`
+    ], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+        maxBuffer: 10 * 1024 * 1024
+    });
+    if (result.timedOut || result.error || result.status !== 0) {
+        const reason = result.timedOut
+            ? `timed out after ${DEFAULT_GIT_TIMEOUT_MS}ms`
+            : result.error
+                ? String(result.error)
+                : String(result.stderr || result.stdout || `exit status ${result.status}`).trim();
+        return {
+            files: [],
+            error: `git status could not inspect current project-memory changes (${reason}).`
+        };
+    }
+
+    const files = new Set<string>();
+    const parts = String(result.stdout || '').split('\0').filter((part) => part.length > 0);
+    for (let index = 0; index < parts.length; index += 1) {
+        const line = parts[index];
+        if (line.length < 4) {
+            continue;
+        }
+        const normalizedPath = normalizePath(line.slice(3));
+        if (!normalizedPath.startsWith(`${repoRelativeMemoryDir}/`)) {
+            if ((line[0] === 'R' || line[0] === 'C') && index + 1 < parts.length) {
+                index += 1;
+            }
+            continue;
+        }
+        files.add(normalizedPath);
+        if ((line[0] === 'R' || line[0] === 'C') && index + 1 < parts.length) {
+            index += 1;
+        }
+    }
+
+    return {
+        files: [...files].sort(),
+        error: null
+    };
+}
+
+function resolveUpdatedMemoryFilesForConfirmation(input: {
+    repoRoot: string;
+    bundleRoot: string;
+    affectedMemoryFiles: string[];
+    explicitUpdatedMemoryFiles: string[];
+}): { updatedMemoryFiles: string[]; inferenceViolation: string | null } {
+    const explicitUpdatedMemoryFiles = input.explicitUpdatedMemoryFiles
+        .map((file) => String(file || '').trim())
+        .filter(Boolean);
+    if (explicitUpdatedMemoryFiles.length > 0 || input.affectedMemoryFiles.length === 0) {
+        return {
+            updatedMemoryFiles: explicitUpdatedMemoryFiles,
+            inferenceViolation: null
+        };
+    }
+
+    const inferred = collectChangedProjectMemoryFiles(input.repoRoot, input.bundleRoot);
+    if (inferred.error) {
+        return {
+            updatedMemoryFiles: [],
+            inferenceViolation: 'No --updated-memory-file values were provided, and the current project-memory diff could not be inferred safely.'
+        };
+    }
+    if (!arraysEqual(inferred.files, input.affectedMemoryFiles)) {
+        const changedSummary = inferred.files.length > 0 ? inferred.files.join(', ') : '(none)';
+        return {
+            updatedMemoryFiles: [],
+            inferenceViolation: `No --updated-memory-file values were provided, and the current changed project-memory files do not exactly match the affected list. Changed project-memory files: ${changedSummary}.`
+        };
+    }
+    return {
+        updatedMemoryFiles: inferred.files,
+        inferenceViolation: null
+    };
+}
+
 function readUpdateEvidence(updateArtifactPath: string): ProjectMemoryUpdateEvidence | null {
     const parsed = readJsonFileIfPresent(updateArtifactPath);
     if (!isPlainObject(parsed)) {
@@ -907,8 +1012,17 @@ function buildUpdateEvidence(input: {
     compactSha256: string | null;
 }): { evidence: ProjectMemoryUpdateEvidence; updateEvidence: ProjectMemoryImpactArtifact['update_evidence']; violations: string[] } {
     const violations: string[] = [];
+    const resolvedUpdatedMemoryFiles = resolveUpdatedMemoryFilesForConfirmation({
+        repoRoot: input.repoRoot,
+        bundleRoot: input.bundleRoot,
+        affectedMemoryFiles: input.affectedMemoryFiles,
+        explicitUpdatedMemoryFiles: input.updatedMemoryFiles
+    });
+    if (resolvedUpdatedMemoryFiles.inferenceViolation) {
+        violations.push(resolvedUpdatedMemoryFiles.inferenceViolation);
+    }
     const normalizedUpdatedFiles: string[] = [];
-    for (const rawFile of input.updatedMemoryFiles) {
+    for (const rawFile of resolvedUpdatedMemoryFiles.updatedMemoryFiles) {
         try {
             normalizedUpdatedFiles.push(normalizeUpdatedMemoryFile(input.repoRoot, input.bundleRoot, rawFile));
         } catch (error: unknown) {
@@ -1082,6 +1196,7 @@ export function assessProjectMemoryImpact(options: ProjectMemoryImpactOptions): 
         update_needed: status === 'UPDATE_NEEDED' || status === 'BLOCKED',
         writes_allowed: false,
         require_user_approval_for_writes: configured.require_user_approval_for_writes,
+        changed_files_source: explicitChangedFilesProvided ? 'explicit' : 'preflight',
         preflight_path: preflightPath ? normalizePath(preflightPath) : null,
         preflight_hash_sha256: preflight.preflightHash,
         changed_files: changedFiles,
