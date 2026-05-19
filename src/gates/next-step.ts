@@ -98,6 +98,11 @@ import {
     getReviewContextContractViolations
 } from './review-context-contract';
 import {
+    buildDomainScopeFingerprints,
+    normalizeDomainScopeFingerprints,
+    reviewLaneScopeSha256Matches
+} from './domain-scope-fingerprints';
+import {
     validateStrictReusedReviewEvidence,
     type ReviewReuseTelemetryEventLike
 } from './review-reuse-telemetry';
@@ -1904,6 +1909,7 @@ interface ReviewArtifactState {
     failed: boolean;
     failureKind: 'launch-package' | null;
     failureReason: string | null;
+    domainScopeCurrent: boolean;
     ready: boolean;
     violations: string[];
     reviewerIdentity: string | null;
@@ -2200,6 +2206,7 @@ function readReviewArtifactState(
     const passToken = REVIEW_VERDICT_PASS_TOKENS[reviewType] || '';
     const failToken = REVIEW_VERDICT_FAIL_TOKENS[reviewType] || '';
     const violations: string[] = [];
+    let contextPreflightBindingViolationIndex: number | null = null;
     const contextExists = fileExists(contextPath);
     let contextCurrent = false;
     const artifactExists = fileExists(artifactPath);
@@ -2227,6 +2234,7 @@ function readReviewArtifactState(
     let failed = false;
     let failureKind: ReviewArtifactState['failureKind'] = null;
     let failureReason: string | null = null;
+    let domainScopeCurrent = false;
     let reviewResultRecordedAtUtc: string | null = null;
     let recordedAtUtc: string | null = null;
     let reviewOutputSourceMtimeUtc: string | null = null;
@@ -2287,6 +2295,7 @@ function readReviewArtifactState(
                     violations.push(...contractViolations);
                 }
             } else {
+                contextPreflightBindingViolationIndex = violations.length;
                 violations.push(
                     'review context preflight binding is stale or missing ' +
                     `(context preflight_path='${contextPreflightPath || 'missing'}', preflight_sha256=${contextPreflightHash || 'missing'}; ` +
@@ -2395,6 +2404,7 @@ function readReviewArtifactState(
         receiptReviewTreeStateSha256 = typeof receipt.review_tree_state_sha256 === 'string'
             ? receipt.review_tree_state_sha256.trim().toLowerCase() || null
             : null;
+        domainScopeCurrent = reviewReceiptDomainScopeMatchesCurrentPreflight(receipt, context, preflightPayload);
         reviewResultRecordedAtUtc = typeof receipt.review_result_recorded_at_utc === 'string'
             ? receipt.review_result_recorded_at_utc.trim() || null
             : null;
@@ -2503,6 +2513,10 @@ function readReviewArtifactState(
         }
     }
 
+    const effectiveViolations = domainScopeCurrent
+        ? violations.filter((_, index) => index !== contextPreflightBindingViolationIndex)
+        : violations;
+
     return {
         reviewType,
         contextPath,
@@ -2518,8 +2532,9 @@ function readReviewArtifactState(
         failed,
         failureKind,
         failureReason,
-        ready: violations.length === 0,
-        violations,
+        domainScopeCurrent,
+        ready: effectiveViolations.length === 0,
+        violations: effectiveViolations,
         reviewerIdentity,
         contextReviewerIdentity,
         reusedExistingReview,
@@ -2541,6 +2556,31 @@ function readReviewArtifactState(
         recordedAtUtc,
         reviewOutputSourceMtimeUtc
     };
+}
+
+function reviewReceiptDomainScopeMatchesCurrentPreflight(
+    receipt: Record<string, unknown>,
+    reviewContext: Record<string, unknown> | null,
+    currentPreflight: Record<string, unknown> | null
+): boolean {
+    if (!reviewContext || !currentPreflight) {
+        return false;
+    }
+    const contextTreeState = isPlainRecord(reviewContext.tree_state) ? reviewContext.tree_state : null;
+    const contextDomainScopeFingerprints = normalizeDomainScopeFingerprints(contextTreeState?.domain_scope_fingerprints);
+    const metrics = isPlainRecord(currentPreflight.metrics) ? currentPreflight.metrics : {};
+    const currentDomainScopeFingerprints = normalizeDomainScopeFingerprints(metrics.domain_scope_fingerprints);
+    if (!contextDomainScopeFingerprints || !currentDomainScopeFingerprints) {
+        return false;
+    }
+    const reviewType = String(receipt.review_type || '').trim().toLowerCase();
+    if (reviewType !== String(reviewContext.review_type || '').trim().toLowerCase()) {
+        return false;
+    }
+    return reviewLaneScopeSha256Matches(reviewType, [
+        contextDomainScopeFingerprints,
+        currentDomainScopeFingerprints
+    ]);
 }
 
 function scopedDiffExpectedForReview(options: {
@@ -2767,8 +2807,103 @@ function timelineHasDelegatedReviewInvocationAttestation(
     return false;
 }
 
+function timelineHasHistoricalDelegatedReviewInvocationAttestation(
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): boolean {
+    if (state.reusedExistingReview) {
+        return false;
+    }
+    if (!state.reviewerIdentity || !state.reviewerProvenance?.task_sequence || !state.reviewerProvenance.event_sha256) {
+        return false;
+    }
+    if (
+        state.reviewerProvenance.attestation_type !== 'reviewer_invocation_attestation'
+        || state.reviewerProvenance.controller_event_type !== 'REVIEWER_INVOCATION_ATTESTED'
+    ) {
+        return false;
+    }
+    const expectedReviewContextSha256 = state.receiptReviewContextSha256;
+    const expectedReviewTreeStateSha256 = state.contextReviewTreeStateSha256;
+    if (
+        !expectedReviewContextSha256
+        || !expectedReviewTreeStateSha256
+        || state.receiptReviewTreeStateSha256 !== expectedReviewTreeStateSha256
+        || state.reviewerProvenance.review_context_sha256 !== expectedReviewContextSha256
+        || state.reviewerProvenance.review_tree_state_sha256 !== expectedReviewTreeStateSha256
+    ) {
+        return false;
+    }
+    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fileExists(timelinePath)) {
+        return false;
+    }
+    const lines = fs.readFileSync(timelinePath, 'utf8')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const event = JSON.parse(lines[index]) as Record<string, unknown>;
+            if (String(event.event_type || '').trim() !== 'REVIEWER_INVOCATION_ATTESTED') {
+                continue;
+            }
+            const details = isPlainRecord(event.details) ? event.details : {};
+            if (String(details.task_id || '').trim() !== taskId) {
+                continue;
+            }
+            if (String(details.review_type || '').trim() !== state.reviewType) {
+                continue;
+            }
+            if (String(details.reviewer_execution_mode || '').trim() !== 'delegated_subagent') {
+                continue;
+            }
+            const eventReviewerIdentity = String(details.reviewer_identity || details.reviewer_session_id || '').trim();
+            if (eventReviewerIdentity !== state.reviewerIdentity) {
+                continue;
+            }
+            const reviewContextSha256 = String(details.review_context_sha256 || '').trim().toLowerCase();
+            const reviewTreeStateSha256 = String(details.review_tree_state_sha256 || '').trim().toLowerCase();
+            const routingEventSha256 = String(details.routing_event_sha256 || '').trim().toLowerCase();
+            if (
+                reviewContextSha256 !== expectedReviewContextSha256
+                || reviewTreeStateSha256 !== expectedReviewTreeStateSha256
+                || routingEventSha256 !== String(state.reviewerProvenance.routing_event_sha256 || '').trim().toLowerCase()
+            ) {
+                continue;
+            }
+            const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+            const taskSequence = typeof integrity?.task_sequence === 'number'
+                ? integrity.task_sequence
+                : Number(integrity?.task_sequence);
+            const eventSha256 = String(integrity?.event_sha256 || '').trim().toLowerCase();
+            const prevEventSha256 = integrity?.prev_event_sha256 == null
+                ? null
+                : String(integrity.prev_event_sha256 || '').trim().toLowerCase() || null;
+            if (
+                taskSequence !== state.reviewerProvenance.task_sequence
+                || eventSha256 !== state.reviewerProvenance.event_sha256
+                || prevEventSha256 !== state.reviewerProvenance.prev_event_sha256
+            ) {
+                continue;
+            }
+            return true;
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return false;
+}
+
 function timelineHasReviewReuseRecordedAfterCompile(eventsRoot: string, taskId: string, state: ReviewArtifactState): boolean {
-    if (!state.reusedExistingReview || !state.receiptExists || !state.contextExists || !state.contextCurrent || !state.artifactExists) {
+    if (
+        !state.reusedExistingReview
+        || !state.receiptExists
+        || !state.contextExists
+        || (!state.contextCurrent && !state.domainScopeCurrent)
+        || !state.artifactExists
+    ) {
         return false;
     }
     const reviewContextSha256 = fileSha256(state.contextPath);
@@ -2800,7 +2935,7 @@ function timelineHasReviewReuseRecordedAfterCompile(eventsRoot: string, taskId: 
         reviewerExecutionMode: state.reviewerProvenance?.reviewer_execution_mode || null,
         reviewerIdentity: state.reviewerIdentity,
         reviewerProvenance: state.reviewerProvenance as unknown as Record<string, unknown> | null,
-        latestCompileTaskSequence: latestCompileSequence
+        latestCompileTaskSequence: state.domainScopeCurrent ? null : latestCompileSequence
     });
     return validation.valid;
 }
@@ -3473,6 +3608,9 @@ function reviewStateHasSatisfiedEvidence(
     if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
         return false;
     }
+    if (state.domainScopeCurrent && !state.reusedExistingReview) {
+        return timelineHasHistoricalDelegatedReviewInvocationAttestation(eventsRoot, taskId, state);
+    }
     if (state.reusedExistingReview) {
         return timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state);
     }
@@ -3524,6 +3662,9 @@ function reviewStateHasCurrentRecordedEvidence(
     }
     if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
         return false;
+    }
+    if (state.domainScopeCurrent && !state.reusedExistingReview) {
+        return timelineHasHistoricalDelegatedReviewInvocationAttestation(eventsRoot, taskId, state);
     }
     if (state.reusedExistingReview) {
         return timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state);
@@ -3648,7 +3789,8 @@ function readCompileReadiness(
                 detectionSource,
                 changedFilesSha256,
                 scopeContentSha256,
-                getDocImpactDeclaredDocsUpdated(path.join(reviewsRoot, `${taskId}-doc-impact.json`))
+                getDocImpactDeclaredDocsUpdated(path.join(reviewsRoot, `${taskId}-doc-impact.json`)),
+                null
             )
             : null;
         if (docsOnlyDeltaReadiness) {
@@ -3920,7 +4062,8 @@ function buildDocsOnlyDeltaReadiness(
     detectionSource: string,
     expectedChangedFilesSha256: string,
     expectedScopeContentSha256: string,
-    declaredDocsUpdated: string[]
+    declaredDocsUpdated: string[],
+    expectedDomainScopeFingerprints: ReturnType<typeof normalizeDomainScopeFingerprints>
 ): PreflightWorkspaceReadiness | null {
     if (!isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource)) {
         return null;
@@ -3939,13 +4082,51 @@ function buildDocsOnlyDeltaReadiness(
     const declaredDocsSet = declaredDocsUpdated.length > 0
         ? new Set(declaredDocsUpdated.map((entry) => normalizePath(entry)).filter(Boolean))
         : null;
-    if (declaredDocsSet && docsOnlyDeltaFiles.some((entry) => !declaredDocsSet.has(entry))) {
+    const currentDomainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource,
+        includeUntracked,
+        changedFiles: currentFiles
+    });
+    const acceptedDeltaFiles = docsOnlyDeltaFiles.filter((filePath) => {
+        const normalizedPath = normalizePath(filePath);
+        return currentDomainScopeFingerprints.domains.docs.changed_files.includes(normalizedPath)
+            || currentDomainScopeFingerprints.domains.closeout.changed_files.includes(normalizedPath);
+    });
+    if (acceptedDeltaFiles.length !== docsOnlyDeltaFiles.length) {
         return null;
     }
+    if (declaredDocsSet) {
+        const undeclaredDocs = acceptedDeltaFiles.filter((entry) => (
+            currentDomainScopeFingerprints.domains.docs.changed_files.includes(entry)
+            && !declaredDocsSet.has(entry)
+        ));
+        if (undeclaredDocs.length > 0) {
+            return null;
+        }
+    }
+    if (expectedDomainScopeFingerprints) {
+        const protectedDomains = ['implementation', 'test', 'config'] as const;
+        const staleDomains = protectedDomains.filter((domain) => (
+            expectedDomainScopeFingerprints.domains[domain].scope_sha256
+            && currentDomainScopeFingerprints.domains[domain].scope_sha256
+            && expectedDomainScopeFingerprints.domains[domain].scope_sha256
+                !== currentDomainScopeFingerprints.domains[domain].scope_sha256
+        ));
+        if (staleDomains.length > 0) {
+            return null;
+        }
+        return {
+            ready: true,
+            reason:
+                'Preflight implementation/test/config domains still match the current workspace after accepting docs/closeout updates: ' +
+                `${describePathList(acceptedDeltaFiles)}.`,
+            currentChangedFiles: currentFiles,
+            acceptedDocsOnlyDeltaFiles: acceptedDeltaFiles
+        };
+    }
 
-    const nonOrdinaryDocs = docsOnlyDeltaFiles.filter((filePath) => (
-        !isOrdinaryDocumentationDeltaPath(filePath, classificationConfig)
-    ));
+    const nonOrdinaryDocs = docsOnlyDeltaFiles.filter((filePath) => !isOrdinaryDocumentationDeltaPath(filePath, classificationConfig));
     if (nonOrdinaryDocs.length > 0) {
         return null;
     }
@@ -4016,6 +4197,9 @@ function readPreflightWorkspaceReadiness(
     const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
         ? metrics.scope_content_sha256.trim().toLowerCase()
         : '';
+    const expectedDomainScopeFingerprints = normalizeDomainScopeFingerprints(
+        isPlainRecord(metrics.domain_scope_fingerprints) ? metrics.domain_scope_fingerprints : null
+    );
     const currentScope = getWorkspaceSnapshotCached(
         repoRoot,
         detectionSource,
@@ -4076,7 +4260,8 @@ function readPreflightWorkspaceReadiness(
                     detectionSource,
                     expectedChangedFilesSha256,
                     expectedScopeContentSha256,
-                    getDocImpactDeclaredDocsUpdated(options.docImpactPath)
+                    getDocImpactDeclaredDocsUpdated(options.docImpactPath),
+                    expectedDomainScopeFingerprints
                 );
                 if (docsOnlyDeltaReadiness) {
                     return docsOnlyDeltaReadiness;
@@ -4110,7 +4295,8 @@ function readPreflightWorkspaceReadiness(
             detectionSource,
             expectedChangedFilesSha256,
             expectedScopeContentSha256,
-            getDocImpactDeclaredDocsUpdated(options.docImpactPath)
+            getDocImpactDeclaredDocsUpdated(options.docImpactPath),
+            expectedDomainScopeFingerprints
         );
         if (docsOnlyDeltaReadiness) {
             return docsOnlyDeltaReadiness;

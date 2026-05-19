@@ -22,6 +22,7 @@ import { assessProjectMemoryImpact } from '../../../src/gates/project-memory-imp
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events-helpers';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
+import { buildDomainScopeFingerprints } from '../../../src/gates/domain-scope-fingerprints';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -475,10 +476,24 @@ function writePreflight(
     repoRoot: string,
     taskId: string,
     requiredReviews: Record<string, boolean>,
-    options: { seedPostPreflight?: boolean; reviewPolicyMode?: string } = {}
+    options: {
+        seedPostPreflight?: boolean;
+        reviewPolicyMode?: string;
+        changedFiles?: string[];
+        includeDomainScopeFingerprints?: boolean;
+    } = {}
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const changedFiles = options.changedFiles || ['src/app.ts'];
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+    const domainScopeFingerprints = options.includeDomainScopeFingerprints
+        ? buildDomainScopeFingerprints({
+            repoRoot,
+            detectionSource: snapshot.detection_source,
+            includeUntracked: snapshot.include_untracked,
+            changedFiles
+        })
+        : null;
     const reviewPolicyMode = options.reviewPolicyMode || 'code_first_optional';
     writeJson(preflightPath, {
         task_id: taskId,
@@ -489,10 +504,11 @@ function writePreflight(
             changed_lines_total: snapshot.changed_lines_total,
             changed_files_sha256: snapshot.changed_files_sha256,
             scope_content_sha256: snapshot.scope_content_sha256,
-            scope_sha256: snapshot.scope_sha256
+            scope_sha256: snapshot.scope_sha256,
+            ...(domainScopeFingerprints ? { domain_scope_fingerprints: domainScopeFingerprints } : {})
         },
         required_reviews: requiredReviews,
-        changed_files: ['src/app.ts'],
+        changed_files: changedFiles,
         review_execution_policy: {
             mode: reviewPolicyMode,
             visible_summary_line: `Review execution policy: ${reviewPolicyMode}`
@@ -598,6 +614,7 @@ function buildReviewContextScopeFixture(repoRoot: string, taskId: string, review
             schema_version: 1,
             detection_source: String(preflight.detection_source || 'explicit_changed_files'),
             changed_files: changedFiles,
+            domain_scope_fingerprints: (preflight.metrics as Record<string, unknown> | undefined)?.domain_scope_fingerprints,
             tree_state_sha256: sha256Text(JSON.stringify({
                 task_id: taskId,
                 review_type: reviewType,
@@ -642,6 +659,7 @@ function writeReviewEvidence(
     const reviewContextScope = buildReviewContextScopeFixture(repoRoot, taskId, reviewType);
     const reviewTreeState = reviewContextScope.tree_state as Record<string, unknown> | undefined;
     const reviewTreeStateSha256 = String(reviewTreeState?.tree_state_sha256 || '').trim();
+    const domainScopeFingerprints = reviewTreeState?.domain_scope_fingerprints;
     const reviewContext = {
         task_id: taskId,
         review_type: reviewType,
@@ -747,12 +765,14 @@ function writeReviewEvidence(
     writeJson(receiptPath, {
         task_id: taskId,
         review_type: reviewType,
+        preflight_sha256: fileSha256(preflightPath),
         trust_level: 'INDEPENDENT_AUDITED',
         reviewer_execution_mode: 'delegated_subagent',
         reviewer_identity: `agent:${reviewType}-reviewer`,
         review_artifact_sha256: sha256Text(artifactText),
         review_context_sha256: sha256Text(reviewContextText),
         review_tree_state_sha256: reviewTreeStateSha256,
+        domain_scope_fingerprints: domainScopeFingerprints,
         reviewer_provenance: {
             schema_version: 1,
             attestation_type: 'reviewer_invocation_attestation',
@@ -4880,7 +4900,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.match(result.title, /before test review/);
         assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
@@ -4968,7 +4988,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.equal(result.full_suite_validation.placement, 'before_completion');
         assert.ok(result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
@@ -5101,7 +5121,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "test"'));
     });
 
@@ -5125,7 +5145,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'implementation');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.match(result.title, /Fix full-suite failures/);
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('build-review-context'));
@@ -5153,7 +5173,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.match(result.title, /before test review/);
         assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
@@ -5206,7 +5226,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
     });
@@ -5233,7 +5253,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.match(result.title, /before test review/);
         assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
@@ -5598,7 +5618,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'test');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "test"'));
     });
 
@@ -6015,6 +6035,189 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'build-review-context');
         assert.ok(result.reason.includes('stale for the current preflight'));
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
+    });
+
+    it('keeps passed code review satisfied when only test-domain scope changes after preflight refresh', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const testFile = path.join(repoRoot, 'tests', 'review-domain.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("review domain", () => {});\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['src/app.ts', 'tests/review-domain.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+    });
+
+    it('rejects receipt-spoofed lane-domain freshness when review context evidence changed', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changedAfterReview = true;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['src/app.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        const currentPreflight = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')
+        ) as Record<string, unknown>;
+        receipt.domain_scope_fingerprints = (currentPreflight.metrics as Record<string, unknown>).domain_scope_fingerprints;
+        writeJson(receiptPath, receipt);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+        assert.ok(!result.review.launchable_review_types.includes('security'));
+    });
+
+    it('keeps lane-domain-current reused review evidence on the strict reuse validation path', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-receipt.json`);
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code.md`);
+        const contextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const originalPreflight = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`), 'utf8')
+        ) as Record<string, unknown>;
+        const originalPreflightMetrics = originalPreflight.metrics as Record<string, unknown>;
+        const originalLegacyScopes = ((originalPreflightMetrics.domain_scope_fingerprints as Record<string, unknown>)
+            .legacy || {}) as Record<string, unknown>;
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        receipt.review_scope_sha256 = originalLegacyScopes.review_scope_sha256;
+        receipt.code_scope_sha256 = originalLegacyScopes.code_scope_sha256;
+        writeJson(receiptPath, receipt);
+        const reviewerProvenance = receipt.reviewer_provenance as Record<string, unknown>;
+        const historicalReceiptSha256 = fileSha256(receiptPath);
+        const historicalReceiptSnapshotPath = path.join(
+            reviewsRoot(repoRoot),
+            `${TASK_ID}-code-receipt-${historicalReceiptSha256}.json`
+        );
+        fs.copyFileSync(receiptPath, historicalReceiptSnapshotPath);
+        const historicalContextSha256 = fileSha256(contextPath);
+        const reviewArtifactSha256 = fileSha256(artifactPath);
+        const reviewArtifactSnapshotPath = path.join(
+            reviewsRoot(repoRoot),
+            `${TASK_ID}-code-artifact-${reviewArtifactSha256}.md`
+        );
+        fs.copyFileSync(artifactPath, reviewArtifactSnapshotPath);
+        const currentReviewContextReuseSha256 = '7'.repeat(64);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+            ...receipt,
+            receipt_path: receiptPath,
+            receipt_sha256: historicalReceiptSha256,
+            receipt_snapshot_path: historicalReceiptSnapshotPath,
+            receipt_snapshot_sha256: historicalReceiptSha256,
+            review_artifact_path: artifactPath,
+            review_artifact_sha256: reviewArtifactSha256,
+            review_artifact_snapshot_path: reviewArtifactSnapshotPath,
+            review_artifact_snapshot_sha256: reviewArtifactSha256,
+            review_context_path: contextPath,
+            review_context_sha256: historicalContextSha256,
+            review_context_reuse_sha256: currentReviewContextReuseSha256,
+            review_tree_state_sha256: receipt.review_tree_state_sha256
+        });
+        receipt.reused_existing_review = true;
+        receipt.reused_from_receipt_path = receiptPath;
+        receipt.reused_from_receipt_sha256 = historicalReceiptSha256;
+        receipt.review_context_reuse_sha256 = currentReviewContextReuseSha256;
+        receipt.reused_from_review_context_sha256 = historicalContextSha256;
+        receipt.reused_from_review_context_reuse_sha256 = currentReviewContextReuseSha256;
+        receipt.reused_from_review_tree_state_sha256 = reviewerProvenance.review_tree_state_sha256;
+        receipt.reused_from_review_scope_sha256 = receipt.review_scope_sha256;
+        receipt.reused_from_code_scope_sha256 = receipt.code_scope_sha256;
+        writeJson(receiptPath, receipt);
+        const currentReceiptSha256 = fileSha256(receiptPath);
+        const currentReceiptSnapshotPath = path.join(
+            reviewsRoot(repoRoot),
+            `${TASK_ID}-code-receipt-${currentReceiptSha256}.json`
+        );
+        fs.copyFileSync(receiptPath, currentReceiptSnapshotPath);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+            ...receipt,
+            receipt_path: receiptPath,
+            receipt_sha256: currentReceiptSha256,
+            receipt_snapshot_path: currentReceiptSnapshotPath,
+            receipt_snapshot_sha256: currentReceiptSha256,
+            review_artifact_path: artifactPath,
+            review_artifact_sha256: reviewArtifactSha256,
+            review_artifact_snapshot_path: reviewArtifactSnapshotPath,
+            review_artifact_snapshot_sha256: reviewArtifactSha256,
+            review_context_path: contextPath,
+            review_context_sha256: historicalContextSha256,
+            review_context_reuse_sha256: currentReviewContextReuseSha256,
+            review_tree_state_sha256: receipt.review_tree_state_sha256
+        });
+
+        const testFile = path.join(repoRoot, 'tests', 'review-domain.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("review domain", () => {});\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['src/app.ts', 'tests/review-domain.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
     });
 
     it('rebuilds each stale specialist review context against the current preflight hash', () => {

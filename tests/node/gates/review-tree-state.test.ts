@@ -171,6 +171,100 @@ describe('gates/review-tree-state', () => {
         }
     });
 
+    it('accepts git-auto docs-only drift when the reviewed code domain still matches', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-doc-drift-'));
+        try {
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+
+            const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+            const treeState = buildReviewTreeState({
+                repoRoot,
+                detectionSource: 'git_auto',
+                includeUntracked: true,
+                changedFiles: snapshot.changed_files,
+                metrics: {
+                    changed_files_sha256: snapshot.changed_files_sha256,
+                    scope_content_sha256: snapshot.scope_content_sha256,
+                    scope_sha256: snapshot.scope_sha256
+                }
+            });
+            const reviewContext = {
+                review_type: 'code',
+                tree_state: treeState
+            };
+
+            fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\nCloseout note.\n', 'utf8');
+
+            assert.doesNotThrow(() => assertReviewTreeStateFresh({
+                repoRoot,
+                reviewContext,
+                contextPath: path.join(repoRoot, 'runtime', 'reviews', 'T-1-code-review-context.json'),
+                gateName: 'required-reviews-check',
+                freshnessCache: createReviewTreeStateFreshnessCache()
+            }));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('fails closed on git-auto config drift even when implementation files stay unchanged', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-config-drift-'));
+        try {
+            runGit(repoRoot, ['init']);
+            runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+            runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+            runGit(repoRoot, ['add', 'src/app.ts']);
+            runGit(repoRoot, ['commit', '-m', 'baseline']);
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+
+            const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+            const treeState = buildReviewTreeState({
+                repoRoot,
+                detectionSource: 'git_auto',
+                includeUntracked: true,
+                changedFiles: snapshot.changed_files,
+                metrics: {
+                    changed_files_sha256: snapshot.changed_files_sha256,
+                    scope_content_sha256: snapshot.scope_content_sha256,
+                    scope_sha256: snapshot.scope_sha256
+                }
+            });
+            const reviewContext = {
+                review_type: 'code',
+                tree_state: treeState
+            };
+
+            fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config'), { recursive: true });
+            fs.writeFileSync(
+                path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+                '{\"full_suite_validation\":{\"enabled\":false}}\n',
+                'utf8'
+            );
+
+            assert.throws(
+                () => assertReviewTreeStateFresh({
+                    repoRoot,
+                    reviewContext,
+                    contextPath: path.join(repoRoot, 'runtime', 'reviews', 'T-1-code-review-context.json'),
+                    gateName: 'required-reviews-check',
+                    freshnessCache: createReviewTreeStateFreshnessCache()
+                }),
+                /review context scope is stale|scope fingerprints are stale|tree_state is stale/
+            );
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('binds in-repo symlink targets into review and reuse fingerprints', (t) => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-tree-state-symlink-target-'));
         try {

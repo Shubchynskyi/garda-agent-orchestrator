@@ -256,6 +256,19 @@ export function getReviewLaneScopeSha256(
         || fingerprints.legacy.review_scope_sha256;
 }
 
+export function reviewLaneScopeSha256Matches(
+    reviewType: string,
+    fingerprints: Array<DomainScopeFingerprints | null>
+): boolean {
+    if (fingerprints.length === 0) {
+        return false;
+    }
+    const laneScopeSha256s = fingerprints.map((entry) => getReviewLaneScopeSha256(reviewType, entry));
+    const firstLaneScopeSha256 = laneScopeSha256s[0];
+    return !!firstLaneScopeSha256
+        && laneScopeSha256s.every((entry) => !!entry && entry === firstLaneScopeSha256);
+}
+
 export function getCombinedDomainScopeFingerprint(
     fingerprints: DomainScopeFingerprints | null,
     domains: DomainScopeName[]

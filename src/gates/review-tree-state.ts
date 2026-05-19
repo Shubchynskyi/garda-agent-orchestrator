@@ -1,5 +1,11 @@
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 import { getWorkspaceSnapshot } from './compile-gate';
+import {
+    buildDomainScopeFingerprints,
+    normalizeDomainScopeFingerprints,
+    reviewLaneScopeSha256Matches,
+    type DomainScopeFingerprints
+} from './domain-scope-fingerprints';
 import { normalizePath, stringSha256 } from './helpers';
 import { getSafeWorktreePathState } from './worktree-path-state';
 
@@ -39,6 +45,7 @@ export interface ReviewTreeState {
     changed_files_sha256: string | null;
     scope_content_sha256: string | null;
     scope_sha256: string | null;
+    domain_scope_fingerprints?: DomainScopeFingerprints | null;
     entries: ReviewTreeStateEntry[];
     stale_staged_snapshot_files: string[];
     mixed_staged_worktree_files: string[];
@@ -228,6 +235,12 @@ export function buildReviewTreeState(options: {
         changed_files_sha256: normalizeOptionalHash(metrics.changed_files_sha256),
         scope_content_sha256: normalizeOptionalHash(metrics.scope_content_sha256),
         scope_sha256: normalizeOptionalHash(metrics.scope_sha256),
+        domain_scope_fingerprints: buildDomainScopeFingerprints({
+            repoRoot: options.repoRoot,
+            detectionSource,
+            includeUntracked: !!options.includeUntracked,
+            changedFiles
+        }),
         entries,
         stale_staged_snapshot_files: staleStagedSnapshotFiles,
         mixed_staged_worktree_files: mixedStagedWorktreeFiles
@@ -306,6 +319,30 @@ function getTreeStateHash(value: unknown): string | null {
 
 function getOptionalBoolean(value: unknown): boolean {
     return value === true || String(value || '').trim().toLowerCase() === 'true';
+}
+
+function reviewDomainStillMatches(options: {
+    repoRoot: string;
+    reviewContext: Record<string, unknown>;
+    detectionSource: string;
+    includeUntracked: boolean;
+    currentChangedFiles: string[];
+}): boolean {
+    const storedTreeState = isPlainRecord(options.reviewContext.tree_state)
+        ? options.reviewContext.tree_state
+        : null;
+    const storedDomainFingerprints = normalizeDomainScopeFingerprints(storedTreeState?.domain_scope_fingerprints);
+    if (!storedDomainFingerprints) {
+        return false;
+    }
+    const currentDomainFingerprints = buildDomainScopeFingerprints({
+        repoRoot: options.repoRoot,
+        detectionSource: options.detectionSource,
+        includeUntracked: options.includeUntracked,
+        changedFiles: options.currentChangedFiles
+    });
+    const reviewType = String(options.reviewContext.review_type || '').trim().toLowerCase();
+    return reviewLaneScopeSha256Matches(reviewType, [storedDomainFingerprints, currentDomainFingerprints]);
 }
 
 function formatPathList(paths: string[], max = 8): string {
@@ -424,7 +461,14 @@ export function assertReviewTreeStateFresh(options: {
     const currentChangedFileSet = new Set(currentChangedFiles);
     const missingFromContext = currentChangedFiles.filter((filePath) => !storedChangedFileSet.has(filePath));
     const noLongerCurrent = storedChangedFiles.filter((filePath) => !currentChangedFileSet.has(filePath));
-    if (missingFromContext.length > 0 || noLongerCurrent.length > 0) {
+    const allowReviewDomainDrift = reviewDomainStillMatches({
+        repoRoot: options.repoRoot,
+        reviewContext: options.reviewContext,
+        detectionSource,
+        includeUntracked,
+        currentChangedFiles
+    });
+    if (!allowReviewDomainDrift && (missingFromContext.length > 0 || noLongerCurrent.length > 0)) {
         throw new Error(
             `${options.gateName} cannot continue because review context scope is stale for '${normalizePath(options.contextPath)}'. ` +
             `Stored changed_files=${formatPathList(storedChangedFiles)}; current ${detectionSource} snapshot=${formatPathList(currentChangedFiles)}. ` +
@@ -445,7 +489,7 @@ export function assertReviewTreeStateFresh(options: {
     };
     const staleMetricNames = (Object.keys(storedMetrics) as Array<keyof typeof storedMetrics>)
         .filter((metricName) => !!storedMetrics[metricName] && !!currentMetrics[metricName] && storedMetrics[metricName] !== currentMetrics[metricName]);
-    if (staleMetricNames.length > 0) {
+    if (!allowReviewDomainDrift && staleMetricNames.length > 0) {
         throw new Error(
             `${options.gateName} cannot continue because review context scope fingerprints are stale for '${normalizePath(options.contextPath)}'. ` +
             staleMetricNames.map((metricName) => `${metricName}: stored=${storedMetrics[metricName]}, current=${currentMetrics[metricName]}`).join('; ') +
@@ -467,7 +511,7 @@ export function assertReviewTreeStateFresh(options: {
             blockingViolations.join(' ')
         );
     }
-    if (currentTreeState.tree_state_sha256 !== expectedHash) {
+    if (!allowReviewDomainDrift && currentTreeState.tree_state_sha256 !== expectedHash) {
         throw new Error(
             `${options.gateName} cannot continue because review context tree_state is stale for '${normalizePath(options.contextPath)}'. ` +
             `Expected tree_state_sha256=${expectedHash}; current tree_state_sha256=${currentTreeState.tree_state_sha256}. ` +
