@@ -45,6 +45,7 @@ import {
     makeTempDir,
     type TaskAuditSummaryResult
 } from './task-audit-summary-fixtures';
+import { buildDomainScopeFingerprints } from '../../../src/gates/domain-scope-fingerprints';
 
 
 describe('gates/task-audit-summary', () => {
@@ -251,6 +252,72 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.required_reviews.db, false);
         });
 
+        it('accepts stale review receipts only when persisted domain fingerprints match current scope', () => {
+            const changedFiles = ['src/gates/task-audit-summary.ts'];
+            const currentPreflight = {
+                detection_source: 'git_auto',
+                include_untracked: true,
+                changed_files: changedFiles,
+                required_reviews: { code: true }
+            };
+            writePreflight(reviewsDir, TASK_ID, currentPreflight);
+            const currentPreflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+            const stalePreflightSha256 = 'a'.repeat(64);
+            const matchingDomainScopeFingerprints = buildDomainScopeFingerprints({
+                repoRoot: tmpDir,
+                detectionSource: 'git_auto',
+                includeUntracked: true,
+                changedFiles
+            });
+            writeCurrentIndependentReviewFixture({
+                reviewsDir,
+                taskId: TASK_ID,
+                preflightSha256: stalePreflightSha256,
+                receiptOverrides: {
+                    domain_scope_fingerprints: matchingDomainScopeFingerprints
+                }
+            });
+
+            const matchingSummary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                currentPreflightSha256,
+                currentPreflight,
+                tmpDir
+            );
+
+            assert.equal(matchingSummary?.status, 'INDEPENDENT_AUDITED');
+
+            const mismatchedDomainScopeFingerprints = buildDomainScopeFingerprints({
+                repoRoot: tmpDir,
+                detectionSource: 'git_auto',
+                includeUntracked: true,
+                changedFiles: ['src/gates/next-step.ts']
+            });
+            writeCurrentIndependentReviewFixture({
+                reviewsDir,
+                taskId: TASK_ID,
+                preflightSha256: stalePreflightSha256,
+                receiptOverrides: {
+                    domain_scope_fingerprints: mismatchedDomainScopeFingerprints
+                }
+            });
+
+            const mismatchedSummary = readReviewTrustSummary(
+                { code: true },
+                reviewsDir,
+                TASK_ID,
+                'code',
+                currentPreflightSha256,
+                currentPreflight,
+                tmpDir
+            );
+
+            assert.equal(mismatchedSummary?.status, 'UNAVAILABLE');
+        });
+
         it('surfaces task-mode workflow-config authorization in audit and closeout output', () => {
             const plannedChangedFiles = ['garda-agent-orchestrator/live/config/workflow-config.json'];
             writePreflight(reviewsDir, TASK_ID, {
@@ -307,6 +374,10 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.implementation_summary.orchestrator_work, true);
             assert.equal(result.final_closeout.implementation_summary.workflow_config_work, true);
             assert.deepEqual(result.final_closeout.implementation_summary.planned_changed_files, plannedChangedFiles);
+            assert.deepEqual(
+                result.final_closeout.implementation_summary.domain_scope_fingerprints?.domains.config.changed_files,
+                plannedChangedFiles
+            );
 
             const expectedLine =
                 'orchestrator_work=true; workflow_config_work=true; ' +

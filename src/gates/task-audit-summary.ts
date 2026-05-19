@@ -35,6 +35,7 @@ import {
 } from '../core/review-execution-policy';
 import { getStatusSnapshot } from '../validators';
 import { getWorkspaceSnapshotCached } from './workspace-snapshot-cache';
+import { buildDomainScopeFingerprints } from './domain-scope-fingerprints';
 import {
     buildUnavailableRequiredReviewTrustSummary,
     type BlockerEntry,
@@ -1899,6 +1900,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             changed_files_sha256: closeoutScopeSnapshot?.changed_files_sha256 ?? null,
             scope_content_sha256: closeoutScopeSnapshot?.scope_content_sha256 ?? null,
             scope_sha256: closeoutScopeSnapshot?.scope_sha256 ?? null,
+            domain_scope_fingerprints: closeoutScopeSnapshot
+                ? buildDomainScopeFingerprints({
+                    repoRoot,
+                    detectionSource: closeoutScopeSnapshot.detection_source,
+                    includeUntracked: !!closeoutScopeSnapshot.include_untracked,
+                    changedFiles: closeoutScopeSnapshot.changed_files
+                })
+                : null,
             changed_files_count: changedFilesCount,
             changed_lines_total: changedLinesTotal,
             scope_category: scopeCategory,

@@ -24,6 +24,12 @@ import {
     type ReviewReuseTelemetryEventLike
 } from './review-reuse-telemetry';
 import { computeReviewRelevantScopeFingerprint } from './review-reuse';
+import {
+    buildDomainScopeFingerprints,
+    getReviewLaneScopeSha256,
+    normalizeDomainScopeFingerprints
+} from './domain-scope-fingerprints';
+import type { DomainScopeFingerprints } from './domain-scope-fingerprints';
 
 export interface TaskQueueMetadata {
     area: string | null;
@@ -87,6 +93,7 @@ export interface FinalCloseoutImplementationSummary {
     changed_files_sha256?: string | null;
     scope_content_sha256?: string | null;
     scope_sha256?: string | null;
+    domain_scope_fingerprints?: DomainScopeFingerprints | null;
     changed_files_count: number;
     changed_lines_total: number;
     scope_category: string | null;
@@ -941,8 +948,28 @@ function reviewReceiptMatchesCurrentReviewDomain(
     currentPreflight?: Record<string, unknown> | null,
     repoRoot?: string | null
 ): boolean {
+    if (!currentPreflight || !repoRoot) {
+        return false;
+    }
+    const reviewType = String(receipt.review_type || '').trim().toLowerCase();
+    const storedDomainScopeFingerprints = normalizeDomainScopeFingerprints(receipt.domain_scope_fingerprints);
+    if (storedDomainScopeFingerprints) {
+        const currentDomainScopeFingerprints = buildDomainScopeFingerprints({
+            repoRoot,
+            detectionSource: String(currentPreflight.detection_source || 'git_auto'),
+            includeUntracked: currentPreflight.include_untracked !== false,
+            changedFiles: Array.isArray(currentPreflight.changed_files)
+                ? currentPreflight.changed_files as string[]
+                : []
+        });
+        const expectedLaneScopeSha256 = getReviewLaneScopeSha256(reviewType, storedDomainScopeFingerprints);
+        const currentLaneScopeSha256 = getReviewLaneScopeSha256(reviewType, currentDomainScopeFingerprints);
+        return !!expectedLaneScopeSha256
+            && !!currentLaneScopeSha256
+            && expectedLaneScopeSha256 === currentLaneScopeSha256;
+    }
     const expectedReviewScopeSha256 = normalizeSha256Text(receipt.review_scope_sha256);
-    if (!expectedReviewScopeSha256 || !currentPreflight || !repoRoot) {
+    if (!expectedReviewScopeSha256) {
         return false;
     }
     try {
