@@ -1399,8 +1399,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
         }
     });
 
-    it('blocks ordinary task preflight even when workflow-config policy change was made through workflow set', { concurrency: false }, () => {
-        const taskId = 'T-900workflow-config-workflow-set-not-bypass';
+    it('allows ordinary task preflight after audited workflow set refreshes protected manifest', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-workflow-set-refreshes-manifest';
         const repoRoot = prepareTaskRepo(taskId);
         const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
 
@@ -1416,18 +1416,30 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             assert.equal(workflowResult.status, 'CHANGED');
             assert.equal(typeof workflowResult.audit_path, 'string');
             assert.ok(fs.existsSync(String(workflowResult.audit_path)));
+            assert.equal(typeof workflowResult.protected_manifest_path, 'string');
+            assert.ok(fs.existsSync(String(workflowResult.protected_manifest_path)));
             const auditText = fs.readFileSync(String(workflowResult.audit_path), 'utf8');
             assert.match(auditText, /"event_source":"workflow-config-set"/);
 
-            assert.throws(
-                () => runClassifyChangeCommand({
-                    repoRoot,
-                    taskId,
-                    taskIntent: 'Update app flow',
-                    emitMetrics: false
-                }),
-                /without task-mode --orchestrator-work --workflow-config-work/
-            );
+            const taskModeResult = runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Start ordinary task after audited workflow set'
+            });
+            assert.equal(taskModeResult.exitCode, 0);
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            const result = runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'Update app flow',
+                emitMetrics: false
+            });
+            const payload = JSON.parse(result.outputText);
+            assert.equal(payload.triggers.protected_control_plane_manifest_status, 'MATCH');
+            assert.deepEqual(payload.triggers.changed_workflow_config_files, []);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

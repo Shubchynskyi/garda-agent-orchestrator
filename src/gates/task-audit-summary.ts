@@ -698,6 +698,10 @@ function buildAuditedChangedFiles(
                 appendPath(normalized);
                 continue;
             }
+            if (isInternalCloseoutEvidencePath(normalized)) {
+                appendPath(normalized);
+                continue;
+            }
             violations.push(
                 `Doc impact docs_updated contains non-documentation path '${normalized}' that is not in preflight changed_files. ` +
                 'Refresh preflight for implementation drift or remove the path from docs_updated.'
@@ -705,6 +709,11 @@ function buildAuditedChangedFiles(
         }
     }
     return { changedFiles, violations };
+}
+
+function isInternalCloseoutEvidencePath(normalizedPath: string): boolean {
+    return normalizedPath === 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md'
+        || normalizedPath.startsWith('garda-agent-orchestrator/live/docs/project-memory/');
 }
 
 function buildPostDoneWorkspaceDriftBlocker(
@@ -1594,7 +1603,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             reviewsRoot,
             safeTaskId,
             scopeCategory,
-            preflightSha256
+            preflightSha256,
+            preflight,
+            repoRoot
         );
         const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
             reviewGate,
@@ -1605,9 +1616,10 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         );
         const hasRequiredReviews = Object.values(requiredReviews).some((value) => value);
         const reviewTrustSummary = reviewGateTrustSummary
+            ?? receiptReviewTrustSummary
             ?? (hasRequiredReviews
                 ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
-                : receiptReviewTrustSummary);
+                : null);
         const reviewIntegrityAttestation = buildReviewIntegrityAttestation({
             requiredReviews,
             reviewsRoot,
@@ -1616,6 +1628,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             preflightSha256,
             reviewTrustSummary,
             repoRoot,
+            currentPreflight: preflight,
             timelineEvents: events
         });
         const reviewAttemptSummary = buildReviewAttemptSummary({
@@ -1712,6 +1725,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
 
     let status: 'PASS' | 'BLOCKED' | 'INCOMPLETE';
     const reviewsRequired = Object.keys(requiredReviews).some((reviewType) => requiredReviews[reviewType]);
+    const reviewDomainFinalitySatisfied = reviewsRequired
+        && reviewSnapshot.reviewIntegrityAttestation.completion_allowed === true
+        && reviewSnapshot.reviewIntegrityAttestation.completion_review_attested === true;
     const supportingLifecycleAnchorEvents = new Set([
         'HANDSHAKE_DIAGNOSTICS_RECORDED',
         'SHELL_SMOKE_PREFLIGHT_RECORDED',
@@ -1733,6 +1749,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                     return false;
                 }
                 if (!reviewsRequired && gate.gate === 'review-phase') {
+                    return false;
+                }
+                if (gate.gate === 'required-reviews-check' && reviewDomainFinalitySatisfied) {
                     return false;
                 }
                 return gate.status !== 'PASS';

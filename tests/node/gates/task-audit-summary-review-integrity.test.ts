@@ -45,6 +45,7 @@ import {
     makeTempDir,
     type TaskAuditSummaryResult
 } from './task-audit-summary-fixtures';
+import { computeReviewRelevantScopeFingerprint } from '../../../src/gates/review-reuse';
 
 
 describe('gates/task-audit-summary', () => {
@@ -197,13 +198,107 @@ describe('gates/task-audit-summary', () => {
 
                     const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
 
-                    assert.equal(result.final_closeout.status, 'READY');
-                    assert.equal(result.final_report_contract.status, 'READY');
+                    const blockerDetails = [
+                        result.final_report_contract.blocker,
+                        JSON.stringify(result.blockers),
+                        JSON.stringify(result.final_closeout.review_integrity_attestation?.observed_issues || [])
+                    ].filter(Boolean).join(' | ');
+                    assert.equal(result.final_closeout.status, 'READY', blockerDetails);
+                    assert.equal(result.final_report_contract.status, 'READY', blockerDetails);
                     const attestation = assertReviewIntegrity(result, 'INDEPENDENT_REVIEW_ATTESTED', {
                         completionReviewAttested: true,
                         enforcementMode: 'BLOCKING'
                     });
                     assert.deepEqual(attestation.observed_issues, []);
+                });
+
+                it('keeps mandatory review attested when closeout-only docs are added after review', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    const implementationFile = 'src/gates/task-audit-summary.ts';
+                    const closeoutDoc = 'CHANGELOG.md';
+                    const reviewedPreflight = {
+                        mode: 'FULL_PATH',
+                        changed_files: [implementationFile],
+                        metrics: { changed_lines_total: 18 },
+                        required_reviews: { code: true }
+                    };
+                    const reviewScopeSha256 = computeReviewRelevantScopeFingerprint(reviewedPreflight, tmpDir).review_scope_sha256;
+                    writePreflight(reviewsDir, TASK_ID, reviewedPreflight);
+                    const reviewedPreflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+                    const reviewerIdentity = 'agent:code-reviewer';
+                    const fixture = writeCurrentIndependentReviewFixture({
+                        reviewsDir,
+                        taskId: TASK_ID,
+                        preflightSha256: reviewedPreflightSha256,
+                        reviewerIdentity,
+                        provenance: null,
+                        receiptOverrides: {
+                            review_scope_sha256: reviewScopeSha256,
+                            code_scope_sha256: reviewScopeSha256
+                        }
+                    });
+                    writeIntegrityEventSequence(eventsDir, TASK_ID, ['TASK_MODE_ENTERED', 'RULE_PACK_LOADED', 'HANDSHAKE_DIAGNOSTICS_RECORDED', 'SHELL_SMOKE_PREFLIGHT_RECORDED', 'PREFLIGHT_CLASSIFIED', 'COMPILE_GATE_PASSED', 'REVIEW_PHASE_STARTED'].map((event_type) => ({ event_type })));
+                    const invocationEvent = appendIntegrityEvent(eventsDir, TASK_ID, {
+                        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        details: {
+                            task_id: TASK_ID,
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: reviewerIdentity,
+                            review_context_sha256: fixture.reviewContextSha256,
+                            routing_event_sha256: 'd'.repeat(64)
+                        }
+                    });
+                    const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
+                    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+                    const integrity = invocationEvent.integrity as Record<string, unknown>;
+                    receipt.reviewer_provenance = {
+                        schema_version: 1,
+                        attestation_type: 'reviewer_invocation_attestation',
+                        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        task_sequence: integrity.task_sequence,
+                        prev_event_sha256: integrity.prev_event_sha256,
+                        event_sha256: integrity.event_sha256,
+                        task_id: TASK_ID,
+                        review_type: 'code',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: reviewerIdentity,
+                        review_context_sha256: fixture.reviewContextSha256,
+                        routing_event_sha256: 'd'.repeat(64)
+                    };
+                    writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', receipt);
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_RECORDED', details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code') });
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_GATE_PASSED' });
+                    writePreflight(reviewsDir, TASK_ID, {
+                        mode: 'FULL_PATH',
+                        changed_files: [implementationFile, closeoutDoc],
+                        metrics: { changed_lines_total: 19 },
+                        required_reviews: { code: true }
+                    });
+                    writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                        status: 'PASSED',
+                        outcome: 'PASS',
+                        decision: 'DOCS_UPDATED',
+                        behavior_changed: true,
+                        changelog_updated: true,
+                        docs_updated: [closeoutDoc]
+                    });
+                    ['DOC_IMPACT_ASSESSED', 'COMPLETION_GATE_PASSED'].forEach((event_type) => appendIntegrityEvent(eventsDir, TASK_ID, { event_type }));
+
+                    const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+
+                    const blockerDetails = [
+                        result.final_report_contract.blocker,
+                        JSON.stringify(result.blockers),
+                        JSON.stringify(result.final_closeout.review_integrity_attestation?.observed_issues || [])
+                    ].filter(Boolean).join(' | ');
+                    assert.equal(result.final_closeout.status, 'READY', blockerDetails);
+                    assert.equal(result.final_report_contract.status, 'READY', blockerDetails);
+                    assert.deepEqual(result.final_closeout.docs.docs_updated, [closeoutDoc]);
+                    assertReviewIntegrity(result, 'INDEPENDENT_REVIEW_ATTESTED', {
+                        completionReviewAttested: true,
+                        enforcementMode: 'BLOCKING'
+                    });
                 });
 
                 it('marks docs-only no-review closeout as allowed but not review-attested', () => {

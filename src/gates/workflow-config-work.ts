@@ -513,6 +513,9 @@ export function getWorkflowConfigPreTaskBaselineState(
         const hasManifestHash = manifestState.status === 'present'
             && Object.prototype.hasOwnProperty.call(manifestHashes, relativePath);
         const manifestHash = hasManifestHash ? manifestHashes[relativePath] : undefined;
+        if (hasManifestHash && manifestHash === currentHash) {
+            continue;
+        }
         const gitStatusLines = gitHeadHash === undefined && !hasManifestHash
             ? readGitIndexOrWorktreeStatus(repoRoot, relativePath)
             : [];

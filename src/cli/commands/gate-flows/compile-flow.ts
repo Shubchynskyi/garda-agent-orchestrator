@@ -508,6 +508,14 @@ function mergePathLists(...pathLists: string[][]): string[] {
     return [...new Set(pathLists.flat().map((entry) => gateHelpers.normalizePath(entry)).filter(Boolean))].sort();
 }
 
+function subtractPathList(paths: string[], excludedPaths: string[]): string[] {
+    const excluded = new Set(excludedPaths.map((entry) => gateHelpers.normalizePath(entry)).filter(Boolean));
+    return paths
+        .map((entry) => gateHelpers.normalizePath(entry))
+        .filter((entry) => entry && !excluded.has(entry))
+        .sort();
+}
+
 export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions): { outputText: string } {
     const repoRoot = path.resolve(String(options.repoRoot || '.'));
     const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
@@ -635,6 +643,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         const taskModeEvidence = getTaskModeEvidence(repoRoot, resolvedTaskId, resolvedTaskModePath);
         const taskQueueMetadata = readTaskQueueMetadata(repoRoot, resolvedTaskId);
         currentTaskSummary = readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary);
+        let trustedWorkflowConfigBaselineFiles: string[] = [];
         const rawTaskProfile = taskModeEvidence.task_profile || taskQueueMetadata?.profile || null;
         const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
         if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
@@ -711,16 +720,20 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 ? []
                 : getWorkflowConfigChangedFiles(result.changed_files, getWorkflowConfigControlPlanePaths(repoRoot))
         );
+        trustedWorkflowConfigBaselineFiles = workflowConfigChanges.baseline_file_hashes && changedWorkflowConfigFiles.length === 0
+            ? getWorkflowConfigControlPlanePaths(repoRoot)
+            : [];
         (result.triggers as any).changed_workflow_config_files = changedWorkflowConfigFiles;
         (result.triggers as any).workflow_config_file_hashes = workflowConfigChanges.current_file_hashes;
         if (workflowConfigChanges.scan_error) {
             (result.triggers as any).workflow_config_workspace_scan_error = workflowConfigChanges.scan_error;
         }
-        const changedProtectedFiles = mergePathLists(getChangedProtectedFiles(result), changedWorkflowConfigFiles);
-        if (changedProtectedFiles.length > 0) {
-            (result.triggers as any).changed_protected_files = changedProtectedFiles;
-            (result.triggers as any).protected_control_plane_changed = true;
-        }
+        const changedProtectedFiles = mergePathLists(
+            subtractPathList(getChangedProtectedFiles(result), trustedWorkflowConfigBaselineFiles),
+            changedWorkflowConfigFiles
+        );
+        (result.triggers as any).changed_protected_files = changedProtectedFiles;
+        (result.triggers as any).protected_control_plane_changed = changedProtectedFiles.length > 0;
         if (preflightErrors.length === 0) {
             preflightErrors.push(...getWorkflowConfigWorkViolations({
                 changedFiles: changedWorkflowConfigFiles,
@@ -821,10 +834,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         const hasExplicitScopeIsolation = explicitChangedFilesProvided || options.useStaged === true;
         if (preflightErrors.length === 0 && !hasExplicitScopeIsolation) {
             const preTaskModifiedFiles = dirtyWorkspaceBaseline
-                ? dirtyWorkspaceBaseline.changed_files
+                ? subtractPathList(dirtyWorkspaceBaseline.changed_files, trustedWorkflowConfigBaselineFiles)
                 : listChangedFilesPredatingTaskMode(
                     repoRoot,
-                    workspaceSnapshot.changed_files,
+                    subtractPathList(workspaceSnapshot.changed_files, trustedWorkflowConfigBaselineFiles),
                     taskModeEvidence.evidence_path
                 );
             if (preTaskModifiedFiles.length > 0) {

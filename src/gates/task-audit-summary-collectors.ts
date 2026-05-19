@@ -23,6 +23,7 @@ import {
     validateStrictReusedReviewEvidence,
     type ReviewReuseTelemetryEventLike
 } from './review-reuse-telemetry';
+import { computeReviewRelevantScopeFingerprint } from './review-reuse';
 
 export interface TaskQueueMetadata {
     area: string | null;
@@ -768,14 +769,18 @@ export function readReviewTrustSummary(
     reviewsRoot: string,
     taskId: string,
     scopeCategory: string | null,
-    preflightSha256?: string | null
+    preflightSha256?: string | null,
+    currentPreflight?: Record<string, unknown> | null,
+    repoRoot?: string | null
 ): FinalCloseoutReviewTrustSummary | null {
     return withReviewArtifactReadBarrier(reviewsRoot, () => readReviewTrustSummaryUnlocked(
         requiredReviews,
         reviewsRoot,
         taskId,
         scopeCategory,
-        preflightSha256
+        preflightSha256,
+        currentPreflight,
+        repoRoot
     ));
 }
 
@@ -784,7 +789,9 @@ function readReviewTrustSummaryUnlocked(
     reviewsRoot: string,
     taskId: string,
     scopeCategory: string | null,
-    preflightSha256?: string | null
+    preflightSha256?: string | null,
+    currentPreflight?: Record<string, unknown> | null,
+    repoRoot?: string | null
 ): FinalCloseoutReviewTrustSummary | null {
     const requiredReviewTypes = collectKnownRequiredReviewTypes(requiredReviews);
     const compatibilityFallbackActive = requiredReviewTypes.length === 0;
@@ -825,7 +832,11 @@ function readReviewTrustSummaryUnlocked(
         const recordedPreflightHash = typeof receipt.preflight_sha256 === 'string'
             ? receipt.preflight_sha256.trim().toLowerCase()
             : '';
-        if (expectedPreflightHash && (!recordedPreflightHash || recordedPreflightHash !== expectedPreflightHash)) {
+        if (
+            expectedPreflightHash
+            && (!recordedPreflightHash || recordedPreflightHash !== expectedPreflightHash)
+            && !reviewReceiptMatchesCurrentReviewDomain(receipt, currentPreflight, repoRoot)
+        ) {
             return [];
         }
         const recordedReviewContextHash = typeof receipt.review_context_sha256 === 'string'
@@ -925,6 +936,25 @@ function readReviewTrustSummaryUnlocked(
     return buildReviewTrustSummary(entries, scopeCategory, compatibilityReviewTypes.length);
 }
 
+function reviewReceiptMatchesCurrentReviewDomain(
+    receipt: Record<string, unknown>,
+    currentPreflight?: Record<string, unknown> | null,
+    repoRoot?: string | null
+): boolean {
+    const expectedReviewScopeSha256 = normalizeSha256Text(receipt.review_scope_sha256);
+    if (!expectedReviewScopeSha256 || !currentPreflight || !repoRoot) {
+        return false;
+    }
+    try {
+        const currentReviewScopeSha256 = normalizeSha256Text(
+            computeReviewRelevantScopeFingerprint(currentPreflight, repoRoot).review_scope_sha256
+        );
+        return !!currentReviewScopeSha256 && currentReviewScopeSha256 === expectedReviewScopeSha256;
+    } catch {
+        return false;
+    }
+}
+
 function reviewLooksFabricated(content: string): boolean {
     const normalized = String(content || '');
     return /^\s*(?:this\s+is\s+)?(?:a\s+)?(?:fake|fabricated)\s+review[.!]?\s*$/imu.test(normalized) || /^\s*(?:obviously synthetic|placeholder review|todo review)\b/imu.test(normalized) || /\b(?:review output|review artifact)\s*:\s*(?:fake|fabricated|placeholder|todo)\b/iu.test(normalized);
@@ -993,6 +1023,7 @@ function findFreshReviewTelemetryIssue(options: {
     reviewType: string; repoRoot: string | null | undefined; taskId: string; events: readonly ReviewReuseTelemetryEventLike[] | undefined;
     latestCompileTaskSequence: number | null; latestReviewGateTaskSequence: number | null; receiptPath: string; receiptSha256: string; receipt: Record<string, unknown>;
     reviewContextSha256: string; reviewTreeStateSha256: string; reviewArtifactSha256: string; reviewerExecutionMode: string; reviewerIdentity: string; reviewerProvenance: Record<string, unknown> | null;
+    allowDomainScopeTelemetryOmission?: boolean;
 }): string | null {
     if (!options.repoRoot) {
         return `${options.reviewType}: fresh review evidence cannot be validated without repo root`;
@@ -1033,8 +1064,12 @@ function findFreshReviewTelemetryIssue(options: {
             reviewContextSha256: options.reviewContextSha256,
             reviewContextReuseSha256: normalizeSha256Text(options.receipt.review_context_reuse_sha256) || undefined,
             reviewTreeStateSha256: options.reviewTreeStateSha256 || undefined,
-            reviewScopeSha256: normalizeSha256Text(options.receipt.review_scope_sha256) || undefined,
-            codeScopeSha256: normalizeSha256Text(options.receipt.code_scope_sha256) || undefined,
+            reviewScopeSha256: options.allowDomainScopeTelemetryOmission
+                ? undefined
+                : normalizeSha256Text(options.receipt.review_scope_sha256) || undefined,
+            codeScopeSha256: options.allowDomainScopeTelemetryOmission
+                ? undefined
+                : normalizeSha256Text(options.receipt.code_scope_sha256) || undefined,
             reviewArtifactSha256: options.reviewArtifactSha256,
             reviewerExecutionMode: options.reviewerExecutionMode,
             reviewerIdentity: options.reviewerIdentity,
@@ -1090,7 +1125,8 @@ function discoverReviewIntegrityObservationTypes(reviewsRoot: string, taskId: st
 
 function collectReviewIntegrityIssues(options: {
     requiredReviewTypes: string[]; reviewsRoot: string; taskId: string; preflightSha256?: string | null;
-    repoRoot?: string | null; timelineEvents?: readonly ReviewReuseTelemetryEventLike[]; strictVerification: boolean; initialIssues?: string[];
+    repoRoot?: string | null; currentPreflight?: Record<string, unknown> | null;
+    timelineEvents?: readonly ReviewReuseTelemetryEventLike[]; strictVerification: boolean; initialIssues?: string[];
 }): string[] {
     const issues: string[] = [...(options.initialIssues || [])];
     const expectedPreflightSha256 = String(options.preflightSha256 || '').trim().toLowerCase();
@@ -1197,7 +1233,14 @@ function collectReviewIntegrityIssues(options: {
             issues.push(`${reviewType}: receipt omits review artifact hash`);
         }
         const recordedPreflightHash = String(receipt.preflight_sha256 || '').trim().toLowerCase();
-        if (expectedPreflightSha256 && recordedPreflightHash !== expectedPreflightSha256) {
+        const preflightMismatchAcceptedByReviewDomain = !!expectedPreflightSha256
+            && recordedPreflightHash !== expectedPreflightSha256
+            && reviewReceiptMatchesCurrentReviewDomain(receipt as Record<string, unknown>, options.currentPreflight, options.repoRoot);
+        if (
+            expectedPreflightSha256
+            && recordedPreflightHash !== expectedPreflightSha256
+            && !preflightMismatchAcceptedByReviewDomain
+        ) {
             issues.push(`${reviewType}: receipt preflight hash does not match current preflight`);
         }
         if (!recordedReviewContextHash) {
@@ -1270,7 +1313,8 @@ function collectReviewIntegrityIssues(options: {
                 reviewArtifactSha256: recordedReviewArtifactHash,
                 reviewerExecutionMode: receiptExecutionMode,
                 reviewerIdentity: receiptReviewerIdentity,
-                reviewerProvenance: isPlainRecord(receipt.reviewer_provenance) ? receipt.reviewer_provenance : null
+                reviewerProvenance: isPlainRecord(receipt.reviewer_provenance) ? receipt.reviewer_provenance : null,
+                allowDomainScopeTelemetryOmission: preflightMismatchAcceptedByReviewDomain
             });
             if (telemetryIssue) {
                 issues.push(telemetryIssue);
@@ -1355,14 +1399,16 @@ function collectReviewIntegrityIssues(options: {
 
 export function buildReviewIntegrityAttestation(options: {
     requiredReviews: Record<string, boolean>; reviewsRoot: string; taskId: string; scopeCategory: string | null; preflightSha256?: string | null;
-    reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
+    reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; currentPreflight?: Record<string, unknown> | null;
+    timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
 }): FinalCloseoutReviewIntegrityAttestation {
     return withReviewArtifactReadBarrier(options.reviewsRoot, () => buildReviewIntegrityAttestationUnlocked(options));
 }
 
 function buildReviewIntegrityAttestationUnlocked(options: {
     requiredReviews: Record<string, boolean>; reviewsRoot: string; taskId: string; scopeCategory: string | null; preflightSha256?: string | null;
-    reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
+    reviewTrustSummary: FinalCloseoutReviewTrustSummary | null; repoRoot?: string | null; currentPreflight?: Record<string, unknown> | null;
+    timelineEvents?: readonly ReviewReuseTelemetryEventLike[];
 }): FinalCloseoutReviewIntegrityAttestation {
     const requiredReviewTypes = collectKnownRequiredReviewTypes(options.requiredReviews);
     const unsafeRequiredReviewTypeIssues = collectUnsafeRequiredReviewTypeIssues(options.requiredReviews);
@@ -1381,6 +1427,7 @@ function buildReviewIntegrityAttestationUnlocked(options: {
         taskId: options.taskId,
         preflightSha256: options.preflightSha256,
         repoRoot: options.repoRoot,
+        currentPreflight: options.currentPreflight,
         timelineEvents: options.timelineEvents,
         strictVerification,
         initialIssues: unsafeRequiredReviewTypeIssues

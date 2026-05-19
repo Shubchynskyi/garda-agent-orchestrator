@@ -48,6 +48,7 @@ import {
     OUT_OF_SCOPE_FAILURE_POLICIES,
     type OutOfScopeFailurePolicy
 } from '../../gates/full-suite-validation';
+import { writeProtectedControlPlaneManifest } from '../../gates/protected-control-plane';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
     bold,
@@ -136,6 +137,7 @@ interface WorkflowSetResult extends WorkflowCommandResultBase {
     changed_fields: string[];
     noop_fields: string[];
     audit_path: string | null;
+    protected_manifest_path: string | null;
 }
 
 interface WorkflowValidateResult extends WorkflowCommandResultBase {
@@ -536,6 +538,9 @@ function formatWorkflowSetSummaryOutput(result: WorkflowSetResult): string {
     ];
     if (result.audit_path) {
         lines.push(`AuditPath: ${result.audit_path}`);
+    }
+    if (result.protected_manifest_path) {
+        lines.push(`ProtectedManifestPath: ${result.protected_manifest_path}`);
     }
     if (result.status === 'NO_CHANGE') {
         lines.push('Hint: requested workflow settings already matched the current config; no audit record was written.');
@@ -1047,6 +1052,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const noopFields = requestedFields.filter((field) => !actualChangedFieldSet.has(field));
 
     let auditPath: string | null = null;
+    let protectedManifestPath: string | null = null;
     if (changed) {
         const safeSelfGuardHardening = requestedFields.length === 1
             && requestedFields[0] === 'orchestrator_work_policy.mode'
@@ -1062,6 +1068,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             currentSerialized,
             nextSerialized
         );
+        protectedManifestPath = writeProtectedControlPlaneManifest(roots.targetRoot);
     }
 
     const result: WorkflowSetResult = {
@@ -1077,7 +1084,8 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         requested_fields: requestedFields,
         changed_fields: actualChangedFields,
         noop_fields: noopFields,
-        audit_path: auditPath ? normalizeOutputPath(auditPath) : null
+        audit_path: auditPath ? normalizeOutputPath(auditPath) : null,
+        protected_manifest_path: protectedManifestPath ? normalizeOutputPath(protectedManifestPath) : null
     };
     console.log(formatWorkflowShowOutput(result, options.json === true));
     if (options.json !== true) {
