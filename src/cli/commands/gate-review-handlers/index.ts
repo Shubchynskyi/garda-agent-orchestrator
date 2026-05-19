@@ -48,6 +48,9 @@ import {
     computeReviewContextReuseHash,
     isNonTestReviewScope
 } from '../../../gates/review-reuse';
+import {
+    buildDomainScopeFingerprints
+} from '../../../gates/domain-scope-fingerprints';
 import { resolveCanonicalReviewContextPath } from '../../../gates/review-context-paths';
 import {
     buildReviewContextPreflightDiffExpectations,
@@ -2329,6 +2332,12 @@ async function recordReviewReceiptFromArtifacts(options: {
         codeScopeSha256: isNonTestReviewScope(options.reviewType)
             ? codeScopeFingerprint.code_scope_sha256
             : null,
+        domainScopeFingerprints: buildDomainScopeFingerprints({
+            repoRoot: options.repoRoot,
+            detectionSource: String(preflight.detection_source || 'git_auto'),
+            includeUntracked: preflight.include_untracked !== false,
+            changedFiles: Array.isArray(preflight.changed_files) ? preflight.changed_files as string[] : []
+        }),
         reviewContextSha256: contextSha256,
         reviewTreeStateSha256: getReviewTreeStateSha256(parsedReviewContext) || null,
         reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),

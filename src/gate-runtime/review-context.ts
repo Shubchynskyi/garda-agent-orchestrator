@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import { stringSha256 } from './hash';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from './review-artifacts';
 import { estimateTokenCount, DEFAULT_TOKEN_ESTIMATOR, LEGACY_TOKEN_ESTIMATOR } from './token-telemetry';
+import type { DomainScopeFingerprints } from '../gates/domain-scope-fingerprints';
 
 interface CompactMarkdownOptions {
     stripExamples?: boolean;
@@ -357,6 +358,7 @@ export interface ReviewReceipt {
     scope_sha256: string | null;
     review_scope_sha256?: string | null;
     code_scope_sha256?: string | null;
+    domain_scope_fingerprints?: DomainScopeFingerprints | null;
     review_context_sha256: string | null;
     review_tree_state_sha256?: string | null;
     review_context_reuse_sha256?: string | null;
@@ -374,6 +376,7 @@ export interface ReviewReceipt {
     reused_from_review_tree_state_sha256?: string | null;
     reused_from_review_scope_sha256?: string | null;
     reused_from_code_scope_sha256?: string | null;
+    reused_from_domain_scope_fingerprints?: DomainScopeFingerprints | null;
     recorded_at_utc: string;
     review_result_recorded_at_utc?: string | null;
     review_output_source_mtime_utc?: string | null;
@@ -863,6 +866,7 @@ export function buildReviewReceipt(options: {
     scopeSha256: string | null;
     reviewScopeSha256?: string | null;
     codeScopeSha256?: string | null;
+    domainScopeFingerprints?: DomainScopeFingerprints | null;
     reviewContextSha256: string | null;
     reviewTreeStateSha256?: string | null;
     reviewContextReuseSha256?: string | null;
@@ -880,6 +884,7 @@ export function buildReviewReceipt(options: {
     reusedFromReviewTreeStateSha256?: string | null;
     reusedFromReviewScopeSha256?: string | null;
     reusedFromCodeScopeSha256?: string | null;
+    reusedFromDomainScopeFingerprints?: DomainScopeFingerprints | null;
 }): ReviewReceipt {
     return {
         schema_version: 2,
@@ -889,6 +894,7 @@ export function buildReviewReceipt(options: {
         scope_sha256: options.scopeSha256,
         review_scope_sha256: options.reviewScopeSha256 ?? null,
         code_scope_sha256: options.codeScopeSha256 ?? null,
+        domain_scope_fingerprints: options.domainScopeFingerprints ?? null,
         review_context_sha256: options.reviewContextSha256,
         review_tree_state_sha256: options.reviewTreeStateSha256 ?? null,
         review_context_reuse_sha256: options.reviewContextReuseSha256 ?? null,
@@ -906,6 +912,7 @@ export function buildReviewReceipt(options: {
         reused_from_review_tree_state_sha256: options.reusedFromReviewTreeStateSha256 ?? null,
         reused_from_review_scope_sha256: options.reusedFromReviewScopeSha256 ?? null,
         reused_from_code_scope_sha256: options.reusedFromCodeScopeSha256 ?? null,
+        reused_from_domain_scope_fingerprints: options.reusedFromDomainScopeFingerprints ?? null,
         recorded_at_utc: new Date().toISOString()
     };
 }

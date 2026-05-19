@@ -53,6 +53,7 @@ import {
     getReviewTreeStateBlockingViolations,
     type ReviewTreeState
 } from './review-tree-state';
+import { buildDomainScopeFingerprints } from './domain-scope-fingerprints';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
 import { getTaskModeEvidence } from './task-mode';
 import { getReviewSkillCandidates, hasSkillEntrypoint } from '../core/review-capabilities';
@@ -1726,6 +1727,12 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         task_scope: {
             changed_files: changedFiles,
             changed_file_count: changedFiles.length,
+            domain_scope_fingerprints: buildDomainScopeFingerprints({
+                repoRoot,
+                detectionSource: String(preflight.detection_source || 'git_auto'),
+                includeUntracked: preflight.include_untracked !== false,
+                changedFiles
+            }),
             required_reviews: requiredReviewTypes,
             active_triggers: activeTriggers,
             diff_stat: gitDiff.stat,

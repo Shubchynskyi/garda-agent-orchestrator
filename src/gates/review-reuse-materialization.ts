@@ -16,6 +16,10 @@ import {
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint
 } from './review-reuse';
+import {
+    buildDomainScopeFingerprints,
+    normalizeDomainScopeFingerprints
+} from './domain-scope-fingerprints';
 import type { HistoricalReviewReuseCandidate } from './review-reuse-validation';
 
 export interface MaterializeReusedReviewEvidenceOptions {
@@ -112,6 +116,14 @@ export async function materializeReusedReviewEvidence(
 }
 
 function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOptions): ReviewReceipt {
+    const currentDomainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot: options.repoRoot,
+        detectionSource: String(options.preflightPayload.detection_source || 'git_auto'),
+        includeUntracked: options.preflightPayload.include_untracked !== false,
+        changedFiles: Array.isArray(options.preflightPayload.changed_files)
+            ? options.preflightPayload.changed_files as string[]
+            : []
+    });
     return buildReviewReceipt({
         taskId: options.taskId,
         reviewType: options.reviewType,
@@ -125,6 +137,7 @@ function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOption
         codeScopeSha256: options.nonTestReviewScope
             ? String(options.codeScopeFingerprint.code_scope_sha256 || '').trim().toLowerCase() || null
             : null,
+        domainScopeFingerprints: currentDomainScopeFingerprints,
         reviewContextSha256: options.currentReviewContextSha256,
         reviewTreeStateSha256: options.currentReviewTreeStateSha256,
         reviewContextReuseSha256: options.currentContextReuseSha256,
@@ -141,7 +154,8 @@ function buildReusedReviewReceipt(options: MaterializeReusedReviewEvidenceOption
         reusedFromReviewContextReuseSha256: options.expectedContextReuseSha256,
         reusedFromReviewTreeStateSha256: options.expectedReviewTreeStateSha256,
         reusedFromReviewScopeSha256: options.expectedReviewScopeSha256,
-        reusedFromCodeScopeSha256: options.expectedCodeScopeSha256
+        reusedFromCodeScopeSha256: options.expectedCodeScopeSha256,
+        reusedFromDomainScopeFingerprints: normalizeDomainScopeFingerprints(options.receipt.domain_scope_fingerprints)
     });
 }
 

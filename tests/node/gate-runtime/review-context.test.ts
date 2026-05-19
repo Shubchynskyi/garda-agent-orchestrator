@@ -395,6 +395,69 @@ test('buildReviewReceipt preserves explicit reviewer_provenance', () => {
     assert.deepEqual(receipt.reviewer_provenance, provenance);
 });
 
+test('buildReviewReceipt preserves explicit domain_scope_fingerprints', () => {
+    const fingerprints = {
+        schema_version: 1 as const,
+        detection_source: 'explicit_changed_files',
+        include_untracked: true,
+        use_staged: false,
+        domains: {
+            implementation: {
+                changed_files: ['src/app.ts'],
+                changed_files_count: 1,
+                changed_files_sha256: 'a'.repeat(64),
+                scope_content_sha256: 'b'.repeat(64),
+                scope_sha256: 'c'.repeat(64)
+            },
+            test: {
+                changed_files: [],
+                changed_files_count: 0,
+                changed_files_sha256: 'd'.repeat(64),
+                scope_content_sha256: 'e'.repeat(64),
+                scope_sha256: 'f'.repeat(64)
+            },
+            docs: {
+                changed_files: [],
+                changed_files_count: 0,
+                changed_files_sha256: '1'.repeat(64),
+                scope_content_sha256: '2'.repeat(64),
+                scope_sha256: '3'.repeat(64)
+            },
+            config: {
+                changed_files: ['garda-agent-orchestrator/live/config/workflow-config.json'],
+                changed_files_count: 1,
+                changed_files_sha256: '4'.repeat(64),
+                scope_content_sha256: '5'.repeat(64),
+                scope_sha256: '6'.repeat(64)
+            },
+            closeout: {
+                changed_files: ['TASK.md'],
+                changed_files_count: 1,
+                changed_files_sha256: '7'.repeat(64),
+                scope_content_sha256: '8'.repeat(64),
+                scope_sha256: '9'.repeat(64)
+            }
+        },
+        legacy: {
+            review_scope_sha256: 'a1'.repeat(32),
+            code_scope_sha256: 'b1'.repeat(32),
+            non_test_review_scope_sha256: 'c1'.repeat(32),
+            code_review_scope_sha256: 'd1'.repeat(32)
+        }
+    };
+    const receipt = buildReviewReceipt({
+        taskId: 'T-1001',
+        reviewType: 'code',
+        preflightSha256: 'preflight',
+        scopeSha256: 'scope',
+        reviewContextSha256: 'context',
+        reviewArtifactSha256: 'artifact',
+        domainScopeFingerprints: fingerprints
+    });
+
+    assert.deepEqual(receipt.domain_scope_fingerprints, fingerprints);
+});
+
 test('normalizeReviewReceiptReviewerProvenance accepts controller event integrity evidence', () => {
     const normalized = normalizeReviewReceiptReviewerProvenance({
         schema_version: 1,
