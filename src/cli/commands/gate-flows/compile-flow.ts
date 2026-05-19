@@ -61,6 +61,9 @@ import {
 import {
     getWorkspaceSnapshotCached
 } from '../../../gates/workspace-snapshot-cache';
+import {
+    buildDomainScopeFingerprints
+} from '../../../gates/domain-scope-fingerprints';
 import { loadIsolationModeConfig } from '../../../gates/isolation-mode';
 import { resolveIsolatedOrchestratorRoot, resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
 import {
@@ -567,6 +570,12 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     (result.metrics as Record<string, unknown>).changed_files_sha256 = workspaceSnapshot.changed_files_sha256;
     (result.metrics as Record<string, unknown>).scope_content_sha256 = workspaceSnapshot.scope_content_sha256;
     (result.metrics as Record<string, unknown>).scope_sha256 = workspaceSnapshot.scope_sha256;
+    (result.metrics as Record<string, unknown>).domain_scope_fingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource: workspaceSnapshot.detection_source,
+        includeUntracked: !!workspaceSnapshot.include_untracked,
+        changedFiles: workspaceSnapshot.changed_files
+    });
     const ignoredGeneratedRuntimeFiles = Array.isArray((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files)
         ? ((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files as string[])
         : [];

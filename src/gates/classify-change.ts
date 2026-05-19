@@ -562,6 +562,10 @@ export function isDocumentationLikePath(pathValue: string, ordinaryDocPaths: str
         || matchOrdinaryDocPathPattern(normalizedPath, ordinaryDocPaths) !== null;
 }
 
+export function isConfigLikePath(pathValue: string): boolean {
+    return testPrecompiled(normalizePath(pathValue), CONFIG_LIKE_COMPILED);
+}
+
 function isProtectedControlPlaneDocumentationSurfacePath(
     pathValue: string,
     config: SafeOrdinaryDocumentationPathConfig

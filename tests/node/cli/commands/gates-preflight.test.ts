@@ -994,6 +994,47 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change keeps code-like protected control-plane files in implementation domain fingerprints', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-domain-scope-protected-code.json');
+        const taskId = 'T-930-domain-scope-protected-code';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Keep protected control-plane TypeScript in implementation domain fingerprints'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: [
+                'src/gates/review-tree-state.ts',
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ],
+            taskId,
+            taskIntent: 'Keep protected control-plane TypeScript in implementation domain fingerprints',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        const domainFingerprints = payload.metrics.domain_scope_fingerprints;
+        assert.deepEqual(domainFingerprints.domains.implementation.changed_files, ['src/gates/review-tree-state.ts']);
+        assert.deepEqual(
+            domainFingerprints.domains.config.changed_files,
+            ['garda-agent-orchestrator/live/config/workflow-config.json']
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change strict profile suppresses reviews for audited zero-diff baseline-only closeout', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-strict-zero-diff.json');

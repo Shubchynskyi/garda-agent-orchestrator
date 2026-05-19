@@ -218,7 +218,7 @@ function getWorktreeContentFingerprint(repoRoot: string, relativePath: string): 
     }
 }
 
-function buildScopeContentFingerprint(repoRoot: string, source: string, changedFiles: string[]): string | null {
+export function buildScopeContentFingerprint(repoRoot: string, source: string, changedFiles: string[]): string | null {
     const useStaged = ['git_staged_only', 'git_staged_plus_untracked'].includes(source);
     const fingerprintEntries = [...new Set(changedFiles.map((entry) => normalizePath(entry)).filter(Boolean))]
         .sort()
