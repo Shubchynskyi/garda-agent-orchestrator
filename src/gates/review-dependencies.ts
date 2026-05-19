@@ -10,6 +10,7 @@ import {
     type EffectiveReviewExecutionPolicyMode
 } from '../core/review-execution-policy';
 import * as gateHelpers from './helpers';
+import { reviewContextLaneScopeMatchesCurrentPreflight } from './domain-scope-fingerprints';
 import { REVIEW_CONTRACTS, validateReviewArtifactGateEligibility } from './required-reviews-check';
 import { resolveCanonicalReviewContextPath } from './review-context-paths';
 import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from './reviewer-routing';
@@ -128,6 +129,24 @@ export function buildLatestRecordedReviewEventMap(
     return result;
 }
 
+function buildLatestAnyRecordedReviewEventMap(
+    events: readonly ReviewDependencyTimelineEvent[]
+): Map<string, ReviewDependencyTimelineEvent> {
+    const result = new Map<string, ReviewDependencyTimelineEvent>();
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const entry = events[index];
+        if (entry.event_type !== 'REVIEW_RECORDED') {
+            continue;
+        }
+        const normalizedReviewType = String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase();
+        if (!normalizedReviewType || result.has(normalizedReviewType)) {
+            continue;
+        }
+        result.set(normalizedReviewType, entry);
+    }
+    return result;
+}
+
 function resolveReviewContextPath(
     preflightPath: string,
     reviewType: string,
@@ -190,12 +209,16 @@ export function assessUpstreamReviewDependencyStatus(options: {
     preflightPayload: Record<string, unknown>;
     preflightHashSha256: string | null;
     latestRecordedReviewByType: ReadonlyMap<string, ReviewDependencyTimelineEvent>;
+    latestAnyRecordedReviewByType?: ReadonlyMap<string, ReviewDependencyTimelineEvent>;
     upstreamReviewType: string;
     timelineEvents?: readonly ReviewDependencyTimelineEvent[];
     taskModePath?: string | null;
     runtimeReviewerIdentity?: RuntimeReviewerIdentity | null;
 }): ReviewDependencyStatus {
-    const recordedEvent = options.latestRecordedReviewByType.get(options.upstreamReviewType) ?? null;
+    const currentCycleRecordedEvent = options.latestRecordedReviewByType.get(options.upstreamReviewType) ?? null;
+    const recordedEvent = currentCycleRecordedEvent
+        ?? options.latestAnyRecordedReviewByType?.get(options.upstreamReviewType)
+        ?? null;
     if (!recordedEvent) {
         return blockedDependencyStatus(
             options.upstreamReviewType,
@@ -239,16 +262,6 @@ export function assessUpstreamReviewDependencyStatus(options: {
             options.upstreamReviewType,
             'stale_freshness',
             `review receipt type is '${receipt.review_type || 'unknown'}'`
-        );
-    }
-    if (
-        String(receipt.preflight_sha256 || '').trim().toLowerCase()
-        !== String(options.preflightHashSha256 || '').trim().toLowerCase()
-    ) {
-        return blockedDependencyStatus(
-            options.upstreamReviewType,
-            'stale_freshness',
-            'review receipt is not bound to the current preflight artifact'
         );
     }
 
@@ -301,6 +314,27 @@ export function assessUpstreamReviewDependencyStatus(options: {
             `missing or invalid review-context artifact at ${gateHelpers.normalizePath(reviewContextPath)}`
         );
     }
+    const domainScopeCurrent = reviewContextLaneScopeMatchesCurrentPreflight(
+        options.upstreamReviewType,
+        reviewContext,
+        options.preflightPayload
+    );
+    const receiptPreflightMatchesCurrent = String(receipt.preflight_sha256 || '').trim().toLowerCase()
+        === String(options.preflightHashSha256 || '').trim().toLowerCase();
+    if (!receiptPreflightMatchesCurrent && !domainScopeCurrent) {
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'stale_freshness',
+            'review receipt is not bound to the current preflight artifact and review-context lane-domain evidence is not current'
+        );
+    }
+    if (!currentCycleRecordedEvent && !domainScopeCurrent) {
+        return blockedDependencyStatus(
+            options.upstreamReviewType,
+            'missing_upstream_pass',
+            'no current-cycle REVIEW_RECORDED evidence and historical review-context lane-domain evidence is not current'
+        );
+    }
 
     const repoRoot = resolveRepoRootFromPreflightPath(options.preflightPath);
     const runtimeIdentity = options.runtimeReviewerIdentity || resolveRuntimeReviewerIdentity({
@@ -330,6 +364,7 @@ export function assessUpstreamReviewDependencyStatus(options: {
             receipt
         },
         allowLegacyReviewContextIdentityFallback: runtimeIdentity.task_mode_identity_backfilled,
+        allowLaneDomainPreflightBinding: domainScopeCurrent,
         timelineEvents: options.timelineEvents,
         repoRoot
     });
@@ -372,6 +407,9 @@ export function buildReviewDependencyDiagnostics(options: {
         (entry) => entry.event_type === 'COMPILE_GATE_PASSED'
     );
     const latestRecordedReviewByType = buildLatestRecordedReviewEventMap(options.timelineEvents, latestCompilePassSequence);
+    const latestAnyRecordedReviewByType = latestCompilePassSequence == null
+        ? new Map<string, ReviewDependencyTimelineEvent>()
+        : buildLatestAnyRecordedReviewEventMap(options.timelineEvents);
     const currentPreflightHashSha256 = String(gateHelpers.fileSha256(options.preflightPath) || '').trim().toLowerCase() || null;
     const dependencyStatuses = upstreamReviewTypes.map((upstreamReviewType) => assessUpstreamReviewDependencyStatus({
         taskId: options.taskId,
@@ -379,6 +417,7 @@ export function buildReviewDependencyDiagnostics(options: {
         preflightPayload: options.preflightPayload,
         preflightHashSha256: currentPreflightHashSha256,
         latestRecordedReviewByType,
+        latestAnyRecordedReviewByType,
         upstreamReviewType,
         timelineEvents: options.timelineEvents,
         taskModePath: String(options.taskModePath || '').trim(),

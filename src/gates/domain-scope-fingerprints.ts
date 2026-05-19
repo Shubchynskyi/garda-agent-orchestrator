@@ -269,6 +269,35 @@ export function reviewLaneScopeSha256Matches(
         && laneScopeSha256s.every((entry) => !!entry && entry === firstLaneScopeSha256);
 }
 
+export function reviewContextLaneScopeMatchesCurrentPreflight(
+    reviewType: string,
+    reviewContext: Record<string, unknown> | null | undefined,
+    currentPreflight: Record<string, unknown> | null | undefined
+): boolean {
+    if (!reviewContext || !currentPreflight) {
+        return false;
+    }
+    const contextTreeState = isDomainScopeRecord(reviewContext.tree_state)
+        ? reviewContext.tree_state
+        : null;
+    const contextDomainScopeFingerprints = normalizeDomainScopeFingerprints(
+        contextTreeState?.domain_scope_fingerprints
+    );
+    const metrics = isDomainScopeRecord(currentPreflight.metrics)
+        ? currentPreflight.metrics
+        : {};
+    const currentDomainScopeFingerprints = normalizeDomainScopeFingerprints(
+        metrics.domain_scope_fingerprints
+    );
+    if (!contextDomainScopeFingerprints || !currentDomainScopeFingerprints) {
+        return false;
+    }
+    return reviewLaneScopeSha256Matches(reviewType, [
+        contextDomainScopeFingerprints,
+        currentDomainScopeFingerprints
+    ]);
+}
+
 export function getCombinedDomainScopeFingerprint(
     fingerprints: DomainScopeFingerprints | null,
     domains: DomainScopeName[]

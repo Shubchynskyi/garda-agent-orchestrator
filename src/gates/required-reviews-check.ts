@@ -17,6 +17,7 @@ import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from './review-context-contract';
+import { reviewContextLaneScopeMatchesCurrentPreflight } from './domain-scope-fingerprints';
 import { resolveReviewContextRoutingIdentity } from './review-context-routing';
 import { resolveReviewerPromptArtifactBinding } from './review-prompt-artifact';
 import {
@@ -399,7 +400,8 @@ function findMatchingRoutingEvent(
     reviewerExecutionMode: string,
     reviewerIdentity: string,
     reviewerFallbackReason: string | null,
-    reviewerProvenance?: ReturnType<typeof normalizeReviewReceiptReviewerProvenance>
+    reviewerProvenance?: ReturnType<typeof normalizeReviewReceiptReviewerProvenance>,
+    allowHistoricalEvidence = false
 ): ReviewDependencyTimelineEvent | null {
     const normalizedReviewType = String(reviewType || '').trim().toLowerCase();
     const latestCompilePassSequence = findLatestTimelineSequence(
@@ -413,12 +415,14 @@ function findMatchingRoutingEvent(
             && String(entry.details?.review_type || entry.details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
         )
     );
-    const cycleFloorSequence = latestCompilePassSequence == null
+    const cycleFloorSequence = allowHistoricalEvidence
+        ? null
+        : latestCompilePassSequence == null
         ? latestReviewPhaseSequence
         : latestReviewPhaseSequence == null
             ? latestCompilePassSequence
             : Math.max(latestCompilePassSequence, latestReviewPhaseSequence);
-    if (cycleFloorSequence == null) {
+    if (cycleFloorSequence == null && !allowHistoricalEvidence) {
         return null;
     }
     if (reviewerProvenance?.attestation_type === 'controller_event_integrity') {
@@ -426,7 +430,7 @@ function findMatchingRoutingEvent(
             const entry = timelineEvents[index];
             const details = entry.details;
             const eventFallbackReason = String((details?.reviewer_fallback_reason ?? details?.reviewerFallbackReason) || '').trim();
-            if (entry.sequence <= cycleFloorSequence) {
+            if (cycleFloorSequence != null && entry.sequence <= cycleFloorSequence) {
                 break;
             }
             if (
@@ -448,17 +452,22 @@ function findMatchingRoutingEvent(
     }
     for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
         const entry = timelineEvents[index];
-        if (entry.sequence <= cycleFloorSequence) {
+        if (cycleFloorSequence != null && entry.sequence <= cycleFloorSequence) {
             break;
         }
         const details = entry.details;
         const eventFallbackReason = String((details?.reviewer_fallback_reason ?? details?.reviewerFallbackReason) || '').trim();
+        const eventSha256 = String(entry.integrity?.event_sha256 || '').trim().toLowerCase();
+        const expectedRoutingEventSha256 = reviewerProvenance?.attestation_type === 'reviewer_invocation_attestation'
+            ? String(reviewerProvenance.routing_event_sha256 || '').trim().toLowerCase()
+            : '';
         if (
             entry.event_type === 'REVIEWER_DELEGATION_ROUTED'
             && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
             && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === reviewerExecutionMode
             && String((details?.reviewer_session_id ?? details?.reviewerSessionId) || '').trim() === reviewerIdentity
             && (reviewerExecutionMode !== 'same_agent_fallback' || eventFallbackReason === (reviewerFallbackReason || ''))
+            && (!expectedRoutingEventSha256 || eventSha256 === expectedRoutingEventSha256)
         ) {
             return entry;
         }
@@ -613,6 +622,7 @@ export function validateReviewArtifactGateEligibility(options: {
     executionProvider?: string | null;
     executionProviderSource?: string | null;
     allowLegacyReviewContextIdentityFallback?: boolean;
+    allowLaneDomainPreflightBinding?: boolean;
     timelineEvents?: readonly ReviewDependencyTimelineEvent[];
     treeStateFreshnessCache?: ReviewTreeStateFreshnessCache | null;
 }): ReviewArtifactGateEligibilityResult {
@@ -680,6 +690,7 @@ export function validateReviewArtifactGateEligibility(options: {
     let reusedFromReviewTreeStateSha256: string | null = null;
     let trivialReview = false;
     let findingsEvidence: ReturnType<typeof getReviewArtifactFindingsEvidence> | null = null;
+    let laneDomainPreflightBindingAllowed = false;
 
     if (artifactPath && artifactContent) {
         compactionAudit = auditReviewArtifactCompaction({
@@ -707,18 +718,26 @@ export function validateReviewArtifactGateEligibility(options: {
                 preflightPath: options.preflightPath
             });
             const diffExpectations = buildReviewContextPreflightDiffExpectations(preflightPayload, reviewKey);
+            laneDomainPreflightBindingAllowed = options.allowLaneDomainPreflightBinding === true
+                && reviewContextLaneScopeMatchesCurrentPreflight(reviewKey, reviewContext || null, preflightPayload);
             errors.push(...getReviewContextContractViolations({
                 contextPath: reviewArtifact.reviewContextPath || artifactPath.replace(/\.md$/, '-review-context.json'),
                 reviewContext: reviewContext || null,
                 expectedTaskId: resolvedTaskId,
                 expectedReviewType: reviewKey,
-                expectedPreflightPath: options.preflightPath,
-                expectedPreflightSha256: options.preflightSha256,
+                expectedPreflightPath: laneDomainPreflightBindingAllowed ? null : options.preflightPath,
+                expectedPreflightSha256: laneDomainPreflightBindingAllowed ? null : options.preflightSha256,
                 requireReviewType: true,
                 requireTaskId: true,
-                requirePreflightPath: true,
-                requirePreflightSha256: true,
-                ...diffExpectations
+                requirePreflightPath: !laneDomainPreflightBindingAllowed,
+                requirePreflightSha256: !laneDomainPreflightBindingAllowed,
+                ...diffExpectations,
+                expectedChangedFiles: laneDomainPreflightBindingAllowed ? [] : diffExpectations.expectedChangedFiles,
+                expectedChangedFilesSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedChangedFilesSha256,
+                expectedScopeContentSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeContentSha256,
+                expectedScopeSha256: laneDomainPreflightBindingAllowed ? null : diffExpectations.expectedScopeSha256,
+                expectedScopedDiff: laneDomainPreflightBindingAllowed ? false : diffExpectations.expectedScopedDiff,
+                requireDiffMaterialForRequiredReview: !laneDomainPreflightBindingAllowed
             }));
             if (reviewContext && !reviewContextTreeStateSha256) {
                 errors.push(
@@ -1047,7 +1066,8 @@ export function validateReviewArtifactGateEligibility(options: {
                         reviewerExecutionMode,
                         reviewerIdentity,
                         reviewerFallbackReason,
-                        reviewerProvenance
+                        reviewerProvenance,
+                        laneDomainPreflightBindingAllowed
                     );
                     const latestRoutingEvent = findLatestRoutingEventForReviewType(options.timelineEvents, reviewKey);
                     if (!routingEvent) {

@@ -100,7 +100,7 @@ import {
 import {
     buildDomainScopeFingerprints,
     normalizeDomainScopeFingerprints,
-    reviewLaneScopeSha256Matches
+    reviewContextLaneScopeMatchesCurrentPreflight
 } from './domain-scope-fingerprints';
 import {
     validateStrictReusedReviewEvidence,
@@ -2566,21 +2566,11 @@ function reviewReceiptDomainScopeMatchesCurrentPreflight(
     if (!reviewContext || !currentPreflight) {
         return false;
     }
-    const contextTreeState = isPlainRecord(reviewContext.tree_state) ? reviewContext.tree_state : null;
-    const contextDomainScopeFingerprints = normalizeDomainScopeFingerprints(contextTreeState?.domain_scope_fingerprints);
-    const metrics = isPlainRecord(currentPreflight.metrics) ? currentPreflight.metrics : {};
-    const currentDomainScopeFingerprints = normalizeDomainScopeFingerprints(metrics.domain_scope_fingerprints);
-    if (!contextDomainScopeFingerprints || !currentDomainScopeFingerprints) {
-        return false;
-    }
     const reviewType = String(receipt.review_type || '').trim().toLowerCase();
     if (reviewType !== String(reviewContext.review_type || '').trim().toLowerCase()) {
         return false;
     }
-    return reviewLaneScopeSha256Matches(reviewType, [
-        contextDomainScopeFingerprints,
-        currentDomainScopeFingerprints
-    ]);
+    return reviewContextLaneScopeMatchesCurrentPreflight(reviewType, reviewContext, currentPreflight);
 }
 
 function scopedDiffExpectedForReview(options: {
