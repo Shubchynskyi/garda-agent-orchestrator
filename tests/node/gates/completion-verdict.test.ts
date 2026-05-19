@@ -229,12 +229,22 @@ describe('gates/completion-verdict', () => {
     describe('isMeaningfulReviewEntry', () => {
         it('treats empty markers as not meaningful', () => {
             assert.equal(isMeaningfulReviewEntry('None'), false);
+            assert.equal(isMeaningfulReviewEntry('NONE'), false);
             assert.equal(isMeaningfulReviewEntry('n/a'), false);
             assert.equal(isMeaningfulReviewEntry('No findings'), false);
+            assert.equal(isMeaningfulReviewEntry('None significant for the scoped remediation; current tests exercise the changed review-output paths adequately.'), false);
         });
 
         it('treats real findings as meaningful', () => {
             assert.equal(isMeaningfulReviewEntry('Missing null check on line 42'), true);
+            assert.equal(isMeaningfulReviewEntry('None significant, but the authentication fallback still needs a follow-up fix.'), true);
+        assert.equal(isMeaningfulReviewEntry('None significant, action required before release.'), true);
+        assert.equal(isMeaningfulReviewEntry('None significant, pending owner decision.'), true);
+        assert.equal(isMeaningfulReviewEntry('None significant for the scoped remediation; verify release notes.'), true);
+        assert.equal(
+            isMeaningfulReviewEntry('None significant for the scoped remediation; current tests exercise uncovered a flaky auth path needing fix'),
+            true
+        );
         });
     });
 
@@ -248,6 +258,26 @@ describe('gates/completion-verdict', () => {
             const entries = getMarkdownMeaningfulEntries(lines);
             assert.equal(entries.length, 1);
             assert.ok(entries[0].includes('parser.ts'));
+        });
+
+        it('filters common no-risk prose without hiding active risks', () => {
+            assert.deepEqual(getMarkdownMeaningfulEntries([
+                'None significant for the scoped remediation; current tests exercise the changed review-output paths adequately.',
+                'NONE',
+                'No material residual risks.'
+            ]), []);
+            assert.deepEqual(getMarkdownMeaningfulEntries([
+                'None significant, but the authentication fallback still needs a follow-up fix.'
+            ]), ['None significant, but the authentication fallback still needs a follow-up fix.']);
+        assert.deepEqual(getMarkdownMeaningfulEntries([
+            'None significant, pending owner decision.'
+        ]), ['None significant, pending owner decision.']);
+        assert.deepEqual(getMarkdownMeaningfulEntries([
+            'None significant for the scoped remediation; investigate release behavior.'
+        ]), ['None significant for the scoped remediation; investigate release behavior.']);
+        assert.deepEqual(getMarkdownMeaningfulEntries([
+            'None significant for the scoped remediation; current tests exercise uncovered a flaky auth path needing fix'
+        ]), ['None significant for the scoped remediation; current tests exercise uncovered a flaky auth path needing fix']);
         });
     });
 

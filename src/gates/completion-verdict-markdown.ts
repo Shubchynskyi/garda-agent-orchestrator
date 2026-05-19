@@ -3,6 +3,16 @@ export const EMPTY_REVIEW_MARKERS = new Set([
     'no deferred findings', 'no open findings', 'no outstanding findings'
 ]);
 
+const NO_SIGNIFICANT_REVIEW_ISSUE_PATTERN = /^(?:no|none|nothing)\s+(?:significant|material|active|outstanding)\b/u;
+const NO_SIGNIFICANT_REVIEW_ISSUE_PREFIX_PATTERN = /^(?:no|none|nothing)\s+(?:significant|material|active|outstanding)(?:\s+(?:residual\s+)?risks?)?\b[.;,:-]?\s*/u;
+const BENIGN_NO_SIGNIFICANT_REVIEW_ISSUE_REMAINDERS = new Set([
+    'for the scoped remediation',
+    'for the scoped remediation; current tests exercise the changed review-output paths adequately',
+    'for the scoped remediation; current tests exercise the accepted no-risk phrases',
+    'for the scoped remediation; current tests exercise common no-risk phrasing',
+    'for the scoped remediation; current tests exercise common pass wording'
+]);
+
 export const CANONICAL_REVIEW_SECTION_HEADINGS = [
     'Findings by Severity',
     'Deferred Findings',
@@ -121,7 +131,17 @@ export function isMeaningfulReviewEntry(value: unknown): boolean {
     const text = normalizeReviewListText(value);
     if (!text) return false;
     const normalized = text.trim().replace(/\.$/, '').trim().replace(/^`|`$/g, '').trim().toLowerCase();
-    return !EMPTY_REVIEW_MARKERS.has(normalized);
+    if (EMPTY_REVIEW_MARKERS.has(normalized)) return false;
+    if (NO_SIGNIFICANT_REVIEW_ISSUE_PATTERN.test(normalized)) {
+        const remainder = normalized.replace(NO_SIGNIFICANT_REVIEW_ISSUE_PREFIX_PATTERN, '').trim();
+        if (!remainder) {
+            return false;
+        }
+        if (BENIGN_NO_SIGNIFICANT_REVIEW_ISSUE_REMAINDERS.has(remainder)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 export function getMarkdownMeaningfulEntries(sectionLines: string[]): string[] {
