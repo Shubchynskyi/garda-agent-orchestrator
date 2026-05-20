@@ -3750,6 +3750,13 @@ function readCompileReadiness(
     const scopeContentSha256 = String(evidence.scope_content_sha256 || '').trim().toLowerCase();
     const changedFilesSha256 = String(evidence.scope_changed_files_sha256 || '').trim();
     const changedLinesTotal = Number.parseInt(String(evidence.scope_changed_lines_total || 0), 10) || 0;
+    const preflightEvidence = safeReadJson(preflightPath);
+    const preflightMetrics = isPlainRecord(preflightEvidence?.metrics) ? preflightEvidence.metrics : {};
+    const expectedDomainScopeFingerprints = normalizeDomainScopeFingerprints(
+        isPlainRecord(evidence.domain_scope_fingerprints)
+            ? evidence.domain_scope_fingerprints
+            : (isPlainRecord(preflightMetrics.domain_scope_fingerprints) ? preflightMetrics.domain_scope_fingerprints : null)
+    );
     if (!detectionSource || !scopeSha256 || !changedFilesSha256) {
         return {
             ready: false,
@@ -3781,7 +3788,7 @@ function readCompileReadiness(
                 changedFilesSha256,
                 scopeContentSha256,
                 getDocImpactDeclaredDocsUpdated(path.join(reviewsRoot, `${taskId}-doc-impact.json`)),
-                null
+                expectedDomainScopeFingerprints
             )
             : null;
         if (docsOnlyDeltaReadiness) {

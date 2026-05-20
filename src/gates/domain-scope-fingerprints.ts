@@ -39,9 +39,6 @@ export interface DomainScopeFingerprints {
 }
 
 const CLOSEOUT_DOC_PATH_PATTERNS = [
-    '^CHANGELOG(?:\\.[^/]+)?$',
-    '^RELEASE_NOTES(?:\\.[^/]+)?$',
-    '^garda-agent-orchestrator/live/docs/changes/',
     '^garda-agent-orchestrator/live/docs/project-memory/'
 ] as const;
 

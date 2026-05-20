@@ -7046,6 +7046,53 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--docs-updated "garda-agent-orchestrator/live/docs/project-memory/commands.md"'));
     });
 
+    it('keeps changelog in docs domain while project-memory and task metadata stay closeout domain', () => {
+        const repoRoot = makeTempRepo();
+        const projectMemoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+        fs.mkdirSync(projectMemoryRoot, { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\n- Runtime-facing release note.\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), '# Tasks\n\nCloseout metadata.\n', 'utf8');
+        fs.writeFileSync(path.join(projectMemoryRoot, 'commands.md'), '# Commands\n\nCloseout memory note.\n', 'utf8');
+
+        const fingerprints = buildDomainScopeFingerprints({
+            repoRoot,
+            detectionSource: 'explicit_changed_files',
+            includeUntracked: true,
+            changedFiles: [
+                'CHANGELOG.md',
+                'TASK.md',
+                'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+            ]
+        });
+
+        assert.deepEqual(fingerprints.domains.docs.changed_files, ['CHANGELOG.md']);
+        assert.deepEqual(fingerprints.domains.closeout.changed_files, [
+            'TASK.md',
+            'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+        ]);
+    });
+
+    it('uses preflight domain fingerprints for legacy compile evidence without fingerprint fields', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        const compileArtifact = JSON.parse(
+            fs.readFileSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), 'utf8')
+        ) as Record<string, unknown>;
+        assert.equal(compileArtifact.domain_scope_fingerprints, undefined);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '\nCloseout note for reviewed implementation.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+    });
+
     it('keeps post-review docs and closeout deltas separated in doc-impact', () => {
         const repoRoot = makeTempRepo();
         fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });

@@ -1611,6 +1611,12 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         scope_changed_files_sha256: workspaceSnapshot ? workspaceSnapshot.changed_files_sha256 : null,
         scope_content_sha256: workspaceSnapshot ? workspaceSnapshot.scope_content_sha256 : null,
         scope_sha256: workspaceSnapshot ? workspaceSnapshot.scope_sha256 : null,
+        domain_scope_fingerprints: workspaceSnapshot ? buildDomainScopeFingerprints({
+            repoRoot,
+            detectionSource: workspaceSnapshot.detection_source,
+            includeUntracked: !!workspaceSnapshot.include_untracked,
+            changedFiles: workspaceSnapshot.changed_files
+        }) : null,
         dirty_workspace_protection: dirtyWorkspaceProtectionDrift,
         protected_manifest: protectedManifestGuard ? {
             status: protectedManifestGuard.manifest_evidence.status,

@@ -383,6 +383,17 @@ function buildFullSuiteValidationCommandEnv(): NodeJS.ProcessEnv {
     };
 }
 
+function resolveEffectiveFullSuiteValidationConfig(
+    repoRoot: string,
+    config: ReturnType<typeof loadFullSuiteValidationConfig>
+): ReturnType<typeof loadFullSuiteValidationConfig> {
+    const timeoutForecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+    const effectiveTimeoutMs = Math.max(config.timeout_ms, timeoutForecast.recommended_timeout_seconds * 1000);
+    return effectiveTimeoutMs === config.timeout_ms
+        ? config
+        : { ...config, timeout_ms: effectiveTimeoutMs };
+}
+
 function buildWorkflowConfigWorkBlockedResult(
     config: ReturnType<typeof loadFullSuiteValidationConfig>,
     cycleBinding: FullSuiteValidationCycleBinding,
@@ -561,12 +572,13 @@ export async function runFullSuiteValidationCommand(
     let commandExitCode = EXIT_GENERAL_FAILURE;
     let timedOut = false;
     let outputLines: string[] = [];
+    const executionConfig = resolveEffectiveFullSuiteValidationConfig(repoRoot, config);
     const startedAtMs = Date.now();
     try {
         const execution = await executeCommandAsync(config.command, {
             cwd: repoRoot,
             env: buildFullSuiteValidationCommandEnv(),
-            timeoutMs: config.timeout_ms
+            timeoutMs: executionConfig.timeout_ms
         });
         commandExitCode = execution.exitCode;
         timedOut = execution.timedOut;
@@ -593,7 +605,7 @@ export async function runFullSuiteValidationCommand(
         'utf8'
     );
     const result = buildValidationResult(
-        config,
+        executionConfig,
         commandExitCode,
         timedOut,
         outputLines,
