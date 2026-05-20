@@ -3694,6 +3694,80 @@ function describeBlockedReviewDependencies(
         .join('; ');
 }
 
+function getTimelineEventTaskSequence(event: ReviewReuseTelemetryEventLike): number | null {
+    const integrity = event.integrity && typeof event.integrity === 'object' && !Array.isArray(event.integrity)
+        ? event.integrity as Record<string, unknown>
+        : null;
+    const sequence = typeof integrity?.task_sequence === 'number'
+        ? integrity.task_sequence
+        : Number(integrity?.task_sequence);
+    return Number.isInteger(sequence) && sequence > 0 ? sequence : null;
+}
+
+function getLatestReviewEventSequence(
+    events: readonly ReviewReuseTelemetryEventLike[],
+    eventType: string,
+    reviewType: string
+): number | null {
+    const normalizedEventType = eventType.trim().toUpperCase();
+    const normalizedReviewType = reviewType.trim().toLowerCase();
+    let latestSequence: number | null = null;
+    for (const event of events) {
+        if (String(event.event_type || '').trim().toUpperCase() !== normalizedEventType) {
+            continue;
+        }
+        const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+            ? event.details as Record<string, unknown>
+            : null;
+        const currentReviewType = String(details?.review_type ?? details?.reviewType ?? '').trim().toLowerCase();
+        if (currentReviewType !== normalizedReviewType) {
+            continue;
+        }
+        const sequence = getTimelineEventTaskSequence(event);
+        if (sequence != null) {
+            latestSequence = latestSequence == null ? sequence : Math.max(latestSequence, sequence);
+        }
+    }
+    return latestSequence;
+}
+
+function findDownstreamReviewNeedingDependencyRebind(params: {
+    eventsRoot: string;
+    taskId: string;
+    requiredReviewTypes: string[];
+    requiredReviews: Record<string, boolean>;
+    policyMode: EffectiveReviewExecutionPolicyMode;
+    reviewStates: readonly ReviewArtifactState[];
+}): { downstreamState: ReviewArtifactState; upstreamReviewType: string } | null {
+    const timelineEvents = readTaskTimelineEventLikes(params.eventsRoot, params.taskId);
+    if (timelineEvents.length === 0) {
+        return null;
+    }
+    const stateByReviewType = new Map(params.reviewStates.map((state) => [state.reviewType, state]));
+    for (const reviewType of params.requiredReviewTypes) {
+        const downstreamState = stateByReviewType.get(reviewType);
+        if (!downstreamState?.ready || !downstreamState.contextExists) {
+            continue;
+        }
+        const downstreamPhaseSequence = getLatestReviewEventSequence(timelineEvents, 'REVIEW_PHASE_STARTED', reviewType);
+        if (downstreamPhaseSequence == null) {
+            continue;
+        }
+        const upstreamReviewTypes = getReviewExecutionDependencies(
+            reviewType,
+            params.requiredReviews,
+            params.policyMode
+        );
+        for (const upstreamReviewType of upstreamReviewTypes) {
+            const upstreamRecordedSequence = getLatestReviewEventSequence(timelineEvents, 'REVIEW_RECORDED', upstreamReviewType);
+            if (upstreamRecordedSequence != null && upstreamRecordedSequence > downstreamPhaseSequence) {
+                return { downstreamState, upstreamReviewType };
+            }
+        }
+    }
+    return null;
+}
+
 function readCompileReadiness(
     repoRoot: string,
     reviewsRoot: string,
@@ -5786,10 +5860,16 @@ function getPreflightRefreshChangedFiles(
     preflight: Record<string, unknown> | null
 ): string[] {
     const plannedChangedFiles = getTaskModePlannedChangedFiles(taskMode);
-    if (plannedChangedFiles.length > 0) {
-        return plannedChangedFiles;
-    }
     const detectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
+    const explicitPreflightChangedFiles = detectionSource === 'explicit_changed_files'
+        ? getPreflightChangedFiles(preflight)
+        : [];
+    if (plannedChangedFiles.length > 0 || explicitPreflightChangedFiles.length > 0) {
+        return [...new Set([
+            ...plannedChangedFiles,
+            ...explicitPreflightChangedFiles
+        ])].sort();
+    }
     if (detectionSource === 'explicit_changed_files') {
         return getPreflightChangedFiles(preflight);
     }
@@ -8102,6 +8182,56 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
+    }
+
+    const downstreamDependencyRebind = findDownstreamReviewNeedingDependencyRebind({
+        eventsRoot,
+        taskId,
+        requiredReviewTypes,
+        requiredReviews: summary.required_reviews,
+        policyMode: reviewPolicy.mode,
+        reviewStates
+    });
+    if (downstreamDependencyRebind) {
+        const reviewType = downstreamDependencyRebind.downstreamState.reviewType;
+        const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
+        const reviewerReadinessChain = buildReviewerReadinessChainSummary(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            downstreamDependencyRebind.downstreamState
+        );
+        const reviewContextChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'compile-to-review-context',
+            reason: `latest upstream '${downstreamDependencyRebind.upstreamReviewType}' review evidence is recorded before re-binding '${reviewType}' review context`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: downstreamDependencyRebind.downstreamState.contextPath
+                ? toRepoDisplayPath(repoRoot, downstreamDependencyRebind.downstreamState.contextPath)
+                : undefined,
+            depth: reviewDepth
+        });
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'build-review-context',
+            title: `Refresh '${reviewType}' review context after upstream review reuse.`,
+            reason:
+                `Configured review policy '${reviewPolicy.mode}' requires '${reviewType}' to start after upstream ` +
+                `'${downstreamDependencyRebind.upstreamReviewType}' evidence. Current '${reviewType}' evidence is otherwise present, ` +
+                `but its latest review phase predates the upstream review record, so rebind '${reviewType}' through build-review-context/reuse before required-reviews-check and completion. ` +
+                `${reviewerReadinessChain} ${reviewContextChain}`,
+            commands: [
+                buildCommand(
+                    'Build review context',
+                    buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
+                )
+            ]
+        });
     }
 
     if (preflightRequiresAuditedNoOp(preflight)) {

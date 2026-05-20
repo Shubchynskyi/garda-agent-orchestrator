@@ -6044,6 +6044,54 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
     });
 
+    it('preserves expanded explicit preflight scope when refreshing after completion failure', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        const taskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        taskMode.planned_changed_files = ['src/app.ts'];
+        writeJson(taskModePath, taskMode);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'gates'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'gates', 'next-step.ts'), 'export const routed = true;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles: ['src/app.ts', 'src/gates/next-step.ts']
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(command.includes('--changed-file "src/gates/next-step.ts"'));
+    });
+
+    it('rebinds downstream strict-sequential review when upstream reuse is recorded after downstream phase', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', { review_type: 'test' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', { review_type: 'code' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', { review_type: 'code' });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.ok(result.reason.includes("latest review phase predates the upstream review record"), result.reason);
+        assert.ok(result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+    });
+
     it('keeps passed code review satisfied when only test-domain scope changes after preflight refresh', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
