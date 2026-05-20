@@ -43,6 +43,89 @@ export const DEFAULT_UI_PORT_START = 17340;
 export const DEFAULT_UI_PORT_END = 17359;
 export const DEFAULT_UI_IDLE_MINUTES = 15;
 export const DEFAULT_UI_IDLE_WARNING_SECONDS = 60;
+const DYNAMIC_PORT_RETRY_LIMIT = 25;
+const BROWSER_UNSAFE_PORTS = new Set<number>([
+    1,
+    7,
+    9,
+    11,
+    13,
+    15,
+    17,
+    19,
+    20,
+    21,
+    22,
+    23,
+    25,
+    37,
+    42,
+    43,
+    53,
+    69,
+    77,
+    79,
+    87,
+    95,
+    101,
+    102,
+    103,
+    104,
+    109,
+    110,
+    111,
+    113,
+    115,
+    117,
+    119,
+    123,
+    135,
+    137,
+    139,
+    143,
+    161,
+    179,
+    389,
+    427,
+    465,
+    512,
+    513,
+    514,
+    515,
+    526,
+    530,
+    531,
+    532,
+    540,
+    548,
+    554,
+    556,
+    563,
+    587,
+    601,
+    636,
+    989,
+    990,
+    993,
+    995,
+    1719,
+    1720,
+    1723,
+    2049,
+    3659,
+    4045,
+    5060,
+    5061,
+    6000,
+    6566,
+    6665,
+    6666,
+    6667,
+    6668,
+    6669,
+    6697,
+    10080
+]);
 
 export interface StartLocalUiServerOptions {
     repoRoot: string;
@@ -467,6 +550,10 @@ function validatePort(port: number, label: string): void {
     }
 }
 
+function isBrowserUnsafePort(port: number): boolean {
+    return BROWSER_UNSAFE_PORTS.has(port);
+}
+
 export async function startLocalUiServer(options: StartLocalUiServerOptions): Promise<LocalUiServer> {
     const host = options.host || DEFAULT_UI_HOST;
     if (host !== DEFAULT_UI_HOST) {
@@ -479,39 +566,56 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
     if (portEnd < portStart) {
         throw new Error('portEnd must be greater than or equal to portStart.');
     }
-    const candidatePorts = options.port === null || options.port === undefined
+    const requestedPort = options.port;
+    const explicitPort = requestedPort !== null && requestedPort !== undefined;
+    const candidatePorts = !explicitPort
         ? Array.from({ length: portEnd - portStart + 1 }, (_, index) => portStart + index)
-        : [options.port];
+        : [requestedPort];
     let lastError: Error | null = null;
+    const dynamicRetryCount = explicitPort && requestedPort === 0 ? DYNAMIC_PORT_RETRY_LIMIT : 1;
     for (const port of candidatePorts) {
         validatePort(port, 'port');
-        const server = createLocalUiServer(options.repoRoot, {
-            actionsEnabled: options.actionsEnabled === true,
-            actionRunner: options.actionRunner,
-            idleShutdownEnabled: options.idleShutdownEnabled !== false,
-            idleMinutes: options.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
-            idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
-            language: normalizeLocalUiLanguage(options.language || DEFAULT_LOCAL_UI_LANGUAGE)
-        });
-        try {
-            const actualPort = await listenOnPort(server, host, port);
-            return {
-                server,
-                host,
-                port: actualPort,
-                url: `http://${host}:${actualPort}/`,
+        if (port !== 0 && isBrowserUnsafePort(port)) {
+            lastError = new Error(`Port ${port} is not browser-safe for localhost UI fetch/navigation.`);
+            if (explicitPort) {
+                throw lastError;
+            }
+            continue;
+        }
+        for (let retryIndex = 0; retryIndex < dynamicRetryCount; retryIndex += 1) {
+            const server = createLocalUiServer(options.repoRoot, {
                 actionsEnabled: options.actionsEnabled === true,
+                actionRunner: options.actionRunner,
                 idleShutdownEnabled: options.idleShutdownEnabled !== false,
                 idleMinutes: options.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
                 idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
-                language: normalizeLocalUiLanguage(options.language || DEFAULT_LOCAL_UI_LANGUAGE),
-                close: () => closeServer(server)
-            };
-        } catch (error: unknown) {
-            lastError = error instanceof Error ? error : new Error(String(error));
-            await closeServer(server).catch(() => undefined);
-            if (options.port !== null && options.port !== undefined || !('code' in (lastError as Error & { code?: string })) || (lastError as Error & { code?: string }).code !== 'EADDRINUSE') {
-                throw lastError;
+                language: normalizeLocalUiLanguage(options.language || DEFAULT_LOCAL_UI_LANGUAGE)
+            });
+            try {
+                const actualPort = await listenOnPort(server, host, port);
+                if (isBrowserUnsafePort(actualPort)) {
+                    lastError = new Error(`Port ${actualPort} is not browser-safe for localhost UI fetch/navigation.`);
+                    await closeServer(server).catch(() => undefined);
+                    continue;
+                }
+                return {
+                    server,
+                    host,
+                    port: actualPort,
+                    url: `http://${host}:${actualPort}/`,
+                    actionsEnabled: options.actionsEnabled === true,
+                    idleShutdownEnabled: options.idleShutdownEnabled !== false,
+                    idleMinutes: options.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
+                    idleWarningSeconds: options.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
+                    language: normalizeLocalUiLanguage(options.language || DEFAULT_LOCAL_UI_LANGUAGE),
+                    close: () => closeServer(server)
+                };
+            } catch (error: unknown) {
+                lastError = error instanceof Error ? error : new Error(String(error));
+                await closeServer(server).catch(() => undefined);
+                if (explicitPort || !('code' in (lastError as Error & { code?: string })) || (lastError as Error & { code?: string }).code !== 'EADDRINUSE') {
+                    throw lastError;
+                }
             }
         }
     }

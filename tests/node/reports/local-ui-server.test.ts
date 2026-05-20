@@ -663,12 +663,12 @@ test('local UI server returns JSON errors for API method and route failures', as
 test('local UI server exposes server-owned idle session state and activity reset', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
-    const server = await startLocalUiServer({
-        repoRoot,
-        port: 0,
-        idleMinutes: 0.001,
-        idleWarningSeconds: 30
-    });
+        const server = await startLocalUiServer({
+            repoRoot,
+            port: 0,
+            idleMinutes: 0.01,
+            idleWarningSeconds: 30
+        });
     try {
         const actionToken = extractActionToken(await (await fetch(server.url)).text());
         const headers = {
@@ -687,11 +687,11 @@ test('local UI server exposes server-owned idle session state and activity reset
         };
         assert.equal(initial.enabled, true);
         assert.equal(initial.state, 'active');
-        assert.equal(initial.idle_minutes, 0.001);
+        assert.equal(initial.idle_minutes, 0.01);
         assert.equal(initial.warning_seconds, 30);
         assert.ok((initial.seconds_until_warning || 0) <= 1);
 
-        await new Promise<void>((resolve) => setTimeout(resolve, 90));
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
         const warning = await (await fetch(`${server.url}api/session`)).json() as {
             state: string;
             seconds_until_shutdown: number | null;
@@ -1154,6 +1154,34 @@ test('local UI server skips busy ports in the default local range', async () => 
         await server.close();
         await closeNetServer(reserved);
     }
+});
+
+test('local UI server skips browser-unsafe ports in configured local ranges', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        portStart: 6000,
+        portEnd: 6001
+    });
+    try {
+        assert.equal(server.host, DEFAULT_UI_HOST);
+        assert.equal(server.port, 6001);
+        const response = await fetch(server.url);
+        assert.equal(response.status, 200);
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI server rejects browser-unsafe explicit ports', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+
+    await assert.rejects(
+        () => startLocalUiServer({ repoRoot, port: 6000 }),
+        /not browser-safe/
+    );
 });
 
 test('local UI server refuses non-localhost binding', async () => {
