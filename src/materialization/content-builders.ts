@@ -123,6 +123,7 @@ export const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
 export const COMMIT_GUARD_START = '# garda-agent-orchestrator:commit-guard-start';
 export const COMMIT_GUARD_END = '# garda-agent-orchestrator:commit-guard-end';
 export const GITIGNORE_MANAGED_COMMENT = '# garda-agent-orchestrator managed ignores';
+export const AGENTIGNORE_ACTIVE_MANAGED_COMMENT = '# Garda active-mode agent ignore';
 export const UNINSTALL_BACKUP_GITIGNORE_COMMENT = '# Backup artifacts created by Garda Agent Orchestrator uninstall';
 export function getUninstallBackupGitignoreEntry(): string {
     return `${resolveBundleName()}-uninstall-backups/`;
@@ -144,7 +145,7 @@ export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
     ...getProviderEntrypointFiles(), 'TASK.md',
     '.qwen/settings.json', '.claude/settings.local.json',
     '.vscode/settings.json',
-    '.git/hooks/pre-commit', '.gitignore',
+    '.git/hooks/pre-commit', '.gitignore', '.agentignore',
     '.agents/workflows/start-task.md',
     ...getProviderBridgeRelativePaths(),
     '.github/agents/reviewer.md', '.github/agents/code-review.md',
@@ -1006,6 +1007,89 @@ export function buildGitignoreEntries(
 export function buildManagedGitignoreBlock(entries: string[] | null | undefined, newline = '\n'): string {
     const normalizedEntries = [...new Set((entries || []).filter((entry) => Boolean(entry && String(entry).trim())).map((entry) => String(entry)))].sort();
     return [GITIGNORE_MANAGED_COMMENT, ...normalizedEntries].join(newline);
+}
+
+export function getManagedAgentignoreActiveEntries(bundleName = resolveBundleName()): string[] {
+    return [
+        `${bundleName}/dist/`,
+        `${bundleName}/src/`,
+        `${bundleName}/template/`,
+        `${bundleName}/runtime/update-rollbacks/`,
+        `${bundleName}/runtime/tmp/`,
+        `${bundleName}/runtime/metrics/`,
+        `${bundleName}/runtime/full-suite/`,
+        `${bundleName}/runtime/scoped-diffs/`,
+        `${bundleName}/runtime/reviews/*-review-context.md`,
+        `${bundleName}/runtime/reviews/*-review-input.md`,
+        `${bundleName}/runtime/reviews/*-review-scratch.md`,
+        `${bundleName}/runtime/task-events/index*.json`,
+        `${bundleName}/runtime/task-events/*-aggregate.json`,
+        `${bundleName}/runtime/timeline-summaries/`
+    ];
+}
+
+function countMarkerOccurrences(content: string, marker: string): number {
+    return content.split(marker).length - 1;
+}
+
+function getManagedBlockRegex(flags = 'gm'): RegExp {
+    return new RegExp(`${escapeRegex(MANAGED_START)}[\\s\\S]*?${escapeRegex(MANAGED_END)}`, flags);
+}
+
+function assertCompleteManagedMarkers(content: string, relativePath: string): void {
+    const startCount = countMarkerOccurrences(content, MANAGED_START);
+    const endCount = countMarkerOccurrences(content, MANAGED_END);
+    if (startCount !== endCount) {
+        throw new Error(`${relativePath}: managed block markers are incomplete`);
+    }
+}
+
+function buildManagedAgentignoreActiveBlock(bundleName: string, newline: string): string {
+    return [
+        MANAGED_START,
+        AGENTIGNORE_ACTIVE_MANAGED_COMMENT,
+        ...getManagedAgentignoreActiveEntries(bundleName),
+        MANAGED_END
+    ].join(newline);
+}
+
+export function syncManagedAgentignoreActiveBlockInContent(
+    content: string | null | undefined,
+    bundleName = resolveBundleName()
+): ManagedBlockSyncResult {
+    const originalContent = content || '';
+    const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
+    assertCompleteManagedMarkers(originalContent, '.agentignore');
+
+    const block = buildManagedAgentignoreActiveBlock(bundleName, newline);
+    const managedBlockRegex = getManagedBlockRegex('gm');
+    const activeBlockCount = [...originalContent.matchAll(managedBlockRegex)]
+        .filter((match) => match[0].includes(AGENTIGNORE_ACTIVE_MANAGED_COMMENT))
+        .length;
+    if (activeBlockCount > 1) {
+        throw new Error('.agentignore: multiple Garda active-mode managed blocks found');
+    }
+
+    let updatedContent: string;
+    if (!originalContent.trim()) {
+        updatedContent = `${block}${newline}`;
+    } else if (activeBlockCount === 1) {
+        updatedContent = originalContent.replace(
+            getManagedBlockRegex('gm'),
+            (existingBlock) => existingBlock.includes(AGENTIGNORE_ACTIVE_MANAGED_COMMENT) ? block : existingBlock
+        );
+        if (!updatedContent.endsWith(newline)) {
+            updatedContent += newline;
+        }
+    } else {
+        const prefix = originalContent.endsWith(newline) ? originalContent : `${originalContent}${newline}`;
+        updatedContent = `${prefix}${block}${newline}`;
+    }
+
+    return {
+        content: updatedContent,
+        changed: updatedContent !== originalContent
+    };
 }
 
 function normalizeUninstallBackupGitignoreLines(lines: string[]): string[] {

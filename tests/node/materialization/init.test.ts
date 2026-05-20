@@ -80,6 +80,38 @@ describe('runInit', () => {
         }
     });
 
+    it('creates active .agentignore block during init without replacing user content', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(path.join(projectRoot, '.agentignore'), 'coverage/\n', 'utf8');
+
+            const first = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+            const second = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const agentignore = fs.readFileSync(path.join(projectRoot, '.agentignore'), 'utf8');
+            assert.equal(first.agentignoreUpdated, true);
+            assert.equal(second.agentignoreUpdated, false);
+            assert.ok(agentignore.startsWith('coverage/'));
+            assert.equal((agentignore.match(/# Garda active-mode agent ignore/g) || []).length, 1);
+            assert.ok(agentignore.includes('garda-agent-orchestrator/runtime/full-suite/'));
+            assert.ok(!agentignore.includes('garda-agent-orchestrator/live/config/'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('applies language and brevity to 00-core.md', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

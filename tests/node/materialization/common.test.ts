@@ -11,6 +11,7 @@ import {
     getManagedGitignoreEntries,
     getManagedGitignoreCleanupEntries
 } from '../../../src/materialization/common';
+import { getManagedAgentignoreActiveEntries } from '../../../src/materialization/content-builders';
 
 describe('getCanonicalEntrypointFile', () => {
     it('maps all source-of-truth values to entrypoint files', () => {
@@ -141,6 +142,31 @@ describe('managed gitignore entries', () => {
         assert.ok(cleanup.includes('.windsurf/rules/rules.md'));
         assert.ok(cleanup.includes('.junie/guidelines.md'));
         assert.ok(cleanup.includes('.antigravity/rules.md'));
+    });
+});
+
+describe('managed agentignore active entries', () => {
+    it('hides bulky Garda artifacts without hiding command and rule surfaces', () => {
+        const entries = getManagedAgentignoreActiveEntries('garda-agent-orchestrator');
+
+        assert.ok(entries.includes('garda-agent-orchestrator/dist/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/src/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/template/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/update-rollbacks/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/tmp/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/metrics/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/full-suite/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/scoped-diffs/'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/reviews/*-review-context.md'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/task-events/index*.json'));
+        assert.ok(entries.includes('garda-agent-orchestrator/runtime/timeline-summaries/'));
+        assert.ok(!entries.includes('AGENTS.md'));
+        assert.ok(!entries.includes('.agents/workflows/start-task.md'));
+        assert.ok(!entries.includes('garda-agent-orchestrator/bin/garda.js'));
+        assert.ok(!entries.includes('garda-agent-orchestrator/live/docs/agent-rules/'));
+        assert.ok(!entries.includes('garda-agent-orchestrator/live/config/'));
+        assert.ok(!entries.includes('garda-agent-orchestrator/runtime/protected-control-plane-manifest.json'));
+        assert.ok(!entries.includes('garda-agent-orchestrator/'));
     });
 });
 

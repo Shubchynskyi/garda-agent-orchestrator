@@ -41,7 +41,8 @@ import {
 } from './common';
 import {
     buildGitignoreEntries,
-    syncManagedGitignoreBlockInContent
+    syncManagedGitignoreBlockInContent,
+    syncManagedAgentignoreActiveBlockInContent
 } from './content-builders';
 import { getProjectDiscovery, buildProjectDiscoveryLines, buildDiscoveryOverlaySection } from './project-discovery';
 import {
@@ -490,6 +491,8 @@ export function runInit(options: RunInitOptions) {
     const usagePath = path.join(liveRoot, 'USAGE.md');
     const skillsIndexPath = path.join(liveRoot, 'config', 'skills-index.json');
     const gitignorePath = path.join(normalizedTarget, '.gitignore');
+    const agentignorePath = path.join(normalizedTarget, '.agentignore');
+    let agentignoreUpdated = false;
     const sourceInventory = collectSourceInventory(targetRoot);
     const reviewCapabilitiesSync = dryRun ? null : syncReviewCapabilities(bundleRoot);
     const gitignoreEntries = buildGitignoreEntries(
@@ -511,6 +514,15 @@ export function runInit(options: RunInitOptions) {
         if (gitignoreSync.changed) {
             fs.writeFileSync(gitignorePath, gitignoreSync.content, 'utf8');
         }
+        const existingAgentignoreContent = pathExists(agentignorePath) ? readTextFile(agentignorePath) : '';
+        const agentignoreSync = syncManagedAgentignoreActiveBlockInContent(
+            existingAgentignoreContent,
+            path.basename(bundleRoot)
+        );
+        if (agentignoreSync.changed) {
+            fs.writeFileSync(agentignorePath, agentignoreSync.content, 'utf8');
+            agentignoreUpdated = true;
+        }
     } else {
         const existingGitignoreContent = pathExists(gitignorePath) ? readTextFile(gitignorePath) : '';
         gitignoreEntriesAdded = syncManagedGitignoreBlockInContent(
@@ -518,6 +530,11 @@ export function runInit(options: RunInitOptions) {
             gitignoreEntries,
             claudeOrchestratorFullAccess
         ).addedEntries;
+        const existingAgentignoreContent = pathExists(agentignorePath) ? readTextFile(agentignorePath) : '';
+        agentignoreUpdated = syncManagedAgentignoreActiveBlockInContent(
+            existingAgentignoreContent,
+            path.basename(bundleRoot)
+        ).changed;
     }
 
     if (!dryRun) {
@@ -573,6 +590,7 @@ export function runInit(options: RunInitOptions) {
         providerMinimalism,
         activeAgentFiles: resolvedActiveEntryFiles,
         gitignoreEntriesAdded,
+        agentignoreUpdated,
         ruleFilesMaterialized: RULE_FILES.length,
         supportDirectoriesSynced: copiedSupportDirs,
         seedOnlyDirectoriesSeeded: seededDirs,

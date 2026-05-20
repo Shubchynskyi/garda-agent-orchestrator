@@ -553,6 +553,80 @@ describe('runInstall — core deploy and invariants', () => {
         }
     });
 
+    it('creates active .agentignore block while preserving user content', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                ProviderMinimalism: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+            fs.writeFileSync(path.join(projectRoot, '.agentignore'), 'node_modules/\n', 'utf8');
+
+            const first = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+            const second = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            const agentignore = fs.readFileSync(path.join(projectRoot, '.agentignore'), 'utf8');
+            assert.equal(first.agentignoreUpdated, true);
+            assert.equal(second.agentignoreUpdated, false);
+            assert.ok(agentignore.startsWith('node_modules/'));
+            assert.equal((agentignore.match(/# Garda active-mode agent ignore/g) || []).length, 1);
+            assert.ok(agentignore.includes('garda-agent-orchestrator/runtime/scoped-diffs/'));
+            assert.ok(!agentignore.includes('garda-agent-orchestrator/bin/garda.js'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks malformed .agentignore managed markers during install', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+            fs.writeFileSync(path.join(projectRoot, '.agentignore'), '<!-- garda-agent-orchestrator:managed-start -->\n', 'utf8');
+
+            assert.throws(() => runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            }), /\.agentignore: managed block markers are incomplete/);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('replaces an existing managed .gitignore block instead of appending a second header', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

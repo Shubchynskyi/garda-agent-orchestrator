@@ -232,7 +232,7 @@ function buildAgentIgnoreContent(existingContent: string | null, bundleName: str
 }
 
 function hasIncompleteManagedMarkers(content: string): boolean {
-    return content.includes(MANAGED_START) !== content.includes(MANAGED_END);
+    return content.split(MANAGED_START).length !== content.split(MANAGED_END).length;
 }
 
 function readActiveEntrypoints(targetRoot: string, bundleRoot: string): string[] {

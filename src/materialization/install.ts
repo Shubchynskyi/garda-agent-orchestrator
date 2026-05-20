@@ -34,6 +34,7 @@ import {
     buildVscodeSettingsContent,
     buildGitignoreEntries,
     syncManagedGitignoreBlockInContent,
+    syncManagedAgentignoreActiveBlockInContent,
     syncManagedBlockInContent
 } from './content-builders';
 import { withLifecycleOperationLock } from '../lifecycle/common';
@@ -662,6 +663,8 @@ export function runInstall(options: RunInstallOptions) {
     );
     let gitignoreAdded = 0;
     const gitignorePath = path.join(targetRoot, '.gitignore');
+    const agentignorePath = path.join(targetRoot, '.agentignore');
+    let agentignoreUpdated = false;
     if (!dryRun) {
         const gitignoreExisted = pathExists(gitignorePath);
         const existingContent = gitignoreExisted ? readTextFile(gitignorePath) : '';
@@ -677,6 +680,19 @@ export function runInstall(options: RunInstallOptions) {
             }
             fs.writeFileSync(gitignorePath, syncResult.content, 'utf8');
         }
+        const agentignoreExisted = pathExists(agentignorePath);
+        const existingAgentignoreContent = agentignoreExisted ? readTextFile(agentignorePath) : '';
+        const agentignoreSync = syncManagedAgentignoreActiveBlockInContent(
+            existingAgentignoreContent,
+            path.basename(bundleRoot)
+        );
+        if (agentignoreSync.changed) {
+            if (agentignoreExisted) {
+                backupFile(agentignorePath, '.agentignore');
+            }
+            fs.writeFileSync(agentignorePath, agentignoreSync.content, 'utf8');
+            agentignoreUpdated = true;
+        }
     } else {
         const existingContent = pathExists(gitignorePath) ? readTextFile(gitignorePath) : '';
         gitignoreAdded = syncManagedGitignoreBlockInContent(
@@ -684,6 +700,11 @@ export function runInstall(options: RunInstallOptions) {
             gitignoreEntryList,
             enableClaudeOrchestratorFullAccess
         ).addedEntries;
+        const existingAgentignoreContent = pathExists(agentignorePath) ? readTextFile(agentignorePath) : '';
+        agentignoreUpdated = syncManagedAgentignoreActiveBlockInContent(
+            existingAgentignoreContent,
+            path.basename(bundleRoot)
+        ).changed;
     }
 
     // Commit guard hook
@@ -767,6 +788,7 @@ export function runInstall(options: RunInstallOptions) {
         filesPreserved: preserved,
         filesBackedUp: backedUp,
         gitignoreEntriesAdded: gitignoreAdded,
+        agentignoreUpdated,
         qwenSettingsParseMode: qwenPlan.parseMode,
         qwenSettingsNeedsUpdate: qwenPlan.needsUpdate,
         qwenSettingsUpdated: qwenUpdated,

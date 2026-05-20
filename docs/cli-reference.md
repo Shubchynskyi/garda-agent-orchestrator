@@ -268,7 +268,8 @@ Notes:
 - `garda on` restores those managed files from `runtime/switch/off/`.
 - User-owned root alternatives are moved into `runtime/switch/on/` when turning Garda back on, and restored when turning it off again.
 - `TASK.md` remains visible; the switch is for root agent instruction surfaces, not task queue removal.
-- `garda off` writes a managed `.agentignore` block pointing agents away from `garda-agent-orchestrator/`; `garda on` removes only that managed block.
+- Setup/update/reinit keep an active managed `.agentignore` block for bulky Garda-generated artifacts while leaving command, rule, config, and explicit runtime evidence paths readable.
+- `garda off` writes a separate managed `.agentignore` block pointing agents away from `garda-agent-orchestrator/`; `garda on` removes only that off-mode block and leaves the active block in place.
 - Conflicts fail closed without overwriting user-authored files. Use `--dry-run` to inspect planned moves before changing a workspace.
 
 ### `garda bootstrap`

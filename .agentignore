@@ -1,0 +1,17 @@
+<!-- garda-agent-orchestrator:managed-start -->
+# Garda active-mode agent ignore
+garda-agent-orchestrator/dist/
+garda-agent-orchestrator/src/
+garda-agent-orchestrator/template/
+garda-agent-orchestrator/runtime/update-rollbacks/
+garda-agent-orchestrator/runtime/tmp/
+garda-agent-orchestrator/runtime/metrics/
+garda-agent-orchestrator/runtime/full-suite/
+garda-agent-orchestrator/runtime/scoped-diffs/
+garda-agent-orchestrator/runtime/reviews/*-review-context.md
+garda-agent-orchestrator/runtime/reviews/*-review-input.md
+garda-agent-orchestrator/runtime/reviews/*-review-scratch.md
+garda-agent-orchestrator/runtime/task-events/index*.json
+garda-agent-orchestrator/runtime/task-events/*-aggregate.json
+garda-agent-orchestrator/runtime/timeline-summaries/
+<!-- garda-agent-orchestrator:managed-end -->
