@@ -1341,6 +1341,58 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
+        it('gate full-suite-validation supplies prebuilt node test env to npm test subprocesses', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-shard-env-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'print-shard-env.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'process.stdout.write(`prebuilt=${process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT || ""}\\n`);',
+                    'process.stdout.write(`reuse=${process.env.GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME || ""}\\n`);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 10,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after_compile_before_reviews'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-SHARD-ENV-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-SHARD-ENV',
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-SHARD-ENV',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const outputPath = path.join(reviewsDir, 'T-SHARD-ENV-full-suite-output.log');
+            const outputText = fs.readFileSync(outputPath, 'utf8');
+            assert.match(outputText, /prebuilt=1/);
+            assert.match(outputText, /reuse=1/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
         it('gate full-suite-validation removes dead generated build locks after command timeout', async () => {
             const repoRoot = path.resolve(process.cwd());
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-timeout-lock-'));

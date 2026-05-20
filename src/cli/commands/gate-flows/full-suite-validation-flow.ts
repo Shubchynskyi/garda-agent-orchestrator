@@ -379,7 +379,9 @@ function formatGeneratedLockCleanupObservation(observation: GeneratedLockCleanup
 
 function buildFullSuiteValidationCommandEnv(): NodeJS.ProcessEnv {
     return {
-        GARDA_BUNDLE_NAME: undefined
+        GARDA_BUNDLE_NAME: undefined,
+        GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME: '1',
+        GARDA_NODE_FOUNDATION_TEST_PREBUILT: '1'
     };
 }
 

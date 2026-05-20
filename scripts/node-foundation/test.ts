@@ -4,6 +4,9 @@ import * as path from 'node:path';
 
 import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } from './build';
 
+const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
+const NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV = 'GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME';
+
 const NODE_TEST_OPTIONS_WITH_VALUE = new Set<string>([
     '--test-name-pattern',
     '--test-skip-pattern',
@@ -176,11 +179,88 @@ function resolveSelectedTestFiles(buildResult: BuildResult, compiledTestFiles: s
     return selectedTestFiles;
 }
 
-export function runNodeFoundationTests(): void {
+function hasExplicitTestShardOption(optionArgs: string[]): boolean {
+    return optionArgs.some((arg) => arg === '--test-shard' || arg.startsWith('--test-shard='));
+}
+
+function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs: string[], fileTargets: string[]): number {
+    if (fileTargets.length > 0 || hasExplicitTestShardOption(optionArgs)) {
+        return 1;
+    }
+
+    const rawValue = String(process.env[NODE_FOUNDATION_TEST_SHARDS_ENV] || '1').trim();
+    if (!rawValue) {
+        return 1;
+    }
+
+    const parsed = Number(rawValue);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`${NODE_FOUNDATION_TEST_SHARDS_ENV} must be a positive integer.`);
+    }
+
+    return Math.max(1, Math.min(parsed, selectedTestFiles.length));
+}
+
+function buildNodeFoundationTestShards(selectedTestFiles: string[], shardCount: number): string[][] {
+    const shards = Array.from({ length: shardCount }, () => [] as string[]);
+    selectedTestFiles.forEach((testFile, index) => {
+        shards[index % shardCount].push(testFile);
+    });
+    return shards.filter((shard) => shard.length > 0);
+}
+
+function runSingleNodeTestProcess(repoRoot: string, optionArgs: string[], selectedTestFiles: string[]): number {
+    const result = childProcess.spawnSync(process.execPath, ['--test', ...optionArgs, ...selectedTestFiles], {
+        cwd: repoRoot,
+        stdio: 'inherit',
+        windowsHide: true
+    });
+    return result.status == null ? 1 : result.status;
+}
+
+function runNodeTestShard(repoRoot: string, optionArgs: string[], shardFiles: string[], shardIndex: number, shardCount: number): Promise<number> {
+    return new Promise((resolve, reject) => {
+        console.log(`NODE_FOUNDATION_TEST_SHARD_START ${shardIndex + 1}/${shardCount} files=${shardFiles.length}`);
+        const child = childProcess.spawn(process.execPath, ['--test', ...optionArgs, ...shardFiles], {
+            cwd: repoRoot,
+            stdio: 'inherit',
+            windowsHide: true
+        });
+        child.once('error', reject);
+        child.once('exit', (code) => {
+            const exitCode = code == null ? 1 : code;
+            console.log(`NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode}`);
+            resolve(exitCode);
+        });
+    });
+}
+
+async function runShardedNodeTestProcesses(repoRoot: string, optionArgs: string[], selectedTestFiles: string[], shardCount: number): Promise<number> {
+    const shards = buildNodeFoundationTestShards(selectedTestFiles, shardCount);
+    const exitCodes = await Promise.all(shards.map((shardFiles, index) =>
+        runNodeTestShard(repoRoot, optionArgs, shardFiles, index, shards.length)
+    ));
+    return exitCodes.find((exitCode) => exitCode !== 0) || 0;
+}
+
+function ensureReusablePublishRuntime(repoRoot: string): void {
+    const manifestPath = path.join(repoRoot, 'dist', 'publish-runtime-manifest.json');
+    if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
+        throw new Error(
+            `${NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV}=1 requires prebuilt publish runtime artifact: ${manifestPath}`
+        );
+    }
+}
+
+export async function runNodeFoundationTests(): Promise<number> {
     const repoRoot: string = getRepoRoot();
     // Some lifecycle/update tests seed sync-surface fixtures from the current
     // publish-runtime bundle, so refresh dist before compiling .node-build.
-    buildPublishRuntime();
+    if (process.env[NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV] === '1') {
+        ensureReusablePublishRuntime(repoRoot);
+    } else {
+        buildPublishRuntime();
+    }
     const buildResult: BuildResult = buildNodeFoundation();
     const compiledTestFiles: string[] = collectCompiledNodeFoundationTestFiles(buildResult);
     const forwardedArgs = process.argv.slice(2);
@@ -191,19 +271,29 @@ export function runNodeFoundationTests(): void {
         throw new Error('No Node foundation tests were found under .node-build/tests/node.');
     }
 
-    const result = childProcess.spawnSync(process.execPath, ['--test', ...optionArgs, ...selectedTestFiles], {
-        cwd: repoRoot,
-        stdio: 'inherit'
-    });
+    const shardCount = resolveNodeFoundationShardCount(selectedTestFiles, optionArgs, fileTargets);
+    const exitCode = shardCount === 1
+        ? runSingleNodeTestProcess(repoRoot, optionArgs, selectedTestFiles)
+        : await runShardedNodeTestProcesses(repoRoot, optionArgs, selectedTestFiles, shardCount);
 
-    if (result.status !== 0) {
-        process.exit(result.status || 1);
+    if (exitCode !== 0) {
+        return exitCode;
     }
-
     console.log('NODE_FOUNDATION_TEST_OK');
+    return 0;
 }
 
 // CLI entry point when run directly
 if (require.main === module) {
-    runNodeFoundationTests();
+    runNodeFoundationTests()
+        .then((exitCode) => {
+            if (exitCode !== 0) {
+                process.exit(exitCode);
+            }
+        })
+        .catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error(message);
+            process.exit(1);
+        });
 }

@@ -13,6 +13,7 @@ const mutableBuildModule = require('../../../scripts/node-foundation/build') as 
     buildPublishRuntime: () => BuildResult;
 };
 const mutableChildProcess = require('node:child_process') as typeof childProcess & {
+    spawn: typeof childProcess.spawn;
     spawnSync: typeof childProcess.spawnSync;
 };
 
@@ -44,7 +45,7 @@ function createBuildResultFixture(): { buildResult: BuildResult; cleanup: () => 
     };
 }
 
-test('runNodeFoundationTests forwards test-name-pattern args before compiled test files', () => {
+test('runNodeFoundationTests forwards test-name-pattern args before compiled test files', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
@@ -64,8 +65,9 @@ test('runNodeFoundationTests forwards test-name-pattern args before compiled tes
             return { status: 0 } as childProcess.SpawnSyncReturns<Buffer>;
         }) as typeof childProcess.spawnSync;
 
-        testModule.runNodeFoundationTests();
+        const exitCode = await testModule.runNodeFoundationTests();
 
+        assert.equal(exitCode, 0);
         assert.equal(observedCommand, process.execPath);
         assert.deepEqual(observedArgs, [
             '--test',
@@ -83,7 +85,7 @@ test('runNodeFoundationTests forwards test-name-pattern args before compiled tes
     }
 });
 
-test('runNodeFoundationTests narrows explicit source test targets to compiled outputs', () => {
+test('runNodeFoundationTests narrows explicit source test targets to compiled outputs', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
@@ -106,8 +108,9 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
             return { status: 0 } as childProcess.SpawnSyncReturns<Buffer>;
         }) as typeof childProcess.spawnSync;
 
-        testModule.runNodeFoundationTests();
+        const exitCode = await testModule.runNodeFoundationTests();
 
+        assert.equal(exitCode, 0);
         assert.deepEqual(observedArgs, [
             '--test',
             '--test-name-pattern',
@@ -123,7 +126,7 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
     }
 });
 
-test('runNodeFoundationTests fails fast when an explicit test target cannot be resolved', () => {
+test('runNodeFoundationTests fails fast when an explicit test target cannot be resolved', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
@@ -134,7 +137,7 @@ test('runNodeFoundationTests fails fast when an explicit test target cannot be r
         mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
 
-        assert.throws(
+        await assert.rejects(
             () => testModule.runNodeFoundationTests(),
             /Unable to resolve targeted Node foundation test path: tests\/node\/missing\.test\.ts/
         );
@@ -142,6 +145,54 @@ test('runNodeFoundationTests fails fast when an explicit test target cannot be r
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
         mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shards and aggregates failures', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const observedShardArgs: string[][] = [];
+
+    try {
+        process.argv = ['node', 'scripts/node-foundation/test.js'];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = '2';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            observedShardArgs.push(Array.from(args));
+            const events = new (require('node:events').EventEmitter)();
+            const exitCode = observedShardArgs.length === 2 ? 7 : 0;
+            setImmediate(() => events.emit('exit', exitCode));
+            return events as childProcess.ChildProcess;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 7);
+        assert.equal(observedShardArgs.length, 2);
+        assert.deepEqual(observedShardArgs[0], [
+            '--test',
+            path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js')
+        ]);
+        assert.deepEqual(observedShardArgs[1], [
+            '--test',
+            path.join(buildResult.buildRoot, 'tests', 'node', 'repo', 'build-root-serialization.test.js')
+        ]);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
         cleanup();
     }
 });

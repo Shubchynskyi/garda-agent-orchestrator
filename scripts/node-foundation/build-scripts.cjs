@@ -31,6 +31,13 @@ function runProcess(command, args, cwd) {
     }
 }
 
+function shouldUsePrebuiltTestEntry(entryScript, compiledEntryPath) {
+    return entryScript === 'test.js'
+        && process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT === '1'
+        && fs.existsSync(compiledEntryPath)
+        && fs.statSync(compiledEntryPath).isFile();
+}
+
 function copyScriptRuntimeSupportFiles(repoRoot, buildRoot) {
     const compiledScriptsRoot = path.join(buildRoot, 'scripts', 'node-foundation');
     fs.mkdirSync(compiledScriptsRoot, { recursive: true });
@@ -62,6 +69,10 @@ function main() {
     try {
         if (holdMs > 0) {
             sleepSync(holdMs);
+        }
+        if (shouldUsePrebuiltTestEntry(entryScript, compiledEntryPath)) {
+            runProcess(process.execPath, [compiledEntryPath, ...entryArgs], repoRoot);
+            return;
         }
         resetBuildRoot(buildRoot);
         runProcess(process.execPath, [tscCliPath, '-p', 'tsconfig.scripts.json', '--outDir', '.scripts-build'], repoRoot);
