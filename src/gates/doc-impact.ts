@@ -67,10 +67,45 @@ export interface AssessDocImpactOptions {
     decision?: string;
     behaviorChanged?: unknown;
     changelogUpdated?: unknown;
+    internalChangelogUpdated?: unknown;
+    projectMemoryUpdated?: unknown;
     sensitiveReviewed?: unknown;
     docsUpdated?: unknown;
     rationale?: string;
     repoRoot?: string;
+}
+
+function normalizeDocImpactInputPath(input: string, repoRoot?: string): string {
+    const normalized = normalizePath(input);
+    if (!path.isAbsolute(normalized) || !repoRoot) {
+        return normalized;
+    }
+    const relative = path.relative(path.resolve(repoRoot), normalized);
+    if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+        return normalizePath(relative);
+    }
+    return normalized;
+}
+
+function isInternalCloseoutEvidencePath(input: string, repoRoot?: string): boolean {
+    const normalized = normalizeDocImpactInputPath(input, repoRoot).toLowerCase();
+    return normalized === 'task.md'
+        || normalized === 'garda-agent-orchestrator/live/docs/changes/changelog.md'
+        || normalized.startsWith('garda-agent-orchestrator/live/docs/project-memory/');
+}
+
+function describeInternalCloseoutEvidencePath(input: string, repoRoot?: string): string {
+    const normalized = normalizeDocImpactInputPath(input, repoRoot);
+    if (normalized === 'TASK.md') {
+        return `${normalized} (task queue closeout evidence)`;
+    }
+    if (normalized.toLowerCase() === 'garda-agent-orchestrator/live/docs/changes/changelog.md') {
+        return `${normalized} (use --internal-changelog-updated true)`;
+    }
+    if (normalized.toLowerCase().startsWith('garda-agent-orchestrator/live/docs/project-memory/')) {
+        return `${normalized} (use --project-memory-updated true)`;
+    }
+    return normalized;
 }
 
 /**
@@ -83,6 +118,8 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     const decision = (options.decision || 'NO_DOC_UPDATES').trim().toUpperCase();
     const behaviorChanged = parseBool(options.behaviorChanged);
     const changelogUpdated = parseBool(options.changelogUpdated);
+    const internalChangelogUpdated = parseBool(options.internalChangelogUpdated);
+    const projectMemoryUpdated = parseBool(options.projectMemoryUpdated);
     const sensitiveReviewed = parseBool(options.sensitiveReviewed);
     const docsUpdated = [...new Set(toStringArray(options.docsUpdated, { trimValues: true }).filter(Boolean))].sort();
     const rationale = (options.rationale || '').trim();
@@ -109,6 +146,13 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     }
     if (decision === 'DOCS_UPDATED' && !docsUpdated.length) {
         errors.push('Decision DOCS_UPDATED requires non-empty docs_updated list.');
+    }
+    const internalCloseoutDocsUpdated = docsUpdated.filter((entry) => isInternalCloseoutEvidencePath(entry, options.repoRoot));
+    if (internalCloseoutDocsUpdated.length > 0) {
+        errors.push(
+            'docs_updated is reserved for user-facing documentation. Internal closeout evidence must use explicit fields: ' +
+            internalCloseoutDocsUpdated.map((entry) => describeInternalCloseoutEvidencePath(entry, options.repoRoot)).join(', ') + '.'
+        );
     }
     if (behaviorChanged && decision !== 'DOCS_UPDATED') {
         errors.push('BehaviorChanged=true requires Decision=DOCS_UPDATED.');
@@ -153,6 +197,12 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
         decision,
         behavior_changed: behaviorChanged,
         changelog_updated: changelogUpdated,
+        internal_changelog_updated: internalChangelogUpdated,
+        project_memory_updated: projectMemoryUpdated,
+        internal_closeout_evidence: {
+            internal_changelog_updated: internalChangelogUpdated,
+            project_memory_updated: projectMemoryUpdated
+        },
         sensitive_triggers_detected: sensitiveTriggersFired,
         sensitive_scope_reviewed: sensitiveReviewed,
         docs_updated: docsUpdated,
@@ -160,4 +210,3 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
         violations: errors
     };
 }
-

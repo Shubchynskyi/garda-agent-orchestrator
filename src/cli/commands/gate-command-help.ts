@@ -275,7 +275,7 @@ function buildReviewGateHelpEntries(
         'doc-impact-gate': {
             ...createSingleUsageEntry(
                 'Record documentation impact evidence before completion.',
-                `${cliPrefix} gate doc-impact-gate --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "<why>" --repo-root "."`,
+                `${cliPrefix} gate doc-impact-gate --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --internal-changelog-updated false --project-memory-updated false --rationale "<why>" --repo-root "."`,
                 true
             )
         },

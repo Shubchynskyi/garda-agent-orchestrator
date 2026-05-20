@@ -87,6 +87,8 @@ export interface DocImpactGateCommandOptions {
     decision?: string;
     behaviorChanged?: unknown;
     changelogUpdated?: unknown;
+    internalChangelogUpdated?: unknown;
+    projectMemoryUpdated?: unknown;
     sensitiveScopeReviewed?: unknown;
     sensitiveReviewed?: unknown;
     rationale?: unknown;
@@ -181,6 +183,8 @@ export function runDocImpactGateCommand(options: DocImpactGateCommandOptions): {
         decision: options.decision || 'NO_DOC_UPDATES',
         behaviorChanged: parseBooleanOption(options.behaviorChanged, false),
         changelogUpdated: parseBooleanOption(options.changelogUpdated, false),
+        internalChangelogUpdated: parseBooleanOption(options.internalChangelogUpdated, false),
+        projectMemoryUpdated: parseBooleanOption(options.projectMemoryUpdated, false),
         sensitiveReviewed: parseBooleanOption(options.sensitiveScopeReviewed != null ? options.sensitiveScopeReviewed : options.sensitiveReviewed, false),
         docsUpdated,
         rationale: String(options.rationale || ''),

@@ -3984,6 +3984,8 @@ function docImpactTimelineDetailsMatchArtifact(
         && String(details.outcome || '').trim().toUpperCase() === String(docImpact.outcome || '').trim().toUpperCase()
         && details.behavior_changed === docImpact.behavior_changed
         && details.changelog_updated === docImpact.changelog_updated
+        && details.internal_changelog_updated === docImpact.internal_changelog_updated
+        && details.project_memory_updated === docImpact.project_memory_updated
         && stringSha256(actualDocsUpdated.join('\n')) === stringSha256(expectedDocsUpdated.join('\n'));
 }
 

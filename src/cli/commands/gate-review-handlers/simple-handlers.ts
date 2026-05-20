@@ -49,6 +49,8 @@ export async function handleDocImpactGate(gateArgv: string[]): Promise<void> {
         '--behavior-changed': { key: 'behaviorChanged', type: 'boolean' },
         '--docs-updated': { key: 'docsUpdated', type: 'string[]' },
         '--changelog-updated': { key: 'changelogUpdated', type: 'boolean' },
+        '--internal-changelog-updated': { key: 'internalChangelogUpdated', type: 'boolean' },
+        '--project-memory-updated': { key: 'projectMemoryUpdated', type: 'boolean' },
         '--sensitive-scope-reviewed': { key: 'sensitiveScopeReviewed', type: 'boolean' },
         '--sensitive-reviewed': { key: 'sensitiveReviewed', type: 'boolean' },
         '--rationale': { key: 'rationale', type: 'string' },
