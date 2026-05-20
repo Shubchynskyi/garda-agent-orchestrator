@@ -337,7 +337,108 @@ export function writePreflight(
     return preflightPath;
 }
 
-function runGitBestEffort(repoRoot: string, args: string[]): void {
+const GIT_FIXTURE_MAX_SETUP_ATTEMPTS = 3;
+const GIT_FIXTURE_SETUP_RETRY_DELAYS_MS = [25, 75];
+
+function isGitFixtureSetupCommand(args: string[]): boolean {
+    return args[0] === 'init' || args[0] === 'config';
+}
+
+export function isTransientGitFixtureSetupError(output: string): boolean {
+    const normalized = output.replace(/\\/g, '/');
+    return /permission denied/i.test(normalized)
+        || /could not set ['"]?core\.ignorecase['"]?/i.test(normalized)
+        || /\.git\/config/i.test(normalized)
+        || /index\.lock/i.test(normalized);
+}
+
+function sleepGitFixtureRetryDelay(attempt: number): void {
+    const delayMs = GIT_FIXTURE_SETUP_RETRY_DELAYS_MS[Math.min(attempt - 1, GIT_FIXTURE_SETUP_RETRY_DELAYS_MS.length - 1)] || 0;
+    const deadline = Date.now() + delayMs;
+    while (Date.now() < deadline) {
+        // Bounded fixture-only backoff for transient Windows temp git config locks.
+    }
+}
+
+function gitFixtureOutput(result: childProcess.SpawnSyncReturns<string>): string {
+    return [
+        result.error instanceof Error ? result.error.message : '',
+        result.stdout || '',
+        result.stderr || ''
+    ].filter(Boolean).join('\n');
+}
+
+export function formatGitFixtureFailureMessage(
+    repoRoot: string,
+    args: string[],
+    result: childProcess.SpawnSyncReturns<string>,
+    attempts: number
+): string {
+    const output = gitFixtureOutput(result).trim() || '<no output>';
+    return [
+        `git fixture command failed in ${repoRoot}`,
+        `Command: git ${args.join(' ')}`,
+        `Attempts: ${attempts}`,
+        `ExitStatus: ${String(result.status)}`,
+        `Output: ${output}`
+    ].join('\n');
+}
+
+export function runGit(
+    repoRoot: string,
+    args: string[],
+    options: { retryFixtureSetup?: boolean } = {}
+): childProcess.SpawnSyncReturns<string> {
+    const maxAttempts = options.retryFixtureSetup && isGitFixtureSetupCommand(args)
+        ? GIT_FIXTURE_MAX_SETUP_ATTEMPTS
+        : 1;
+    let result: childProcess.SpawnSyncReturns<string> | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        result = childProcess.spawnSync('git', args, {
+            cwd: repoRoot,
+            windowsHide: true,
+            encoding: 'utf8'
+        });
+        if (result.status === 0 && !result.error) {
+            return result;
+        }
+        if (
+            attempt < maxAttempts
+            && isTransientGitFixtureSetupError(gitFixtureOutput(result))
+        ) {
+            sleepGitFixtureRetryDelay(attempt);
+            continue;
+        }
+        break;
+    }
+
+    assert.ok(result !== null);
+    assert.equal(
+        result.status,
+        0,
+        formatGitFixtureFailureMessage(repoRoot, args, result, maxAttempts)
+    );
+    return result;
+}
+
+export function initializeGitRepo(repoRoot: string): void {
+    runGit(repoRoot, ['init'], { retryFixtureSetup: true });
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests'], { retryFixtureSetup: true });
+    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com'], { retryFixtureSetup: true });
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'test: baseline']);
+}
+
+function runGitBestEffort(repoRoot: string, args: string[], options: { retryFixtureSetup?: boolean } = {}): void {
+    try {
+        runGit(repoRoot, args, options);
+    } catch {
+        // Review fixtures can be pre-seeded by individual tests; this helper only best-effort fills gaps.
+    }
+}
+
+function runGitBestEffortRaw(repoRoot: string, args: string[]): void {
     childProcess.spawnSync('git', args, {
         cwd: repoRoot,
         encoding: 'utf8',
@@ -369,10 +470,10 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
     }
 
     if (!fs.existsSync(path.join(repoRoot, '.git'))) {
-        runGitBestEffort(repoRoot, ['init']);
+        runGitBestEffort(repoRoot, ['init'], { retryFixtureSetup: true });
     }
-    runGitBestEffort(repoRoot, ['config', 'user.name', 'Garda Tests']);
-    runGitBestEffort(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    runGitBestEffort(repoRoot, ['config', 'user.name', 'Garda Tests'], { retryFixtureSetup: true });
+    runGitBestEffort(repoRoot, ['config', 'user.email', 'garda-tests@example.com'], { retryFixtureSetup: true });
     const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
         cwd: repoRoot,
         encoding: 'utf8',
@@ -382,9 +483,9 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
     if (head.status !== 0) {
         const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
         if (fs.existsSync(workflowConfigPath)) {
-            runGitBestEffort(repoRoot, ['add', '--', 'garda-agent-orchestrator/live/config/workflow-config.json']);
+            runGitBestEffortRaw(repoRoot, ['add', '--', 'garda-agent-orchestrator/live/config/workflow-config.json']);
         }
-        runGitBestEffort(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+        runGitBestEffortRaw(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
     }
 
     for (const changedFile of changedFiles) {

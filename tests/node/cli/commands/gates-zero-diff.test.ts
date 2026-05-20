@@ -18,7 +18,9 @@ import {
 import { runCompletionGate } from '../../../../src/gates/completion';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
-import * as childProcess from 'node:child_process';
+import {
+    initializeGitRepo
+} from './gate-test-seed-helpers';
 
 function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
@@ -267,31 +269,6 @@ function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Co
         diagnostics: [],
         violations: []
     }, null, 2), 'utf8');
-}
-
-function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
-    const result = childProcess.spawnSync('git', args, {
-        cwd: repoRoot,
-        windowsHide: true,
-        encoding: 'utf8'
-    });
-    if (result.error) {
-        throw result.error;
-    }
-    assert.equal(
-        result.status,
-        0,
-        `git ${args.join(' ')} failed: ${String(result.stderr || result.stdout || '').trim()}`
-    );
-    return result;
-}
-
-function initializeGitRepo(repoRoot: string): void {
-    runGit(repoRoot, ['init']);
-    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
-    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
-    runGit(repoRoot, ['add', '.']);
-    runGit(repoRoot, ['commit', '-m', 'test: baseline']);
 }
 
 function readTaskTimelineEvents(repoRoot: string, taskId: string): Array<Record<string, unknown>> {

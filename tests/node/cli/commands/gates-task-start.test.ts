@@ -17,12 +17,12 @@ import {
     EXIT_GATE_FAILURE
 } from '../../../../src/cli/exit-codes';
 import {
-    appendPreflightClassifiedEvent
+    appendPreflightClassifiedEvent,
+    initializeGitRepo
 } from './gate-test-seed-helpers';
 import {
     runCliMain
 } from '../../../../src/cli/main';
-import * as childProcess from 'node:child_process';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -208,29 +208,6 @@ function loadTaskEntryRulePack(repoRoot: string, taskId: string, taskModePath = 
         ],
         emitMetrics: false
     });
-}
-
-function initializeGitRepo(repoRoot: string): void {
-    const runGit = (args: string[]) => {
-        const result = childProcess.spawnSync('git', args, {
-            cwd: repoRoot,
-            windowsHide: true,
-            encoding: 'utf8'
-        });
-        if (result.error) {
-            throw result.error;
-        }
-        assert.equal(
-            result.status,
-            0,
-            `git ${args.join(' ')} failed: ${String(result.stderr || result.stdout || '').trim()}`
-        );
-    };
-    runGit(['init']);
-    runGit(['config', 'user.name', 'Garda Tests']);
-    runGit(['config', 'user.email', 'garda-tests@example.com']);
-    runGit(['add', '.']);
-    runGit(['commit', '-m', 'test: baseline']);
 }
 
 describe('cli/commands/gates — task-start', () => {
