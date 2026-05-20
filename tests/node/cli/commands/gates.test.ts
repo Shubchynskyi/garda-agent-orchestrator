@@ -846,21 +846,36 @@ describe('cli/commands/gates', () => {
         }
     });
 
-    it('renders help paths with the configured bundle name instead of hardcoding the default bundle', { concurrency: false }, async () => {
-        const previousBundleName = process.env.GARDA_BUNDLE_NAME;
-        process.env.GARDA_BUNDLE_NAME = 'custom-garda-bundle';
-        try {
-            const helpOutput = stripAnsi(buildGateHelpText('load-rule-pack', path.resolve('.')));
-            assert.ok(helpOutput.includes('custom-garda-bundle/live/docs/agent-rules/00-core.md'));
-            assert.ok(helpOutput.includes('custom-garda-bundle/runtime/reviews/<task-id>-preflight.json'));
-            assert.ok(!helpOutput.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
-        } finally {
-            if (previousBundleName == null) {
-                delete process.env.GARDA_BUNDLE_NAME;
-            } else {
-                process.env.GARDA_BUNDLE_NAME = previousBundleName;
-            }
-        }
+    it('renders help paths with the configured bundle name instead of hardcoding the default bundle', () => {
+        const childEnv: NodeJS.ProcessEnv = {
+            ...process.env,
+            GARDA_BUNDLE_NAME: 'custom-garda-bundle',
+            NO_COLOR: '1'
+        };
+        delete childEnv.FORCE_COLOR;
+        const script = [
+            "const path = require('node:path');",
+            "const { pathToFileURL } = require('node:url');",
+            '(async () => {',
+            "    const modulePath = path.join(process.cwd(), '.node-build', 'src', 'cli', 'commands', 'gate-command-help.js');",
+            '    const module = await import(pathToFileURL(modulePath).href);',
+            '    const buildGateHelpText = module.buildGateHelpText || module.default?.buildGateHelpText;',
+            "    process.stdout.write(buildGateHelpText('load-rule-pack', process.cwd()));",
+            '})().catch((error) => {',
+            "    console.error(error && error.stack ? error.stack : String(error));",
+            '    process.exitCode = 1;',
+            '});'
+        ].join('\n');
+        const result = childProcess.spawnSync(process.execPath, ['-e', script], {
+            cwd: path.resolve('.'),
+            env: childEnv,
+            encoding: 'utf8'
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const helpOutput = stripAnsi(result.stdout);
+        assert.ok(helpOutput.includes('custom-garda-bundle/live/docs/agent-rules/00-core.md'));
+        assert.ok(helpOutput.includes('custom-garda-bundle/runtime/reviews/<task-id>-preflight.json'));
+        assert.ok(!helpOutput.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
     });
 
     it('includes real-subagent hard-stop guidance in complete-reviewer-launch help', () => {
