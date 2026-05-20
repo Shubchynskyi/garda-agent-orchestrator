@@ -805,7 +805,7 @@ describe('gates/task-events-summary', () => {
             assert.match(summary.token_economy!.visible_summary_line!, /code review context ~480 chars/);
             assert.match(summary.token_economy!.visible_summary_line!, /compile gate output ~132 chars/);
             assert.match(summary.token_economy!.visible_summary_line!, /review gate output ~48 chars/);
-            assert.match(summary.token_economy!.visible_summary_line!, /Token estimate: ~165/);
+            assert.match(summary.token_economy!.visible_summary_line!, /Suppressed output estimate: ~165 tokens/);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
@@ -1141,6 +1141,56 @@ describe('gates/task-events-summary', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
+        it('uses the canonical review-type registry for fallback review-context discovery when no compile cycle exists', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            const reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const reviewContextPath = path.join(reviewsDir, 'T-004B-fallback-dependency-review-context.json');
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.writeFileSync(reviewContextPath, JSON.stringify({
+                review_type: 'dependency',
+                rule_context: {
+                    summary: {
+                        original_char_count: 300,
+                        output_char_count: 180,
+                        estimated_saved_chars: 120,
+                        original_token_count_estimate: 75,
+                        output_token_count_estimate: 45,
+                        estimated_saved_tokens: 30
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00.000Z',
+                    task_id: 'T-004B-fallback',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Task mode entered before any compile cycle.'
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-004B-fallback.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const summary = buildTaskEventsSummary({
+                taskId: 'T-004B-fallback',
+                eventsRoot: eventsDir,
+                repoRoot: tmpDir
+            });
+            assert.equal(summary.token_economy!.total_estimated_saved_chars, 120);
+            assert.equal(summary.token_economy!.total_estimated_saved_tokens, 30);
+            assert.equal(summary.token_economy!.breakdown.length, 1);
+            assert.match(summary.token_economy!.visible_summary_line!, /dependency review context ~120 chars/);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
         it('excludes stale compile and review-context telemetry after a newer compile cycle starts', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
             const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
@@ -1298,7 +1348,7 @@ describe('gates/task-events-summary', () => {
             const summary = buildTaskEventsSummary({ taskId: 'T-005', eventsRoot: eventsDir, repoRoot: tmpDir });
             assert.match(summary.token_economy!.visible_summary_line!, /Suppressed output \(char-aware subset\): ~420 chars/);
             assert.match(summary.token_economy!.visible_summary_line!, /full-suite validation output ~420 chars/);
-            assert.match(summary.token_economy!.visible_summary_line!, /compile gate output token estimate ~33/);
+            assert.match(summary.token_economy!.visible_summary_line!, /compile gate output suppressed output estimate ~33 tokens/);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
@@ -1700,7 +1750,7 @@ describe('gates/task-events-summary', () => {
                 command_policy_warnings: [],
                 command_policy_warning_count: 0,
                 token_economy: {
-                    visible_summary_line: 'Suppressed output: ~132 chars (~66%) (compile gate output ~132 chars). Token estimate: ~33.'
+                    visible_summary_line: 'Suppressed output: ~132 chars (~66%) (compile gate output ~132 chars). Suppressed output estimate: ~33 tokens.'
                 },
                 first_event_utc: '2024-01-15T10:00:00.000Z',
                 last_event_utc: '2024-01-15T10:00:00.000Z',
@@ -1717,7 +1767,7 @@ describe('gates/task-events-summary', () => {
             assert.ok(text.includes('Task: T-001'));
             assert.ok(text.includes('Events: 1'));
             assert.ok(text.includes('IntegrityStatus: PASS'));
-            assert.ok(text.includes('Suppressed output: ~132 chars (~66%) (compile gate output ~132 chars). Token estimate: ~33.'));
+            assert.ok(text.includes('Suppressed output: ~132 chars (~66%) (compile gate output ~132 chars). Suppressed output estimate: ~33 tokens.'));
             assert.ok(text.includes('PREFLIGHT_CLASSIFIED'));
             assert.ok(text.includes('Timeline:'));
         });

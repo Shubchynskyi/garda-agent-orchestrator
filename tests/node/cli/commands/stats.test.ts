@@ -169,7 +169,7 @@ function makeStats(overrides: Partial<TaskStatsResult> = {}): TaskStatsResult {
                     raw_token_count_estimate: 500
                 }
             ],
-            visible_summary_line: 'Suppressed output: ~1600 chars (~80%) (compile gate output ~1600 chars). Token estimate: ~400.'
+            visible_summary_line: 'Suppressed output: ~1600 chars (~80%) (compile gate output ~1600 chars). Suppressed output estimate: ~400 tokens.'
         },
         ...overrides
     };
@@ -693,7 +693,7 @@ test('buildTaskStats keeps token-only legacy contributions visible inside char-f
         const stats = buildTaskStats('T-302', tmpDir, eventsRoot, reviewsRoot);
         assert.ok(stats.token_economy.visible_summary_line!.includes('Suppressed output (char-aware subset): ~1050 chars'));
         assert.ok(stats.token_economy.visible_summary_line!.includes('full-suite validation output ~1050 chars'));
-        assert.ok(stats.token_economy.visible_summary_line!.includes('compile gate output token estimate ~33'));
+        assert.ok(stats.token_economy.visible_summary_line!.includes('compile gate output suppressed output estimate ~33 tokens'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1046,7 +1046,7 @@ test('formatTaskStatsText produces readable output', () => {
                     raw_token_count_estimate: 800
                 }
             ],
-            visible_summary_line: 'Suppressed output: ~2000 chars (~25%) (compile gate output ~1200 chars + code review context ~800 chars). Token estimate: ~500.'
+            visible_summary_line: 'Suppressed output: ~2000 chars (~25%) (compile gate output ~1200 chars + code review context ~800 chars). Suppressed output estimate: ~500 tokens.'
         }
     };
 
@@ -1175,7 +1175,7 @@ test('formatAggregateStatsText includes header and per-task lines', () => {
     assert.ok(text.includes('GARDA_STATS'));
     assert.ok(text.includes('Tasks analyzed: 2'));
     assert.ok(text.includes('Total suppressed output: ~4000 chars (~25%)'));
-    assert.ok(text.includes('Total token estimate: ~1000'));
+    assert.ok(text.includes('Total suppressed output estimate: ~1000 tokens'));
     assert.ok(text.includes('T-001'));
     assert.ok(text.includes('T-002'));
 });
@@ -1220,7 +1220,7 @@ test('formatAggregateStatsText keeps token-only per-task notes visible', () => {
                     chars_savings_percent: null,
                     savings_percent: 66,
                     breakdown: [],
-                    visible_summary_line: 'Token estimate: ~33 (~66%) (compile gate output ~33 tokens).'
+                    visible_summary_line: 'Suppressed output estimate: ~33 tokens (~66%) (compile gate output suppressed output estimate ~33 tokens).'
                 }
             }
         ]
@@ -1228,8 +1228,8 @@ test('formatAggregateStatsText keeps token-only per-task notes visible', () => {
 
     const text = stripAnsi(formatAggregateStatsText(agg));
     assert.ok(text.includes('Total suppressed output: unavailable (legacy token-only artifacts)'));
-    assert.ok(text.includes('Total token estimate: ~33'));
-    assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, token estimate ~33'));
+    assert.ok(text.includes('Total suppressed output estimate: ~33 tokens'));
+    assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, suppressed output estimate ~33 tokens'));
 });
 
 test('formatAggregateStatsText marks partial char coverage for mixed aggregate history', () => {
@@ -1272,7 +1272,7 @@ test('formatAggregateStatsText marks partial char coverage for mixed aggregate h
                     chars_savings_percent: null,
                     savings_percent: 25,
                     breakdown: [],
-                    visible_summary_line: 'Suppressed output (char-aware subset): ~2000 chars (compile gate output ~1200 chars + legacy review gate output token estimate ~200). Token estimate: ~500.'
+                    visible_summary_line: 'Suppressed output (char-aware subset): ~2000 chars (compile gate output ~1200 chars + legacy review gate output suppressed output estimate ~200 tokens). Suppressed output estimate: ~500 tokens.'
                 }
             },
             {
@@ -1301,7 +1301,7 @@ test('formatAggregateStatsText marks partial char coverage for mixed aggregate h
                     chars_savings_percent: null,
                     savings_percent: 66,
                     breakdown: [],
-                    visible_summary_line: 'Token estimate: ~33 (~66%) (compile gate output ~33 tokens).'
+                    visible_summary_line: 'Suppressed output estimate: ~33 tokens (~66%) (compile gate output suppressed output estimate ~33 tokens).'
                 }
             }
         ]
@@ -1309,8 +1309,8 @@ test('formatAggregateStatsText marks partial char coverage for mixed aggregate h
 
     const text = stripAnsi(formatAggregateStatsText(agg));
     assert.ok(text.includes('Total suppressed output (char-aware subset): ~2000 chars'));
-    assert.ok(text.includes('T-MIXED: 5 events, 2m 0s, ~2000 chars suppressed (char-aware subset; token estimate ~500)'));
-    assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, token estimate ~33'));
+    assert.ok(text.includes('T-MIXED: 5 events, 2m 0s, ~2000 chars suppressed (char-aware subset; suppressed output estimate ~500 tokens)'));
+    assert.ok(text.includes('T-LEGACY: 3 events, 1m 0s, suppressed output estimate ~33 tokens'));
 });
 
 test('formatAggregateStatsJson produces valid JSON', () => {
@@ -1592,7 +1592,7 @@ test('formatTaskStatsText renders depth and budget forecast when present', () =>
                     raw_token_count_estimate: 1500
                 }
             ],
-            visible_summary_line: 'Suppressed output: ~1600 chars (~27%) (compile gate output ~1600 chars). Token estimate: ~400.'
+            visible_summary_line: 'Suppressed output: ~1600 chars (~27%) (compile gate output ~1600 chars). Suppressed output estimate: ~400 tokens.'
         }
     };
     const text = stripAnsi(formatTaskStatsText(stats));

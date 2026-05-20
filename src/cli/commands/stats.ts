@@ -1,5 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+    getGateOutputCompactionLabel,
+    getReviewContextOutputLabel,
+    summarizeOutputCompactionBreakdown,
+    type OutputCompactionContributionLike
+} from '../../gate-runtime/output-compaction-reporting';
 import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-events';
 import { parseTaskIdJsonlFileName } from '../../core/task-ids';
 import { coerceIntLike } from '../../gate-runtime/token-telemetry';
@@ -22,14 +28,7 @@ import {
     shouldIncludeTelemetryForCurrentCycle
 } from '../../gates/task-events-summary';
 
-interface TokenContribution {
-    label: string;
-    estimated_saved_chars: number;
-    estimated_saved_tokens: number;
-    raw_char_count: number;
-    output_char_count: number | null;
-    raw_token_count_estimate: number;
-}
+interface TokenContribution extends OutputCompactionContributionLike {}
 
 export interface TaskStatsResult {
     task_id: string;
@@ -79,19 +78,6 @@ export interface AggregateStatsResult {
     per_task: TaskStatsResult[];
 }
 
-// Review context labels — kept local to avoid coupling.
-const REVIEW_CONTEXT_LABELS: Record<string, string> = {
-    code: 'code review context',
-    db: 'DB review context',
-    security: 'security review context',
-    refactor: 'refactor review context',
-    api: 'API review context',
-    test: 'test review context',
-    performance: 'performance review context',
-    infra: 'infra review context',
-    dependency: 'dependency review context'
-};
-
 // Gate outcome event types used for pass/fail counting.
 const GATE_PASS_EVENTS = new Set([
     'RULE_PACK_LOADED',
@@ -139,7 +125,7 @@ function getReviewContextSummary(payload: Record<string, unknown> | null | undef
     const outputCharCount = coerceIntLike(summary.output_char_count);
     const reviewType = String(payload.review_type || '').trim().toLowerCase();
     return {
-        label: REVIEW_CONTEXT_LABELS[reviewType] || 'review context',
+        label: getReviewContextOutputLabel(reviewType),
         estimated_saved_chars: savedChars != null && savedChars > 0 ? savedChars : 0,
         estimated_saved_tokens: savedTokens != null && savedTokens > 0 ? savedTokens : 0,
         raw_char_count: rawCharCount != null && rawCharCount > 0 ? rawCharCount : 0,
@@ -175,18 +161,7 @@ function readJsonArtifact(pathValue: unknown, repoRoot: string | null): Record<s
 }
 
 function getCommandOutputLabel(eventType: string): string {
-    const normalized = String(eventType || '').trim().toUpperCase();
-    if (normalized.startsWith('COMPILE_GATE_')) return 'compile gate output';
-    if (normalized.startsWith('REVIEW_GATE_')) return 'review gate output';
-    if (normalized.startsWith('FULL_SUITE_VALIDATION_')) return 'full-suite validation output';
-    return 'gate output';
-}
-
-function formatContributionSummaryPart(item: TokenContribution): string {
-    if (item.estimated_saved_chars > 0) {
-        return `${item.label} ~${item.estimated_saved_chars} chars`;
-    }
-    return `${item.label} token estimate ~${item.estimated_saved_tokens}`;
+    return getGateOutputCompactionLabel(eventType);
 }
 
 function getCommandOutputSourceKey(
@@ -481,50 +456,18 @@ function buildTokenEconomy(
         }
     }
 
-    const totalSavedChars = breakdown.reduce((sum, item) => sum + item.estimated_saved_chars, 0);
-    const totalRawChars = breakdown.reduce((sum, item) => sum + (item.raw_char_count || 0), 0);
-    const totalOutputChars = breakdown.reduce((sum, item) => sum + (item.output_char_count != null ? item.output_char_count : 0), 0);
-    const totalSaved = breakdown.reduce((sum, item) => sum + item.estimated_saved_tokens, 0);
-    const totalRaw = breakdown.reduce((sum, item) => sum + (item.raw_token_count_estimate || 0), 0);
-    const baselineKnown = breakdown.length > 0 && breakdown.every(item => (item.raw_token_count_estimate || 0) > 0);
-    const charsBaselineKnown = breakdown.length > 0 && breakdown.every(item => (item.raw_char_count || 0) > 0);
-    const hasTokenOnlyContributions = breakdown.some((item) => item.estimated_saved_chars <= 0 && item.estimated_saved_tokens > 0);
-    const hasCharAwareContributions = breakdown.some((item) => item.estimated_saved_chars > 0);
-    const charAwareSubsetOnly = hasCharAwareContributions && hasTokenOnlyContributions;
-    const savingsPercent = baselineKnown && totalRaw > 0 ? Math.round((totalSaved * 100.0) / totalRaw) : null;
-    const charsSavingsPercent = charsBaselineKnown && totalRawChars > 0 ? Math.round((totalSavedChars * 100.0) / totalRawChars) : null;
-
-    let visibleSummaryLine: string | null = null;
-    if (totalSavedChars > 0 && breakdown.length > 0) {
-        const parts = breakdown.map(item => formatContributionSummaryPart(item)).join(' + ');
-        const tokenNote = totalSaved > 0 ? ` Token estimate: ~${totalSaved}.` : '';
-        const prefix = charAwareSubsetOnly
-            ? 'Suppressed output (char-aware subset)'
-            : 'Suppressed output';
-        if (charsSavingsPercent != null) {
-            visibleSummaryLine = `${prefix}: ~${totalSavedChars} chars (~${charsSavingsPercent}%) (${parts}).${tokenNote}`;
-        } else {
-            visibleSummaryLine = `${prefix}: ~${totalSavedChars} chars (${parts}).${tokenNote}`;
-        }
-    } else if (totalSaved > 0 && breakdown.length > 0) {
-        const parts = breakdown.map(item => `${item.label} ~${item.estimated_saved_tokens} tokens`).join(' + ');
-        if (savingsPercent != null) {
-            visibleSummaryLine = `Token estimate: ~${totalSaved} (~${savingsPercent}%) (${parts}).`;
-        } else {
-            visibleSummaryLine = `Token estimate: ~${totalSaved} (${parts}).`;
-        }
-    }
+    const aggregateSummary = summarizeOutputCompactionBreakdown(breakdown);
 
     return {
-        total_estimated_saved_chars: totalSavedChars,
-        total_raw_char_count: totalRawChars,
-        total_output_char_count: totalOutputChars,
-        total_estimated_saved_tokens: totalSaved,
-        total_raw_token_count_estimate: totalRaw,
-        chars_savings_percent: charsSavingsPercent,
-        savings_percent: savingsPercent,
+        total_estimated_saved_chars: aggregateSummary.total_estimated_saved_chars,
+        total_raw_char_count: aggregateSummary.total_raw_char_count,
+        total_output_char_count: aggregateSummary.total_output_char_count,
+        total_estimated_saved_tokens: aggregateSummary.total_estimated_saved_tokens,
+        total_raw_token_count_estimate: aggregateSummary.total_raw_token_count_estimate,
+        chars_savings_percent: aggregateSummary.chars_savings_percent,
+        savings_percent: aggregateSummary.savings_percent,
         breakdown,
-        visible_summary_line: visibleSummaryLine
+        visible_summary_line: aggregateSummary.visible_summary_line
     };
 }
 
@@ -708,14 +651,14 @@ export function formatTaskStatsText(stats: TaskStatsResult): string {
             if (item.estimated_saved_chars > 0) {
                 const notes = [
                     item.raw_char_count > 0 ? `raw ~${item.raw_char_count} chars` : null,
-                    item.estimated_saved_tokens > 0 ? `token estimate ~${item.estimated_saved_tokens}` : null
+                    item.estimated_saved_tokens > 0 ? `suppressed output estimate ~${item.estimated_saved_tokens} tokens` : null
                 ].filter((entry) => !!entry).join(', ');
                 lines.push(`  - ${cyan(item.label)}: ${green(`~${item.estimated_saved_chars} chars suppressed`)}${notes ? ` (${dim(notes)})` : ''}`);
             } else if (item.estimated_saved_tokens > 0) {
                 const notes = item.raw_token_count_estimate > 0
                     ? `raw ~${item.raw_token_count_estimate} tokens`
                     : '';
-                lines.push(`  - ${cyan(item.label)}: ${green(`token estimate ~${item.estimated_saved_tokens}`)}${notes ? ` (${dim(notes)})` : ''}`);
+                lines.push(`  - ${cyan(item.label)}: ${green(`suppressed output estimate ~${item.estimated_saved_tokens} tokens`)}${notes ? ` (${dim(notes)})` : ''}`);
             }
         }
     } else {
@@ -752,7 +695,7 @@ export function formatAggregateStatsText(stats: AggregateStatsResult): string {
             lines.push(`${bold('Total suppressed output:')} ${yellow('unavailable')} ${dim('(legacy token-only artifacts)')}`);
         }
         if (stats.total_estimated_saved_tokens > 0) {
-            lines.push(`${bold('Total token estimate:')} ${green(`~${stats.total_estimated_saved_tokens}`)}`);
+            lines.push(`${bold('Total suppressed output estimate:')} ${green(`~${stats.total_estimated_saved_tokens} tokens`)}`);
         }
         if (stats.total_raw_char_count > 0) {
             lines.push(`${bold('Total raw chars:')} ~${stats.total_raw_char_count}`);
@@ -773,10 +716,10 @@ export function formatAggregateStatsText(stats: AggregateStatsResult): string {
                 && task.token_economy.chars_savings_percent == null;
             const savedNote = task.token_economy.total_estimated_saved_chars > 0
                 ? partialCharCoverage
-                    ? `, ~${task.token_economy.total_estimated_saved_chars} chars suppressed (char-aware subset; token estimate ~${task.token_economy.total_estimated_saved_tokens})`
+                    ? `, ~${task.token_economy.total_estimated_saved_chars} chars suppressed (char-aware subset; suppressed output estimate ~${task.token_economy.total_estimated_saved_tokens} tokens)`
                     : `, ~${task.token_economy.total_estimated_saved_chars} chars suppressed`
                 : task.token_economy.total_estimated_saved_tokens > 0
-                    ? `, token estimate ~${task.token_economy.total_estimated_saved_tokens}`
+                    ? `, suppressed output estimate ~${task.token_economy.total_estimated_saved_tokens} tokens`
                     : '';
             const durationNote = formatWallClock(task.wall_clock_seconds);
             lines.push(`  ${cyan(task.task_id)}: ${task.events_count} events, ${durationNote}${savedNote}`);

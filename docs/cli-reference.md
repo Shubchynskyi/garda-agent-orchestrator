@@ -179,6 +179,7 @@ garda stats --task-id "T-137" --target-root "." --json
 Notes:
 - A positional task id is equivalent to `--task-id` for task-specific stats.
 - Task-specific stats include review attempt pass/fail/reuse/missing counts when review evidence is available; aggregate stats keep the existing aggregate schema.
+- Output-compaction reporting uses `chars` as the primary unit. When a token estimate is shown, it is explicitly a secondary estimate of suppressed output, not model-token usage.
 - Human-readable stats output uses color when the terminal supports it; `--json` remains uncolored.
 
 ### `garda task`

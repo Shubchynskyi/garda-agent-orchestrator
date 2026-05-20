@@ -94,7 +94,8 @@ test('colorizeTaskAuditSummaryText highlights pass, blocked, and missing evidenc
         'FinalReportContract: NOT_READY',
         'FinalCloseout: READY (MATERIALIZED)',
         '  Review trust: INDEPENDENT_AUDITED via DELEGATED_SUBAGENT.',
-        '  Review integrity: INDEPENDENT_REVIEW_ATTESTED; completion_allowed=yes.'
+        '  Review integrity: INDEPENDENT_REVIEW_ATTESTED; completion_allowed=yes.',
+        '  Suppressed output (char-aware subset): ~420 chars (full-suite validation output ~420 chars). Suppressed output estimate: ~105 tokens.'
     ].join('\n');
 
     const colored = withColorEnv({ NO_COLOR: undefined, FORCE_COLOR: '1' }, () => colorizeTaskAuditSummaryText(plain));
@@ -103,6 +104,7 @@ test('colorizeTaskAuditSummaryText highlights pass, blocked, and missing evidenc
     assert.ok(colored.includes('\x1b[31mBLOCKED\x1b[0m'));
     assert.ok(colored.includes('\x1b[2m[ ]\x1b[0m'));
     assert.ok(colored.includes('\x1b[33m[!]\x1b[0m'));
+    assert.ok(colored.includes('\x1b[32m  Suppressed output (char-aware subset): ~420 chars (full-suite validation output ~420 chars). Suppressed output estimate: ~105 tokens.\x1b[0m'));
     assert.equal(stripAnsi(colored), plain);
 
     const noColor = withColorEnv({ NO_COLOR: '1', FORCE_COLOR: '1' }, () => colorizeTaskAuditSummaryText(plain));

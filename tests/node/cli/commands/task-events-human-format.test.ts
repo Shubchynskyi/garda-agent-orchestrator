@@ -73,6 +73,7 @@ test('colorizeTaskEventsSummaryText highlights human task timeline output only w
         'Source: /repo/garda-agent-orchestrator/runtime/task-events/T-001.jsonl',
         'Events: 2',
         'IntegrityStatus: PASS',
+        'Suppressed output (char-aware subset): ~420 chars (full-suite validation output ~420 chars). Suppressed output estimate: ~105 tokens.',
         '',
         'Timeline:',
         '[01] 2026-05-08T10:00:00.000Z | COMPILE_GATE_PASSED | PASS | actor=gate | Compile passed.',
@@ -81,6 +82,7 @@ test('colorizeTaskEventsSummaryText highlights human task timeline output only w
 
     const colored = withColorEnv({ NO_COLOR: undefined, FORCE_COLOR: '1' }, () => colorizeTaskEventsSummaryText(plain));
     assert.equal(hasAnsi(colored), true);
+    assert.ok(colored.includes('\x1b[32mSuppressed output (char-aware subset): ~420 chars (full-suite validation output ~420 chars). Suppressed output estimate: ~105 tokens.\x1b[0m'));
     assert.equal(stripAnsi(colored), plain);
 
     const noColor = withColorEnv({ NO_COLOR: '1', FORCE_COLOR: '1' }, () => colorizeTaskEventsSummaryText(plain));

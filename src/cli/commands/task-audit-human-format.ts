@@ -1,3 +1,4 @@
+import { isOutputCompactionSummaryLine } from '../../gate-runtime/output-compaction-reporting';
 import {
     bold,
     cyan,
@@ -78,7 +79,7 @@ function colorAuditLine(line: string): string {
     if (line.includes('Review trust: INDEPENDENT_AUDITED')) return green(line);
     if (line.includes('Review integrity:') && line.includes('completion_allowed=yes')) return green(line);
     if (line.includes('Review integrity:') || line.includes('Review trust:')) return yellow(line);
-    if (line.startsWith('Suppressed output:')) return green(line);
+    if (isOutputCompactionSummaryLine(line)) return green(line);
     if (line.includes(':')) return colorKeyValueLine(line);
     return line;
 }

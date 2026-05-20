@@ -1,3 +1,4 @@
+import { isOutputCompactionSummaryLine } from '../../gate-runtime/output-compaction-reporting';
 import {
     bold,
     cyan,
@@ -58,7 +59,7 @@ function colorLine(line: string): string {
     if (line.startsWith('[')) return colorTimelineLine(line);
     if (line.trimStart().startsWith('details=')) return dim(line);
     if (line.startsWith('- ')) return yellow(line);
-    if (line.startsWith('Suppressed output:')) return green(line);
+    if (isOutputCompactionSummaryLine(line)) return green(line);
     if (line.includes(':')) return colorKeyValueLine(line);
     return line;
 }
