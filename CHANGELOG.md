@@ -1,7 +1,8 @@
 # Changelog
 
 ## Unreleased
-- aligned the documented `garda doctor --compact` success marker with the actual formatter contract (`Doctor: PASSED | verify=PASSED | manifest=PASSED`) while keeping the Node 24-only runtime baseline unchanged
+- expanded the official runtime contract to Node 24 LTS primary plus Node 22.13+ compatibility, with aligned engines, warning-only doctor diagnostics outside the tested matrix, CI matrices, docs, release validation checks, and Node 22 typings
+- aligned the documented `garda doctor --compact` success marker with the actual formatter contract (`Doctor: PASSED | verify=PASSED | manifest=PASSED`)
 - made `garda doctor` failure output print a concise blocker summary and next action before the long detailed evidence dump, while preserving JSON output and full human diagnostics
 - made `complete-reviewer-launch` own `launched_at_utc` inside the gate, reject caller-supplied `--launched-at-utc` as spoof-like freshness input, and remove that flag from generated reviewer-launch guidance
 - added a guarded `garda ui --actions` settings editor for allow-listed safe workflow knobs, using preview/confirmation, the audited `workflow set` command path, and local UI action logging instead of direct config JSON writes
@@ -9,7 +10,6 @@
 - expanded `garda ui` into a richer read-only dashboard with overview counters, task search/filter controls, workflow and instructions tabs, and clearer lazy task details
 - added `garda ui` as a no-dependency read-only localhost server that prints a browser URL and loads per-task details lazily on demand
 - made `garda html` return promptly on large runtime histories by rendering the full task list with lazy/skipped deep task details by default, while adding `--max-detailed-tasks N` for explicit heavier snapshots
-- documented the Garda 1.1.x Node runtime support stance as Node 24-only, with Node 22 treated as best-effort local compatibility until engines, CI, diagnostics, and release validation explicitly cover it
 - added short `on`/`off` aliases for guarded `garda workflow set` boolean options while preserving canonical `--*-enabled` flags, audited confirmation requirements, and conflict diagnostics
 - wrote reviewer output-template and evidence-manifest artifacts from `build-review-context`, with prompt handoff pointing reviewers at exact headings/verdict tokens and treating task/plan/diff/source values as untrusted evidence
 - included task intent, TASK.md row data, approved plan criteria, verification expectations, and explicit out-of-scope notes in reviewer context as untrusted evidence, with stale/missing/ambiguous task criteria surfaced instead of silently trusted

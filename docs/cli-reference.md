@@ -8,16 +8,16 @@ The runtime is Node-only.
 
 - Published command names: `garda`, `gao`, `garda-agent-orchestrator`
 - Source invocation: `node bin/garda.js <command>`
-- Runtime baseline: `Node.js 24 LTS`
+- Runtime baseline: `Node.js ^22.13.0 || >=24.0.0` (Node 24 LTS primary, Node 22.13+ compatibility)
 - Source installs from a git/source checkout run `npm prepare`, which builds the generated `bin/garda.js` launcher and compiled runtime before execution.
 
 Runtime compatibility matrix:
 
 | Node.js line | Garda 1.1.x status | Notes |
 |---|---|---|
-| Node 24 LTS | Supported | Covered by `package.json` engines, CI, release validation, and cross-platform smoke. |
-| Node 22 LTS | Best-effort only | Not an official support target without engines, CI matrix, diagnostics, and release validation coverage. |
-| Node 20 and older | Unsupported | Below the enforced `>=24.0.0` runtime baseline. |
+| Node 24 LTS | Supported primary runtime | Covered by `package.json` engines, CI, release validation, and cross-platform smoke. |
+| Node 22.13+ LTS | Supported compatibility runtime | Covered by `package.json` engines, CI typecheck/test/release validation, runtime diagnostics, docs, and cross-platform smoke. |
+| Node 23, Node 22 before 22.13, and Node 20 or older | Untested / not officially supported | Outside the tested `^22.13.0 || >=24.0.0` support matrix. Doctor warns, but runtime version mismatch alone does not block execution. |
 
 ---
 
@@ -709,5 +709,5 @@ Zero-diff task contract:
 
 | Component | Requirement |
 |---|---|
-| Public CLI and gate commands | Node.js 24 LTS |
+| Public CLI and gate commands | Node.js 24 LTS primary; Node.js 22.13+ compatibility |
 | Task orchestration workspace | Local Git repository with the `git` CLI available; GitHub, GitLab, or other remotes are optional |

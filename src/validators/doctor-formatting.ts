@@ -92,8 +92,8 @@ function formatDoctorFailureSummary(result: DoctorResult): string[] {
     }
     if (!result.runtimeMismatchEvidence.passed) {
         blockers.push(
-            'Runtime mismatch: Node ' + result.runtimeMismatchEvidence.current_node_version +
-            ' does not satisfy ' + result.runtimeMismatchEvidence.required_range + '.'
+            'Runtime compatibility check failed for Node ' + result.runtimeMismatchEvidence.current_node_version +
+            ' against ' + result.runtimeMismatchEvidence.required_range + '.'
         );
     }
     if (!result.permissionEvidence.passed) {
@@ -134,7 +134,7 @@ function formatDoctorFailureSummary(result: DoctorResult): string[] {
     } else if (result.reviewLockHealth && result.reviewLockHealth.stale_count > 0) {
         actionLines.push('Run: garda doctor --target-root "." --cleanup-stale-locks --dry-run');
     } else if (!result.runtimeMismatchEvidence.passed) {
-        actionLines.push('Install a Node.js version that satisfies ' + result.runtimeMismatchEvidence.required_range + ', then rerun doctor.');
+        actionLines.push('Inspect runtime compatibility diagnostics, then rerun doctor.');
     } else if (!result.partialStateEvidence.passed) {
         actionLines.push('Rerun update/rollback/setup instead of deleting lifecycle sentinels or locks manually.');
     } else {
@@ -391,13 +391,20 @@ export function formatDoctorResult(result: DoctorResult): string {
         lines.push('');
     }
 
-    // Runtime mismatch
+    // Runtime compatibility
+    const runtimeWarnings = result.runtimeMismatchEvidence.warnings || [];
+    const runtimeStatus = result.runtimeMismatchEvidence.passed
+        ? (runtimeWarnings.length > 0 ? 'WARN' : 'OK')
+        : 'FAILED';
     lines.push('Runtime Compatibility');
     lines.push('  Node: ' + result.runtimeMismatchEvidence.current_node_version);
     lines.push('  Required: ' + result.runtimeMismatchEvidence.required_range);
-    lines.push('  Status: ' + (result.runtimeMismatchEvidence.passed ? 'OK' : 'MISMATCH'));
+    lines.push('  Status: ' + runtimeStatus);
     for (const rv of result.runtimeMismatchEvidence.violations) {
-        lines.push('  - ' + rv);
+        lines.push('  Violation: ' + rv);
+    }
+    for (const warning of runtimeWarnings) {
+        lines.push('  Warning: ' + warning);
     }
     lines.push('');
 

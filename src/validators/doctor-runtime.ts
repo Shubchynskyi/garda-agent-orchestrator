@@ -5,46 +5,110 @@ export interface RuntimeMismatchEvidence {
     current_node_version: string;
     required_range: string;
     violations: string[];
+    warnings?: string[];
+}
+
+export interface RuntimeMismatchCheckOptions {
+    currentVersion?: string;
+    requiredRange?: string;
 }
 
 /**
- * Parse a `>=X.Y.Z` range and test whether the running Node.js version
- * satisfies it.  Handles optional `v` prefix and missing minor/patch.
+ * Parse the small npm-engine subset this runtime publishes and test whether
+ * the running Node.js version satisfies it. Handles `>=X.Y.Z`, `^X.Y.Z`, OR
+ * ranges separated by `||`, optional `v` prefixes, and missing minor/patch.
  */
-export function checkRuntimeMismatch(): RuntimeMismatchEvidence {
-    const currentVersion = process.version;
-    const requiredRange = NODE_ENGINE_RANGE;
-    const violations: string[] = [];
+interface ParsedNodeVersion {
+    major: number;
+    minor: number;
+    patch: number;
+}
 
-    const rangeMatch = requiredRange.match(/^>=\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
-    if (!rangeMatch) {
-        violations.push('Unable to parse engine range: ' + requiredRange);
-        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations };
-    }
-
-    const requiredMajor = Number(rangeMatch[1]);
-    const requiredMinor = rangeMatch[2] !== undefined ? Number(rangeMatch[2]) : 0;
-    const requiredPatch = rangeMatch[3] !== undefined ? Number(rangeMatch[3]) : 0;
-
-    const versionMatch = currentVersion.match(/^v?(\d+)\.(\d+)\.(\d+)/);
+function parseNodeVersion(value: string): ParsedNodeVersion | null {
+    const versionMatch = value.trim().match(/^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
     if (!versionMatch) {
-        violations.push('Unable to parse current Node.js version: ' + currentVersion);
-        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations };
+        return null;
+    }
+    return {
+        major: Number(versionMatch[1]),
+        minor: versionMatch[2] !== undefined ? Number(versionMatch[2]) : 0,
+        patch: versionMatch[3] !== undefined ? Number(versionMatch[3]) : 0
+    };
+}
+
+function compareNodeVersions(left: ParsedNodeVersion, right: ParsedNodeVersion): number {
+    if (left.major !== right.major) return left.major - right.major;
+    if (left.minor !== right.minor) return left.minor - right.minor;
+    return left.patch - right.patch;
+}
+
+function satisfiesComparator(current: ParsedNodeVersion, comparator: string): boolean | null {
+    const normalized = comparator.trim();
+    if (normalized.startsWith('>=')) {
+        const minimum = parseNodeVersion(normalized.slice(2).trim());
+        return minimum ? compareNodeVersions(current, minimum) >= 0 : null;
     }
 
-    const currentMajor = Number(versionMatch[1]);
-    const currentMinor = Number(versionMatch[2]);
-    const currentPatch = Number(versionMatch[3]);
+    if (normalized.startsWith('^')) {
+        const minimum = parseNodeVersion(normalized.slice(1).trim());
+        if (!minimum) return null;
+        const upperBound = { major: minimum.major + 1, minor: 0, patch: 0 };
+        return compareNodeVersions(current, minimum) >= 0 && compareNodeVersions(current, upperBound) < 0;
+    }
 
-    const satisfies =
-        currentMajor > requiredMajor ||
-        (currentMajor === requiredMajor && currentMinor > requiredMinor) ||
-        (currentMajor === requiredMajor && currentMinor === requiredMinor && currentPatch >= requiredPatch);
+    return null;
+}
+
+export function nodeVersionSatisfiesRange(currentVersion: string, requiredRange: string): boolean | null {
+    const parsedCurrent = parseNodeVersion(currentVersion);
+    if (!parsedCurrent) {
+        return null;
+    }
+
+    return parsedNodeVersionSatisfiesRange(parsedCurrent, requiredRange);
+}
+
+function parsedNodeVersionSatisfiesRange(parsedCurrent: ParsedNodeVersion, requiredRange: string): boolean | null {
+    const comparators = requiredRange.split('||').map((item) => item.trim()).filter(Boolean);
+    if (comparators.length === 0) {
+        return null;
+    }
+
+    for (const comparator of comparators) {
+        const result = satisfiesComparator(parsedCurrent, comparator);
+        if (result === null) {
+            return null;
+        }
+        if (result) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+export function checkRuntimeMismatch(options?: RuntimeMismatchCheckOptions): RuntimeMismatchEvidence {
+    const currentVersion = options?.currentVersion || process.version;
+    const requiredRange = options?.requiredRange || NODE_ENGINE_RANGE;
+    const violations: string[] = [];
+    const warnings: string[] = [];
+
+    const parsedCurrent = parseNodeVersion(currentVersion);
+    if (!parsedCurrent) {
+        violations.push('Unable to parse current Node.js version: ' + currentVersion);
+        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations, warnings };
+    }
+
+    const satisfies = parsedNodeVersionSatisfiesRange(parsedCurrent, requiredRange);
+    if (satisfies === null) {
+        violations.push('Unable to parse engine range: ' + requiredRange);
+        return { passed: false, current_node_version: currentVersion, required_range: requiredRange, violations, warnings };
+    }
 
     if (!satisfies) {
-        violations.push(
-            'Node.js ' + currentVersion + ' does not satisfy required range ' + requiredRange +
-            '. Upgrade to ' + NODE_ENGINE_RANGE + ' or later.'
+        warnings.push(
+            'Node.js ' + currentVersion + ' is outside the tested support matrix ' + requiredRange +
+            '. Execution is allowed, but this runtime is not covered by CI or release validation.'
         );
     }
 
@@ -52,6 +116,7 @@ export function checkRuntimeMismatch(): RuntimeMismatchEvidence {
         passed: violations.length === 0,
         current_node_version: currentVersion,
         required_range: requiredRange,
-        violations
+        violations,
+        warnings
     };
 }

@@ -25,19 +25,22 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  NODE_VERSION: '24'
-
 jobs:
   typecheck:
-    name: Static Checks
+    name: Static Checks / Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '22.13.0'
+          - '24'
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
@@ -57,7 +60,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [24]
+        node-version:
+          - '22.13.0'
+          - '24'
     steps:
       - uses: actions/checkout@v6
 
@@ -76,7 +81,7 @@ jobs:
 
   # ── 3. Release validation matrix (version parity + build + quality + pack smoke)
   validate-release:
-    name: Release Validation / ${{ matrix.os }}
+    name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
     needs: test
     strategy:
@@ -85,12 +90,15 @@ jobs:
         os:
           - ubuntu-latest
           - windows-latest
+        node-version:
+          - '22.13.0'
+          - '24'
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ matrix.node-version }}
           cache: npm
 
       - name: Install dependencies
@@ -113,7 +121,9 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macos-latest
-        node-version: [24]
+        node-version:
+          - '22.13.0'
+          - '24'
     steps:
       - uses: actions/checkout@v6
 

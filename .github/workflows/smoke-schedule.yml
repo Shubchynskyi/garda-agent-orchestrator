@@ -13,9 +13,6 @@ on:
 permissions:
   contents: read
 
-env:
-  NODE_VERSION: '24'
-
 jobs:
   smoke:
     name: Smoke / ${{ matrix.os }} / Node ${{ matrix.node-version }}
@@ -27,7 +24,9 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macos-latest
-        node-version: [24]
+        node-version:
+          - '22.13.0'
+          - '24'
     steps:
       - uses: actions/checkout@v6
 

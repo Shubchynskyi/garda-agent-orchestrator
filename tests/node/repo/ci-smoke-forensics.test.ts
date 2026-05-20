@@ -25,24 +25,90 @@ interface WorkflowFile {
     jobs?: Record<string, WorkflowJob>;
 }
 
-function loadCiWorkflow(): WorkflowFile {
+function loadWorkflow(relativePath: string, label: string): WorkflowFile {
     const repoRoot = getRepoRoot();
-    const ciPath = path.join(repoRoot, '.github', 'workflows', 'ci.yml');
-    assert.ok(fs.existsSync(ciPath), `CI workflow must exist at ${ciPath}`);
-    const content = fs.readFileSync(ciPath, 'utf8');
+    const workflowPath = path.join(repoRoot, relativePath);
+    assert.ok(fs.existsSync(workflowPath), `${label} workflow must exist at ${workflowPath}`);
+    const content = fs.readFileSync(workflowPath, 'utf8');
     // Lightweight YAML parsing: extract only what we need via line scanning.
     // Full yaml parsing would require a dependency; line-level checks are
     // sufficient for structural contract validation.
     return { _raw: content } as unknown as WorkflowFile & { _raw: string };
 }
 
+function loadCiWorkflow(): WorkflowFile {
+    return loadWorkflow('.github/workflows/ci.yml', 'CI');
+}
+
+function loadScheduledSmokeWorkflow(): WorkflowFile {
+    return loadWorkflow('.github/workflows/smoke-schedule.yml', 'Scheduled smoke');
+}
+
 function getRawContent(workflow: WorkflowFile): string {
     return (workflow as unknown as { _raw: string })._raw;
+}
+
+function getWorkflowJobBlock(raw: string, jobId: string): string {
+    const lines = raw.split(/\r?\n/);
+    const jobStart = lines.findIndex((line) => line === `  ${jobId}:`);
+    assert.notEqual(jobStart, -1, `Workflow must define job '${jobId}'`);
+    const nextJob = lines.findIndex((line, index) => index > jobStart && /^  [A-Za-z0-9_-]+:\s*$/u.test(line));
+    return lines.slice(jobStart, nextJob === -1 ? undefined : nextJob).join('\n');
+}
+
+function extractYamlListAfterKey(block: string, key: string): string[] {
+    const lines = block.split(/\r?\n/);
+    const keyPattern = new RegExp(`^(\\s*)${key}:\\s*$`, 'u');
+    const keyIndex = lines.findIndex((line) => keyPattern.test(line));
+    assert.notEqual(keyIndex, -1, `Expected YAML key '${key}'`);
+    const keyIndent = keyPattern.exec(lines[keyIndex])![1].length;
+    const values: string[] = [];
+    for (const line of lines.slice(keyIndex + 1)) {
+        const indent = line.match(/^\s*/u)![0].length;
+        if (line.trim() && indent <= keyIndent) {
+            break;
+        }
+        const item = /^\s*-\s*(.+?)\s*$/u.exec(line);
+        if (item) {
+            values.push(item[1].replace(/^['"]|['"]$/gu, ''));
+        }
+    }
+    return values;
+}
+
+function assertSupportedNodeMatrix(raw: string, jobId: string, label: string): void {
+    const jobBlock = getWorkflowJobBlock(raw, jobId);
+    assert.deepEqual(
+        extractYamlListAfterKey(jobBlock, 'node-version'),
+        ['22.13.0', '24'],
+        `${label} must run on Node 22.13.0 and Node 24`
+    );
 }
 
 test('CI workflow smoke job exists', () => {
     const raw = getRawContent(loadCiWorkflow());
     assert.match(raw, /^\s+smoke:/m, 'CI workflow must define a smoke job');
+});
+
+test('CI workflow smoke job covers supported Node runtime lines', () => {
+    const raw = getRawContent(loadCiWorkflow());
+    const smokeJob = getWorkflowJobBlock(raw, 'smoke');
+
+    assert.match(smokeJob, /name:\s*Smoke \/ \$\{\{\s*matrix\.os\s*\}\} \/ Node \$\{\{\s*matrix\.node-version\s*\}\}/);
+    assertSupportedNodeMatrix(raw, 'smoke', 'CI smoke job');
+});
+
+test('scheduled smoke workflow covers supported Node runtime lines', () => {
+    const raw = getRawContent(loadScheduledSmokeWorkflow());
+    const smokeJob = getWorkflowJobBlock(raw, 'smoke');
+
+    assert.match(raw, /^\s+smoke:/m, 'Scheduled smoke workflow must define a smoke job');
+    assert.match(smokeJob, /name:\s*Smoke \/ \$\{\{\s*matrix\.os\s*\}\} \/ Node \$\{\{\s*matrix\.node-version\s*\}\}/);
+    assert.deepEqual(
+        extractYamlListAfterKey(smokeJob, 'os'),
+        ['ubuntu-latest', 'windows-latest', 'macos-latest']
+    );
+    assertSupportedNodeMatrix(raw, 'smoke', 'Scheduled smoke job');
 });
 
 test('smoke job lifecycle step has an id for output forwarding', () => {

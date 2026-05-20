@@ -56,7 +56,7 @@ export function getRepoRoot(): string {
 function getNodeEngineRange(): string {
     const pkg: { engines?: { node?: string } } =
         JSON.parse(fs.readFileSync(path.join(getRepoRoot(), 'package.json'), 'utf8'));
-    return (pkg.engines && pkg.engines.node) || '>=24.0.0';
+    return (pkg.engines && pkg.engines.node) || '^22.13.0 || >=24.0.0';
 }
 
 function collectFiles(rootPath: string, extension: string = '.js'): string[] {

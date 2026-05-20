@@ -21,7 +21,7 @@ Each walkthrough covers the full lifecycle: **install → first task → update 
 ## Prerequisites
 
 All walkthroughs assume:
-- Node.js 24 LTS installed.
+- Node.js 24 LTS installed, or Node.js 22.13+ for compatibility-runtime usage.
 - `npm install -g garda-agent-orchestrator` completed.
 - A git-initialized project directory.
 

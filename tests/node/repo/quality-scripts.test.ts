@@ -28,6 +28,40 @@ function readTextRepoFile(relativePath: string): string {
     return fs.readFileSync(path.join(getRepoRoot(), relativePath), 'utf8');
 }
 
+function getWorkflowJobBlock(raw: string, jobId: string): string {
+    const lines = raw.split(/\r?\n/);
+    const jobStart = lines.findIndex((line) => line === `  ${jobId}:`);
+    assert.notEqual(jobStart, -1, `Workflow must define job '${jobId}'`);
+    const nextJob = lines.findIndex((line, index) => index > jobStart && /^  [A-Za-z0-9_-]+:\s*$/u.test(line));
+    return lines.slice(jobStart, nextJob === -1 ? undefined : nextJob).join('\n');
+}
+
+function extractYamlListAfterKey(block: string, key: string): string[] {
+    const lines = block.split(/\r?\n/);
+    const keyPattern = new RegExp(`^(\\s*)${key}:\\s*$`, 'u');
+    const keyIndex = lines.findIndex((line) => keyPattern.test(line));
+    assert.notEqual(keyIndex, -1, `Expected YAML key '${key}'`);
+    const keyIndent = keyPattern.exec(lines[keyIndex])![1].length;
+    const values: string[] = [];
+    for (const line of lines.slice(keyIndex + 1)) {
+        const indent = line.match(/^\s*/u)![0].length;
+        if (line.trim() && indent <= keyIndent) {
+            break;
+        }
+        const item = /^\s*-\s*(.+?)\s*$/u.exec(line);
+        if (item) {
+            values.push(item[1].replace(/^['"]|['"]$/gu, ''));
+        }
+    }
+    return values;
+}
+
+function assertJobMatrixValues(raw: string, jobId: string, key: string, expectedValues: string[]): string {
+    const jobBlock = getWorkflowJobBlock(raw, jobId);
+    assert.deepEqual(extractYamlListAfterKey(jobBlock, key), expectedValues);
+    return jobBlock;
+}
+
 test('package quality scripts expose lint, coverage, audit, and composed release validation', () => {
     const scripts = getScripts();
 
@@ -68,18 +102,20 @@ test('quality script dependencies and eslint config are present', () => {
 
 test('release validation CI covers Windows quality script execution', () => {
     const ciWorkflow = readTextRepoFile('.github/workflows/ci.yml');
+    const releaseJob = assertJobMatrixValues(ciWorkflow, 'validate-release', 'node-version', ['22.13.0', '24']);
 
-    assert.match(ciWorkflow, /validate-release:\s+name: Release Validation \/ \$\{\{ matrix\.os \}\}/);
-    assert.match(ciWorkflow, /runs-on: \$\{\{ matrix\.os \}\}/);
-    assert.match(ciWorkflow, /os:\s+- ubuntu-latest\s+- windows-latest/);
-    assert.match(ciWorkflow, /run: npm run validate:release/);
+    assert.match(releaseJob, /name:\s*Release Validation \/ \$\{\{ matrix\.os \}\} \/ Node \$\{\{ matrix\.node-version \}\}/);
+    assert.match(releaseJob, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
+    assert.deepEqual(extractYamlListAfterKey(releaseJob, 'os'), ['ubuntu-latest', 'windows-latest']);
+    assert.match(releaseJob, /run:\s*npm run validate:release/);
 });
 
-test('Linux unit CI lane runs the full node foundation suite with ANSI enabled', () => {
+test('Linux unit CI lane runs the full node foundation suite with ANSI enabled on supported Node lines', () => {
     const ciWorkflow = readTextRepoFile('.github/workflows/ci.yml');
+    const testJob = assertJobMatrixValues(ciWorkflow, 'test', 'node-version', ['22.13.0', '24']);
 
-    assert.match(ciWorkflow, /test:\s+name: Unit Tests \/ Node \$\{\{ matrix\.node-version \}\}/);
-    assert.match(ciWorkflow, /runs-on: ubuntu-latest/);
-    assert.match(ciWorkflow, /FORCE_COLOR:\s+'1'/);
-    assert.match(ciWorkflow, /run: npm run build:node-foundation && npm test/);
+    assert.match(testJob, /name:\s*Unit Tests \/ Node \$\{\{ matrix\.node-version \}\}/);
+    assert.match(testJob, /runs-on:\s*ubuntu-latest/);
+    assert.match(testJob, /FORCE_COLOR:\s+'1'/);
+    assert.match(testJob, /run:\s*npm run build:node-foundation && npm test/);
 });

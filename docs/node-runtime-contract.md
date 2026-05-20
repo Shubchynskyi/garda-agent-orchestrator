@@ -1,7 +1,7 @@
 # Node Runtime Contract
 
 Version source: VERSION
-Frozen: 2026-04-23
+Frozen: 2026-05-20
 
 This document captures the current Node-only runtime surface.
 
@@ -9,17 +9,17 @@ This document captures the current Node-only runtime surface.
 
 - CLI aliases: `garda`, `gao`, `garda-agent-orchestrator`
 - Entrypoint: generated `bin/garda.js` (compiled from `src/bin/garda.ts`)
-- Runtime baseline: `Node.js >=24.0.0`
+- Runtime baseline: `Node.js ^22.13.0 || >=24.0.0`
 
 ## Compatibility Matrix
 
-Garda 1.1.x is a Node 24-only supported runtime line. Node 22 is still an upstream Maintenance LTS release line, but Garda does not make it official support unless engines, CI, runtime diagnostics, and release validation all include Node 22.
+Garda 1.1.x uses Node 24 LTS as the primary runtime line and supports Node 22.13+ as a compatibility runtime line. Node 22 support is official only at 22.13.0 and newer because repository dependencies and CI coverage are pinned to that lower bound. Other Node versions are outside the tested support matrix: doctor should warn about them, not block solely because of the version number.
 
 | Node.js line | Garda 1.1.x status | Contract |
 |---|---|---|
-| Node 24 LTS | Supported | Public CLI, lifecycle commands, gate commands, release validation, and cross-platform smoke are covered by CI and `package.json` engines. |
-| Node 22 LTS | Best-effort only | No official support claim, no CI matrix, no release validation, and no diagnostic promise. A successful local build on Node 22 is evidence for that machine only. |
-| Node 20 and older | Unsupported | Below the enforced `>=24.0.0` runtime baseline. |
+| Node 24 LTS | Supported primary runtime | Public CLI, lifecycle commands, gate commands, release validation, and cross-platform smoke are covered by CI and `package.json` engines. |
+| Node 22.13+ LTS | Supported compatibility runtime | Public CLI, lifecycle commands, gate commands, typecheck, test, release validation, and cross-platform smoke are covered by CI and runtime diagnostics. |
+| Node 23, Node 22 before 22.13, and Node 20 or older | Untested / not officially supported | Outside the tested `^22.13.0 || >=24.0.0` support matrix. Doctor reports a warning, but runtime version mismatch alone is not a hard block. |
 
 ## Execution Modes
 

@@ -143,9 +143,12 @@ function createReadinessFixture(openTaskId?: string): string {
         path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
         [
             'validate-release:',
-            '  name: Release Validation / ${{ matrix.os }}',
+            '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
             '  strategy:',
             '    matrix:',
+            '      node-version:',
+            "        - '22.13.0'",
+            "        - '24'",
             '      os:',
             '        - ubuntu-latest',
             '        - windows-latest',
@@ -154,6 +157,9 @@ function createReadinessFixture(openTaskId?: string): string {
             'smoke:',
             '  strategy:',
             '    matrix:',
+            '      node-version:',
+            "        - '22.13.0'",
+            "        - '24'",
             '      os:',
             '        - ubuntu-latest',
             '        - windows-latest',
@@ -198,6 +204,53 @@ test('release readiness fails while a required 1.1.0 blocker remains open', () =
         assert.match(output, /RELEASE_READINESS_FAILED/);
         assert.match(output, /OpenBlockers: T-319/);
         assert.ok(result.violations.includes('release-blockers: all required Release 1.1.0 blocker tasks before T-244 are closed'));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when Node matrix markers are outside required CI jobs', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
+            [
+                'validate-release:',
+                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
+                '  strategy:',
+                '    matrix:',
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '  steps:',
+                '    - run: npm run validate:release',
+                'smoke:',
+                '  strategy:',
+                '    matrix:',
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '        - macos-latest',
+                '  steps:',
+                '    - run: $CLI setup',
+                '    - run: $CLI update git',
+                '    - run: $CLI doctor',
+                '    - run: $CLI uninstall',
+                'metadata-only:',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'"
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.ok(result.violations.some(v => v.startsWith('ci:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

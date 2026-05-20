@@ -2,8 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getProviderIds, getProviderEntrypointMap, getProviderEntrypointFiles } from './provider-registry';
 
-export const NODE_ENGINE_RANGE = '>=24.0.0';
-export const NODE_BASELINE_LABEL = 'Node 24 LTS';
+export const NODE_ENGINE_RANGE = '^22.13.0 || >=24.0.0';
+export const NODE_BASELINE_LABEL = 'Node 24 LTS primary; Node 22.13+ compatibility';
 export const PRODUCT_NAME = 'Garda Agent Orchestrator';
 export const PRODUCT_ACRONYM = 'GARDA';
 export const PRODUCT_ACRONYM_EXPANSION = 'Governed Agent Runtime, Deployment, and Audit';

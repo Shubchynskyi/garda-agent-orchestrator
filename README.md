@@ -149,10 +149,10 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 ## Runtime Baseline
 
-- **Node.js 24 LTS is the supported runtime baseline** for the public CLI, lifecycle commands, and gate commands. CI targets Node 24 across the supported OS matrix.
+- **Node.js 24 LTS is the primary runtime baseline** for the public CLI, lifecycle commands, and gate commands. Node.js 22.13+ is also supported as the compatibility runtime line.
 - **A local Git working tree is required.** Garda uses `git status` and `git diff` from the local repository to derive task scope, dirty-worktree baselines, zero-diff evidence, protected control-plane drift, and review freshness. The hosting service does not matter: GitHub, GitLab, Bitbucket, a private server, or no remote at all are all acceptable as long as the project is a local Git repository and the `git` CLI is available.
-- **1.1.x compatibility stance:** Node 22 is not an officially supported Garda runtime. It may remain useful for local investigation while the upstream Node.js project keeps it in Maintenance LTS, but Garda does not claim Node 22 compatibility without `package.json` engine support, CI matrix coverage, and release validation on that line.
-- **Compatibility note:** as of `v1.0.0`, the codebase also built on `Node 20.20.2` and `Node 22.22.2`. That historical observation is not part of the official support contract, and runtime diagnostics still enforce the documented `>=24.0.0` baseline.
+- **1.1.x compatibility stance:** Node 22.13+ is covered by `package.json` engines, CI matrix coverage, release validation, runtime diagnostics, and documentation. Node 24 remains the primary line.
+- **Compatibility note:** Node 23, Node 22 versions before 22.13.0, and Node 20 or older are outside the tested support matrix. Runtime diagnostics warn for those versions instead of blocking execution solely because of the Node version.
 - **Compile-first runtime contract:** `src/**/*.ts` is the source of truth, `src/bin/garda.ts` compiles into the public `bin/garda.js` launcher, and that launcher executes compiled JavaScript from `dist/src/**/*.js` or the staged `.node-build/src/**/*.js` test build. Raw `src/**/*.ts` files are never executed directly.
 - **Strict TypeScript means compiler-enforced typing across all maintained code paths:** `tsconfig.build.json` runs `strict:true` for `src/**/*.ts`, and the wider repo graph (`tsconfig.node-foundation.json` / `tsconfig.tests.json`) covers `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
 - **Release validation is explicit:** `npm run validate:release` requires a clean tracked/untracked worktree, proves `build -> embedded bundle parity when present -> test -> pack -> install/invoke`, and checks the worktree again before release handoff.
@@ -161,9 +161,9 @@ Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**
 
 | Node.js line | 1.1.x support status | Release/CI contract |
 |---|---|---|
-| Node 24 LTS | Official supported baseline | `package.json` requires `>=24.0.0`; GitHub Actions typecheck, unit, release validation, and cross-platform smoke run on Node 24. |
-| Node 22 LTS | Not officially supported | No engines claim, no CI matrix, no release validation, and no runtime diagnostics promise. Treat successful local builds as best-effort only. |
-| Node 20 and older | Unsupported | Below the enforced runtime baseline and outside the 1.1.x support contract. |
+| Node 24 LTS | Official primary runtime | `package.json` allows `>=24.0.0`; GitHub Actions typecheck, unit, release validation, and cross-platform smoke run on Node 24. |
+| Node 22.13+ LTS | Official compatibility runtime | `package.json` allows `^22.13.0`; GitHub Actions typecheck, unit, release validation, and cross-platform smoke run on Node 22.13+. |
+| Node 23, Node 22 before 22.13, and Node 20 or older | Untested / not officially supported | Outside the `^22.13.0 || >=24.0.0` support matrix. Doctor warns, but runtime version mismatch alone is warning-only. |
 
 ## Documentation
 

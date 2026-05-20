@@ -402,6 +402,82 @@ function manifestListsEvery(manifestText: string, relativePaths: readonly string
     return relativePaths.every((relativePath) => manifestText.includes(relativePath));
 }
 
+function getWorkflowJobBlock(workflowText: string, jobId: string): string | null {
+    const lines = workflowText.split(/\r?\n/u);
+    const jobPattern = new RegExp(`^(\\s*)${jobId}:\\s*$`, 'u');
+    const jobStart = lines.findIndex((line) => jobPattern.test(line));
+    if (jobStart === -1) {
+        return null;
+    }
+    const jobIndent = jobPattern.exec(lines[jobStart])![1].length;
+    const nextJobPattern = new RegExp(`^\\s{${jobIndent}}[A-Za-z0-9_-]+:\\s*$`, 'u');
+    const nextJob = lines.findIndex((line, index) => index > jobStart && nextJobPattern.test(line));
+    return lines.slice(jobStart, nextJob === -1 ? undefined : nextJob).join('\n');
+}
+
+function extractYamlListAfterKey(block: string | null, key: string): string[] {
+    if (block === null) {
+        return [];
+    }
+    const lines = block.split(/\r?\n/u);
+    const keyPattern = new RegExp(`^(\\s*)${key}:\\s*$`, 'u');
+    const keyIndex = lines.findIndex((line) => keyPattern.test(line));
+    if (keyIndex === -1) {
+        return [];
+    }
+    const keyIndent = keyPattern.exec(lines[keyIndex])![1].length;
+    const values: string[] = [];
+    for (const line of lines.slice(keyIndex + 1)) {
+        const indent = line.match(/^\s*/u)![0].length;
+        if (line.trim() && indent <= keyIndent) {
+            break;
+        }
+        const item = /^\s*-\s*(.+?)\s*$/u.exec(line);
+        if (item) {
+            values.push(item[1].replace(/^['"]|['"]$/gu, ''));
+        }
+    }
+    return values;
+}
+
+function stringArraysEqual(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function workflowJobHasRunStep(block: string | null, command: string): boolean {
+    return block !== null && block.includes(`run: ${command}`);
+}
+
+function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean; details: string[] } {
+    const releaseJob = getWorkflowJobBlock(ciWorkflow, 'validate-release');
+    const smokeJob = getWorkflowJobBlock(ciWorkflow, 'smoke');
+    const supportedNodeLines = ['22.13.0', '24'];
+    const releaseOsLines = ['ubuntu-latest', 'windows-latest'];
+    const smokeOsLines = ['ubuntu-latest', 'windows-latest', 'macos-latest'];
+    const releaseNodeVersions = extractYamlListAfterKey(releaseJob, 'node-version');
+    const smokeNodeVersions = extractYamlListAfterKey(smokeJob, 'node-version');
+    const releaseOsVersions = extractYamlListAfterKey(releaseJob, 'os');
+    const smokeOsVersions = extractYamlListAfterKey(smokeJob, 'os');
+    const releaseMatrixOk = stringArraysEqual(releaseNodeVersions, supportedNodeLines)
+        && stringArraysEqual(releaseOsVersions, releaseOsLines)
+        && workflowJobHasRunStep(releaseJob, 'npm run validate:release');
+    const smokeMatrixOk = stringArraysEqual(smokeNodeVersions, supportedNodeLines)
+        && stringArraysEqual(smokeOsVersions, smokeOsLines)
+        && workflowJobHasRunStep(smokeJob, '$CLI setup')
+        && workflowJobHasRunStep(smokeJob, '$CLI update git')
+        && workflowJobHasRunStep(smokeJob, '$CLI doctor')
+        && workflowJobHasRunStep(smokeJob, '$CLI uninstall');
+    return {
+        passed: releaseMatrixOk && smokeMatrixOk,
+        details: [
+            `validate-release node-version=${releaseNodeVersions.join(', ') || 'missing'}`,
+            `validate-release os=${releaseOsVersions.join(', ') || 'missing'}`,
+            `smoke node-version=${smokeNodeVersions.join(', ') || 'missing'}`,
+            `smoke os=${smokeOsVersions.join(', ') || 'missing'}`
+        ]
+    };
+}
+
 function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessResult {
     const normalizedRoot = path.resolve(repoRoot);
     const violations: string[] = [];
@@ -478,21 +554,14 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
     );
 
     const ciWorkflow = readTextFileIfExists(path.join(normalizedRoot, '.github', 'workflows', 'ci.yml')) || '';
+    const ciRuntimeMatrix = validateCiRuntimeMatrixContract(ciWorkflow);
     pushCheck(
         checks,
         violations,
         'ci',
-        'CI keeps release validation on Linux and Windows and lifecycle update smoke on all supported OS families',
-        /validate-release:\s+name: Release Validation/u.test(ciWorkflow) &&
-            /ubuntu-latest/u.test(ciWorkflow) &&
-            /windows-latest/u.test(ciWorkflow) &&
-            /macos-latest/u.test(ciWorkflow) &&
-            /run: npm run validate:release/u.test(ciWorkflow) &&
-            /\$CLI setup/u.test(ciWorkflow) &&
-            /\$CLI update git/u.test(ciWorkflow) &&
-            /\$CLI doctor/u.test(ciWorkflow) &&
-            /\$CLI uninstall/u.test(ciWorkflow),
-        ['.github/workflows/ci.yml release validation and lifecycle smoke markers']
+        'CI keeps release validation on Linux and Windows, Node 22.13+ and Node 24 matrices, and lifecycle update smoke on all supported OS families',
+        ciRuntimeMatrix.passed,
+        ciRuntimeMatrix.details
     );
 
     const cliReference = readTextFileIfExists(path.join(normalizedRoot, 'docs', 'cli-reference.md')) || '';
@@ -525,7 +594,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         `Version: ${version || 'unknown'}`,
         'Validation command: npm run release:preflight',
         'Package proof: validate:release covers clean worktree, version parity, build, embedded bundle parity, quality, pack smoke, and final clean worktree.',
-        'Readiness alignment: validate:release-readiness checks package, CI, runtime-state docs, security-document surface, and Release 1.1.0 blocker wiring before the full proof path.',
+        'Readiness alignment: validate:release-readiness checks package, CI runtime matrix, runtime-state docs, security-document surface, and Release 1.1.0 blocker wiring before the full proof path.',
         'Update/runtime alignment: CI workflow is configured for setup, update git, doctor, and uninstall smoke across Linux, Windows, and macOS.',
         'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.'
     ];

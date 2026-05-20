@@ -155,21 +155,40 @@ test('formatDoctorResult highlights protected manifest drift with repair guidanc
     assert.ok(output.indexOf('Protected Control-Plane Manifest is DRIFT') < output.indexOf('Protected Control-Plane Manifest\n  Status: DRIFT'));
 });
 
-test('formatDoctorResult summarizes runtime mismatch before detailed runtime section', () => {
+test('formatDoctorResult summarizes runtime compatibility failures before detailed runtime section', () => {
     const fakeResult = buildFakeDoctorResult({
         passed: false,
         runtimeMismatchEvidence: {
             passed: false,
             current_node_version: 'v18.0.0',
-            required_range: '>=24.0.0',
-            violations: ['Node.js v18.0.0 does not satisfy required range >=24.0.0. Upgrade to >=24.0.0 or later.']
+            required_range: '^22.13.0 || >=24.0.0',
+            violations: ['Unable to parse engine range: ^22.13.0 || >=24.0.0']
         }
     });
 
     const output = formatDoctorResult(fakeResult);
-    assert.ok(output.includes('Runtime mismatch: Node v18.0.0 does not satisfy >=24.0.0.'));
-    assert.ok(output.includes('Install a Node.js version that satisfies >=24.0.0, then rerun doctor.'));
-    assert.ok(output.indexOf('Runtime mismatch: Node v18.0.0') < output.indexOf('Runtime Compatibility'));
+    assert.ok(output.includes('Runtime compatibility check failed for Node v18.0.0 against ^22.13.0 || >=24.0.0.'));
+    assert.ok(output.includes('Inspect runtime compatibility diagnostics, then rerun doctor.'));
+    assert.ok(output.indexOf('Runtime compatibility check failed for Node v18.0.0') < output.indexOf('Runtime Compatibility'));
+});
+
+test('formatDoctorResult shows unsupported Node versions as runtime warnings', () => {
+    const fakeResult = buildFakeDoctorResult({
+        runtimeMismatchEvidence: {
+            passed: true,
+            current_node_version: 'v23.0.0',
+            required_range: '^22.13.0 || >=24.0.0',
+            violations: [],
+            warnings: ['Node.js v23.0.0 is outside the tested support matrix ^22.13.0 || >=24.0.0. Execution is allowed, but this runtime is not covered by CI or release validation.']
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Doctor: PASSED'));
+    assert.ok(output.includes('Runtime Compatibility'));
+    assert.ok(output.includes('Status: WARN'));
+    assert.ok(output.includes('Warning: Node.js v23.0.0 is outside the tested support matrix ^22.13.0 || >=24.0.0.'));
+    assert.equal(output.includes('Doctor Failure Summary'), false);
 });
 
 test('formatDoctorResult orders multiple top blockers deterministically', () => {
@@ -199,14 +218,14 @@ test('formatDoctorResult orders multiple top blockers deterministically', () => 
         runtimeMismatchEvidence: {
             passed: false,
             current_node_version: 'v18.0.0',
-            required_range: '>=24.0.0',
+            required_range: '^22.13.0 || >=24.0.0',
             violations: []
         }
     });
 
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.indexOf('Verify failed: 1 violation') < output.indexOf('Protected Control-Plane Manifest is DRIFT'));
-    assert.ok(output.indexOf('Protected Control-Plane Manifest is DRIFT') < output.indexOf('Runtime mismatch: Node v18.0.0'));
+    assert.ok(output.indexOf('Protected Control-Plane Manifest is DRIFT') < output.indexOf('Runtime compatibility check failed for Node v18.0.0'));
 });
 
 
@@ -280,8 +299,8 @@ test('formatDoctorResult includes runtime compatibility section', () => {
         runtimeMismatchEvidence: {
             passed: false,
             current_node_version: 'v18.0.0',
-            required_range: '>=24.0.0',
-            violations: ['Node.js v18.0.0 does not satisfy required range >=24.0.0. Upgrade to >=24.0.0 or later.']
+            required_range: '^22.13.0 || >=24.0.0',
+            violations: ['Unable to parse engine range: ^22.13.0 || >=24.0.0']
         },
         permissionEvidence: { passed: true, checks: [] },
         partialStateEvidence: {
@@ -312,7 +331,7 @@ test('formatDoctorResult includes runtime compatibility section', () => {
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.includes('Runtime Compatibility'));
     assert.ok(output.includes('Node: v18.0.0'));
-    assert.ok(output.includes('Status: MISMATCH'));
+    assert.ok(output.includes('Status: FAILED'));
     assert.ok(output.includes('Doctor: FAIL'));
 });
 

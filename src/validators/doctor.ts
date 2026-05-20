@@ -49,7 +49,7 @@ import {
 } from './protected-manifest-assessment';
 
 // Re-export extracted collectors for backward compatibility
-export { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor-runtime';
+export { checkRuntimeMismatch, nodeVersionSatisfiesRange, type RuntimeMismatchEvidence } from './doctor-runtime';
 export { checkProfileHealth, type ProfileHealthEvidence } from './doctor-profile';
 export {
     collectLockHealth,

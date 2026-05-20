@@ -6,6 +6,7 @@ import * as os from 'node:os';
 
 import {
     checkRuntimeMismatch,
+    nodeVersionSatisfiesRange,
     checkPermissions,
     checkPartialState,
     checkRollbackHealth,
@@ -35,6 +36,77 @@ test('checkRuntimeMismatch evidence includes expected fields', () => {
     assert.ok(typeof result.current_node_version === 'string');
     assert.ok(typeof result.required_range === 'string');
     assert.ok(Array.isArray(result.violations));
+    assert.ok(Array.isArray(result.warnings));
+});
+
+test('checkRuntimeMismatch warns without failing for unsupported Node versions', () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process, 'version');
+    try {
+        Object.defineProperty(process, 'version', {
+            value: 'v23.0.0',
+            configurable: true
+        });
+
+        const result = checkRuntimeMismatch();
+
+        assert.equal(result.passed, true);
+        assert.equal(result.violations.length, 0);
+        assert.equal(result.warnings?.length, 1);
+        assert.ok(result.warnings?.[0].includes('outside the tested support matrix'));
+    } finally {
+        if (originalDescriptor) {
+            Object.defineProperty(process, 'version', originalDescriptor);
+        }
+    }
+});
+
+test('checkRuntimeMismatch fails closed when the current Node version cannot be parsed', () => {
+    const result = checkRuntimeMismatch({ currentVersion: 'not-a-node-version' });
+
+    assert.equal(result.passed, false);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0], 'Unable to parse current Node.js version: not-a-node-version');
+    assert.equal(result.warnings?.length, 0);
+});
+
+test('checkRuntimeMismatch fails closed when the engine range cannot be parsed', () => {
+    const result = checkRuntimeMismatch({
+        currentVersion: 'v24.11.1',
+        requiredRange: 'not-a-supported-range'
+    });
+
+    assert.equal(result.passed, false);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0], 'Unable to parse engine range: not-a-supported-range');
+    assert.equal(result.warnings?.length, 0);
+});
+
+test('checkRuntimeMismatch fails closed when the engine range is only partially parseable', () => {
+    const result = checkRuntimeMismatch({
+        currentVersion: 'v24.11.1',
+        requiredRange: '^22.13.0 || not-a-supported-range || >=24.0.0'
+    });
+
+    assert.equal(result.passed, false);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0], 'Unable to parse engine range: ^22.13.0 || not-a-supported-range || >=24.0.0');
+    assert.equal(result.warnings?.length, 0);
+});
+
+test('nodeVersionSatisfiesRange identifies Node 22.13+ and Node 24+ as the tested support matrix', () => {
+    const supportedRange = '^22.13.0 || >=24.0.0';
+
+    assert.equal(nodeVersionSatisfiesRange('v22.13.0', supportedRange), true);
+    assert.equal(nodeVersionSatisfiesRange('v22.19.1', supportedRange), true);
+    assert.equal(nodeVersionSatisfiesRange('v24.0.0', supportedRange), true);
+    assert.equal(nodeVersionSatisfiesRange('v26.0.0', supportedRange), true);
+    assert.equal(nodeVersionSatisfiesRange('v22.12.0', supportedRange), false);
+    assert.equal(nodeVersionSatisfiesRange('v23.0.0', supportedRange), false);
+    assert.equal(nodeVersionSatisfiesRange('v20.19.0', supportedRange), false);
+});
+
+test('nodeVersionSatisfiesRange fails closed for trailing comparator garbage', () => {
+    assert.equal(nodeVersionSatisfiesRange('v24.0.0', '>=22.13.0 <bad'), null);
 });
 
 
