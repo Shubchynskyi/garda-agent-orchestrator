@@ -210,6 +210,13 @@ function buildPreflightGateHelpEntries(
                 true
             )
         },
+        'run-intermediate-command': {
+            ...createSingleUsageEntry(
+                'Run an opt-in auditable intermediate validation command with full raw output artifact and compact visible output.',
+                `${cliPrefix} gate run-intermediate-command --task-id "${TASK_ID_PLACEHOLDER}" --command-source "<node-test|targeted-test|typecheck|validation>" --command "<validation command>" --repo-root "."`,
+                true
+            )
+        },
         'classify-change': {
             ...createGateHelpEntry('Classify the intended scope before implementation and determine required review types.', [
                 `${cliPrefix} gate classify-change --task-id "${TASK_ID_PLACEHOLDER}" --task-intent "<task summary>" --changed-file "src/<file>" --output-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,

@@ -23,6 +23,10 @@ export {
 } from './gate-flows/task-mode-flow';
 
 export {
+    runIntermediateCommandCommand
+} from './gate-flows/command-run-flow';
+
+export {
     runClassifyChangeCommand,
     runCompileGateCommand
 } from './gate-flows/compile-flow';

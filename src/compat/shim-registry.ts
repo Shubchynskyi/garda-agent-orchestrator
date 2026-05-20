@@ -29,6 +29,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'handshake-diagnostics',
     'shell-smoke-preflight',
     'command-timeout-diagnostics',
+    'run-intermediate-command',
     'project-memory-impact',
     'validate-isolation',
     'prepare-isolation',

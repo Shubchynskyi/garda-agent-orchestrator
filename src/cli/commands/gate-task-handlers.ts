@@ -18,6 +18,7 @@ import {
     runRestartReviewCycleCommand,
     runShellSmokePreflightCommand,
     runCommandTimeoutDiagnosticsCommand,
+    runIntermediateCommandCommand,
     runProjectMemoryImpactCommand
 } from './gates';
 import {
@@ -238,6 +239,25 @@ export async function handleCommandTimeoutDiagnostics(gateArgv: string[]): Promi
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runCommandTimeoutDiagnosticsCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleRunIntermediateCommand(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--command': { key: 'command', type: 'string' },
+        '--command-source': { key: 'commandSource', type: 'string' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--output-path': { key: 'outputPath', type: 'string' },
+        '--timeout-ms': { key: 'timeoutMs', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' },
+        '--events-root': { key: 'eventsRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = await runIntermediateCommandCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;
