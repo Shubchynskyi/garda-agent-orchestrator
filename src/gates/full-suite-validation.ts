@@ -362,6 +362,16 @@ export function isFullSuiteNotRequiredForDocsOnlyScope(preflight: Record<string,
     return !hasRequiredReview(preflight);
 }
 
+export function isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight: Record<string, unknown>): boolean {
+    const zeroDiffGuard = isPlainRecord(preflight.zero_diff_guard) ? preflight.zero_diff_guard : {};
+    const profileGuardrails = isPlainRecord(preflight.profile_guardrails) ? preflight.profile_guardrails : {};
+    return zeroDiffGuard.zero_diff_detected === true
+        && String(zeroDiffGuard.status || '').trim() === 'BASELINE_ONLY'
+        && zeroDiffGuard.completion_requires_audited_no_op === true
+        && profileGuardrails.zero_diff_no_reviewable_scope === true
+        && !hasRequiredReview(preflight);
+}
+
 export function compactGreenSummary(outputLines: string[], maxLines: number): string[] {
     if (outputLines.length === 0) {
         return ['Full suite passed (no output).'];

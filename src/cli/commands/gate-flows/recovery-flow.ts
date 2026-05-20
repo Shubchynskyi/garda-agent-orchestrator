@@ -690,6 +690,13 @@ function resolveReplayScope(
                 detectionSource: 'git_staged_plus_untracked'
             };
         default:
+            if (previousChangedFiles.length === 0) {
+                return {
+                    plannedChangedFiles: [],
+                    changedFiles: undefined,
+                    detectionSource: 'git_auto_current_workspace'
+                };
+            }
             return {
                 plannedChangedFiles: previousChangedFiles,
                 changedFiles: previousChangedFiles,

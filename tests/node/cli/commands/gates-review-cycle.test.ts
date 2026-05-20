@@ -791,6 +791,81 @@ describe('cli/commands/gates – review-cycle suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('preserves git-auto zero-diff no-review classification during coherent-cycle restart', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle-git-auto-zero';
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# AGENTS\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'VERSION'), '0.0.0-test\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+        fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_auto',
+            metrics: { changed_lines_total: 0, changed_files_count: 0 },
+            changed_files: [],
+            required_reviews: {
+                code: false,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            zero_diff_guard: {
+                zero_diff_detected: true,
+                status: 'BASELINE_ONLY',
+                completion_requires_audited_no_op: true,
+                no_op_artifact_suffix: '-no-op.json',
+                rationale: 'Preflight on a clean workspace is baseline-only.'
+            }
+        });
+        const commandsPath = path.join(
+            getOrchestratorRoot(repoRoot),
+            'runtime',
+            'commands-restart-coherent-cycle-git-auto-zero.md'
+        );
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Replay zero-diff git_auto scope during cycle restart'
+        });
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /DetectionSource: git_auto_current_workspace/);
+
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(refreshedPreflight.detection_source, 'git_auto');
+        assert.deepEqual(refreshedPreflight.changed_files, []);
+        assert.equal((refreshedPreflight.required_reviews as Record<string, boolean>).code, false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('preserves approved task-plan metadata when coherent-cycle restart re-enters task mode', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-restart-coherent-cycle-plan';

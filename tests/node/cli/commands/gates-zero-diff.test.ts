@@ -514,6 +514,10 @@ describe('cli/commands/gates', () => {
     it('requires audited no-op evidence before zero-diff completion can pass', { concurrency: false }, async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903b';
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+        workflowConfig.full_suite_validation.enabled = true;
+        fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
@@ -530,6 +534,9 @@ describe('cli/commands/gates', () => {
                 performance: false,
                 infra: false,
                 dependency: false
+            },
+            profile_guardrails: {
+                zero_diff_no_reviewable_scope: true
             },
             changed_files: [],
             zero_diff_guard: {
@@ -647,6 +654,7 @@ describe('cli/commands/gates', () => {
         });
         assert.equal(passedCompletion.outcome, 'PASS');
         assert.equal(passedCompletion.zero_diff_evidence.status, 'SATISFIED_BY_AUDITED_NO_OP');
+        assert.equal(passedCompletion.full_suite_validation_evidence.status, 'NOT_REQUIRED');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

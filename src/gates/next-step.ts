@@ -43,6 +43,7 @@ import {
     buildFullSuiteTimeoutForecast,
     formatFullSuiteTimeoutForecast,
     isFullSuiteNotRequiredForDocsOnlyScope,
+    isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
     loadFullSuiteValidationConfig,
     resolveWorkflowConfigPath
 } from './full-suite-validation';
@@ -2154,18 +2155,9 @@ function hasZeroDiffNoReviewableScopeSuppression(
     preflight: Record<string, unknown> | null,
     requiredReviewTypes: string[]
 ): boolean {
-    if (!preflight || requiredReviewTypes.length > 0) {
-        return false;
-    }
-    const zeroDiffGuard = isPlainRecord(preflight.zero_diff_guard)
-        ? preflight.zero_diff_guard
-        : null;
-    const profileGuardrails = isPlainRecord(preflight.profile_guardrails)
-        ? preflight.profile_guardrails
-        : null;
-    return zeroDiffGuard?.zero_diff_detected === true
-        && zeroDiffGuard.status === 'BASELINE_ONLY'
-        && profileGuardrails?.zero_diff_no_reviewable_scope === true;
+    return !!preflight
+        && requiredReviewTypes.length === 0
+        && isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight);
 }
 
 function preflightRequiresAuditedNoOp(preflight: Record<string, unknown> | null): boolean {

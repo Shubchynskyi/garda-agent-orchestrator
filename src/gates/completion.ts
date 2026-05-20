@@ -64,6 +64,7 @@ import {
 import {
     loadFullSuiteValidationConfig,
     isFullSuiteNotRequiredForDocsOnlyScope,
+    isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
 } from './full-suite-validation';
@@ -249,6 +250,10 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
 
     const preflight = validatedPreflight.preflight || {};
     const fullSuiteNotRequiredForDocsOnly = isFullSuiteNotRequiredForDocsOnlyScope(preflight);
+    const fullSuiteNotRequiredForZeroDiffNoReviewableScope = isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight);
+    const fullSuiteValidationRequired = fullSuiteValidationConfig.enabled
+        && !fullSuiteNotRequiredForDocsOnly
+        && !fullSuiteNotRequiredForZeroDiffNoReviewableScope;
     const dirtyWorkspaceProtectionEvidence = detectProtectedDirtyWorkspaceDrift(
         repoRoot,
         getProtectedDirtyWorkspaceScopeFromPreflight(preflight)
@@ -657,7 +662,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         violations: []
     };
 
-    if (fullSuiteValidationConfig.enabled) {
+    if (fullSuiteValidationRequired) {
         const fullSuiteArtifact = readJsonArtifact(fullSuiteValidationPath, 'Full suite validation', errors) as FullSuiteValidationResult | null;
         const hasFullSuiteTimelineEvent =
             timelineEventTypes.has('FULL_SUITE_VALIDATION_PASSED')
@@ -760,7 +765,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     errors.push(...validateProjectMemoryImpactForCompletion({
         evidence: projectMemoryImpactEvidence,
         orderedEvents,
-        fullSuiteValidationEnabled: fullSuiteValidationConfig.enabled,
+        fullSuiteValidationEnabled: fullSuiteValidationRequired,
         timelinePath
     }));
 
