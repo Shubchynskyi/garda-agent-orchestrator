@@ -141,6 +141,7 @@ const CODE_CHANGING_SAFETY_FLOORS: ReadonlyMap<string, boolean> = new Map([
 const LIGHTENABLE_SCOPE_CATEGORIES = new Set(['docs-only', 'test-only', 'config-only', 'audit-only']);
 const DOMAIN_SURFACE_REVIEW_TYPES = new Set(['db', 'api', 'performance', 'infra', 'dependency']);
 const TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'security', 'refactor']);
+const DOCS_ONLY_SUPPRESSIBLE_REVIEW_TYPES = new Set(['code', 'refactor']);
 
 export interface ProfileReviewDecision {
     review_type: string;
@@ -178,19 +179,25 @@ export interface ProfileGuardrailOptions {
     zeroDiffBaselineOnly?: boolean;
 }
 
-function shouldLightenExplicitCodeReviewForDocsOnly(
+function shouldLightenReviewForDocsOnlyScope(
     reviewType: string,
     profileValue: boolean | 'auto' | undefined,
     scopeCategory: string,
     options: ProfileGuardrailOptions
 ): boolean {
-    return reviewType === 'code'
-        && profileValue === true
-        && scopeCategory === 'docs-only'
-        && (
+    if (profileValue !== true || scopeCategory !== 'docs-only') {
+        return false;
+    }
+    if (DOCS_ONLY_SUPPRESSIBLE_REVIEW_TYPES.has(reviewType)) {
+        return (
             options.protectedControlPlaneChanged !== true
             || options.protectedControlPlaneDocsOnly === true
         );
+    }
+    if (reviewType === 'security') {
+        return options.domainSurface !== undefined && options.domainSurface.security === false;
+    }
+    return false;
 }
 
 function shouldLightenReviewForTestOnlyScope(
@@ -434,7 +441,7 @@ export function applyProfileGuardrails(
             && hasDomainSurfaceEvidence
         );
         const domainSurfaceMissing = needsDomainSurface && !domainSurfacePresent;
-        const scopeLightenedExplicitReview = shouldLightenExplicitCodeReviewForDocsOnly(
+        const scopeLightenedExplicitReview = shouldLightenReviewForDocsOnlyScope(
             key,
             profileValue,
             scopeCategory,

@@ -27,6 +27,10 @@ import { getCurrentWorkflowConfigFileHashes } from '../../../src/gates/workflow-
 import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
 import { countTextChars } from '../../../src/gate-runtime/text-utils';
 import { runCliWithCapturedOutput } from '../cli/commands/gate-test-helpers';
+import {
+    classifyChange,
+    getClassificationConfig
+} from '../../../src/gates/classify-change';
 
 function writeFullSuitePreflight(
     repoRoot: string,
@@ -245,6 +249,17 @@ describe('gates/full-suite-validation', () => {
                 },
                 required_reviews: { test: true }
             }), false);
+
+            assert.equal(isFullSuiteNotRequiredForDocsOnlyScope({
+                scope_category: 'docs-only',
+                changed_files: ['docs/security.md'],
+                triggers: {
+                    runtime_code_changed: false,
+                    security: true,
+                    test: false
+                },
+                required_reviews: { security: true }
+            }), true);
         });
 
         it('buildDocsOnlyNotRequiredResult records an explicit skip reason', () => {
@@ -636,6 +651,75 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.required, false);
             assert.equal(artifact.skip_reason, 'DOCS_ONLY_SCOPE_NOT_REQUIRED');
             const timeline = fs.readFileSync(path.join(eventsDir, 'T-DOCS-SKIP.jsonl'), 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_SKIPPED"/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation records NOT_REQUIRED for preflight-classified security-sensitive docs-only scopes', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-security-docs-skip-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" -e "process.exit(9)"`,
+                    timeout_ms: 30000
+                }
+            }), 'utf8');
+
+            const taskId = 'T-SECURITY-DOCS-SKIP';
+            const classification = classifyChange({
+                normalizedFiles: ['docs/security.md'],
+                taskIntent: 'Update security support wording',
+                changedLinesTotal: 4,
+                additionsTotal: 4,
+                deletionsTotal: 0,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: getClassificationConfig(tempDir),
+                reviewCapabilities: {
+                    code: true,
+                    db: true,
+                    security: true,
+                    refactor: true,
+                    api: true,
+                    test: true,
+                    performance: true,
+                    infra: true,
+                    dependency: true
+                }
+            });
+            assert.equal(classification.scope_category, 'docs-only');
+            assert.equal(classification.required_reviews.security, true);
+            assert.equal(classification.required_reviews.code, false);
+            assert.equal(classification.required_reviews.refactor, false);
+            assert.equal(classification.required_reviews.test, false);
+
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                ...classification,
+                task_id: taskId
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', taskId,
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, result.errors.join('\n'));
+            const artifactPath = path.join(reviewsDir, `${taskId}-full-suite-validation.json`);
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'SKIPPED');
+            assert.equal(artifact.required, false);
+            assert.equal(artifact.skip_reason, 'DOCS_ONLY_SCOPE_NOT_REQUIRED');
+            const timeline = fs.readFileSync(path.join(eventsDir, `${taskId}.jsonl`), 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_SKIPPED"/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });

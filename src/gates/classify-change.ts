@@ -580,6 +580,22 @@ function isProtectedControlPlaneDocumentationSurfacePath(
         && !matchesSensitiveOrdinaryDocTrigger(normalizedPath, config);
 }
 
+function isSecuritySensitiveDocumentationScopePath(
+    pathValue: string,
+    config: SafeOrdinaryDocumentationPathConfig
+): boolean {
+    const normalizedPath = normalizePath(pathValue);
+    return testPrecompiled(normalizedPath, DOC_LIKE_COMPILED)
+        && !isRuntimeCodeLikePath(normalizedPath, config.code_like_regexes, config.runtime_roots)
+        && !testPrecompiled(normalizedPath, AUDIT_ONLY_COMPILED)
+        && !testPathPrefix(normalizedPath, config.protected_control_plane_roots)
+        && !testPrecompiled(normalizedPath, CONFIG_LIKE_COMPILED)
+        && matchAnyRegex(normalizedPath, config.security_trigger_regexes || [], {
+            skipInvalidRegex: true,
+            caseInsensitive: true
+        });
+}
+
 export function isRuntimeCodeLikePath(pathValue: string, codeLikeRegexes: string[], runtimeRoots: string[]): boolean {
     const normalizedPath = normalizePath(pathValue);
     return matchAnyRegex(normalizedPath, codeLikeRegexes, {
@@ -686,6 +702,16 @@ export function classifyScopeCategory(
             security_trigger_regexes: options.securityTriggerRegexes || [],
             api_trigger_regexes: options.apiTriggerRegexes || [],
             dependency_trigger_regexes: options.dependencyTriggerRegexes || []
+        })) {
+            docCount++;
+            continue;
+        }
+        if (isSecuritySensitiveDocumentationScopePath(file, {
+            code_like_regexes: codeLikeRegexes,
+            runtime_roots: runtimeRoots,
+            protected_control_plane_roots: options.protectedControlPlaneRoots || [],
+            ordinary_doc_paths: options.ordinaryDocPaths || [],
+            security_trigger_regexes: options.securityTriggerRegexes || []
         })) {
             docCount++;
             continue;

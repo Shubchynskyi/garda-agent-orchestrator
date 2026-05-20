@@ -893,6 +893,92 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change strict profile keeps true docs-only scopes on applicable reviews only', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-docs-only.json');
+        const taskId = 'T-930-strict-docs-only';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Keep strict profile docs-only updates lightweight'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['docs/usage.md'],
+            taskId,
+            taskIntent: 'Keep strict profile docs-only updates lightweight',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.scope_category, 'docs-only');
+        assert.equal(payload.profile_selection.effective_profile, 'strict');
+        assert.equal(payload.required_reviews.code, false);
+        assert.equal(payload.required_reviews.security, false);
+        assert.equal(payload.required_reviews.refactor, false);
+        assert.equal(payload.required_reviews.test, false);
+        for (const reviewType of ['code', 'security', 'refactor']) {
+            const decision = payload.profile_guardrails.decisions.find(
+                (entry: Record<string, unknown>) => entry.review_type === reviewType
+            );
+            assert.equal(decision?.decision, 'lightened_by_profile');
+            assert.match(String(decision?.reason || ''), /docs-only/);
+        }
+        assert.deepEqual(payload.budget_forecast.required_reviews, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classify-change strict profile keeps mixed docs plus code on full review path', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-docs-code.json');
+        const taskId = 'T-930-strict-docs-code';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Keep mixed docs plus code updates on full validation path'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['docs/usage.md', 'src/app.ts'],
+            taskId,
+            taskIntent: 'Keep mixed docs plus code updates on full validation path',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.scope_category, 'mixed');
+        assert.equal(payload.profile_selection.effective_profile, 'strict');
+        assert.equal(payload.required_reviews.code, true);
+        assert.equal(payload.required_reviews.security, true);
+        assert.equal(payload.required_reviews.refactor, true);
+        assert.ok(payload.budget_forecast.required_reviews.includes('code'));
+        assert.ok(payload.budget_forecast.required_reviews.includes('security'));
+        assert.ok(payload.budget_forecast.required_reviews.includes('refactor'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change strict profile treats pure test-scope diffs as test-review-only', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-strict-test-only.json');

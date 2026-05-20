@@ -129,6 +129,26 @@ describe('gates/classify-change', () => {
             ]);
         });
 
+        it('keeps security-sensitive markdown in docs-only scope while requiring security review', () => {
+            const result = classifyChange({
+                normalizedFiles: ['docs/security.md'],
+                taskIntent: 'Update security support promise',
+                changedLinesTotal: 4,
+                additionsTotal: 4,
+                deletionsTotal: 0,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, security: true }
+            });
+
+            assert.equal(result.scope_category, 'docs-only');
+            assert.equal(result.required_reviews.code, false);
+            assert.equal(result.required_reviews.security, true);
+            assert.equal(result.required_reviews.test, false);
+            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+        });
+
         it('accepts a user-configured docs/plan.md ordinary doc path without code or test review', () => {
             const result = classifyChange({
                 normalizedFiles: ['docs/plan.md'],

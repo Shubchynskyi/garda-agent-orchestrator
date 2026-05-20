@@ -346,20 +346,15 @@ export function isFullSuiteNotRequiredForDocsOnlyScope(preflight: Record<string,
     const triggers = isPlainRecord(preflight.triggers) ? preflight.triggers : {};
     const executionTriggers = [
         'runtime_code_changed',
-        'db',
-        'security',
-        'api',
         'test',
-        'performance',
         'infra',
-        'dependency',
-        'refactor'
+        'performance'
     ];
     if (executionTriggers.some((key) => hasTrueFlag(triggers, key))) {
         return false;
     }
 
-    return !hasRequiredReview(preflight);
+    return true;
 }
 
 export function isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight: Record<string, unknown>): boolean {
