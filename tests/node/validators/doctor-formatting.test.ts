@@ -85,6 +85,130 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
     assert.ok(output.includes('Doctor: FAIL'));
 });
 
+test('formatDoctorResult prints failure summary before detailed evidence', () => {
+    const fakeResult = buildFakeDoctorResult({
+        passed: false,
+        verifyResult: {
+            passed: false,
+            targetRoot: '/tmp/test',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.0.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: ['TASK.md missing.'],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 1
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Doctor Failure Summary'));
+    assert.ok(output.includes('\x1b[31mFAIL\x1b[0m'));
+    assert.ok(output.includes('Blockers:'));
+    assert.ok(output.includes('First verify violation(s):'));
+    assert.ok(output.includes('missingPaths: TASK.md missing.'));
+    assert.ok(output.indexOf('Doctor Failure Summary') < output.indexOf('TargetRoot:'));
+    assert.ok(output.includes('Detailed Evidence'));
+});
+
+test('formatDoctorResult highlights protected manifest drift with repair guidance', () => {
+    const fakeResult = buildFakeDoctorResult({
+        passed: false,
+        protectedManifestEvidence: {
+            status: 'DRIFT' as const,
+            manifest_path: '/tmp/test/garda-agent-orchestrator/runtime/protected-control-plane-manifest.json',
+            changed_files: ['garda-agent-orchestrator/live/config/workflow-config.json'],
+            manifest: null
+        },
+        protectedManifestAssessment: {
+            code: 'BLOCKING_DRIFT' as const,
+            severity: 'fail' as const,
+            blocks: true,
+            requires_refresh: true
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Protected Control-Plane Manifest is DRIFT with 1 changed protected file(s).'));
+    assert.ok(output.includes('garda-agent-orchestrator/live/config/workflow-config.json'));
+    assert.ok(output.includes('repair protected-manifest --target-root "." --confirm'));
+    assert.ok(output.indexOf('Protected Control-Plane Manifest is DRIFT') < output.indexOf('Protected Control-Plane Manifest\n  Status: DRIFT'));
+});
+
+test('formatDoctorResult summarizes runtime mismatch before detailed runtime section', () => {
+    const fakeResult = buildFakeDoctorResult({
+        passed: false,
+        runtimeMismatchEvidence: {
+            passed: false,
+            current_node_version: 'v18.0.0',
+            required_range: '>=24.0.0',
+            violations: ['Node.js v18.0.0 does not satisfy required range >=24.0.0. Upgrade to >=24.0.0 or later.']
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Runtime mismatch: Node v18.0.0 does not satisfy >=24.0.0.'));
+    assert.ok(output.includes('Install a Node.js version that satisfies >=24.0.0, then rerun doctor.'));
+    assert.ok(output.indexOf('Runtime mismatch: Node v18.0.0') < output.indexOf('Runtime Compatibility'));
+});
+
+test('formatDoctorResult orders multiple top blockers deterministically', () => {
+    const fakeResult = buildFakeDoctorResult({
+        passed: false,
+        verifyResult: {
+            ...buildFakeDoctorResult().verifyResult,
+            passed: false,
+            totalViolationCount: 1,
+            violations: {
+                ...buildFakeDoctorResult().verifyResult.violations,
+                missingPaths: ['TASK.md missing.']
+            }
+        },
+        protectedManifestEvidence: {
+            status: 'DRIFT' as const,
+            manifest_path: '/tmp/test/garda-agent-orchestrator/runtime/protected-control-plane-manifest.json',
+            changed_files: ['garda-agent-orchestrator/live/config/workflow-config.json'],
+            manifest: null
+        },
+        protectedManifestAssessment: {
+            code: 'BLOCKING_DRIFT' as const,
+            severity: 'fail' as const,
+            blocks: true,
+            requires_refresh: true
+        },
+        runtimeMismatchEvidence: {
+            passed: false,
+            current_node_version: 'v18.0.0',
+            required_range: '>=24.0.0',
+            violations: []
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.indexOf('Verify failed: 1 violation') < output.indexOf('Protected Control-Plane Manifest is DRIFT'));
+    assert.ok(output.indexOf('Protected Control-Plane Manifest is DRIFT') < output.indexOf('Runtime mismatch: Node v18.0.0'));
+});
+
 
 test('formatDoctorResult shows nested bundle duplication warning', () => {
     const fakeResult = buildFakeDoctorResult({

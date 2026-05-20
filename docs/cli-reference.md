@@ -95,6 +95,7 @@ garda doctor explain --list
 
 Notes:
 - `doctor` remains the aggregate verify + manifest + timeline health command.
+- On failure, human `doctor` output starts with a concise `Doctor Failure Summary` before the detailed evidence dump. The summary lists the primary blockers, highlights failure state, and prints the most actionable next command when a safe remediation is known, such as protected-manifest repair after operator verification.
 - In a self-hosted source checkout, trusted protected-manifest `DRIFT` remains visible in `doctor`, but source-checkout drift is reported as informational unless the task-context gates classify it as real pre-start or lifecycle drift.
 - `doctor --compact` preserves failure diagnostics but reduces the green path to a single line: `Doctor: PASS | verify=PASS | manifest=PASS`.
 - `doctor` reports task-event lock health under `garda-agent-orchestrator/runtime/task-events/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.

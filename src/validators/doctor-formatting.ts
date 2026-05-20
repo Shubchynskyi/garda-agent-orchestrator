@@ -8,8 +8,161 @@ import {
 import { buildProfileAwareNextLine } from './task-command';
 import type { DoctorResult } from './doctor';
 
+const ANSI_RED = '\x1b[31m';
+const ANSI_YELLOW = '\x1b[33m';
+const ANSI_BOLD = '\x1b[1m';
+const ANSI_RESET = '\x1b[0m';
+
+function color(text: string, ansiColor: string): string {
+    return ansiColor + text + ANSI_RESET;
+}
+
+function normalizePathForDisplay(pathValue: string): string {
+    return pathValue.replace(/\\/g, '/');
+}
+
+function pushViolationSamples(lines: string[], violations: readonly string[], limit: number): void {
+    for (var i = 0; i < violations.length && i < limit; i++) {
+        lines.push('  - ' + violations[i]);
+    }
+    if (violations.length > limit) {
+        lines.push('  - ... ' + (violations.length - limit) + ' more');
+    }
+}
+
+function collectVerifyViolations(result: DoctorResult): string[] {
+    const violations: string[] = [];
+    const grouped = result.verifyResult.violations as unknown as Record<string, readonly string[] | undefined>;
+    for (const key of Object.keys(grouped)) {
+        const group = grouped[key];
+        if (!group || group.length === 0) continue;
+        for (const item of group) {
+            violations.push(key + ': ' + item);
+        }
+    }
+    return violations;
+}
+
+function formatDoctorFailureSummary(result: DoctorResult): string[] {
+    if (result.passed) return [];
+
+    const lines: string[] = [];
+    lines.push(color('Doctor Failure Summary', ANSI_BOLD));
+    lines.push('Status: ' + color('FAIL', ANSI_RED));
+    lines.push('Read this section first; detailed evidence follows below.');
+
+    const blockers: string[] = [];
+    const verifyViolations = collectVerifyViolations(result);
+    if (!result.verifyResult.passed) {
+        blockers.push(
+            'Verify failed: ' + result.verifyResult.totalViolationCount +
+            ' violation(s); first details are listed below.'
+        );
+    }
+    if (result.parityResult.isStale) {
+        blockers.push('Source parity is STALE: source and deployed bundle differ.');
+    }
+    if (result.manifestError) {
+        blockers.push('Manifest validation errored: ' + result.manifestError);
+    } else if (result.manifestResult && !result.manifestResult.passed) {
+        blockers.push('Manifest validation failed.');
+    } else if (!result.manifestResult) {
+        blockers.push('Manifest validation did not produce a result.');
+    }
+    if (result.protectedManifestEvidence && result.protectedManifestAssessment?.blocks) {
+        blockers.push(
+            'Protected Control-Plane Manifest is ' + result.protectedManifestEvidence.status +
+            ' with ' + result.protectedManifestEvidence.changed_files.length + ' changed protected file(s).'
+        );
+    }
+    if (result.lockHealth.stale_count > 0) {
+        blockers.push('Task-event locks include ' + result.lockHealth.stale_count + ' stale lock(s).');
+    }
+    if (result.reviewLockHealth && result.reviewLockHealth.stale_count > 0) {
+        blockers.push('Review artifact locks include ' + result.reviewLockHealth.stale_count + ' stale lock(s).');
+    }
+    if (result.completionFinalizationLockHealth && result.completionFinalizationLockHealth.stale_count > 0) {
+        blockers.push('Completion finalization locks include ' + result.completionFinalizationLockHealth.stale_count + ' stale lock(s).');
+    }
+    if (result.providerComplianceResult && !result.providerComplianceResult.passed) {
+        blockers.push('Provider control compliance failed.');
+    }
+    if (result.nestedBundleDuplication.duplicatesFound) {
+        blockers.push('Nested Garda bundle duplication detected.');
+    }
+    if (!result.runtimeMismatchEvidence.passed) {
+        blockers.push(
+            'Runtime mismatch: Node ' + result.runtimeMismatchEvidence.current_node_version +
+            ' does not satisfy ' + result.runtimeMismatchEvidence.required_range + '.'
+        );
+    }
+    if (!result.permissionEvidence.passed) {
+        blockers.push('Permission checks failed for one or more workspace paths.');
+    }
+    if (!result.partialStateEvidence.passed) {
+        blockers.push('Partial lifecycle state detected.');
+    }
+    if (!result.rollbackHealthEvidence.passed) {
+        blockers.push('Rollback snapshot health is degraded.');
+    }
+    if (result.profileHealthEvidence && result.profileHealthEvidence.config_exists && !result.profileHealthEvidence.passed) {
+        blockers.push('Profile health is degraded.');
+    }
+
+    if (blockers.length === 0) {
+        blockers.push('Doctor failed; inspect detailed evidence below for the blocking subsystem.');
+    }
+
+    lines.push('Blockers:');
+    pushViolationSamples(lines, blockers.map(function (item) { return color(item, ANSI_RED); }), 8);
+
+    const actionLines: string[] = [];
+    if (result.protectedManifestEvidence && result.protectedManifestAssessment?.blocks) {
+        const changedFiles = result.protectedManifestEvidence.changed_files;
+        actionLines.push('Inspect protected drift before repair:');
+        for (var i = 0; i < changedFiles.length && i < 5; i++) {
+            actionLines.push('  - ' + normalizePathForDisplay(changedFiles[i]));
+        }
+        if (changedFiles.length > 5) {
+            actionLines.push('  - ... ' + (changedFiles.length - 5) + ' more');
+        }
+        actionLines.push('If the drift is operator-approved, run: node garda-agent-orchestrator/bin/garda.js repair protected-manifest --target-root "." --confirm');
+    } else if (result.parityResult.isStale && result.parityResult.remediation) {
+        actionLines.push(result.parityResult.remediation);
+    } else if (result.lockHealth.stale_count > 0) {
+        actionLines.push('Run: garda doctor --target-root "." --cleanup-stale-locks --dry-run');
+    } else if (result.reviewLockHealth && result.reviewLockHealth.stale_count > 0) {
+        actionLines.push('Run: garda doctor --target-root "." --cleanup-stale-locks --dry-run');
+    } else if (!result.runtimeMismatchEvidence.passed) {
+        actionLines.push('Install a Node.js version that satisfies ' + result.runtimeMismatchEvidence.required_range + ', then rerun doctor.');
+    } else if (!result.partialStateEvidence.passed) {
+        actionLines.push('Rerun update/rollback/setup instead of deleting lifecycle sentinels or locks manually.');
+    } else {
+        actionLines.push('Fix the blocker(s), then rerun: garda doctor --target-root "."');
+    }
+
+    lines.push('Next action:');
+    for (const actionLine of actionLines) {
+        lines.push('  ' + color(actionLine, ANSI_YELLOW));
+    }
+
+    if (verifyViolations.length > 0) {
+        lines.push('First verify violation(s):');
+        pushViolationSamples(lines, verifyViolations, 3);
+    }
+
+    return lines;
+}
+
 export function formatDoctorResult(result: DoctorResult): string {
     var lines: string[] = [];
+    const failureSummary = formatDoctorFailureSummary(result);
+    if (failureSummary.length > 0) {
+        lines.push(...failureSummary);
+        lines.push('');
+        lines.push('Detailed Evidence');
+        lines.push('');
+    }
     lines.push(formatVerifyResult(result.verifyResult));
     lines.push('');
 
