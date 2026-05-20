@@ -227,10 +227,11 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - For infrastructure-driven blocks, you must report: the exact command, `cwd`, chosen CLI path, and `stderr`.
 
 ## DECOMPOSED Semantics
-- `SPLIT_REQUIRED` means a scope-budget or review-cycle auto-split guard latched the parent task before ordinary continuation. Do not run classify, compile, review, full-suite, completion, or final closeout gates on a `SPLIT_REQUIRED` parent.
+- `SPLIT_REQUIRED` means a scope-budget guard, review-cycle auto-split guard, or strict decomposition `split-required` decision latched the parent task before ordinary continuation. Do not run classify, compile, review, full-suite, completion, or final closeout gates on a `SPLIT_REQUIRED` parent.
 - A `SPLIT_REQUIRED` parent clears only when linked child tasks are added so `next-step` can transition it to `DECOMPOSED`, or when an explicit operator reset/discard command clears the task.
-- `DECOMPOSED` means the parent task was intentionally split because scope-budget or review-cycle guardrails made the monolithic lifecycle too large.
+- `DECOMPOSED` means the parent task was intentionally split because scope-budget, review-cycle, or strict-decomposition guardrails made the monolithic lifecycle too large.
 - A `DECOMPOSED` parent is not an executable lifecycle scope: do not run classify-change, compile, review, full-suite, or completion gates on the parent.
 - `next-step` must route a `DECOMPOSED` parent to the next unfinished child task; nested decomposed parents should resolve to the next unfinished leaf child.
 - Existing legacy `BLOCKED` rows whose notes clearly say "Paused for split", "Split into ...", or "Continue via child tasks" may be treated compatibly as decomposed parents until a safe migration updates the status cell.
 - When review-cycle auto split is enabled, the guard should move the parent to `SPLIT_REQUIRED`; the agent should create maximally small child tasks, rerun `next-step` on the parent so the gate transitions it to `DECOMPOSED`, and execute those children through normal gates.
+- For a strict decomposition `split-required` decision, linked children must match the decision artifact: each proposed child id is explicitly linked from parent notes, exists as a `TASK.md` row, is parent-derived, and uses profile `strict`. Extra linked parent-derived children outside the artifact, missing child rows, non-parent-derived child ids, or non-strict profiles keep the parent blocked instead of relaxing strictness.

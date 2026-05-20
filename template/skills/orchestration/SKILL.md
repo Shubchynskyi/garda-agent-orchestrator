@@ -192,8 +192,9 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 26. Terminal status contract:
     - `DONE` only when compile gate, required review gate, doc impact gate, and completion gate passed; successful completion finalization reconciles `TASK.md` to `DONE`.
     - `BLOCKED` when any mandatory gate failed or cannot run; keep the blocked reason explicit, stop the pipeline, and do not hand-edit the active `TASK.md` status cell to `BLOCKED` as a gate substitute.
-    - `SPLIT_REQUIRED` when a scope-budget or review-cycle auto-split guard latched the parent before child tasks were linked; do not run parent lifecycle gates while latched.
-    - `DECOMPOSED` when a scope-budget or review-cycle guard intentionally split the parent into child tasks; do not run parent lifecycle gates after decomposition.
+    - `SPLIT_REQUIRED` when a scope-budget guard, review-cycle auto-split guard, or strict decomposition `split-required` decision latched the parent before child tasks were linked; do not run parent lifecycle gates while latched.
+    - `DECOMPOSED` when a scope-budget, review-cycle, or strict-decomposition guard intentionally split the parent into child tasks; do not run parent lifecycle gates after decomposition.
+    - Strict decomposition children must stay strict: `next-step` only routes a `split-required` strict parent when the linked child rows match the decision artifact, are parent-derived, exist in `TASK.md`, and use profile `strict`.
     - Log terminal event: `TASK_DONE` or `TASK_BLOCKED`.
 27. Report to user in exact order:
     1. concise implementation summary (include depth, path mode, review verdicts, docs updated)

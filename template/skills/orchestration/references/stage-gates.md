@@ -72,5 +72,5 @@ Pass criteria:
 ## Failure Policy
 - Any failed gate blocks next gates.
 - Stop in explicit `BLOCKED` workflow state when a gate cannot be satisfied now, but do not hand-edit the active `TASK.md` status cell to `BLOCKED` as a gate substitute.
-- Use explicit `DECOMPOSED` state when the parent is no longer executable because remaining work was split into child tasks.
+- Use explicit `DECOMPOSED` state when the parent is no longer executable because remaining work was split into child tasks. For strict decomposition `split-required` decisions, the child rows must match the decision artifact and remain strict-profile work.
 - Resume only after blocker is resolved.

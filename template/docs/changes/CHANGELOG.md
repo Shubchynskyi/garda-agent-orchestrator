@@ -6,5 +6,6 @@ Current baseline:
 - lifecycle commands and gates run through `bin/garda.js`
 - template content no longer ships shell lifecycle or gate entrypoints
 - `record-review-result` can ingest reviewer output from stdin, but still persists the same canonical raw `*-review-output.md` artifact before verdict, routing, and receipt validation so direct ingest cannot bypass the review audit path
+- strict decomposition `split-required` routing keeps parents non-executable until linked parent-derived strict child rows match the recorded decision artifact
 
 For source-level release notes, see the repository root `CHANGELOG.md`.

@@ -54,7 +54,7 @@ Escalate back to the full orchestration skill immediately if:
 - Do not continue a normal task run when the workspace already had modified files before `enter-task-mode`; isolate scope first with staged or explicit preflight inputs.
 - Do not skip compile, review, or completion gates.
 - Mandatory reviews still require a fresh clean-context delegated reviewer; do not reuse an existing reviewer session, and close or release the reviewer after receipt persistence.
-- Do not hand-edit active `TASK.md` lifecycle status transitions (`IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, `DONE`, `BLOCKED`); gate flow owns `IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, and `DONE`, explicit operator `task-reset` owns reset/discard, and `DECOMPOSED` is only for intentionally split parent tasks after child tasks are linked.
+- Do not hand-edit active `TASK.md` lifecycle status transitions (`IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, `DONE`, `BLOCKED`); gate flow owns `IN_PROGRESS`, `IN_REVIEW`, `SPLIT_REQUIRED`, and `DONE`, explicit operator `task-reset` owns reset/discard, and `DECOMPOSED` is only for intentionally split parent tasks after child tasks are linked. Strict decomposition splits do not relax strictness: linked children must be parent-derived strict-profile rows that match the recorded decision artifact.
 - Re-run preflight after meaningful scope changes.
 - If the original preflight used planned `--changed-file` inputs in a clean workspace before implementation, refresh it before compile by rerunning `classify-change` and then the POST_PREFLIGHT command printed by `next-step` once the real diff exists.
 - Do not mark a task `DONE` while any PASS review artifact still has active findings, residual risks, or deferred items without `Justification:`.
