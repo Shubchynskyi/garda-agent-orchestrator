@@ -8689,14 +8689,17 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
     }
 
-    const downstreamDependencyRebind = findDownstreamReviewNeedingDependencyRebind({
-        eventsRoot,
-        taskId,
-        requiredReviewTypes,
-        requiredReviews: summary.required_reviews,
-        policyMode: reviewPolicy.mode,
-        reviewStates
-    });
+    const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
+    const downstreamDependencyRebind = reviewGateAlreadyPassed
+        ? null
+        : findDownstreamReviewNeedingDependencyRebind({
+            eventsRoot,
+            taskId,
+            requiredReviewTypes,
+            requiredReviews: summary.required_reviews,
+            policyMode: reviewPolicy.mode,
+            reviewStates
+        });
     if (downstreamDependencyRebind) {
         const reviewType = downstreamDependencyRebind.downstreamState.reviewType;
         const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
@@ -8720,6 +8723,38 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 : undefined,
             depth: reviewDepth
         });
+        const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
+        const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
+        const scopedDiffReadiness = scopedDiffExpectedForReview({
+            preflight,
+            reviewType
+        })
+            ? getScopedDiffMetadataReadiness({
+                metadataPath: scopedDiffMetadataPath,
+                preflight,
+                preflightPath,
+                preflightSha256,
+                reviewType
+            })
+            : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
+        if (!scopedDiffReadiness.ready) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'build-scoped-diff',
+                title: `Prepare '${reviewType}' scoped diff metadata.`,
+                reason:
+                    `${scopedDiffReadiness.reason} Rebinding '${reviewType}' after upstream ` +
+                    `'${downstreamDependencyRebind.upstreamReviewType}' review evidence requires current scoped diff metadata before rebuilding the review context. ` +
+                    `${reviewerReadinessChain} ${reviewContextChain}`,
+                commands: [
+                    buildCommand(
+                        'Build scoped diff',
+                        `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                    )
+                ]
+            });
+        }
         return buildResult({
             ...resultBase,
             status: 'BLOCKED',
