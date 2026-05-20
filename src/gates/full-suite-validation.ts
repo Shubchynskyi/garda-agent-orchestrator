@@ -524,6 +524,30 @@ export function buildDocsOnlyNotRequiredResult(
     };
 }
 
+export function buildZeroDiffNoReviewableNotRequiredResult(
+    config: FullSuiteValidationConfig,
+    cycleBinding?: FullSuiteValidationCycleBinding
+): FullSuiteValidationResult {
+    return {
+        status: 'SKIPPED',
+        enabled: config.enabled,
+        command: config.command,
+        required: false,
+        skip_reason: 'ZERO_DIFF_NO_REVIEWABLE_SCOPE_NOT_REQUIRED',
+        exit_code: null,
+        timed_out: false,
+        output_artifact_path: null,
+        compact_summary: ['Full-suite validation is not required for this zero-diff no-reviewable scope.'],
+        failure_chunks: [],
+        out_of_scope_failure_policy: config.out_of_scope_failure_policy,
+        out_of_scope_failure_detected: false,
+        out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+        violations: [],
+        warnings: [],
+        cycle_binding: cycleBinding
+    };
+}
+
 export function buildValidationResult(
     config: FullSuiteValidationConfig,
     exitCode: number,

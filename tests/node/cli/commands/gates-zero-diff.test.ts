@@ -9,9 +9,11 @@ import {
     runCompileGateCommand,
     runDocImpactGateCommand,
     runEnterTaskModeCommand,
+    runFullSuiteValidationCommand,
     runLoadRulePackCommand,
     runRecordNoOpCommand,
-    runRequiredReviewsCheckCommand
+    runRequiredReviewsCheckCommand,
+    runTaskAuditSummaryCommand
 } from '../../../../src/cli/commands/gates';
 import { runCompletionGate } from '../../../../src/gates/completion';
 import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
@@ -655,6 +657,30 @@ describe('cli/commands/gates', () => {
         assert.equal(passedCompletion.outcome, 'PASS');
         assert.equal(passedCompletion.zero_diff_evidence.status, 'SATISFIED_BY_AUDITED_NO_OP');
         assert.equal(passedCompletion.full_suite_validation_evidence.status, 'NOT_REQUIRED');
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'COMPLETION_GATE_PASSED',
+            'PASS',
+            'Zero-diff completion gate passed with audited no-op evidence.',
+            {}
+        );
+
+        const fullSuiteResult = await runFullSuiteValidationCommand({
+            repoRoot,
+            taskId,
+            preflightPath
+        });
+        assert.equal(fullSuiteResult.exitCode, 0);
+        assert.ok(fullSuiteResult.outputText.includes('FULL_SUITE_VALIDATION_SKIPPED'));
+        assert.ok(fullSuiteResult.outputText.includes('SkipReason: ZERO_DIFF_NO_REVIEWABLE_SCOPE_NOT_REQUIRED'));
+
+        const auditResult = runTaskAuditSummaryCommand({
+            repoRoot,
+            taskId
+        });
+        assert.equal(auditResult.exitCode, 0, auditResult.rendered);
+        assert.ok(auditResult.rendered.includes('FinalReportContract: READY'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -12,8 +12,10 @@ import {
     buildDocsOnlyNotRequiredResult,
     buildSkippedResult,
     buildValidationResult,
+    buildZeroDiffNoReviewableNotRequiredResult,
     formatFullSuiteValidationResult,
     isFullSuiteNotRequiredForDocsOnlyScope,
+    isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
     loadFullSuiteValidationConfig,
     recordFullSuiteValidationDuration,
     type FullSuiteValidationCycleBinding,
@@ -517,6 +519,24 @@ export async function runFullSuiteValidationCommand(
 
     if (isFullSuiteNotRequiredForDocsOnlyScope(preflight)) {
         const skippedResult = buildDocsOnlyNotRequiredResult(config, cycleBinding);
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, skippedResult.status, skippedResult, {
+            status: skippedResult.status,
+            enabled: skippedResult.enabled,
+            command: skippedResult.command,
+            required: skippedResult.required,
+            skip_reason: skippedResult.skip_reason,
+            preflight_path: cycleBinding.preflight_path,
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            cycle_binding: skippedResult.cycle_binding
+        });
+        return {
+            outputText: `${formatFullSuiteValidationResult(skippedResult)}\n`,
+            exitCode: 0
+        };
+    }
+
+    if (isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight)) {
+        const skippedResult = buildZeroDiffNoReviewableNotRequiredResult(config, cycleBinding);
         await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, skippedResult.status, skippedResult, {
             status: skippedResult.status,
             enabled: skippedResult.enabled,

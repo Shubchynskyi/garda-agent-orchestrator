@@ -18,7 +18,10 @@ import {
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
 import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from './classify-change';
-import { loadFullSuiteValidationConfig } from './full-suite-validation';
+import {
+    isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
+    loadFullSuiteValidationConfig
+} from './full-suite-validation';
 import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
     PROJECT_MEMORY_IMPACT_BLOCKED_EVENT,
@@ -1494,6 +1497,9 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         repoRoot,
         liveFullSuiteValidationEnabled
     );
+    const preflightForLifecycle = safeReadJson(path.join(reviewsRoot, `${safeTaskId}-preflight.json`));
+    const fullSuiteValidationRequiredForLifecycle = fullSuiteValidationEnabled
+        && !isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflightForLifecycle || {});
     const projectMemoryImpactEvidence = getProjectMemoryImpactLifecycleEvidence({
         repoRoot,
         taskId: safeTaskId,
@@ -1504,7 +1510,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const projectMemoryImpactRequired = projectMemoryImpactEvidence.required
         && (!hasCompletionPassEvent || hasCurrentProjectMemoryImpactEvent);
     const workspaceStatusSnapshot = getStatusSnapshot(repoRoot);
-    const lifecycleGates = getLifecycleGates(fullSuiteValidationEnabled, projectMemoryImpactRequired);
+    const lifecycleGates = getLifecycleGates(fullSuiteValidationRequiredForLifecycle, projectMemoryImpactRequired);
     let integrityStatus: string;
     if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
         try {
@@ -1921,8 +1927,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         review_attempt_summary: reviewAttemptSummary,
         optional_skills: optionalSkillsSummary,
         workflow: {
-            mandatory_full_suite_enabled: fullSuiteValidationEnabled,
-            visible_summary_line: `Mandatory full-suite: ${fullSuiteValidationEnabled ? 'true' : 'false'}`,
+            mandatory_full_suite_enabled: fullSuiteValidationRequiredForLifecycle,
+            visible_summary_line: `Mandatory full-suite: ${fullSuiteValidationRequiredForLifecycle ? 'true' : 'false'}`,
             review_execution_policy_mode: reviewExecutionPolicyMode,
             review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(reviewExecutionPolicyMode)
         },
