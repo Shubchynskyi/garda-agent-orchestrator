@@ -87,6 +87,7 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'load-rule-pack',
     'bind-rule-pack-to-preflight',
     'record-no-op',
+    'record-strict-decomposition-decision',
     'handshake-diagnostics',
     'shell-smoke-preflight',
     'command-timeout-diagnostics',

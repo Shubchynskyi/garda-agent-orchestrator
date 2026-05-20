@@ -14,6 +14,7 @@ import {
     runLoadRulePackCommand,
     runLogTaskEventCommand,
     runRecordNoOpCommand,
+    runRecordStrictDecompositionDecisionCommand,
     runRestartCoherentCycleCommand,
     runRestartReviewCycleCommand,
     runShellSmokePreflightCommand,
@@ -177,6 +178,34 @@ export async function handleRecordNoOp(gateArgv: string[]): Promise<void> {
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runRecordNoOpCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleRecordStrictDecompositionDecision(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--decision': { key: 'decision', type: 'string' },
+        '--task-profile': { key: 'taskProfile', type: 'string' },
+        '--task-summary': { key: 'taskSummary', type: 'string' },
+        '--reason': { key: 'reason', type: 'string' },
+        '--scope-risk': { key: 'scopeRisk', type: 'string' },
+        '--expected-review-type': { key: 'expectedReviewTypes', type: 'string[]' },
+        '--expected-review-types': { key: 'expectedReviewTypes', type: 'string[]' },
+        '--atomicity-constraint': { key: 'atomicityConstraints', type: 'string[]' },
+        '--atomicity-constraints': { key: 'atomicityConstraints', type: 'string[]' },
+        '--proposed-child-task-id': { key: 'proposedChildTaskIds', type: 'string[]' },
+        '--proposed-child-task-ids': { key: 'proposedChildTaskIds', type: 'string[]' },
+        '--actor': { key: 'actor', type: 'string' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--metrics-path': { key: 'metricsPath', type: 'string' },
+        '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runRecordStrictDecompositionDecisionCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;

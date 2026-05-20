@@ -18,6 +18,7 @@ import * as projectMemoryImpact from './project-memory-impact';
 import * as isolationMode from './isolation-mode';
 import * as isolationSandbox from './isolation-sandbox';
 import * as workspaceSnapshotCache from './workspace-snapshot-cache';
+import * as strictDecompositionDecision from './strict-decomposition-decision';
 
 export {
     helpers,
@@ -39,5 +40,6 @@ export {
     projectMemoryImpact,
     isolationMode,
     isolationSandbox,
-    workspaceSnapshotCache
+    workspaceSnapshotCache,
+    strictDecompositionDecision
 };

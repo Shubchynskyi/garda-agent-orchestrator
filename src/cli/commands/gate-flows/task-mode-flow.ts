@@ -76,6 +76,10 @@ import {
     resolveNoOpArtifactPath
 } from '../../../gates/no-op';
 import {
+    buildStrictDecompositionDecisionArtifact,
+    resolveStrictDecompositionDecisionArtifactPath
+} from '../../../gates/strict-decomposition-decision';
+import {
     getCurrentWorkflowConfigFileHashes,
     getWorkflowConfigControlPlanePaths,
     getWorkflowConfigPreTaskBaselineState
@@ -163,6 +167,23 @@ export interface RecordNoOpCommandOptions {
     reason?: unknown;
     actor?: unknown;
     preflightPath?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
+export interface RecordStrictDecompositionDecisionCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    decision?: unknown;
+    taskProfile?: unknown;
+    taskSummary?: unknown;
+    reason?: unknown;
+    scopeRisk?: unknown;
+    expectedReviewTypes?: unknown;
+    atomicityConstraints?: unknown;
+    proposedChildTaskIds?: unknown;
+    actor?: unknown;
     artifactPath?: string;
     metricsPath?: string;
     emitMetrics?: unknown;
@@ -344,6 +365,17 @@ function requireTaskModeOperatorConfirmation(
             'Ask the operator to approve this protected task-mode entry, then rerun with --operator-confirmed yes and --operator-confirmed-at-utc "<ISO-8601 timestamp>". ' +
             'Agents must not approve --orchestrator-work or --workflow-config-work for themselves.'
     });
+}
+
+function resolveContainedStrictDecompositionWritePath(repoRoot: string, pathValue: string, label: string): string {
+    const resolvedPath = requireResolvedPath(gateHelpers.resolvePathInsideRepo(pathValue, repoRoot, {
+        allowMissing: true,
+        enforceInside: true
+    }), label);
+    if (!gateHelpers.isPathRealpathInsideRoot(resolvedPath, repoRoot, { allowMissing: true })) {
+        throw new Error(`${label} must stay inside repo root after realpath resolution: ${gateHelpers.normalizePath(resolvedPath)}`);
+    }
+    return resolvedPath;
 }
 
 function buildGateRerunCommand(repoRoot: string, taskId: string, gateName: string, taskModePath = ''): string {
@@ -1152,6 +1184,77 @@ export function runRecordNoOpCommand(options: RecordNoOpCommandOptions): { outpu
             'NO_OP_RECORDED',
             `TaskId: ${taskId}`,
             `Classification: ${artifact.classification}`,
+            `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`
+        ],
+        exitCode: 0
+    };
+}
+
+export function runRecordStrictDecompositionDecisionCommand(
+    options: RecordStrictDecompositionDecisionCommandOptions
+): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const artifactPath = resolveStrictDecompositionDecisionArtifactPath(
+        repoRoot,
+        taskId,
+        String(options.artifactPath || '')
+    );
+
+    const artifact = buildStrictDecompositionDecisionArtifact({
+        taskId,
+        decision: options.decision,
+        taskProfile: options.taskProfile,
+        taskSummary: options.taskSummary,
+        reason: options.reason,
+        scopeRisk: options.scopeRisk,
+        expectedReviewTypes: expandValueList(options.expectedReviewTypes || [], { splitDelimiters: true }),
+        atomicityConstraints: expandValueList(options.atomicityConstraints || [], { splitDelimiters: false }),
+        proposedChildTaskIds: expandValueList(options.proposedChildTaskIds || [], { splitDelimiters: true })
+    });
+    writeJsonArtifact(artifactPath, artifact);
+
+    const metricsPath = options.metricsPath
+        ? resolveContainedStrictDecompositionWritePath(repoRoot, options.metricsPath, 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(repoRoot, metricsPath, {
+        timestamp_utc: artifact.timestamp_utc,
+        event_type: 'strict_decomposition_decision_recorded',
+        task_id: taskId,
+        artifact_path: gateHelpers.normalizePath(artifactPath),
+        decision: artifact.decision,
+        task_profile: artifact.task_profile,
+        expected_review_types: artifact.expected_review_types,
+        expected_review_types_declared_none: artifact.expected_review_types_declared_none,
+        proposed_child_task_ids: artifact.proposed_children.map((child) => child.task_id),
+        task_summary_sha256: artifact.task_summary_sha256
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        'STRICT_DECOMPOSITION_DECISION_RECORDED',
+        'INFO',
+        'Strict decomposition decision recorded.',
+        {
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            decision: artifact.decision,
+            task_profile: artifact.task_profile,
+            expected_review_types: artifact.expected_review_types,
+            expected_review_types_declared_none: artifact.expected_review_types_declared_none,
+            proposed_child_task_ids: artifact.proposed_children.map((child) => child.task_id),
+            task_summary_sha256: artifact.task_summary_sha256
+        }
+    );
+
+    return {
+        outputLines: [
+            'STRICT_DECOMPOSITION_DECISION_RECORDED',
+            `TaskId: ${taskId}`,
+            `Decision: ${artifact.decision}`,
+            `ExpectedReviews: ${artifact.expected_review_types_declared_none ? 'none' : artifact.expected_review_types.join(',')}`,
+            `ProposedChildren: ${artifact.proposed_children.map((child) => child.task_id).join(',') || 'none'}`,
             `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`
         ],
         exitCode: 0
