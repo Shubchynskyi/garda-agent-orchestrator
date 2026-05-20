@@ -6,6 +6,7 @@
 - made `garda doctor` failure output print a concise blocker summary and next action before the long detailed evidence dump, while preserving JSON output and full human diagnostics
 - made `complete-reviewer-launch` own `launched_at_utc` inside the gate, reject caller-supplied `--launched-at-utc` as spoof-like freshness input, and remove that flag from generated reviewer-launch guidance
 - made `next-step` treat `REVIEW_GATE_PASSED` as terminal for stale downstream review rebind prompts, while routing pre-gate rebinds through required scoped-diff refresh before rebuilding review context
+- routed compile-gate failures caused by `Preflight scope drift detected` back to `classify-change` refresh instead of retrying the stale compile gate
 - added a guarded `garda ui --actions` settings editor for allow-listed safe workflow knobs, using preview/confirmation, the audited `workflow set` command path, and local UI action logging instead of direct config JSON writes
 - added opt-in `garda ui --actions` for allow-listed local UI actions with preview, confirmation for mutating commands, and runtime audit logging
 - expanded `garda ui` into a richer read-only dashboard with overview counters, task search/filter controls, workflow and instructions tabs, and clearer lazy task details

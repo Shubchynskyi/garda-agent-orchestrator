@@ -7302,6 +7302,33 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Preflight scope is stale before compile'));
     });
 
+    it('routes failed compile scope-drift artifacts back to preflight refresh instead of compile retry', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\n- Document compile drift recovery.\n', 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'FAILED',
+            outcome: 'FAIL',
+            error:
+                'Preflight scope drift detected. Refresh preflight for the current scope before compile: rerun classify-change, rerun load-rule-pack --stage POST_PREFLIGHT, and then rerun compile-gate.',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_hash_sha256: fileSha256(preflightPath)
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_FAILED', 'FAIL');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.ok(result.reason.includes('Compile gate failed because the preflight scope is stale'));
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+    });
+
     it('does not route to preflight refresh only because generated orchestrator locks exist', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

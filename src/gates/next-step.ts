@@ -2105,6 +2105,7 @@ function detectReviewLaunchPackageFailureReason(content: string): string | null 
 interface CompileReadiness {
     ready: boolean;
     reason: string;
+    recoveryGate?: 'classify-change';
 }
 
 interface PreflightWorkspaceReadiness {
@@ -3923,6 +3924,16 @@ function readCompileReadiness(
         };
     }
     if (evidenceStatus !== 'PASSED' || evidenceOutcome !== 'PASS') {
+        const evidenceError = String(evidence.error || '').trim();
+        if (/\bPreflight scope drift detected\b/i.test(evidenceError)) {
+            return {
+                ready: false,
+                reason:
+                    `Compile gate failed because the preflight scope is stale. ${evidenceError} ` +
+                    'Refresh classify-change for the current scope before rerunning compile-gate.',
+                recoveryGate: 'classify-change'
+            };
+        }
         return {
             ready: false,
             reason: `Compile gate did not pass. Evidence status='${evidenceStatus || 'UNKNOWN'}', outcome='${evidenceOutcome || 'UNKNOWN'}'.`
@@ -8142,6 +8153,32 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ? readCompileReadiness(repoRoot, reviewsRoot, taskId, preflightPath)
         : { ready: false, reason: 'No current preflight exists.' };
     if (!isGatePassed(summary, 'compile-gate') || !compileReadiness.ready) {
+        if (preflight && compileReadiness.recoveryGate === 'classify-change') {
+            const classifyCommand = buildClassifyChangeCommand({
+                repoRoot,
+                cliPrefix,
+                taskId,
+                taskMode,
+                taskModePath,
+                preflightCommandPath,
+                includePlannedScope: false,
+                changedFiles: preflightWorkspaceReadiness.currentChangedFiles
+                    ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+            });
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'classify-change',
+                title: 'Refresh preflight after compile scope drift.',
+                reason: compileReadiness.reason,
+                commands: [
+                    buildCommand(
+                        'Refresh preflight',
+                        classifyCommand
+                    )
+                ]
+            });
+        }
         const compileCommand = buildCompileGateCommand(
             repoRoot,
             cliPrefix,
