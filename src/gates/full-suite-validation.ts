@@ -80,7 +80,7 @@ const DEFAULT_CONFIG: FullSuiteValidationConfig = Object.freeze({
     green_summary_max_lines: 5,
     red_failure_chunk_lines: 50,
     out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
-    placement: 'before_test_review'
+    placement: 'after_compile_before_reviews'
 });
 
 export interface FullSuiteValidationResult {

@@ -648,7 +648,7 @@ describe('runUpdate', () => {
                 red_failure_chunk_lines: 42,
                 out_of_scope_failure_policy: 'AUDIT_AND_WARN',
                 auto_open_report: true,
-                placement: 'before_test_review'
+                placement: 'after_compile_before_reviews'
             });
             assert.deepEqual(workflowConfig.review_execution_policy, {
                 mode: 'strict_sequential'
@@ -907,7 +907,7 @@ describe('runUpdate', () => {
                 green_summary_max_lines: 7,
                 red_failure_chunk_lines: 42,
                 out_of_scope_failure_policy: 'AUDIT_AND_WARN',
-                placement: 'before_test_review'
+                placement: 'after_compile_before_reviews'
             });
             assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
         } finally {
@@ -943,7 +943,7 @@ describe('runUpdate', () => {
                 green_summary_max_lines: 5,
                 red_failure_chunk_lines: 50,
                 out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
-                placement: 'before_test_review'
+                placement: 'after_compile_before_reviews'
             });
             assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
             assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);

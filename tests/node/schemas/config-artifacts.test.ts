@@ -141,7 +141,7 @@ test('validateWorkflowConfig defaults missing full-suite placement but rejects i
     const normalized = validateWorkflowConfig(baseConfig);
     assert.equal(
         (normalized.full_suite_validation as Record<string, unknown>).placement,
-        'before_test_review'
+        'after_compile_before_reviews'
     );
 
     assert.throws(

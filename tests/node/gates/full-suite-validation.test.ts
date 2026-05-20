@@ -88,7 +88,7 @@ describe('gates/full-suite-validation', () => {
             assert.equal(config.green_summary_max_lines, 5);
             assert.equal(config.red_failure_chunk_lines, 50);
             assert.equal(config.out_of_scope_failure_policy, 'AUDIT_AND_BLOCK');
-            assert.equal(config.placement, 'before_test_review');
+            assert.equal(config.placement, 'after_compile_before_reviews');
         });
 
         it('loads enabled config from valid JSON', () => {
@@ -137,7 +137,7 @@ describe('gates/full-suite-validation', () => {
             const config = loadFullSuiteValidationConfig(tempDir);
             assert.equal(config.enabled, false);
             assert.equal(config.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
-            assert.equal(config.placement, 'before_test_review');
+            assert.equal(config.placement, 'after_compile_before_reviews');
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

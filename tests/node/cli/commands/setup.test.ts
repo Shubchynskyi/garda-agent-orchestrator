@@ -493,7 +493,7 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
             green_summary_max_lines: 7,
             red_failure_chunk_lines: 42,
             out_of_scope_failure_policy: 'AUDIT_AND_WARN',
-            placement: 'before_test_review'
+            placement: 'after_compile_before_reviews'
         });
         assert.deepEqual(workflowConfig.review_execution_policy, {
             mode: 'strict_sequential'
@@ -893,7 +893,7 @@ test('handleSetup preserves legacy workflow-config omission for review_execution
             green_summary_max_lines: 7,
             red_failure_chunk_lines: 42,
             out_of_scope_failure_policy: 'AUDIT_AND_WARN',
-            placement: 'before_test_review'
+            placement: 'after_compile_before_reviews'
         });
         assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
     } finally {

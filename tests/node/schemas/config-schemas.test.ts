@@ -235,7 +235,7 @@ test('workflow-config template carries the full-suite placement default for gene
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     assert.equal(
         (data.full_suite_validation as Record<string, unknown>).placement,
-        'before_test_review'
+        'after_compile_before_reviews'
     );
 });
 

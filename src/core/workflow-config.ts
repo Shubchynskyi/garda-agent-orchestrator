@@ -45,7 +45,7 @@ export function normalizeFullSuiteValidationPlacement(
     options: NormalizeFullSuiteValidationPlacementOptions = {}
 ): FullSuiteValidationPlacement {
     if (value === undefined) {
-        return 'before_test_review';
+        return 'after_compile_before_reviews';
     }
     const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
     if (FULL_SUITE_VALIDATION_PLACEMENTS.includes(normalized as FullSuiteValidationPlacement)) {
@@ -57,7 +57,7 @@ export function normalizeFullSuiteValidationPlacement(
             `${pathLabel} must be one of: ${[...FULL_SUITE_VALIDATION_PLACEMENTS].join(', ')}.`
         );
     }
-    return 'before_test_review';
+    return 'after_compile_before_reviews';
 }
 
 export const PROJECT_MEMORY_MAINTENANCE_MODES = Object.freeze(['off', 'check', 'update', 'strict'] as const);
@@ -137,7 +137,7 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         green_summary_max_lines: 5,
         red_failure_chunk_lines: 50,
         out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
-        placement: 'before_test_review'
+        placement: 'after_compile_before_reviews'
     }),
     review_execution_policy: Object.freeze(buildDefaultReviewExecutionPolicyConfig()),
     scope_budget_guard: DEFAULT_SCOPE_BUDGET_GUARD_CONFIG,

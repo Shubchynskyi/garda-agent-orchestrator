@@ -94,6 +94,7 @@ test('release 1.1.0 registry announces project memory refresh', () => {
         const message = result.updateMessages.find((entry) => entry.version === '1.1.0');
         assert.equal(message?.title, 'Project memory refresh');
         assert.ok(message?.body.some((line) => line.includes('project-memory refresh prompt')));
+        assert.ok(message?.body.some((line) => line.includes('full-suite validation placement to after_compile_before_reviews')));
     } finally {
         cleanupBundleRoot(bundleRoot);
     }
