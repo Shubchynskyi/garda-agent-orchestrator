@@ -23,6 +23,7 @@ import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events-h
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 import { buildDomainScopeFingerprints } from '../../../src/gates/domain-scope-fingerprints';
+import { buildStrictDecompositionDecisionArtifact } from '../../../src/gates/strict-decomposition-decision';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -242,6 +243,34 @@ function writeNoOpEvidence(
             ? fileSha256(preflightPath)
             : options.preflightSha256
     });
+}
+
+function writeStrictDecompositionDecision(
+    repoRoot: string,
+    taskId: string,
+    options: {
+        decision?: 'atomic' | 'single-cycle' | 'split-required';
+        taskSummary?: string;
+        expectedReviewTypes?: string[];
+        proposedChildTaskIds?: string[];
+    } = {}
+): void {
+    const decision = options.decision || 'single-cycle';
+    writeJson(
+        path.join(reviewsRoot(repoRoot), `${taskId}-strict-decomposition-decision.json`),
+        buildStrictDecompositionDecisionArtifact({
+            taskId,
+            decision,
+            taskSummary: options.taskSummary || 'Seeded next-step task',
+            reason: 'This strict task is intentionally bounded for the current lifecycle cycle.',
+            scopeRisk: 'The scope is constrained by the test fixture and must keep normal review gates.',
+            expectedReviewTypes: options.expectedReviewTypes || ['code'],
+            atomicityConstraints: ['The navigator decision and its regression expectations must land together.'],
+            proposedChildTaskIds: decision === 'split-required'
+                ? (options.proposedChildTaskIds || [`${taskId}-1`])
+                : options.proposedChildTaskIds
+        })
+    );
 }
 
 function appendEvent(
@@ -1513,6 +1542,126 @@ describe('gates/next-step', () => {
         assert.ok(text.includes('OrdinaryDocReviewSkips: docs/plan.md (matched docs/plan.md)'));
     });
 
+    it('routes risky strict tasks to a decomposition decision before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-next-step-enforcement | Make next-step require a current decomposition decision | gpt-5.4 | 2026-05-20 | strict | Risky strict workflow routing guard. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-strict-decomposition-decision');
+        assert.ok(result.reason.includes('requires a current strict decomposition decision'));
+        assert.ok(result.reason.includes('EVIDENCE_FILE_MISSING'));
+        assert.ok(result.reason.includes('task_text:decomposition'));
+        assert.ok(result.commands[0].command.includes('gate record-strict-decomposition-decision'));
+        assert.ok(result.commands[0].command.includes('--task-summary "Seeded next-step task"'));
+        assert.ok(result.commands[0].command.includes('--expected-review-type "none"'));
+        assert.equal(text.includes('gate classify-change'), false);
+        assert.equal(text.includes('gate compile-gate'), false);
+    });
+
+    it('keeps tiny local strict tasks out of the decomposition prompt', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P2 | tests/local | Fix one typo in local test wording | gpt-5.4 | 2026-05-20 | strict | Tiny local wording fix. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.equal(result.commands[0].command.includes('record-strict-decomposition-decision'), false);
+    });
+
+    it('accepts current single-cycle decomposition evidence before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-next-step-enforcement | Make next-step require a current decomposition decision | gpt-5.4 | 2026-05-20 | strict | Risky strict workflow routing guard. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'single-cycle',
+            taskSummary: 'Seeded next-step task',
+            expectedReviewTypes: ['none']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+    });
+
+    it('rejects stale strict decomposition decisions bound to an old task summary', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-next-step-enforcement | Make next-step require a current decomposition decision | gpt-5.4 | 2026-05-20 | strict | Risky strict workflow routing guard. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            taskSummary: 'Old task summary that no longer matches the current task-mode evidence.'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-strict-decomposition-decision');
+        assert.ok(result.reason.includes('EVIDENCE_TASK_SUMMARY_MISMATCH'));
+        assert.ok(result.commands[0].command.includes('--task-summary "Seeded next-step task"'));
+    });
+
+    it('suppresses ordinary gates when a current strict decomposition decision requires split', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-next-step-enforcement | Make next-step require a current decomposition decision | gpt-5.4 | 2026-05-20 | strict | Risky strict workflow routing guard. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'split-required',
+            taskSummary: 'Seeded next-step task',
+            proposedChildTaskIds: [`${TASK_ID}-1`]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'strict-decomposition-split-routing');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('split-required'));
+        assert.ok(result.reason.includes(`${TASK_ID}-1`));
+        assert.equal(text.includes('gate classify-change'), false);
+        assert.equal(text.includes('gate compile-gate'), false);
+    });
+
     it('latches oversized strict-profile scopes as split-required before compile', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -1564,6 +1713,11 @@ describe('gates/next-step', () => {
             output_path: normalizeForTimeline(preflightPath)
         });
         seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'single-cycle',
+            taskSummary: 'Seeded next-step task',
+            expectedReviewTypes: ['code', 'security', 'refactor', 'test']
+        });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
