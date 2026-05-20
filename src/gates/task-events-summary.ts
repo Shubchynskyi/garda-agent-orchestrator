@@ -6,7 +6,17 @@ import {
     getReviewContextOutputLabel,
     summarizeOutputCompactionBreakdown
 } from '../gate-runtime/output-compaction-reporting';
-import { assertValidTaskId, inspectTaskEventFile, forEachJsonlLine } from '../gate-runtime/task-events';
+import {
+    assertValidTaskId,
+    inspectTaskEventFile,
+    forEachJsonlLine,
+    normalizeTaskEventPublicRecord,
+    TASK_EVENT_LEGACY_SCHEMA_VERSION,
+    TASK_EVENT_PUBLIC_SCHEMA_VERSION,
+    type TaskEventHealthState,
+    type TaskEventLifecyclePhase,
+    type TaskEventTerminalOutcome
+} from '../gate-runtime/task-events';
 import { coerceIntLike } from '../gate-runtime/token-telemetry';
 import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from './helpers';
 
@@ -1135,10 +1145,17 @@ interface CompactGateOutcome {
 }
 
 export interface CompactLatestCycleTaskEventsSummary {
-    schema_version: 1;
+    schema_version: 2;
     mode: 'compact_latest_cycle';
     task_id: string;
     source_path: string;
+    event_contract: {
+        schema_version: 2;
+        legacy_schema_versions: number[];
+        current_schema_event_count: number;
+        legacy_schema_event_count: number;
+        unknown_schema_version_count: number;
+    };
     integrity: {
         status: string;
         integrity_event_count: number;
@@ -1153,6 +1170,8 @@ export interface CompactLatestCycleTaskEventsSummary {
         started_at_utc: string | null;
         last_event_utc: string | null;
         status: 'PASS' | 'BLOCKED' | 'IN_PROGRESS';
+        health_state: TaskEventHealthState;
+        terminal_outcome: TaskEventTerminalOutcome;
         blocking_reason: {
             gate: string;
             event_type: string;
@@ -1329,18 +1348,32 @@ export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
         return ta.getTime() - tb.getTime();
     });
 
-    interface TimelineEntry {
+interface TimelineEntry {
         index: number;
         timestamp_utc: string | null;
+        schema_version: number | null;
+        event_source: string | null;
         event_type: string;
         outcome: string;
         actor: string | null;
         message: string;
+        lifecycle_phase: TaskEventLifecyclePhase;
+        health_state: TaskEventHealthState;
+        terminal_outcome: TaskEventTerminalOutcome;
+        normalized_from_legacy: boolean;
+        unknown_schema_version: boolean;
         details: unknown;
         command_policy_audit: ReturnType<typeof getCommandAuditFromDetails>;
     }
 
     const summary: {
+        event_contract: {
+            schema_version: 2;
+            legacy_schema_versions: number[];
+            current_schema_event_count: number;
+            legacy_schema_event_count: number;
+            unknown_schema_version_count: number;
+        };
         task_id: string;
         source_path: string;
         events_count: number;
@@ -1353,6 +1386,13 @@ export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
         token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
         timeline: TimelineEntry[];
     } = {
+        event_contract: {
+            schema_version: TASK_EVENT_PUBLIC_SCHEMA_VERSION,
+            legacy_schema_versions: [TASK_EVENT_LEGACY_SCHEMA_VERSION],
+            current_schema_event_count: 0,
+            legacy_schema_event_count: 0,
+            unknown_schema_version_count: 0
+        },
         task_id: safeTaskId,
         source_path: toPosix(taskEventFile),
         events_count: events.length,
@@ -1368,19 +1408,39 @@ export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
 
     for (let i = 0; i < events.length; i++) {
         const event = events[i];
+        const normalizedEvent = normalizeTaskEventPublicRecord(event);
         const index = i + 1;
         const details = event.details as Record<string, unknown> | null | undefined;
         const commandPolicyAudit = getCommandAuditFromDetails(details) as Record<string, unknown> | null;
         if (commandPolicyAudit && typeof commandPolicyAudit === 'object' && parseInt(String(commandPolicyAudit.warning_count || 0), 10) > 0) {
             summary.command_policy_warnings.push(...((commandPolicyAudit.warnings as string[]) || []));
         }
+        if (normalizedEvent) {
+            if (normalizedEvent.source_schema_version === TASK_EVENT_PUBLIC_SCHEMA_VERSION) {
+                summary.event_contract.current_schema_event_count++;
+            } else if (normalizedEvent.normalized_from_legacy) {
+                summary.event_contract.legacy_schema_event_count++;
+            }
+            if (normalizedEvent.unknown_source_schema_version) {
+                summary.event_contract.unknown_schema_version_count++;
+            }
+        } else {
+            summary.event_contract.legacy_schema_event_count++;
+        }
         summary.timeline.push({
             index,
-            timestamp_utc: formatTimestamp(event.timestamp_utc),
-            event_type: String(event.event_type || 'UNKNOWN'),
-            outcome: String(event.outcome || 'UNKNOWN'),
-            actor: event.actor != null ? String(event.actor) : null,
-            message: String(event.message || ''),
+            timestamp_utc: formatTimestamp(normalizedEvent?.timestamp_utc || event.timestamp_utc),
+            schema_version: normalizedEvent?.source_schema_version ?? null,
+            event_source: normalizedEvent?.event_source || null,
+            event_type: normalizedEvent?.event_type || String(event.event_type || 'UNKNOWN'),
+            outcome: normalizedEvent?.outcome || String(event.outcome || 'UNKNOWN'),
+            actor: normalizedEvent?.actor || (event.actor != null ? String(event.actor) : null),
+            message: normalizedEvent?.message || String(event.message || ''),
+            lifecycle_phase: normalizedEvent?.public_metadata.lifecycle_phase || 'unknown',
+            health_state: normalizedEvent?.public_metadata.health_state || 'neutral',
+            terminal_outcome: normalizedEvent?.public_metadata.terminal_outcome || 'none',
+            normalized_from_legacy: normalizedEvent?.normalized_from_legacy ?? true,
+            unknown_schema_version: normalizedEvent?.unknown_source_schema_version ?? false,
             details,
             command_policy_audit: commandPolicyAudit
         });
@@ -1392,6 +1452,13 @@ export function buildTaskEventsSummary(options: BuildTaskEventsSummaryOptions) {
 }
 
 export interface TaskEventsSummaryResult {
+    event_contract: {
+        schema_version: 2;
+        legacy_schema_versions: number[];
+        current_schema_event_count: number;
+        legacy_schema_event_count: number;
+        unknown_schema_version_count: number;
+    };
     task_id: string;
     source_path: string;
     events_count: number;
@@ -1412,10 +1479,17 @@ export interface TaskEventsSummaryResult {
     timeline: {
         index: number;
         timestamp_utc: string | null;
+        schema_version: number | null;
+        event_source: string | null;
         event_type: string;
         outcome: string;
         actor: string | null;
         message: string;
+        lifecycle_phase: TaskEventLifecyclePhase;
+        health_state: TaskEventHealthState;
+        terminal_outcome: TaskEventTerminalOutcome;
+        normalized_from_legacy: boolean;
+        unknown_schema_version: boolean;
         details: unknown;
     }[];
 }
@@ -1468,6 +1542,30 @@ export function buildCompactLatestCycleTaskEventsSummary(summary: TaskEventsSumm
     const status = blockingOutcome ? 'BLOCKED' : completionPassed ? 'PASS' : 'IN_PROGRESS';
     const firstCycleEvent = latestCycleTimeline[0] || null;
     const lastCycleEvent = latestCycleTimeline[latestCycleTimeline.length - 1] || null;
+    let blockingTimelineEvent: TaskEventsSummaryResult['timeline'][number] | null = null;
+    if (blockingOutcome) {
+        for (let index = latestCycleTimeline.length - 1; index >= 0; index--) {
+            const item = latestCycleTimeline[index];
+            if (resolveGateName(item.event_type, item.details) !== blockingOutcome.gate) continue;
+            if (normalizeCompactStatus(item.outcome, item.event_type) !== 'FAIL') continue;
+            blockingTimelineEvent = item;
+            break;
+        }
+    }
+    let terminalTimelineEvent: TaskEventsSummaryResult['timeline'][number] | null = null;
+    for (let index = latestCycleTimeline.length - 1; index >= 0; index--) {
+        const item = latestCycleTimeline[index];
+        if (item.terminal_outcome !== 'none') {
+            terminalTimelineEvent = item;
+            break;
+        }
+    }
+    const healthState = status === 'BLOCKED'
+        ? (blockingTimelineEvent?.health_state || 'blocked')
+        : completionPassed
+            ? 'healthy'
+            : (lastCycleEvent?.health_state || 'neutral');
+    const terminalOutcome = terminalTimelineEvent?.terminal_outcome || (completionPassed ? 'done' : 'none');
     const tokenEconomy = summary.token_economy == null ? null : {
         visible_summary_line: summary.token_economy.visible_summary_line || null,
         total_estimated_saved_chars: 'total_estimated_saved_chars' in summary.token_economy
@@ -1488,10 +1586,17 @@ export function buildCompactLatestCycleTaskEventsSummary(summary: TaskEventsSumm
     };
 
     return {
-        schema_version: 1,
+        schema_version: 2,
         mode: 'compact_latest_cycle',
         task_id: summary.task_id,
         source_path: summary.source_path,
+        event_contract: {
+            schema_version: TASK_EVENT_PUBLIC_SCHEMA_VERSION,
+            legacy_schema_versions: [TASK_EVENT_LEGACY_SCHEMA_VERSION],
+            current_schema_event_count: summary.event_contract.current_schema_event_count,
+            legacy_schema_event_count: summary.event_contract.legacy_schema_event_count,
+            unknown_schema_version_count: summary.event_contract.unknown_schema_version_count
+        },
         integrity: {
             status: summary.integrity.status,
             integrity_event_count: summary.integrity.integrity_event_count,
@@ -1506,6 +1611,8 @@ export function buildCompactLatestCycleTaskEventsSummary(summary: TaskEventsSumm
             started_at_utc: firstCycleEvent ? firstCycleEvent.timestamp_utc : null,
             last_event_utc: lastCycleEvent ? lastCycleEvent.timestamp_utc : null,
             status,
+            health_state: healthState,
+            terminal_outcome: terminalOutcome,
             blocking_reason: blockingOutcome ? {
                 gate: blockingOutcome.gate,
                 event_type: blockingOutcome.event_type,

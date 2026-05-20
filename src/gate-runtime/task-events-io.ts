@@ -20,6 +20,7 @@ import {
     toTrimmedLowerCaseString,
     toTrimmedString
 } from './task-events-helpers';
+import { createTaskEventPublicRecord, type TaskEventPublicMetadata } from './task-event-public-contract';
 import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
 import { redactSecretText, redactSensitiveData } from '../core/redaction';
 
@@ -80,6 +81,8 @@ export interface TaskEventIntegrity {
 }
 
 export interface TaskEvent {
+    schema_version: number;
+    event_source: string;
     timestamp_utc: string;
     task_id: string;
     event_type: string;
@@ -87,6 +90,7 @@ export interface TaskEvent {
     actor: string;
     message: string;
     details: unknown;
+    public_metadata: TaskEventPublicMetadata;
     integrity?: TaskEventIntegrity;
 }
 
@@ -594,7 +598,7 @@ export function appendTaskEvent(
         staleMs: options.lockStaleMs,
         allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
     };
-    const event: TaskEvent = {
+    const event = createTaskEventPublicRecord({
         timestamp_utc: new Date().toISOString(),
         task_id: safeTaskId,
         event_type: eventType,
@@ -602,7 +606,7 @@ export function appendTaskEvent(
         actor,
         message: redactSecretText(message),
         details: redactSensitiveData(details)
-    };
+    }) as TaskEvent;
     const result = createAppendResult(paths);
     let line: string | null = null;
 
@@ -676,7 +680,7 @@ export async function appendTaskEventAsync(
         staleMs: options.lockStaleMs,
         allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
     };
-    const event: TaskEvent = {
+    const event = createTaskEventPublicRecord({
         timestamp_utc: new Date().toISOString(),
         task_id: safeTaskId,
         event_type: eventType,
@@ -684,7 +688,7 @@ export async function appendTaskEventAsync(
         actor,
         message: redactSecretText(message),
         details: redactSensitiveData(details)
-    };
+    }) as TaskEvent;
     const result = createAppendResult(paths);
     let line: string | null = null;
 

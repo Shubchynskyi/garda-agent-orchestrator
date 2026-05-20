@@ -78,6 +78,7 @@ Notes:
 - `status why-blocked` inspects `TASK.md`, task timelines, and failed gate markers to explain why `BLOCKED`, `IN_PROGRESS`, or `IN_REVIEW` tasks are stalled.
 - `status why-blocked` also surfaces task-event locks that can block timeline writes and review-artifact locks that can block `runtime/reviews` artifact persistence.
 - The canonical task timeline is `garda-agent-orchestrator/runtime/task-events/<task-id>.jsonl`; status rolls up derived task-event indexes rather than replacing the per-task JSONL source of truth.
+- New task-event lines use the public task-event schema version `2` with `event_source: "task-events"` plus stable `public_metadata` fields (`lifecycle_phase`, `status_signal`, `health_state`, `terminal_outcome`). Readers must remain backward-compatible with legacy schema `1` lines that lack those top-level public fields.
 - See [Operator Consistency and Recovery Runbook](operator-consistency-runbook.md) for the canonical-vs-derived model and recovery guidance.
 
 ### `garda doctor`
@@ -197,6 +198,7 @@ Notes:
 - `garda task "<task-id>" stats` routes to the same per-task analytics as `garda stats "<task-id>"`.
 - `garda task "<task-id>" events` prints the task event timeline without changing lifecycle state.
 - Human task event output uses color when the terminal supports it; `--as-json`, `--compact-latest-cycle`, and persisted `--output-path` output remain uncolored.
+- `garda gate task-events-summary --task-id "T-001" --compact-latest-cycle` now emits compact summary schema version `2`, including an `event_contract` block for public event compatibility and latest-cycle `health_state` / `terminal_outcome` fields for bounded automation consumers.
 - The task namespace is inspection-only. It does not alias, replace, or modify `next-step`, and the events wrapper does not expose `--output-path`; use the explicit gate command when intentionally materializing an artifact.
 
 ### `garda html`

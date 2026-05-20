@@ -37,6 +37,25 @@ export {
     type InspectTaskEventResult
 } from './task-events-integrity';
 export {
+    TASK_EVENT_LEGACY_SCHEMA_VERSION,
+    TASK_EVENT_PUBLIC_EVENT_SOURCE,
+    TASK_EVENT_PUBLIC_SCHEMA_VERSION,
+    buildTaskEventPublicMetadata,
+    createTaskEventPublicRecord,
+    inferTaskEventHealthState,
+    inferTaskEventLifecyclePhase,
+    inferTaskEventStatusSignal,
+    inferTaskEventTerminalOutcome,
+    normalizeTaskEventPublicRecord,
+    type NormalizedTaskEventPublicRecord,
+    type TaskEventHealthState,
+    type TaskEventLifecyclePhase,
+    type TaskEventPublicMetadata,
+    type TaskEventPublicRecord,
+    type TaskEventStatusSignal,
+    type TaskEventTerminalOutcome
+} from './task-event-public-contract';
+export {
     appendMandatoryTaskEvent,
     appendMandatoryTaskEventAsync,
     appendTaskEvent,

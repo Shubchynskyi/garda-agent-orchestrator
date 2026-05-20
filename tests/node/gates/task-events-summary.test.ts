@@ -1506,9 +1506,14 @@ describe('gates/task-events-summary', () => {
             const fullSummary = buildTaskEventsSummary({ taskId: 'T-007', eventsRoot: eventsDir, repoRoot: tmpDir });
             const compactSummary = buildCompactLatestCycleTaskEventsSummary(fullSummary);
 
-            assert.equal(compactSummary.schema_version, 1);
+            assert.equal(compactSummary.schema_version, 2);
             assert.equal(compactSummary.mode, 'compact_latest_cycle');
+            assert.equal(compactSummary.event_contract.schema_version, 2);
+            assert.equal(compactSummary.event_contract.current_schema_event_count, 0);
+            assert.equal(compactSummary.event_contract.legacy_schema_event_count, 4);
             assert.equal(compactSummary.latest_cycle.status, 'IN_PROGRESS');
+            assert.equal(compactSummary.latest_cycle.health_state, 'healthy');
+            assert.equal(compactSummary.latest_cycle.terminal_outcome, 'none');
             assert.equal(compactSummary.latest_cycle.cycle_event_count, 2);
             assert.equal(compactSummary.latest_cycle.start_index, 3);
             assert.equal(compactSummary.latest_cycle.blocking_reason, null);
@@ -1520,6 +1525,73 @@ describe('gates/task-events-summary', () => {
             assert.equal(compactSummary.token_economy?.total_estimated_saved_chars, 100);
             assert.equal(JSON.stringify(compactSummary).includes('verbose_payload'), false);
             assert.equal('timeline' in compactSummary, false);
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('tracks mixed legacy, current, and unknown schema event counts in the public contract summary', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-007A',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Legacy event without explicit schema.'
+                },
+                {
+                    schema_version: 2,
+                    event_source: 'task-events',
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-007A',
+                    event_type: 'COMPILE_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Current public schema event.',
+                    public_metadata: {
+                        lifecycle_phase: 'validation',
+                        status_signal: 'pass',
+                        health_state: 'healthy',
+                        terminal_outcome: 'none'
+                    }
+                },
+                {
+                    schema_version: 7,
+                    event_source: 'task-events',
+                    timestamp_utc: '2024-01-15T10:02:00Z',
+                    task_id: 'T-007A',
+                    event_type: 'COMPLETION_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Unknown future schema event.',
+                    public_metadata: {
+                        lifecycle_phase: 'terminal',
+                        status_signal: 'pass',
+                        health_state: 'healthy',
+                        terminal_outcome: 'done'
+                    }
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-007A.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const fullSummary = buildTaskEventsSummary({ taskId: 'T-007A', eventsRoot: eventsDir, repoRoot: tmpDir });
+            const compactSummary = buildCompactLatestCycleTaskEventsSummary(fullSummary);
+
+            assert.equal(fullSummary.event_contract.schema_version, 2);
+            assert.equal(fullSummary.event_contract.current_schema_event_count, 1);
+            assert.equal(fullSummary.event_contract.legacy_schema_event_count, 1);
+            assert.equal(fullSummary.event_contract.unknown_schema_version_count, 1);
+            assert.equal(compactSummary.event_contract.current_schema_event_count, 1);
+            assert.equal(compactSummary.event_contract.legacy_schema_event_count, 1);
+            assert.equal(compactSummary.event_contract.unknown_schema_version_count, 1);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
@@ -1574,9 +1646,106 @@ describe('gates/task-events-summary', () => {
             );
 
             assert.equal(compactSummary.latest_cycle.status, 'BLOCKED');
+            assert.equal(compactSummary.latest_cycle.health_state, 'failed');
             assert.equal(compactSummary.latest_cycle.blocking_reason?.gate, 'compile-gate');
             assert.equal(compactSummary.latest_cycle.blocking_reason?.event_type, 'COMPILE_GATE_FAILED');
             assert.equal(compactSummary.latest_cycle.blocking_reason?.message, 'Compile gate failed again.');
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('preserves blocked health state when informational events appear after the blocking gate', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-008A',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Latest cycle started.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-008A',
+                    event_type: 'PROJECT_MEMORY_IMPACT_BLOCKED',
+                    outcome: 'BLOCKED',
+                    actor: 'gate',
+                    message: 'Project memory blocked closeout.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:02:00Z',
+                    task_id: 'T-008A',
+                    event_type: 'NO_OP_RECORDED',
+                    outcome: 'INFO',
+                    actor: 'agent',
+                    message: 'Operator left an informational breadcrumb.'
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-008A.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const compactSummary = buildCompactLatestCycleTaskEventsSummary(
+                buildTaskEventsSummary({ taskId: 'T-008A', eventsRoot: eventsDir, repoRoot: tmpDir })
+            );
+
+            assert.equal(compactSummary.latest_cycle.status, 'BLOCKED');
+            assert.equal(compactSummary.latest_cycle.health_state, 'blocked');
+            assert.equal(compactSummary.latest_cycle.blocking_reason?.gate, 'project-memory-impact');
+
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('preserves completion terminal outcome when later non-terminal events are appended', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
+            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const events = [
+                {
+                    timestamp_utc: '2024-01-15T10:00:00Z',
+                    task_id: 'T-008D',
+                    event_type: 'TASK_MODE_ENTERED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Latest cycle started.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:01:00Z',
+                    task_id: 'T-008D',
+                    event_type: 'COMPLETION_GATE_PASSED',
+                    outcome: 'PASS',
+                    actor: 'gate',
+                    message: 'Completion gate passed.'
+                },
+                {
+                    timestamp_utc: '2024-01-15T10:02:00Z',
+                    task_id: 'T-008D',
+                    event_type: 'NO_OP_RECORDED',
+                    outcome: 'INFO',
+                    actor: 'agent',
+                    message: 'Final informational note.'
+                }
+            ];
+            fs.writeFileSync(
+                path.join(eventsDir, 'T-008D.jsonl'),
+                events.map(e => JSON.stringify(e)).join('\n') + '\n',
+                'utf8'
+            );
+
+            const compactSummary = buildCompactLatestCycleTaskEventsSummary(
+                buildTaskEventsSummary({ taskId: 'T-008D', eventsRoot: eventsDir, repoRoot: tmpDir })
+            );
+
+            assert.equal(compactSummary.latest_cycle.status, 'PASS');
+            assert.equal(compactSummary.latest_cycle.health_state, 'healthy');
+            assert.equal(compactSummary.latest_cycle.terminal_outcome, 'done');
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
@@ -1688,6 +1857,7 @@ describe('gates/task-events-summary', () => {
             assert.equal(projectMemory.status, 'FAIL');
             assert.equal(projectMemory.event_type, 'PROJECT_MEMORY_IMPACT_BLOCKED');
             assert.equal(compactSummary.latest_cycle.status, 'BLOCKED');
+            assert.equal(compactSummary.latest_cycle.health_state, 'blocked');
             assert.equal(compactSummary.latest_cycle.blocking_reason?.gate, 'project-memory-impact');
             assert.ok(compactSummary.latest_cycle.evidence_references.some((item) => item.endsWith('/doc-impact.json')));
             assert.ok(compactSummary.latest_cycle.evidence_references.some((item) => item.endsWith('/project-memory-impact.json')));
@@ -1728,6 +1898,7 @@ describe('gates/task-events-summary', () => {
 
             assert.ok(Array.isArray(legacy.timeline));
             assert.equal(compact.mode, 'compact_latest_cycle');
+            assert.equal(compact.schema_version, 2);
             assert.equal('timeline' in compact, false);
 
             fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1737,6 +1908,13 @@ describe('gates/task-events-summary', () => {
     describe('formatTaskEventsSummaryText', () => {
         it('formats summary as human-readable text', () => {
             const summary = {
+                event_contract: {
+                    schema_version: 2,
+                    legacy_schema_versions: [1],
+                    current_schema_event_count: 0,
+                    legacy_schema_event_count: 1,
+                    unknown_schema_version_count: 0
+                },
                 task_id: 'T-001',
                 source_path: '/events/T-001.jsonl',
                 events_count: 1,
@@ -1757,10 +1935,17 @@ describe('gates/task-events-summary', () => {
                 timeline: [{
                     index: 1,
                     timestamp_utc: '2024-01-15T10:00:00.000Z',
+                    schema_version: 1,
+                    event_source: 'task-events',
                     event_type: 'PREFLIGHT_CLASSIFIED',
                     outcome: 'INFO',
                     actor: 'gate',
-                    message: 'Done.'
+                    message: 'Done.',
+                    lifecycle_phase: 'preflight',
+                    health_state: 'neutral',
+                    terminal_outcome: 'none',
+                    normalized_from_legacy: true,
+                    unknown_schema_version: false
                 }]
             };
             const text = formatTaskEventsSummaryText(summary as unknown as TaskEventsSummaryResult);

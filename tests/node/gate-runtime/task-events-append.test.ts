@@ -11,6 +11,7 @@ import {
     appendTaskEvent,
     buildEventIntegrityHash,
     inspectTaskEventFile,
+    normalizeTaskEventPublicRecord,
     normalizeIntegrityValue,
     readTaskEventAppendState,
     taskEventAppendHasBlockingFailure,
@@ -383,6 +384,16 @@ test('appendTaskEvent creates chain with correct integrity', () => {
         assert.equal(result.integrity_event_count, 3);
         assert.equal(result.violations.length, 0);
 
+        const firstEvent = JSON.parse(fs.readFileSync(eventFile, 'utf8').trim().split('\n')[0]) as Record<string, unknown>;
+        assert.equal(firstEvent.schema_version, 2);
+        assert.equal(firstEvent.event_source, 'task-events');
+        assert.deepEqual(firstEvent.public_metadata, {
+            lifecycle_phase: 'unknown',
+            status_signal: 'pass',
+            health_state: 'healthy',
+            terminal_outcome: 'none'
+        });
+
         // Also verify all-tasks.jsonl
         const allTasksFile = path.join(orchestratorRoot, 'runtime', 'task-events', 'all-tasks.jsonl');
         assert.ok(fs.existsSync(allTasksFile));
@@ -421,6 +432,73 @@ test('appendTaskEvent redacts secrets from durable event message and details', (
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
+});
+
+test('normalizeTaskEventPublicRecord normalizes legacy timeline lines for public consumers', () => {
+    const normalized = normalizeTaskEventPublicRecord({
+        timestamp_utc: '2024-01-15T10:30:00.000Z',
+        task_id: 'T-LEGACY',
+        event_type: 'PROJECT_MEMORY_IMPACT_BLOCKED',
+        outcome: 'BLOCKED',
+        actor: 'gate',
+        message: 'Legacy blocked event',
+        details: { artifact_path: 'runtime/reviews/T-LEGACY-project-memory.json' }
+    });
+
+    assert.ok(normalized);
+    assert.equal(normalized!.schema_version, 2);
+    assert.equal(normalized!.source_schema_version, 1);
+    assert.equal(normalized!.normalized_from_legacy, true);
+    assert.equal(normalized!.public_metadata.lifecycle_phase, 'closeout');
+    assert.equal(normalized!.public_metadata.health_state, 'blocked');
+    assert.equal(normalized!.public_metadata.terminal_outcome, 'none');
+});
+
+test('normalizeTaskEventPublicRecord keeps reading unknown future schema versions through the stable public view', () => {
+    const normalized = normalizeTaskEventPublicRecord({
+        schema_version: 7,
+        event_source: 'task-events',
+        timestamp_utc: '2024-01-15T10:30:00.000Z',
+        task_id: 'T-FUTURE',
+        event_type: 'COMPLETION_GATE_PASSED',
+        outcome: 'PASS',
+        actor: 'gate',
+        message: 'Future event',
+        details: null
+    });
+
+    assert.ok(normalized);
+    assert.equal(normalized!.schema_version, 2);
+    assert.equal(normalized!.source_schema_version, 7);
+    assert.equal(normalized!.unknown_source_schema_version, true);
+    assert.equal(normalized!.public_metadata.terminal_outcome, 'done');
+});
+
+test('normalizeTaskEventPublicRecord falls back when public metadata contains invalid enum values', () => {
+    const normalized = normalizeTaskEventPublicRecord({
+        schema_version: 2,
+        event_source: 'task-events',
+        timestamp_utc: '2024-01-15T10:30:00.000Z',
+        task_id: 'T-BAD-META',
+        event_type: 'COMPILE_GATE_FAILED',
+        outcome: 'FAIL',
+        actor: 'gate',
+        message: 'Invalid metadata should not leak through.',
+        public_metadata: {
+            lifecycle_phase: 'bogus',
+            status_signal: 'maybe',
+            health_state: 'green',
+            terminal_outcome: 'later'
+        }
+    });
+
+    assert.ok(normalized);
+    assert.deepEqual(normalized!.public_metadata, {
+        lifecycle_phase: 'validation',
+        status_signal: 'fail',
+        health_state: 'failed',
+        terminal_outcome: 'none'
+    });
 });
 
 test('appendTaskEvent returns null for empty taskId', () => {

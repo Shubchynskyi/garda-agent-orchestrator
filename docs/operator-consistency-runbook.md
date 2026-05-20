@@ -30,6 +30,7 @@ Use this document together with:
 1. If `runtime/task-events/<task-id>.jsonl` disagrees with an index, trust the per-task JSONL.
 2. If a file exists only to summarize, aggregate, or cache runtime state, treat it as disposable/rebuildable metadata.
 3. Never manually edit task-event JSONL, trusted manifests, or live lock directories.
+4. The public task-event read contract is append-only schema version `2` with stable top-level `schema_version`, `event_source`, and `public_metadata` fields. Older legacy lines without those top-level fields must still be read as compatible history rather than rewritten in place.
 4. Prefer `doctor`, `doctor explain`, `status why-blocked`, `update`, `rollback`, `reinit`, and task gates over ad-hoc file deletion.
 
 ## Quick Diagnosis
