@@ -553,6 +553,12 @@ function writeGitAutoPreflight(
 ): string {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+    const domainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource: snapshot.detection_source,
+        includeUntracked: snapshot.include_untracked,
+        changedFiles: snapshot.changed_files
+    });
     writeJson(preflightPath, {
         task_id: taskId,
         detection_source: snapshot.detection_source,
@@ -562,7 +568,8 @@ function writeGitAutoPreflight(
             changed_lines_total: snapshot.changed_lines_total,
             changed_files_sha256: snapshot.changed_files_sha256,
             scope_content_sha256: snapshot.scope_content_sha256,
-            scope_sha256: snapshot.scope_sha256
+            scope_sha256: snapshot.scope_sha256,
+            domain_scope_fingerprints: domainScopeFingerprints
         },
         required_reviews: requiredReviews,
         changed_files: snapshot.changed_files,
@@ -6996,6 +7003,89 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
         assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
         assert.ok(result.reason.includes('Completion requires an explicit docs decision.'));
+    });
+
+    it('routes to doc-impact without refreshing preflight when task closeout is added after reviews', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '\nCloseout note for reviewed implementation.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        assert.ok(!result.commands[0].command.includes('--docs-updated "TASK.md"'));
+    });
+
+    it('keeps project-memory closeout out of docs-updated while accepting the closeout delta', () => {
+        const repoRoot = makeTempRepo();
+        const projectMemoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+        fs.mkdirSync(projectMemoryRoot, { recursive: true });
+        fs.writeFileSync(path.join(projectMemoryRoot, 'commands.md'), '# Commands\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(projectMemoryRoot, 'commands.md'), '\nRemember closeout-only delta handling.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        assert.ok(!result.commands[0].command.includes('--docs-updated "garda-agent-orchestrator/live/docs/project-memory/commands.md"'));
+    });
+
+    it('keeps post-review docs and closeout deltas separated in doc-impact', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI reference\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '\nDocumented reviewed CLI behavior.\n', 'utf8');
+        fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '\nCloseout note for reviewed implementation.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "docs/cli-reference.md"'));
+        assert.ok(!result.commands[0].command.includes('--docs-updated "TASK.md"'));
+    });
+
+    it('routes back to preflight when closeout delta is combined with undeclared source drift', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'TASK.md'), '\nCloseout note for reviewed implementation.\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra.ts'), 'export const extra = 3;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('src/extra.ts'));
+        assert.ok(!result.commands[0].command.includes('gate doc-impact-gate'));
     });
 
     it('keeps changelog-only closeout in doc-impact lane after failed completion', () => {

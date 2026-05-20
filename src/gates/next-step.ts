@@ -1984,6 +1984,7 @@ interface PreflightWorkspaceReadiness {
     reason: string;
     currentChangedFiles?: string[];
     acceptedDocsOnlyDeltaFiles?: string[];
+    acceptedCloseoutOnlyDeltaFiles?: string[];
 }
 
 interface PreflightWorkspaceReadinessOptions {
@@ -4020,12 +4021,15 @@ function buildStaleCompletionFailureDocCloseoutAllowance(
         }
         return {};
     }
-    const acceptedDeltaFiles = preflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || [];
+    const acceptedDeltaFiles = [
+        ...(preflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []),
+        ...(preflightWorkspaceReadiness.acceptedCloseoutOnlyDeltaFiles || [])
+    ];
     if (acceptedDeltaFiles.length > 0) {
         return {
             allowStaleCompletionFailureForDocCloseout: true,
             staleCompletionFailureDocCloseoutReason:
-                `current workspace drift is limited to ordinary documentation updates ${describePathList(acceptedDeltaFiles)}`
+                `current workspace drift is limited to ordinary documentation/closeout updates ${describePathList(acceptedDeltaFiles)}`
         };
     }
     return {};
@@ -4078,19 +4082,20 @@ function buildDocsOnlyDeltaReadiness(
         includeUntracked,
         changedFiles: currentFiles
     });
-    const acceptedDeltaFiles = docsOnlyDeltaFiles.filter((filePath) => {
+    const acceptedDocsDeltaFiles = docsOnlyDeltaFiles.filter((filePath) => {
         const normalizedPath = normalizePath(filePath);
-        return currentDomainScopeFingerprints.domains.docs.changed_files.includes(normalizedPath)
-            || currentDomainScopeFingerprints.domains.closeout.changed_files.includes(normalizedPath);
+        return currentDomainScopeFingerprints.domains.docs.changed_files.includes(normalizedPath);
     });
+    const acceptedCloseoutDeltaFiles = docsOnlyDeltaFiles.filter((filePath) => {
+        const normalizedPath = normalizePath(filePath);
+        return currentDomainScopeFingerprints.domains.closeout.changed_files.includes(normalizedPath);
+    });
+    const acceptedDeltaFiles = [...acceptedDocsDeltaFiles, ...acceptedCloseoutDeltaFiles].sort();
     if (acceptedDeltaFiles.length !== docsOnlyDeltaFiles.length) {
         return null;
     }
     if (declaredDocsSet) {
-        const undeclaredDocs = acceptedDeltaFiles.filter((entry) => (
-            currentDomainScopeFingerprints.domains.docs.changed_files.includes(entry)
-            && !declaredDocsSet.has(entry)
-        ));
+        const undeclaredDocs = acceptedDocsDeltaFiles.filter((entry) => !declaredDocsSet.has(entry));
         if (undeclaredDocs.length > 0) {
             return null;
         }
@@ -4109,10 +4114,11 @@ function buildDocsOnlyDeltaReadiness(
         return {
             ready: true,
             reason:
-                'Preflight implementation/test/config domains still match the current workspace after accepting docs/closeout updates: ' +
-                `${describePathList(acceptedDeltaFiles)}.`,
+                'Preflight implementation/test/config domains still match the current workspace after accepting docs/closeout updates. ' +
+                `Docs: ${describePathList(acceptedDocsDeltaFiles)}; closeout: ${describePathList(acceptedCloseoutDeltaFiles)}.`,
             currentChangedFiles: currentFiles,
-            acceptedDocsOnlyDeltaFiles: acceptedDeltaFiles
+            acceptedDocsOnlyDeltaFiles: acceptedDocsDeltaFiles,
+            acceptedCloseoutOnlyDeltaFiles: acceptedCloseoutDeltaFiles
         };
     }
 
