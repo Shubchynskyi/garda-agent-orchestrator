@@ -134,4 +134,27 @@ describe('review execution launch plan', () => {
             { review_type: 'test', blocked_by: ['code', 'security', 'refactor'] }
         ]);
     });
+
+    it('routes stale upstream lanes before blocked failed downstream review remediation', () => {
+        const plan = computeReviewLaunchPlan({
+            requiredReviewTypes: ['code', 'security', 'refactor', 'test'],
+            requiredReviews: { ...REVIEW_FLAGS, code: true, security: true, refactor: true, test: true },
+            policyMode: 'strict_sequential',
+            reviewStates: [
+                { review_type: 'code', satisfied: false },
+                { review_type: 'security', satisfied: false },
+                { review_type: 'refactor', satisfied: false, failed_current: true },
+                { review_type: 'test', satisfied: false }
+            ]
+        });
+
+        assert.deepEqual(plan.launchable_review_types, ['code']);
+        assert.equal(plan.failed_review_type, null);
+        assert.equal(plan.next_review_type, 'code');
+        assert.deepEqual(plan.blocked_review_lanes, [
+            { review_type: 'security', blocked_by: ['code'] },
+            { review_type: 'refactor', blocked_by: ['code', 'security'] },
+            { review_type: 'test', blocked_by: ['code', 'security', 'refactor'] }
+        ]);
+    });
 });

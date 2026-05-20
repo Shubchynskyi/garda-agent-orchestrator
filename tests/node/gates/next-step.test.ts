@@ -5347,6 +5347,50 @@ describe('gates/next-step', () => {
         assert.match(text, /ReviewFailedCurrent: security/);
     });
 
+    it('routes blocked failed downstream reviews back to stale upstream review lanes', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            test: true
+        }, { reviewPolicyMode: 'strict_sequential' });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor', { verdict: 'fail' });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.equal(result.review.failed_review_type, null);
+        assert.deepEqual(result.review.launchable_review_types, ['code']);
+        assert.deepEqual(result.review.blocked_review_lanes, [
+            {
+                review_type: 'security',
+                blocked_by: ['code'],
+                reason: 'Waiting for current-cycle code review artifacts and receipts to pass.'
+            },
+            {
+                review_type: 'refactor',
+                blocked_by: ['code', 'security'],
+                reason: 'Waiting for current-cycle code, security review artifacts and receipts to pass.'
+            },
+            {
+                review_type: 'test',
+                blocked_by: ['code', 'security', 'refactor'],
+                reason: 'Waiting for current-cycle code, security, refactor review artifacts and receipts to pass.'
+            }
+        ]);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "refactor"'));
+        assert.match(text, /ReviewLaunchableBatch: code/);
+        assert.doesNotMatch(text, /ReviewFailedCurrent: refactor/);
+    });
+
     it('exposes parallel_all launch batches without collapsing JSON or human output to one lane', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

@@ -192,9 +192,23 @@ export function computeReviewLaunchPlan(params: {
     const satisfiedReviews = new Set(
         requiredReviewTypes.filter((reviewType) => stateByType.get(reviewType)?.satisfied === true)
     );
+    const dependenciesByReviewType = new Map<string, string[]>();
+    const getBlockedBy = (reviewType: string): string[] => {
+        const cached = dependenciesByReviewType.get(reviewType);
+        if (cached) {
+            return cached;
+        }
+        const blockedBy = getReviewExecutionDependencies(reviewType, params.requiredReviews, params.policyMode)
+            .filter((dependency) => !satisfiedReviews.has(normalizeReviewType(dependency)))
+            .map(normalizeReviewType);
+        dependenciesByReviewType.set(reviewType, blockedBy);
+        return blockedBy;
+    };
     const failedReviewType = requiredReviewTypes.find((reviewType) => {
         const state = stateByType.get(reviewType);
-        return state?.failed_current === true && !satisfiedReviews.has(reviewType);
+        return state?.failed_current === true
+            && !satisfiedReviews.has(reviewType)
+            && getBlockedBy(reviewType).length === 0;
     }) || null;
     const blockedReviewLanes: ReviewLaunchBlockedLane[] = [];
     const launchableReviewTypes: string[] = [];
@@ -203,9 +217,7 @@ export function computeReviewLaunchPlan(params: {
         if (satisfiedReviews.has(reviewType)) {
             continue;
         }
-        const blockedBy = getReviewExecutionDependencies(reviewType, params.requiredReviews, params.policyMode)
-            .filter((dependency) => !satisfiedReviews.has(normalizeReviewType(dependency)))
-            .map(normalizeReviewType);
+        const blockedBy = getBlockedBy(reviewType);
         if (blockedBy.length > 0) {
             blockedReviewLanes.push({
                 review_type: reviewType,
