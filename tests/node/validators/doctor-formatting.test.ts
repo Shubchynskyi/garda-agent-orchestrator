@@ -520,6 +520,15 @@ test('formatDoctorResultCompact emits single line on success', () => {
     assert.ok(!output.includes('manifest=PASS |'), 'compact output must not rely on PASS as a prefix of PASSED');
 });
 
+test('documented doctor compact success output matches formatter contract', () => {
+    const output = formatDoctorResultCompact(buildFakeDoctorResult());
+    const cliReference = fs.readFileSync(path.join(process.cwd(), 'docs', 'cli-reference.md'), 'utf8');
+    const nodeRuntimeContract = fs.readFileSync(path.join(process.cwd(), 'docs', 'node-runtime-contract.md'), 'utf8');
+
+    assert.ok(cliReference.includes(output));
+    assert.ok(nodeRuntimeContract.includes(output));
+});
+
 test('formatDoctorResultCompact emits full output on failure', () => {
     const fakeResult = buildFakeDoctorResult({
         passed: false,

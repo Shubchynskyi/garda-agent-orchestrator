@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- aligned the documented `garda doctor --compact` success marker with the actual formatter contract (`Doctor: PASSED | verify=PASSED | manifest=PASSED`) while keeping the Node 24-only runtime baseline unchanged
 - made `garda doctor` failure output print a concise blocker summary and next action before the long detailed evidence dump, while preserving JSON output and full human diagnostics
 - made `complete-reviewer-launch` own `launched_at_utc` inside the gate, reject caller-supplied `--launched-at-utc` as spoof-like freshness input, and remove that flag from generated reviewer-launch guidance
 - added a guarded `garda ui --actions` settings editor for allow-listed safe workflow knobs, using preview/confirmation, the audited `workflow set` command path, and local UI action logging instead of direct config JSON writes

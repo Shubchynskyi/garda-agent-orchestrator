@@ -196,7 +196,7 @@ Zero-diff guard:
 Compact validation success markers:
 
 - `garda status --compact` (ready): `GARDA_STATUS: ready | source=<provider>`
-- `garda doctor --compact` (pass): `Doctor: PASS | verify=PASS | manifest=PASS`
+- `garda doctor --compact` (pass): `Doctor: PASSED | verify=PASSED | manifest=PASSED`
 - `garda verify --compact` (pass): `Verification: PASS | paths=<count> | violations=0`
 - `garda gate validate-manifest --compact` (pass): `MANIFEST_VALIDATION_PASSED | entries=<count>`
 
