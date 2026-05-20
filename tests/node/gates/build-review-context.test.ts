@@ -375,6 +375,7 @@ describe('gates/build-review-context', () => {
                 full_suite_validation: {
                     enabled: true,
                     command: 'npm test',
+                    placement: 'before_test_review',
                     timeout_ms: 600000,
                     green_summary_max_lines: 5,
                     red_failure_chunk_lines: 50,
@@ -861,6 +862,7 @@ describe('gates/build-review-context', () => {
                 full_suite_validation: {
                     enabled: false,
                     command: 'npm test',
+                    placement: 'before_test_review',
                     timeout_ms: 600000,
                     green_summary_max_lines: 5,
                     red_failure_chunk_lines: 50,

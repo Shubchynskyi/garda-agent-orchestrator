@@ -1658,8 +1658,96 @@ describe('gates/next-step', () => {
         assert.equal(result.commands.length, 0);
         assert.ok(result.reason.includes('split-required'));
         assert.ok(result.reason.includes(`${TASK_ID}-1`));
+        assert.ok(result.reason.includes('missing linked proposed child tasks'));
         assert.equal(text.includes('gate classify-change'), false);
         assert.equal(text.includes('gate compile-gate'), false);
+    });
+
+    it('routes strict split-required decisions through linked parent-derived strict children', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\` and \`${TASK_ID}-2\`. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | First child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/strict-decomposition-split-routing | Second child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'split-required',
+            taskSummary: 'Seeded next-step task',
+            proposedChildTaskIds: [`${TASK_ID}-1`, `${TASK_ID}-2`]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0].command.includes(`next-step "${TASK_ID}-1"`));
+        assert.ok(result.reason.includes('linked parent-derived strict child tasks match the decision artifact'));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | DECOMPOSED |`));
+        assert.ok(events.includes('"event_type":"STRICT_DECOMPOSITION_SPLIT_ROUTED"'));
+        assert.ok(text.includes('Status: DECOMPOSED'));
+    });
+
+    it('blocks strict split-required routing when a proposed child is not strict', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\`. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | First child | gpt-5.4 | 2026-05-20 | balanced | Child of ${TASK_ID}. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'split-required',
+            taskSummary: 'Seeded next-step task',
+            proposedChildTaskIds: [`${TASK_ID}-1`]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'strict-decomposition-split-routing');
+        assert.ok(result.reason.includes('child tasks without strict profile'));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | TODO |`));
+    });
+
+    it('blocks strict split-required routing for unexpected linked child tasks', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/strict-decomposition-split-routing | Route strict split decisions to children | gpt-5.4 | 2026-05-20 | strict | Child tasks: \`${TASK_ID}-1\` and \`${TASK_ID}-extra\`. |`,
+            `| ${TASK_ID}-1 | TODO | P1 | workflow/strict-decomposition-split-routing | First child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            `| ${TASK_ID}-extra | TODO | P1 | workflow/strict-decomposition-split-routing | Extra child | gpt-5.4 | 2026-05-20 | strict | Child of ${TASK_ID}. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'split-required',
+            taskSummary: 'Seeded next-step task',
+            proposedChildTaskIds: [`${TASK_ID}-1`]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'strict-decomposition-split-routing');
+        assert.ok(result.reason.includes('linked child tasks not declared in the decision artifact'));
+        assert.ok(result.reason.includes(`${TASK_ID}-extra`));
     });
 
     it('latches oversized strict-profile scopes as split-required before compile', () => {
@@ -4815,7 +4903,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -5047,7 +5136,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -5198,7 +5288,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'parallel_all'
@@ -5238,7 +5329,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'parallel_all'
@@ -5267,7 +5359,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -5291,7 +5384,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -5317,7 +5411,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -5345,7 +5440,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'
@@ -5397,7 +5493,8 @@ describe('gates/next-step', () => {
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
-                command: 'npm test'
+                command: 'npm test',
+                placement: 'before_test_review'
             },
             review_execution_policy: {
                 mode: 'code_first_optional'

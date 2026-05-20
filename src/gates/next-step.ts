@@ -398,6 +398,17 @@ interface ChildTaskIdMention {
     index: number;
 }
 
+interface StrictDecompositionSplitRoutingState {
+    ready: boolean;
+    linkedChildTaskIds: string[];
+    missingLinkedChildTaskIds: string[];
+    missingChildTaskIds: string[];
+    nonParentDerivedChildTaskIds: string[];
+    unexpectedLinkedChildTaskIds: string[];
+    nonStrictChildTaskIds: string[];
+    childRoute: DecomposedChildRoute | null;
+}
+
 const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks)\b/i;
 const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
     /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:/igu;
@@ -791,6 +802,80 @@ function hasLinkedChildTasks(taskEntries: Map<string, TaskQueueEntry>, parentTas
     const parentEntry = taskEntries.get(parentTaskId);
     return extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
         .some((childTaskId) => childTaskId !== parentTaskId && taskEntries.has(childTaskId));
+}
+
+function isParentDerivedChildTaskId(parentTaskId: string, childTaskId: string): boolean {
+    const normalizedParent = parentTaskId.toLowerCase();
+    const normalizedChild = childTaskId.toLowerCase();
+    return normalizedChild !== normalizedParent && normalizedChild.startsWith(`${normalizedParent}-`);
+}
+
+function resolveStrictDecompositionSplitRoutingState(
+    taskEntries: Map<string, TaskQueueEntry>,
+    parentTaskId: string,
+    proposedChildTaskIds: string[]
+): StrictDecompositionSplitRoutingState {
+    const parentEntry = taskEntries.get(parentTaskId);
+    const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
+        .filter((childTaskId) => childTaskId !== parentTaskId);
+    const linkedChildTaskIdSet = new Set(linkedChildTaskIds);
+    const proposedChildTaskIdSet = new Set(proposedChildTaskIds);
+    const nonParentDerivedChildTaskIds = [...new Set([...proposedChildTaskIds, ...linkedChildTaskIds])]
+        .filter((childTaskId) => !isParentDerivedChildTaskId(parentTaskId, childTaskId));
+    const unexpectedLinkedChildTaskIds = linkedChildTaskIds
+        .filter((childTaskId) => isParentDerivedChildTaskId(parentTaskId, childTaskId) && !proposedChildTaskIdSet.has(childTaskId));
+    const missingLinkedChildTaskIds = proposedChildTaskIds
+        .filter((childTaskId) => !linkedChildTaskIdSet.has(childTaskId));
+    const missingChildTaskIds = proposedChildTaskIds
+        .filter((childTaskId) => !taskEntries.has(childTaskId));
+    const nonStrictChildTaskIds = proposedChildTaskIds
+        .filter((childTaskId) => {
+            const childEntry = taskEntries.get(childTaskId);
+            return childEntry && String(childEntry.profile || '').trim().toLowerCase() !== 'strict';
+        });
+
+    const ready = proposedChildTaskIds.length > 0
+        && missingLinkedChildTaskIds.length === 0
+        && missingChildTaskIds.length === 0
+        && nonParentDerivedChildTaskIds.length === 0
+        && unexpectedLinkedChildTaskIds.length === 0
+        && nonStrictChildTaskIds.length === 0;
+
+    return {
+        ready,
+        linkedChildTaskIds,
+        missingLinkedChildTaskIds,
+        missingChildTaskIds,
+        nonParentDerivedChildTaskIds,
+        unexpectedLinkedChildTaskIds,
+        nonStrictChildTaskIds,
+        childRoute: ready
+            ? resolveNextUnfinishedChildRoute(taskEntries, parentTaskId, new Set<string>(), extractExplicitLinkedChildTaskIds)
+            : null
+    };
+}
+
+function formatStrictDecompositionSplitRoutingViolations(state: StrictDecompositionSplitRoutingState): string {
+    const violations: string[] = [];
+    if (state.missingLinkedChildTaskIds.length > 0) {
+        violations.push(`missing linked proposed child tasks: ${state.missingLinkedChildTaskIds.join(', ')}`);
+    }
+    if (state.missingChildTaskIds.length > 0) {
+        violations.push(`missing TASK.md child rows: ${state.missingChildTaskIds.join(', ')}`);
+    }
+    if (state.nonParentDerivedChildTaskIds.length > 0) {
+        violations.push(`non-parent-derived child task ids: ${state.nonParentDerivedChildTaskIds.join(', ')}`);
+    }
+    if (state.unexpectedLinkedChildTaskIds.length > 0) {
+        violations.push(`linked child tasks not declared in the decision artifact: ${state.unexpectedLinkedChildTaskIds.join(', ')}`);
+    }
+    if (state.nonStrictChildTaskIds.length > 0) {
+        violations.push(`child tasks without strict profile: ${state.nonStrictChildTaskIds.join(', ')}`);
+    }
+    if (violations.length === 0) {
+        return 'child routing is not ready';
+    }
+    return violations.join('; ');
 }
 
 type SplitRequiredGuardKind = 'scope_budget' | 'review_cycle';
@@ -1297,6 +1382,43 @@ function transitionSplitRequiredParentToDecomposed(params: {
             'Split-required latch cleared because child tasks are linked.',
             {
                 previous_status: syncResult.previous_status || SPLIT_REQUIRED_STATUS,
+                new_status: 'DECOMPOSED',
+                reason: 'child_tasks_linked'
+            },
+            { actor: 'orchestrator' }
+        );
+    }
+    return syncResult;
+}
+
+function transitionStrictDecompositionParentToDecomposed(params: {
+    repoRoot: string;
+    eventsRoot: string;
+    taskId: string;
+}): TaskQueueStatusSyncResult {
+    const syncResult = syncTaskQueueStatusDetailed(params.repoRoot, params.taskId, 'DECOMPOSED');
+    if (syncResult.outcome === 'updated') {
+        appendMandatoryTaskEvent(
+            getOrchestratorRootFromEventsRoot(params.eventsRoot),
+            params.taskId,
+            'STATUS_CHANGED',
+            'INFO',
+            `Task status changed: ${syncResult.previous_status || 'UNKNOWN'} -> DECOMPOSED.`,
+            {
+                previous_status: syncResult.previous_status || 'UNKNOWN',
+                new_status: 'DECOMPOSED',
+                reason: 'strict_decomposition_children_linked'
+            },
+            { actor: 'orchestrator' }
+        );
+        appendMandatoryTaskEvent(
+            getOrchestratorRootFromEventsRoot(params.eventsRoot),
+            params.taskId,
+            'STRICT_DECOMPOSITION_SPLIT_ROUTED',
+            'INFO',
+            'Strict split-required decision routed the parent through linked child tasks.',
+            {
+                previous_status: syncResult.previous_status || 'UNKNOWN',
                 new_status: 'DECOMPOSED',
                 reason: 'child_tasks_linked'
             },
@@ -7505,16 +7627,81 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         if (strictDecompositionEvidence.decision === 'split-required') {
+            const splitRoutingState = resolveStrictDecompositionSplitRoutingState(
+                taskEntries,
+                taskId,
+                strictDecompositionEvidence.proposed_child_task_ids
+            );
+            if (!splitRoutingState.ready) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'strict-decomposition-split-routing',
+                    title: 'Strict decomposition split decision is active.',
+                    reason:
+                        'A current strict decomposition decision says split-required, so ordinary classify, compile, review, full-suite, completion, and implementation continuation are suppressed. ' +
+                        `Risk signals: ${formatNextStepInlineList(strictDecompositionRequirement.riskSignals)}. ` +
+                        `Proposed child tasks: ${formatNextStepInlineList(strictDecompositionEvidence.proposed_child_task_ids)}. ` +
+                        `Linked child tasks: ${formatNextStepInlineList(splitRoutingState.linkedChildTaskIds)}. ` +
+                        `Child routing is not ready: ${formatStrictDecompositionSplitRoutingViolations(splitRoutingState)}. ` +
+                        'Create and link parent-derived strict child task rows that match the decision artifact before continuing; later scope-budget or review-cycle split latches remain authoritative.',
+                    commands: [],
+                    missingArtifacts: [],
+                    presentArtifacts: [...coreArtifacts.present, strictDecompositionArtifactState],
+                    finalReport: null
+                });
+            }
+
+            const syncResult = transitionStrictDecompositionParentToDecomposed({ repoRoot, eventsRoot, taskId });
+            if (syncResult.outcome !== 'updated' && syncResult.outcome !== 'already_synced') {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'strict-decomposition-split-routing',
+                    title: 'Strict decomposition child routing status sync failed.',
+                    reason:
+                        'A current strict decomposition decision says split-required and linked strict child tasks were detected, but the gate could not transition the parent to DECOMPOSED. ' +
+                        `Status sync outcome: ${formatNextStepInlineValue(syncResult.outcome)}${syncResult.error_message ? ` (${syncResult.error_message})` : ''}. ` +
+                        'Do not run parent classify, compile, review, full-suite, completion, or final closeout gates until status sync succeeds.',
+                    commands: [],
+                    missingArtifacts: [],
+                    presentArtifacts: [...coreArtifacts.present, strictDecompositionArtifactState],
+                    finalReport: null
+                });
+            }
+
+            if (splitRoutingState.childRoute) {
+                const chain = [taskId, ...splitRoutingState.childRoute.chain].join(' -> ');
+                return buildResult({
+                    ...resultBase,
+                    status: 'DECOMPOSED',
+                    nextGate: 'child-task',
+                    title: 'Strict decomposition split routed; continue with the next child.',
+                    reason:
+                        'A current strict decomposition decision says split-required, and linked parent-derived strict child tasks match the decision artifact. ' +
+                        'The gate transitioned the parent to DECOMPOSED, so it is no longer an executable lifecycle scope. ' +
+                        `Continue through child chain ${chain}; next unfinished child status is ${formatNextStepInlineValue(splitRoutingState.childRoute.status || 'unknown')}.`,
+                    commands: [
+                        buildCommand(
+                            'Continue child task',
+                            `${cliPrefix} next-step "${splitRoutingState.childRoute.taskId}" --repo-root "."`
+                        )
+                    ],
+                    missingArtifacts: [],
+                    presentArtifacts: [...coreArtifacts.present, strictDecompositionArtifactState],
+                    finalReport: null
+                });
+            }
+
             return buildResult({
                 ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'strict-decomposition-split-routing',
-                title: 'Strict decomposition split decision is active.',
+                status: 'DECOMPOSED',
+                nextGate: null,
+                title: 'Strict decomposition split routed; no unfinished child remains.',
                 reason:
-                    'A current strict decomposition decision says split-required, so ordinary classify, compile, review, full-suite, completion, and implementation continuation are suppressed. ' +
-                    `Risk signals: ${formatNextStepInlineList(strictDecompositionRequirement.riskSignals)}. ` +
-                    `Proposed child tasks: ${formatNextStepInlineList(strictDecompositionEvidence.proposed_child_task_ids)}. ` +
-                    'Create and route parent-derived strict child tasks before continuing; later scope-budget or review-cycle split latches remain authoritative.',
+                    'A current strict decomposition decision says split-required, and linked parent-derived strict child tasks match the decision artifact. ' +
+                    'The gate transitioned the parent to DECOMPOSED, but no unfinished child task could be resolved from its notes. ' +
+                    'Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
                 commands: [],
                 missingArtifacts: [],
                 presentArtifacts: [...coreArtifacts.present, strictDecompositionArtifactState],
