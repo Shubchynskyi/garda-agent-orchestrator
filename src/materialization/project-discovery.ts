@@ -460,6 +460,10 @@ export function buildDiscoveryOverlaySection(discovery: ProjectDiscovery): strin
     const dirsText = discovery.topLevelDirectories.length > 0
         ? discovery.topLevelDirectories.slice(0, 10).join(', ')
         : 'none detected';
+    const fullSuiteCommandText = discovery.suggestedFullSuiteValidationCommand
+        && discovery.suggestedFullSuiteValidationCommand !== UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
+        ? `\`${discovery.suggestedFullSuiteValidationCommand}\``
+        : 'none detected; keep workflow-config unconfigured until an operator sets a project-specific command';
 
     return [
         '## Project Discovery Snapshot',
@@ -467,6 +471,7 @@ export function buildDiscoveryOverlaySection(discovery: ProjectDiscovery): strin
         `- Files considered: ${discovery.fileCount}`,
         `- Detected stacks: ${stacksText}`,
         `- Top-level directories: ${dirsText}`,
+        `- Suggested full-suite validation command: ${fullSuiteCommandText}`,
         `- Full report: \`${resolveBundleName()}/live/project-discovery.md\``
     ].join('\r\n');
 }

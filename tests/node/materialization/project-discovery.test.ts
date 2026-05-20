@@ -146,6 +146,17 @@ describe('resolveSuggestedFullSuiteValidationCommand', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     });
+
+    it('does not fall back to npm test for unknown stacks', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-unknown-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'README.md'), '# Unknown\n', 'utf8');
+
+            assert.equal(resolveSuggestedFullSuiteValidationCommand(tmpDir), null);
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('buildProjectDiscoveryLines', () => {
@@ -201,5 +212,29 @@ describe('buildDiscoveryOverlaySection', () => {
         };
         const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);
         assert.ok(result.includes('none detected'));
+    });
+
+    it('includes discovered full-suite command in the compact snapshot', () => {
+        const discovery = {
+            source: 'filesystem_scan',
+            fileCount: 2,
+            detectedStacks: ['Java or JVM'],
+            topLevelDirectories: ['src'],
+            suggestedFullSuiteValidationCommand: './gradlew test'
+        };
+        const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);
+        assert.ok(result.includes('Suggested full-suite validation command: `./gradlew test`'));
+    });
+
+    it('keeps unknown stack full-suite guidance unconfigured in the compact snapshot', () => {
+        const discovery = {
+            source: 'filesystem_scan',
+            fileCount: 1,
+            detectedStacks: [],
+            topLevelDirectories: [],
+            suggestedFullSuiteValidationCommand: null
+        };
+        const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);
+        assert.ok(result.includes('keep workflow-config unconfigured'));
     });
 });

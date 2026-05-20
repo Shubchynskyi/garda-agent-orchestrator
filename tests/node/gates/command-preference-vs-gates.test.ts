@@ -341,23 +341,23 @@ describe('command-preference-vs-mandatory-gates rule clarity', () => {
     });
 
     describe('ad-hoc commands are still discouraged (negative parity)', () => {
-        it('live 40-commands.md still discourages ad-hoc npm run build', () => {
+        it('live 40-commands.md still discourages ad-hoc project commands', () => {
             const liveCommands = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
             assert.ok(
-                liveCommands.includes('Avoid standalone ad-hoc commands'),
+                liveCommands.includes('Avoid standalone ad-hoc build, test, or lint commands'),
                 'live 40-commands.md must still discourage ad-hoc command execution'
             );
         });
 
-        it('template 40-commands.md still discourages ad-hoc npm run build', () => {
+        it('template 40-commands.md still discourages ad-hoc project commands', () => {
             const templateCommands = readRepoFile('template/docs/agent-rules/40-commands.md');
             assert.ok(
-                templateCommands.includes('Avoid standalone ad-hoc commands'),
+                templateCommands.includes('Avoid standalone ad-hoc build, test, or lint commands'),
                 'template 40-commands.md must still discourage ad-hoc command execution'
             );
         });
 
-        it('live 40-commands.md marks direct npm run build as ad-hoc to avoid', () => {
+        it('live 40-commands.md marks direct project build as ad-hoc to avoid', () => {
             const liveCommands = readMaterializedBundleFile('live/docs/agent-rules/40-commands.md');
             assert.ok(
                 liveCommands.includes('Ad-hoc - avoid as routine task validation'),

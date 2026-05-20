@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import { runInit, mergeConfig } from '../../../src/materialization/init';
 import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../src/core/project-memory-rollout';
+import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../src/core/constants';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -533,6 +534,69 @@ describe('runInit', () => {
 
             const initReport = fs.readFileSync(result.initReportPath, 'utf8');
             assert.ok(initReport.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps Java workspace full-suite config unconfigured and reports Gradle discovery', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(path.join(projectRoot, 'build.gradle.kts'), 'plugins {}\n', 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'gradlew.bat'), '@echo off\r\n', 'utf8');
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const workflowConfig = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+                'utf8'
+            ));
+            const discovery = fs.readFileSync(result.projectDiscoveryPath, 'utf8');
+            const commands = fs.readFileSync(
+                path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+                'utf8'
+            );
+
+            assert.equal(workflowConfig.full_suite_validation.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
+            assert.equal(workflowConfig.full_suite_validation.enabled, false);
+            assert.ok(discovery.includes('Java or JVM'));
+            assert.ok(discovery.includes('`build.gradle.kts`'));
+            assert.ok(discovery.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat test' : './gradlew test') + '`'));
+            assert.ok(commands.includes('Use the command detected in `garda-agent-orchestrator/live/project-discovery.md`'));
+            assert.ok(!commands.includes('### Test\r\n```bash\r\nnpm test'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps unknown-stack workspace full-suite config unconfigured', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(path.join(projectRoot, 'README.md'), '# Unknown project\n', 'utf8');
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const workflowConfig = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+                'utf8'
+            ));
+            const discovery = fs.readFileSync(result.projectDiscoveryPath, 'utf8');
+
+            assert.equal(workflowConfig.full_suite_validation.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
+            assert.equal(workflowConfig.full_suite_validation.enabled, false);
+            assert.ok(discovery.includes('No deterministic full-suite command detected yet.'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
