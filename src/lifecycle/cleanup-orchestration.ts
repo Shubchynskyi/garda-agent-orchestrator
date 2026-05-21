@@ -11,6 +11,7 @@ import {
     buildCategorySummary,
     cleanupStaleTaskEventLocks,
     collectIsolationSandbox,
+    collectRuntimeRetentionCandidates,
     collectStaleLifecycleLock,
     collectStaleTaskEventLockCandidates,
     collectStandardCandidates,
@@ -68,9 +69,17 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
     const runtimeDir = path.join(bundleRoot, 'runtime');
     const now = new Date();
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
-    const candidates = collectStandardCandidates(runtimeDir, policy, now, activeTaskIds);
-    const runtimeRetentionPreview = buildRuntimeRetentionPreview(targetRoot, bundleRoot, candidates);
-    const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun);
+    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds);
+    const candidates = [
+        ...collectStandardCandidates(runtimeDir, policy, now, activeTaskIds),
+        ...runtimeRetentionCandidates.compactionCandidates
+    ];
+    const runtimeRetentionPreview = buildRuntimeRetentionPreview(
+        targetRoot,
+        bundleRoot,
+        runtimeRetentionCandidates.previewCandidates.map((item) => ({ path: item.path, category: item.category }))
+    );
+    const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun, runtimeDir);
 
     if (!dryRun && removed.some((item) => item.category === 'reviews')) {
         try {
@@ -154,7 +163,11 @@ export function runGc(options: GcOptions): GcResult {
     const runtimeDir = path.join(bundleRoot, 'runtime');
     const now = new Date();
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
-    const standardCandidates = collectStandardCandidates(runtimeDir, policy, now, activeTaskIds);
+    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds);
+    const standardCandidates = [
+        ...collectStandardCandidates(runtimeDir, policy, now, activeTaskIds),
+        ...runtimeRetentionCandidates.compactionCandidates
+    ];
     const isolationItems = collectIsolationSandbox(runtimeDir, policy.maxAgeDays, now);
     const staleLockItems = collectStaleLifecycleLock(runtimeDir);
     const shouldCleanTaskEventLocks = !filterCategories || filterCategories.has('task-events');
@@ -166,14 +179,18 @@ export function runGc(options: GcOptions): GcResult {
     if (filterCategories) {
         allCandidates = allCandidates.filter((item) => filterCategories.has(item.category));
     }
-    const runtimeRetentionPreview = buildRuntimeRetentionPreview(targetRoot, bundleRoot, allCandidates);
+    const runtimeRetentionPreview = buildRuntimeRetentionPreview(
+        targetRoot,
+        bundleRoot,
+        runtimeRetentionCandidates.previewCandidates.map((item) => ({ path: item.path, category: item.category }))
+    );
 
     const {
         removed,
         skipped,
         errors,
         totalFreedBytes: standardFreedBytes
-    } = processCleanupCandidates(allCandidates, dryRun);
+    } = processCleanupCandidates(allCandidates, dryRun, runtimeDir);
     let totalFreedBytes = standardFreedBytes;
 
     if (!dryRun && removed.some((item) => item.category === 'reviews')) {
@@ -220,7 +237,17 @@ export function runGc(options: GcOptions): GcResult {
     let storagePolicyResult: GcResult['storagePolicyResult'];
     if (shouldApplyStoragePolicy && confirm) {
         const storagePolicy = options.storagePolicy ?? loadStoragePolicy(bundleRoot);
-        storagePolicyResult = applyStoragePolicy(path.join(runtimeDir, 'reviews'), storagePolicy, activeTaskIds);
+        const protectedReviewTaskIds = new Set(activeTaskIds);
+        for (const task of runtimeRetentionPreview.tasks) {
+            const compactableHealthyDone = task.health_state === 'healthy_done'
+                && task.retention_tier === 'compact_ledger_candidate'
+                && task.ledger_status === 'VERIFIED'
+                && task.eligible_now;
+            if (!compactableHealthyDone) {
+                protectedReviewTaskIds.add(task.task_id);
+            }
+        }
+        storagePolicyResult = applyStoragePolicy(path.join(runtimeDir, 'reviews'), storagePolicy, protectedReviewTaskIds, runtimeDir);
     }
 
     const shouldPruneAggregate = !filterCategories || filterCategories.has('task-events');

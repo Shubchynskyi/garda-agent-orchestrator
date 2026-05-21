@@ -37,7 +37,7 @@ function writeFixture(filePath: string, content: string): void {
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
-test('gc reports review-artifact storage policy actions instead of no-op output', () => {
+test('gc keeps review artifacts when summary storage would target a task without a verified ledger', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-gc-cli-'));
     try {
         const bundleRoot = path.join(tmpDir, 'garda-agent-orchestrator');
@@ -67,10 +67,9 @@ test('gc reports review-artifact storage policy actions instead of no-op output'
 
         const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
         assert.equal(result.status, 0, combined);
-        assert.ok(!combined.includes('Nothing to clean up.'), combined);
-        assert.ok(combined.includes('Removed review artifacts:'), combined);
+        assert.ok(combined.includes('Nothing to clean up.'), combined);
         assert.ok(fs.existsSync(path.join(reviewsDir, 'T-099-task-mode.json')));
-        assert.ok(!fs.existsSync(path.join(reviewsDir, 'T-099-code-review-context.json')));
+        assert.ok(fs.existsSync(path.join(reviewsDir, 'T-099-code-review-context.json')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

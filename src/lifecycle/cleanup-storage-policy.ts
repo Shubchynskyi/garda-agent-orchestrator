@@ -4,9 +4,10 @@ import * as zlib from 'node:zlib';
 import { KNOWN_SUFFIXES, invalidateIndex as invalidateReviewsIndex } from '../gate-runtime/reviews-index';
 import {
     parseActiveReviewArtifactTaskId,
-    parseConventionalReviewArtifactTaskId,
     parseKnownReviewArtifactTaskId
 } from '../core/task-ids';
+import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
+import { ensureWithinRoot } from './generic-utils';
 import type {
     ReviewArtifactRetentionMode,
     ReviewArtifactStoragePolicy,
@@ -78,7 +79,8 @@ export function compressFileGzip(filePath: string): string {
 export function applyStoragePolicy(
     reviewsDir: string,
     policy: ReviewArtifactStoragePolicy,
-    activeTaskIds: Set<string>
+    protectedTaskIds: Set<string>,
+    runtimeRoot = path.dirname(reviewsDir)
 ): StoragePolicyResult {
     const result: StoragePolicyResult = {
         compressed: [],
@@ -87,11 +89,18 @@ export function applyStoragePolicy(
         retentionMode: policy.retentionMode
     };
 
-    if (!fs.existsSync(reviewsDir)) return result;
+    let safeReviewsDir: string;
+    try {
+        safeReviewsDir = ensureWithinRoot(runtimeRoot, reviewsDir, 'Reviews directory');
+    } catch {
+        return result;
+    }
+
+    if (!fs.existsSync(safeReviewsDir)) return result;
 
     let entries: string[];
     try {
-        entries = fs.readdirSync(reviewsDir).sort();
+        entries = fs.readdirSync(safeReviewsDir).sort();
     } catch {
         return result;
     }
@@ -104,12 +113,20 @@ export function applyStoragePolicy(
     for (const entry of entries) {
         if (!entry.endsWith('.json') && !entry.endsWith('.md') && !entry.endsWith('.diff')) continue;
 
-        const filePath = path.join(reviewsDir, entry);
-        const taskId = parseActiveReviewArtifactTaskId(entry, activeTaskIds)
-            ?? parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES)
-            ?? parseConventionalReviewArtifactTaskId(entry);
+        const filePath = path.join(safeReviewsDir, entry);
+        let safeFilePath: string;
+        try {
+            safeFilePath = ensureWithinRoot(runtimeRoot, filePath, 'Review artifact');
+        } catch {
+            result.preserved.push(entry);
+            continue;
+        }
+        const knownTaskId = parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES);
+        const taskId = parseActiveReviewArtifactTaskId(entry, protectedTaskIds)
+            ?? knownTaskId
+            ?? resolveStructuredOrJsonReviewArtifactTaskId(safeFilePath, entry);
         if (!taskId) continue;
-        if (activeTaskIds.has(taskId)) {
+        if (protectedTaskIds.has(taskId)) {
             result.preserved.push(entry);
             continue;
         }
@@ -121,7 +138,7 @@ export function applyStoragePolicy(
                 result.preserved.push(entry);
             } else {
                 try {
-                    fs.unlinkSync(filePath);
+                    fs.unlinkSync(safeFilePath);
                     result.removed.push(entry);
                 } catch {
                     result.preserved.push(entry);
@@ -135,7 +152,7 @@ export function applyStoragePolicy(
                 result.preserved.push(entry);
             } else {
                 try {
-                    fs.unlinkSync(filePath);
+                    fs.unlinkSync(safeFilePath);
                     result.removed.push(entry);
                 } catch {
                     result.preserved.push(entry);
@@ -146,9 +163,9 @@ export function applyStoragePolicy(
 
         if (compressCutoffMs > 0) {
             try {
-                const stat = fs.statSync(filePath);
+                const stat = fs.statSync(safeFilePath);
                 if (now - stat.mtimeMs > compressCutoffMs) {
-                    compressFileGzip(filePath);
+                    compressFileGzip(safeFilePath);
                     result.compressed.push(entry);
                     continue;
                 }
@@ -162,7 +179,7 @@ export function applyStoragePolicy(
 
     if (result.removed.length > 0 || result.compressed.length > 0) {
         try {
-            invalidateReviewsIndex(reviewsDir);
+            invalidateReviewsIndex(safeReviewsDir);
         } catch {
             // Best-effort index invalidation.
         }

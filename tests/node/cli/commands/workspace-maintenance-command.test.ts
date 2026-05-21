@@ -125,9 +125,9 @@ test('handleCleanup prints runtime retention preview lines during dry-run cleanu
     try {
         const { lines } = await captureConsoleAsync(() => handleCleanup(['--target-root', projectRoot, '--dry-run'], PACKAGE_JSON));
         assert.ok(lines.some((line) => line.includes('RuntimeRetentionPreviewTasks: 1')));
-        assert.ok(lines.some((line) => line.includes('RuntimeRetentionEligibleNow: 1')));
+        assert.ok(lines.some((line) => line.includes('RuntimeRetentionEligibleNow: 0')));
         assert.ok(lines.some((line) => line.includes('RuntimeRetentionLedgerStatus: verified=0, missing=1, incomplete=0, contradictory=0, invalid=0')));
-        assert.ok(lines.some((line) => line.includes('RuntimeRetentionSample: T-002:healthy_done->compact_ledger_candidate:MISSING:eligible')));
+        assert.ok(lines.some((line) => line.includes('RuntimeRetentionSample: T-002:healthy_done->compact_ledger_candidate:MISSING')));
     } finally {
         fs.rmSync(projectRoot, { recursive: true, force: true });
     }
@@ -139,9 +139,9 @@ test('handleGc prints runtime retention preview lines during dry-run gc', async 
     try {
         const { lines } = await captureConsoleAsync(() => handleGc(['--target-root', projectRoot], PACKAGE_JSON));
         assert.ok(lines.some((line) => line.includes('RuntimeRetentionPreviewTasks: 1')));
-        assert.ok(lines.some((line) => line.includes('RuntimeRetentionEligibleNow: 1')));
+        assert.ok(lines.some((line) => line.includes('RuntimeRetentionEligibleNow: 0')));
         assert.ok(lines.some((line) => line.includes('RuntimeRetentionLedgerStatus: verified=0, missing=1, incomplete=0, contradictory=0, invalid=0')));
-        assert.ok(lines.some((line) => line.includes('RuntimeRetentionSample: T-002:healthy_done->compact_ledger_candidate:MISSING:eligible')));
+        assert.ok(lines.some((line) => line.includes('RuntimeRetentionSample: T-002:healthy_done->compact_ledger_candidate:MISSING')));
     } finally {
         fs.rmSync(projectRoot, { recursive: true, force: true });
     }
