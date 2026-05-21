@@ -23,6 +23,7 @@ import {
     type ReviewArtifactStoragePolicy,
     type StoragePolicyResult
 } from '../../../src/lifecycle/cleanup';
+import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
 
 function makeTmpDir(prefix: string): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -90,6 +91,41 @@ function writeTaskTimeline(
         'utf8'
     );
     return filePath;
+}
+
+function writeTimelineSummary(
+    eventsDir: string,
+    taskId: string,
+    options: {
+        completenessStatus: string;
+        integrityStatus?: string;
+        eventsFound?: string[];
+        eventsMissing?: string[];
+    }
+): void {
+    const timelinePath = path.join(eventsDir, `${taskId}.jsonl`);
+    const stat = fs.statSync(timelinePath);
+    const summaryPath = path.join(eventsDir, '.timeline-summary.json');
+    const existing = fs.existsSync(summaryPath)
+        ? JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { version: number; updated_at_utc: string; entries: Record<string, unknown> }
+        : { version: 2, updated_at_utc: new Date().toISOString(), entries: {} };
+    existing.entries[taskId] = {
+        task_id: taskId,
+        file_size_bytes: stat.size,
+        file_mtime_ms: Math.floor(stat.mtimeMs),
+        code_changed: true,
+        completeness_status: options.completenessStatus,
+        events_found: options.eventsFound || ['TASK_MODE_ENTERED', 'COMPLETION_GATE_PASSED'],
+        events_missing: options.eventsMissing || [],
+        completeness_violations: [],
+        integrity_status: options.integrityStatus || 'PASS',
+        events_scanned: 2,
+        integrity_event_count: 2,
+        integrity_violations: [],
+        written_at_ms: Date.now()
+    };
+    existing.updated_at_utc = new Date().toISOString();
+    fs.writeFileSync(summaryPath, JSON.stringify(existing, null, 2) + '\n', 'utf8');
 }
 
 function createReviewArtifacts(reviewsDir: string, taskId: string): string[] {
@@ -401,6 +437,135 @@ describe('runCleanup', () => {
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'terminal runtime task review artifacts should still be eligible for cleanup');
         assert.equal(fs.existsSync(inactiveEventPath), false, 'terminal runtime task timeline should still be eligible for cleanup');
         assert.ok(result.removed.some((item) => item.path.endsWith('T-002-task-mode.json')));
+    });
+
+    it('builds a runtime retention preview for eligible cleanup candidates', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Active task' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        const plansDir = path.join(runtimeDir, 'plans');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(plansDir, { recursive: true });
+
+        createReviewArtifacts(reviewsDir, 'T-001');
+        createReviewArtifacts(reviewsDir, 'T-002');
+        fs.writeFileSync(path.join(plansDir, 'T-001.md'), '# active\n', 'utf8');
+        fs.writeFileSync(path.join(plansDir, 'T-002.md'), '# done\n', 'utf8');
+        writeTaskTimeline(eventsDir, 'T-001', [
+            { event_type: 'TASK_MODE_ENTERED' },
+            { event_type: 'STATUS_CHANGED', details: { previous_status: 'TODO', new_status: 'IN_PROGRESS' } }
+        ]);
+        appendTaskEvent(bundleRoot, 'T-002', 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-002', 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+            previous_status: 'IN_REVIEW',
+            new_status: 'DONE'
+        }, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-002', 'COMPLETION_GATE_PASSED', 'PASS', 'Completion gate passed.', {}, { passThru: true });
+        writeTimelineSummary(eventsDir, 'T-001', {
+            completenessStatus: 'INCOMPLETE',
+            eventsMissing: ['COMPLETION_GATE_PASSED']
+        });
+        writeTimelineSummary(eventsDir, 'T-002', {
+            completenessStatus: 'COMPLETE'
+        });
+
+        const past = daysAgo(45);
+        for (const entryPath of [
+            path.join(reviewsDir, 'T-001-task-mode.json'),
+            path.join(reviewsDir, 'T-002-task-mode.json'),
+            path.join(eventsDir, 'T-001.jsonl'),
+            path.join(eventsDir, 'T-002.jsonl'),
+            path.join(plansDir, 'T-001.md'),
+            path.join(plansDir, 'T-002.md')
+        ]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: true,
+            retentionPolicy: { maxAgeDays: 30, maxReviews: 100, maxTaskEvents: 100 }
+        });
+
+        assert.ok(result.runtimeRetentionPreview);
+        assert.equal(result.runtimeRetentionPreview!.task_count, 1);
+        const activeTask = result.runtimeRetentionPreview!.tasks.find((task) => task.task_id === 'T-001');
+        const doneTask = result.runtimeRetentionPreview!.tasks.find((task) => task.task_id === 'T-002');
+        assert.ok(doneTask);
+        assert.equal(activeTask, undefined);
+        assert.equal(doneTask!.health_state, 'healthy_done');
+        assert.equal(doneTask!.retention_tier, 'compact_ledger_candidate');
+    });
+
+    it('builds a runtime retention preview for eligible gc candidates', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Active task' },
+            { id: 'T-002', status: '🟩 DONE', title: 'Completed task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        const plansDir = path.join(runtimeDir, 'plans');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(plansDir, { recursive: true });
+
+        createReviewArtifacts(reviewsDir, 'T-001');
+        createReviewArtifacts(reviewsDir, 'T-002');
+        fs.writeFileSync(path.join(plansDir, 'T-001.md'), '# active plan\n', 'utf8');
+        fs.writeFileSync(path.join(plansDir, 'T-002.md'), '# completed plan\n', 'utf8');
+        appendTaskEvent(bundleRoot, 'T-001', 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-001', 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+            previous_status: 'TODO',
+            new_status: 'IN_PROGRESS'
+        }, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-002', 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-002', 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+            previous_status: 'IN_REVIEW',
+            new_status: 'DONE'
+        }, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-002', 'COMPLETION_GATE_PASSED', 'PASS', 'Completion gate passed.', {}, { passThru: true });
+        writeTimelineSummary(eventsDir, 'T-001', {
+            completenessStatus: 'INCOMPLETE',
+            eventsMissing: ['COMPLETION_GATE_PASSED']
+        });
+        writeTimelineSummary(eventsDir, 'T-002', {
+            completenessStatus: 'COMPLETE'
+        });
+
+        const past = daysAgo(45);
+        for (const entryPath of [
+            path.join(reviewsDir, 'T-001-task-mode.json'),
+            path.join(reviewsDir, 'T-002-task-mode.json'),
+            path.join(eventsDir, 'T-001.jsonl'),
+            path.join(eventsDir, 'T-002.jsonl'),
+            path.join(plansDir, 'T-001.md'),
+            path.join(plansDir, 'T-002.md')
+        ]) {
+            fs.utimesSync(entryPath, past, past);
+        }
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: false,
+            retentionPolicy: { maxAgeDays: 30, maxReviews: 100, maxTaskEvents: 100 }
+        });
+
+        assert.ok(result.runtimeRetentionPreview);
+        assert.equal(result.runtimeRetentionPreview!.task_count, 1);
+        const activeTask = result.runtimeRetentionPreview!.tasks.find((task) => task.task_id === 'T-001');
+        const doneTask = result.runtimeRetentionPreview!.tasks.find((task) => task.task_id === 'T-002');
+        assert.ok(doneTask);
+        assert.equal(activeTask, undefined);
+        assert.equal(doneTask!.health_state, 'healthy_done');
+        assert.equal(doneTask!.retention_tier, 'compact_ledger_candidate');
     });
 
     it('preserves a fresh lifecycle restart after an older terminal status', () => {

@@ -1,4 +1,5 @@
 import type { ReviewArtifactRetentionMode } from '../schemas/config-schemas';
+import type { RuntimeRetentionPreviewSummary } from './runtime-retention-policy';
 
 export type { ReviewArtifactRetentionMode };
 
@@ -58,6 +59,7 @@ export interface CleanupResult {
     totalFreedBytes: number;
     result: string;
     aggregateRetention?: { pruned: boolean; lines_before: number; lines_after: number };
+    runtimeRetentionPreview?: RuntimeRetentionPreviewSummary;
 }
 
 export interface GcResult extends CleanupResult {

@@ -6,6 +6,7 @@ import { pruneTimelineSummaryEntries } from '../gate-runtime/timeline-summary';
 import { validateTargetRoot } from './lifecycle-common';
 import { withLifecycleOperationLock } from './lifecycle-lock';
 import { applyStoragePolicy, loadStoragePolicy } from './cleanup-storage-policy';
+import { buildRuntimeRetentionPreview } from './runtime-retention-policy';
 import {
     buildCategorySummary,
     cleanupStaleTaskEventLocks,
@@ -68,6 +69,7 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
     const now = new Date();
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
     const candidates = collectStandardCandidates(runtimeDir, policy, now, activeTaskIds);
+    const runtimeRetentionPreview = buildRuntimeRetentionPreview(targetRoot, bundleRoot, candidates);
     const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun);
 
     if (!dryRun && removed.some((item) => item.category === 'reviews')) {
@@ -104,7 +106,8 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
         errors,
         totalFreedBytes,
         result: errors.length > 0 ? 'PARTIAL' : 'SUCCESS',
-        aggregateRetention
+        aggregateRetention,
+        runtimeRetentionPreview
     };
 }
 
@@ -163,6 +166,7 @@ export function runGc(options: GcOptions): GcResult {
     if (filterCategories) {
         allCandidates = allCandidates.filter((item) => filterCategories.has(item.category));
     }
+    const runtimeRetentionPreview = buildRuntimeRetentionPreview(targetRoot, bundleRoot, allCandidates);
 
     const {
         removed,
@@ -244,7 +248,8 @@ export function runGc(options: GcOptions): GcResult {
         isolationSandboxCleaned,
         categories: buildCategorySummary(actionItems),
         storagePolicyResult,
-        aggregateRetention
+        aggregateRetention,
+        runtimeRetentionPreview
     };
 }
 

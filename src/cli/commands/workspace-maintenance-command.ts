@@ -37,6 +37,7 @@ import {
     normalizeYesNo,
     ParsedOptionsRecord
 } from './shared-command-utils';
+import { formatRuntimeRetentionPreviewLines } from '../../lifecycle/runtime-retention-policy';
 import {
     handleStandardFlags,
     resolveInitAnswersPath,
@@ -363,6 +364,11 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
     formatKeyValueOutput(cleanupResult as unknown as Record<string, unknown>, [
         'targetRoot', 'dryRun', 'totalFreedBytes', 'result'
     ]);
+    if (cleanupResult.runtimeRetentionPreview) {
+        for (const line of formatRuntimeRetentionPreviewLines(cleanupResult.runtimeRetentionPreview)) {
+            console.log(line);
+        }
+    }
 
     const removedOrSkipped = dryRun ? cleanupResult.skipped : cleanupResult.removed;
     if (removedOrSkipped.length === 0) {
@@ -485,6 +491,11 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
     formatKeyValueOutput(gcResult as unknown as Record<string, unknown>, [
         'targetRoot', 'dryRun', 'totalFreedBytes', 'staleLocksCleaned', 'result'
     ]);
+    if (gcResult.runtimeRetentionPreview) {
+        for (const line of formatRuntimeRetentionPreviewLines(gcResult.runtimeRetentionPreview)) {
+            console.log(line);
+        }
+    }
 
     const actionItems = gcResult.dryRun ? gcResult.skipped : gcResult.removed;
     const storagePolicyActions = countStoragePolicyActions(gcResult.storagePolicyResult);
