@@ -286,7 +286,13 @@ export function runGc(options: GcOptions): GcResult {
                 protectedReviewTaskIds.add(task.task_id);
             }
         }
-        storagePolicyResult = applyStoragePolicy(path.join(runtimeDir, 'reviews'), storagePolicy, protectedReviewTaskIds, runtimeDir);
+        storagePolicyResult = applyStoragePolicy(
+            path.join(runtimeDir, 'reviews'),
+            storagePolicy,
+            protectedReviewTaskIds,
+            runtimeDir,
+            runtimeRetentionCandidates.boundedTaskIds ?? undefined
+        );
         const forensicCompressionResult = applyForensicCompressionPolicy(
             path.join(runtimeDir, 'reviews'),
             forensicCompressionTaskIds,

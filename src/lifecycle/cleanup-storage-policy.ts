@@ -192,7 +192,8 @@ export function applyStoragePolicy(
     reviewsDir: string,
     policy: ReviewArtifactStoragePolicy,
     protectedTaskIds: Set<string>,
-    runtimeRoot = path.dirname(reviewsDir)
+    runtimeRoot = path.dirname(reviewsDir),
+    targetTaskIds?: ReadonlySet<string>
 ): StoragePolicyResult {
     const result = buildEmptyStoragePolicyResult(policy.retentionMode);
 
@@ -233,6 +234,10 @@ export function applyStoragePolicy(
             ?? knownTaskId
             ?? resolveStructuredOrJsonReviewArtifactTaskId(safeFilePath, entry);
         if (!taskId) continue;
+        if (targetTaskIds && !targetTaskIds.has(taskId)) {
+            result.preserved.push(entry);
+            continue;
+        }
         if (protectedTaskIds.has(taskId)) {
             result.preserved.push(entry);
             continue;

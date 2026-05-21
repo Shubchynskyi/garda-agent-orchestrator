@@ -25,6 +25,7 @@ export interface RuntimeRetentionCandidateSelection {
     previewCandidates: CleanupItem[];
     compactionCandidates: CleanupItem[];
     selectedTaskIds: Set<string>;
+    boundedTaskIds: Set<string> | null;
 }
 
 function parseReviewArtifactTaskId(filePath: string, fileName: string): string | null {
@@ -307,7 +308,8 @@ function parseMarkdownWorkingPlanTaskId(fileName: string): string | null {
 
 function collectTaskReviewArtifactsInventory(
     reviewsDir: string,
-    activeTaskIds: ReadonlySet<string>
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
     if (!fs.existsSync(reviewsDir)) return [];
     const items: CleanupItem[] = [];
@@ -327,6 +329,9 @@ function collectTaskReviewArtifactsInventory(
         const entryPath = path.join(reviewsDir, entry);
         const taskId = parseReviewArtifactTaskId(entryPath, entry);
         if (!taskId) {
+            continue;
+        }
+        if (taskIdFilter && !taskIdFilter.has(taskId)) {
             continue;
         }
         try {
@@ -350,7 +355,8 @@ function collectTaskReviewArtifactsInventory(
 
 function collectTaskTimelineArtifactsInventory(
     eventsDir: string,
-    activeTaskIds: ReadonlySet<string>
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
     if (!fs.existsSync(eventsDir)) return [];
     const items: CleanupItem[] = [];
@@ -368,6 +374,9 @@ function collectTaskTimelineArtifactsInventory(
         }
         const taskId = entry.replace(/\.jsonl$/, '');
         if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+            continue;
+        }
+        if (taskIdFilter && !taskIdFilter.has(taskId)) {
             continue;
         }
         const entryPath = path.join(eventsDir, entry);
@@ -439,7 +448,8 @@ function collectOrphanedCompletenessCaches(
 
 function collectTaskProjectMemoryArtifactsInventory(
     projectMemoryDir: string,
-    activeTaskIds: ReadonlySet<string>
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
     if (!fs.existsSync(projectMemoryDir)) return [];
     const items: CleanupItem[] = [];
@@ -457,6 +467,9 @@ function collectTaskProjectMemoryArtifactsInventory(
             continue;
         }
         if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+            continue;
+        }
+        if (taskIdFilter && !taskIdFilter.has(taskId)) {
             continue;
         }
         const entryPath = path.join(projectMemoryDir, entry);
@@ -492,7 +505,8 @@ function parseProjectMemoryArtifactTaskId(fileName: string): string | null {
 
 function collectTaskWorkingPlanArtifactsInventory(
     plansDir: string,
-    activeTaskIds: ReadonlySet<string>
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
     if (!fs.existsSync(plansDir)) return [];
     const items: CleanupItem[] = [];
@@ -508,6 +522,9 @@ function collectTaskWorkingPlanArtifactsInventory(
     for (const entry of entries) {
         const taskId = parseMarkdownWorkingPlanTaskId(entry);
         if (!taskId || activeTaskIdsLower.has(taskId.toLowerCase())) {
+            continue;
+        }
+        if (taskIdFilter && !taskIdFilter.has(taskId)) {
             continue;
         }
         const entryPath = path.join(plansDir, entry);
@@ -532,14 +549,60 @@ function collectTaskWorkingPlanArtifactsInventory(
 
 function collectTaskScopedArtifactInventory(
     runtimeDir: string,
-    activeTaskIds: ReadonlySet<string>
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
     return [
-        ...collectTaskReviewArtifactsInventory(path.join(runtimeDir, 'reviews'), activeTaskIds),
-        ...collectTaskTimelineArtifactsInventory(path.join(runtimeDir, 'task-events'), activeTaskIds),
-        ...collectTaskWorkingPlanArtifactsInventory(path.join(runtimeDir, 'plans'), activeTaskIds),
-        ...collectTaskProjectMemoryArtifactsInventory(path.join(runtimeDir, 'project-memory'), activeTaskIds)
+        ...collectTaskReviewArtifactsInventory(path.join(runtimeDir, 'reviews'), activeTaskIds, taskIdFilter),
+        ...collectTaskTimelineArtifactsInventory(path.join(runtimeDir, 'task-events'), activeTaskIds, taskIdFilter),
+        ...collectTaskWorkingPlanArtifactsInventory(path.join(runtimeDir, 'plans'), activeTaskIds, taskIdFilter),
+        ...collectTaskProjectMemoryArtifactsInventory(path.join(runtimeDir, 'project-memory'), activeTaskIds, taskIdFilter)
     ];
+}
+
+function addCandidateTaskId(taskIds: Set<string>, taskId: string | null, activeTaskIds: ReadonlySet<string>): void {
+    if (!taskId || !isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+        return;
+    }
+    taskIds.add(taskId);
+}
+
+function collectTaskScopedArtifactTaskIds(runtimeDir: string, activeTaskIds: ReadonlySet<string>): string[] {
+    const taskIds = new Set<string>();
+
+    for (const entry of directoryEntries(path.join(runtimeDir, 'reviews'))) {
+        if (parseActiveReviewArtifactTaskId(entry, activeTaskIds)) {
+            continue;
+        }
+        addCandidateTaskId(
+            taskIds,
+            parseReviewArtifactTaskId(path.join(runtimeDir, 'reviews', entry), entry),
+            activeTaskIds
+        );
+    }
+
+    for (const entry of directoryEntries(path.join(runtimeDir, 'task-events'))) {
+        if (entry.endsWith('.jsonl') && entry !== 'all-tasks.jsonl') {
+            addCandidateTaskId(taskIds, entry.replace(/\.jsonl$/, ''), activeTaskIds);
+        }
+    }
+
+    for (const entry of directoryEntries(path.join(runtimeDir, 'plans'))) {
+        addCandidateTaskId(taskIds, parseMarkdownWorkingPlanTaskId(entry), activeTaskIds);
+    }
+
+    for (const entry of directoryEntries(path.join(runtimeDir, 'project-memory'))) {
+        addCandidateTaskId(taskIds, parseProjectMemoryArtifactTaskId(entry), activeTaskIds);
+    }
+
+    return Array.from(taskIds).sort((left, right) => left.localeCompare(right));
+}
+
+function normalizePositiveIntegerLimit(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return null;
+    }
+    return Math.floor(value);
 }
 
 export function collectRuntimeRetentionCandidates(
@@ -549,7 +612,11 @@ export function collectRuntimeRetentionCandidates(
     options: { maxEligibleTasks?: number } = {}
 ): RuntimeRetentionCandidateSelection {
     const runtimeDir = path.join(bundleRoot, 'runtime');
-    const previewCandidates = collectTaskScopedArtifactInventory(runtimeDir, activeTaskIds);
+    const maxEligibleTasks = normalizePositiveIntegerLimit(options.maxEligibleTasks);
+    const boundedTaskIds = maxEligibleTasks === null
+        ? null
+        : new Set(collectTaskScopedArtifactTaskIds(runtimeDir, activeTaskIds).slice(0, maxEligibleTasks));
+    const previewCandidates = collectTaskScopedArtifactInventory(runtimeDir, activeTaskIds, boundedTaskIds ?? undefined);
     const preview = buildRuntimeRetentionPreview(
         targetRoot,
         bundleRoot,
@@ -568,10 +635,9 @@ export function collectRuntimeRetentionCandidates(
                 )
             )
             .map((task) => task.task_id);
-    const maxEligibleTasks = options.maxEligibleTasks;
     const selectedTaskIds = new Set(
-        typeof maxEligibleTasks === 'number' && Number.isFinite(maxEligibleTasks) && maxEligibleTasks > 0
-            ? eligibleTaskIds.slice(0, Math.floor(maxEligibleTasks))
+        maxEligibleTasks !== null
+            ? eligibleTaskIds.slice(0, maxEligibleTasks)
             : eligibleTaskIds
     );
     const compactableLedgerTaskIds = new Set(
@@ -589,6 +655,7 @@ export function collectRuntimeRetentionCandidates(
     return {
         previewCandidates,
         selectedTaskIds,
+        boundedTaskIds,
         compactionCandidates: previewCandidates
             .filter((item) => item.taskId && compactableLedgerTaskIds.has(item.taskId))
             .map((item) => ({

@@ -2645,6 +2645,78 @@ describe('runGc with storage policy', () => {
         assert.equal(result.storagePolicyResult?.removed.some((entry) => entry.startsWith('T-700-')), false);
     });
 
+    it('bounds forensic compression to selected problem tasks', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-710', status: '🟥 BLOCKED', title: 'Blocked task' },
+            { id: 'T-711', status: '🟥 BLOCKED', title: 'Blocked task' }
+        ]);
+        writeRuntimeRetentionPolicy(bundleRoot, { preserveDetailedEvidence: false });
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const seedBlockedProblemTask = (taskId: string): string => {
+            const compileLogPath = path.join(reviewsDir, `${taskId}-compile-output.log`);
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-task-mode.json`), JSON.stringify({ task_id: taskId }), 'utf8');
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-preflight.json`), JSON.stringify({ task_id: taskId }), 'utf8');
+            fs.writeFileSync(compileLogPath, `${taskId} failure output\n`, 'utf8');
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-code-review-context.json`), JSON.stringify({ task_id: taskId }), 'utf8');
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-code-scoped.diff`), 'diff --git a/file b/file\n', 'utf8');
+            appendTaskEvent(bundleRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+            appendTaskEvent(bundleRoot, taskId, 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+                previous_status: 'IN_PROGRESS',
+                new_status: 'BLOCKED'
+            }, { passThru: true });
+            appendTaskEvent(bundleRoot, taskId, 'TASK_BLOCKED', 'FAIL', 'Task blocked.', {}, { passThru: true });
+            writeTimelineSummary(eventsDir, taskId, {
+                completenessStatus: 'INCOMPLETE',
+                eventsFound: ['TASK_MODE_ENTERED', 'STATUS_CHANGED', 'TASK_BLOCKED']
+            });
+            return compileLogPath;
+        };
+
+        const selectedCompileLogPath = seedBlockedProblemTask('T-710');
+        const unselectedCompileLogPath = seedBlockedProblemTask('T-711');
+        const past = daysAgo(45);
+        for (const artifactPath of [
+            ...fs.readdirSync(reviewsDir).map((entry) => path.join(reviewsDir, entry)),
+            path.join(eventsDir, 'T-710.jsonl'),
+            path.join(eventsDir, 'T-711.jsonl')
+        ]) {
+            fs.utimesSync(artifactPath, past, past);
+        }
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            runtimeRetentionTaskLimit: 1,
+            retentionPolicy: { maxAgeDays: 365, maxReviews: 1000, maxTaskEvents: 1000 },
+            storagePolicy: {
+                retentionMode: 'none',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: false,
+                gateReceiptSuffixes: []
+            }
+        });
+
+        assert.equal(result.runtimeRetentionPreview?.task_count, 1);
+        assert.equal(result.runtimeRetentionPreview?.tasks[0]?.task_id, 'T-710');
+        assert.ok(result.storagePolicyResult?.compressed.includes('T-710-compile-output.log'));
+        assert.equal(fs.existsSync(selectedCompileLogPath), false);
+        assert.equal(fs.existsSync(`${selectedCompileLogPath}.gz`), true);
+        assert.equal(
+            result.storagePolicyResult?.compressed.some((entry) => entry.startsWith('T-711-')),
+            false,
+            'forensic compression must not mutate problem tasks outside runtimeRetentionTaskLimit'
+        );
+        assert.equal(fs.existsSync(unselectedCompileLogPath), true);
+        assert.equal(fs.existsSync(`${unselectedCompileLogPath}.gz`), false);
+    });
+
     it('preserves heavy forensic artifacts for problem tasks when detailed evidence is protected', () => {
         writeTaskQueue(tmpDir, [
             { id: 'T-701', status: '🟥 BLOCKED', title: 'Blocked task' }
@@ -2790,6 +2862,11 @@ describe('runGc with storage policy', () => {
         });
 
         assert.equal(result.result, 'SUCCESS');
+        assert.equal(
+            result.runtimeRetentionPreview?.task_count,
+            1,
+            'bounded retention maintenance must not classify every task-scoped artifact before selecting work'
+        );
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-800-task-mode.json')), false);
         assert.equal(
             fs.existsSync(path.join(reviewsDir, 'T-801-task-mode.json')),
