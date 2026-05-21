@@ -74,7 +74,15 @@ const DEFAULT_DOCTOR_EVIDENCE = {
     runtimeMismatchEvidence: { checked: false, mismatches: [] },
     permissionEvidence: { checked: false, failures: [] },
     partialStateEvidence: { checked: false, sentinels: [] },
-    rollbackHealthEvidence: { checked: false, snapshots: [] }
+    rollbackHealthEvidence: { checked: false, snapshots: [] },
+    taskHistoryLedgerSummary: {
+        root_path: '/tmp/test/garda-agent-orchestrator/runtime/task-ledger',
+        file_count: 0,
+        verified_count: 0,
+        incomplete_count: 0,
+        contradictory_count: 0,
+        invalid_count: 0
+    }
 };
 
 function makePassingDoctorResult(): Record<string, unknown> {

@@ -3,6 +3,7 @@ import * as path from 'node:path';
 
 import { KNOWN_SUFFIXES } from '../gate-runtime/reviews-index';
 import { inspectTaskEventFile } from '../gate-runtime/task-events';
+import { readTaskHistoryLedgerScanStatus, type TaskHistoryLedgerScanStatus } from '../gate-runtime/task-history-ledger';
 import { readTimelineSummaryIndex } from '../gate-runtime/timeline-summary';
 import {
     collectRuntimeTaskState,
@@ -83,6 +84,7 @@ export interface RuntimeRetentionTaskPreview {
     queue_status: string | null;
     health_state: RuntimeRetentionHealthState;
     retention_tier: RuntimeRetentionTier;
+    ledger_status: TaskHistoryLedgerScanStatus;
     eligible_now: boolean;
     age_days: number | null;
     threshold_days: number | null;
@@ -98,6 +100,7 @@ export interface RuntimeRetentionPreviewSummary {
     eligible_now_count: number;
     tiers: Record<RuntimeRetentionTier, number>;
     health_states: Record<RuntimeRetentionHealthState, number>;
+    ledger_statuses: Record<TaskHistoryLedgerScanStatus, number>;
     tasks: RuntimeRetentionTaskPreview[];
 }
 
@@ -364,6 +367,7 @@ function classifyTaskPreview(
     const ageDays = candidateGroup.newestMtimeMs > 0
         ? normalizeAgeDays(Date.now() - candidateGroup.newestMtimeMs)
         : null;
+    const ledgerStatus = readTaskHistoryLedgerScanStatus(bundleRoot, taskId);
 
     let healthState: RuntimeRetentionHealthState = 'ambiguous';
     const reasons: string[] = [];
@@ -383,7 +387,9 @@ function classifyTaskPreview(
     } else if ((queueStatus === 'DONE' || timelineEvidence.hasCompletionPass) && timelineSummary?.completeness_status === 'COMPLETE') {
         healthState = 'healthy_done';
         reasons.push('Terminal DONE evidence is complete and integrity passed.');
-        if (policy.healthyDone.requireLedger) {
+        if (policy.healthyDone.requireLedger && ledgerStatus === 'VERIFIED') {
+            reasons.push('Verified task ledger exists for this task.');
+        } else if (policy.healthyDone.requireLedger) {
             reasons.push('Heavy artifacts stay authoritative until a ledger exists and is verified.');
         }
     } else if (queueStatus === 'DONE' || timelineEvidence.hasCompletionPass) {
@@ -424,6 +430,7 @@ function classifyTaskPreview(
         queue_status: queueStatus,
         health_state: healthState,
         retention_tier: retentionTier,
+        ledger_status: ledgerStatus,
         eligible_now: eligibleNow,
         age_days: ageDays,
         threshold_days: thresholdDays,
@@ -480,10 +487,18 @@ export function buildRuntimeRetentionPreview(
         tampered: 0,
         ambiguous: 0
     };
+    const ledgerStatuses: Record<TaskHistoryLedgerScanStatus, number> = {
+        MISSING: 0,
+        VERIFIED: 0,
+        INCOMPLETE: 0,
+        CONTRADICTORY: 0,
+        INVALID: 0
+    };
 
     for (const task of tasks) {
         tiers[task.retention_tier] += 1;
         healthStates[task.health_state] += 1;
+        ledgerStatuses[task.ledger_status] += 1;
     }
 
     return {
@@ -493,6 +508,7 @@ export function buildRuntimeRetentionPreview(
         eligible_now_count: tasks.filter((task) => task.eligible_now).length,
         tiers,
         health_states: healthStates,
+        ledger_statuses: ledgerStatuses,
         tasks
     };
 }
@@ -508,10 +524,18 @@ export function formatRuntimeRetentionPreviewLines(preview: RuntimeRetentionPrev
         + `ledger=${preview.tiers.compact_ledger_candidate}, `
         + `forensic=${preview.tiers.compressed_forensic_candidate}`
     );
+    lines.push(
+        'RuntimeRetentionLedgerStatus: '
+        + `verified=${preview.ledger_statuses.VERIFIED}, `
+        + `missing=${preview.ledger_statuses.MISSING}, `
+        + `incomplete=${preview.ledger_statuses.INCOMPLETE}, `
+        + `contradictory=${preview.ledger_statuses.CONTRADICTORY}, `
+        + `invalid=${preview.ledger_statuses.INVALID}`
+    );
     if (preview.tasks.length > 0) {
         const sampleTasks = preview.tasks
             .slice(0, 5)
-            .map((task) => `${task.task_id}:${task.health_state}->${task.retention_tier}${task.eligible_now ? ':eligible' : ''}`);
+            .map((task) => `${task.task_id}:${task.health_state}->${task.retention_tier}:${task.ledger_status}${task.eligible_now ? ':eligible' : ''}`);
         lines.push(`RuntimeRetentionSample: ${sampleTasks.join(', ')}`);
     }
     return lines;

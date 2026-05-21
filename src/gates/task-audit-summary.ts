@@ -3,6 +3,10 @@ import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
 import { redactSensitiveData } from '../core/redaction';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
+import {
+    buildTaskHistoryLedger,
+    resolveTaskHistoryLedgerPath
+} from '../gate-runtime/task-history-ledger';
 import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
 import { fileSha256, toPosix } from './helpers';
@@ -1169,6 +1173,12 @@ function collectEvidenceArtifacts(
         exists: fs.existsSync(taskEventFile),
         sha256: fs.existsSync(taskEventFile) ? fileSha256(taskEventFile) : null
     });
+    evidence.push({
+        kind: 'task-ledger',
+        path: toPosix(resolveTaskHistoryLedgerPath(path.dirname(path.dirname(reviewsRoot)), taskId)),
+        exists: false,
+        sha256: null
+    });
 
     return evidence;
 }
@@ -1976,6 +1986,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
 export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResult): TaskAuditSummaryResult {
     const jsonPath = summary.final_closeout.artifact_paths.json;
     const markdownPath = summary.final_closeout.artifact_paths.markdown;
+    const bundleRoot = path.dirname(path.dirname(path.dirname(jsonPath)));
+    const ledgerPath = resolveTaskHistoryLedgerPath(bundleRoot, summary.task_id);
 
     if (summary.final_closeout.status === 'READY') {
         const closeout = redactSensitiveData({
@@ -1988,10 +2000,7 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         summary.final_closeout = closeout;
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);
-        return summary;
-    }
-
-    if (summary.point_in_time_snapshot.status === 'FINALIZATION_IN_FLIGHT') {
+    } else if (summary.point_in_time_snapshot.status === 'FINALIZATION_IN_FLIGHT') {
         const jsonExists = fs.existsSync(jsonPath);
         const markdownExists = fs.existsSync(markdownPath);
         summary.final_closeout = {
@@ -2000,10 +2009,7 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         };
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, jsonExists);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, markdownExists);
-        return summary;
-    }
-
-    if (summary.blockers.some((blocker) => blocker.gate === 'post-done-drift')) {
+    } else if (summary.blockers.some((blocker) => blocker.gate === 'post-done-drift')) {
         const jsonExists = fs.existsSync(jsonPath);
         const markdownExists = fs.existsSync(markdownPath);
         summary.final_closeout = {
@@ -2012,21 +2018,32 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         };
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, jsonExists);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, markdownExists);
-        return summary;
-    }
-
-    let removed = false;
-    for (const artifactPath of [jsonPath, markdownPath]) {
-        if (fs.existsSync(artifactPath)) {
-            fs.rmSync(artifactPath, { force: true });
-            removed = true;
+    } else {
+        let removed = false;
+        for (const artifactPath of [jsonPath, markdownPath]) {
+            if (fs.existsSync(artifactPath)) {
+                fs.rmSync(artifactPath, { force: true });
+                removed = true;
+            }
         }
+        summary.final_closeout = {
+            ...summary.final_closeout,
+            artifact_state: removed ? 'REMOVED' : 'NOT_READY'
+        };
+        updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, false);
+        updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, false);
     }
-    summary.final_closeout = {
-        ...summary.final_closeout,
-        artifact_state: removed ? 'REMOVED' : 'NOT_READY'
-    };
-    updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, false);
-    updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, false);
+
+    if (summary.status !== 'INCOMPLETE') {
+        fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+        const ledger = redactSensitiveData(buildTaskHistoryLedger(summary, path.dirname(bundleRoot))) as ReturnType<typeof buildTaskHistoryLedger>;
+        writeFileAtomically(ledgerPath, JSON.stringify(ledger, null, 2) + '\n', { encoding: 'utf8' });
+        updateEvidenceArtifactState(summary.evidence, 'task-ledger', ledgerPath, true);
+    } else {
+        if (fs.existsSync(ledgerPath)) {
+            fs.rmSync(ledgerPath, { force: true });
+        }
+        updateEvidenceArtifactState(summary.evidence, 'task-ledger', ledgerPath, false);
+    }
     return summary;
 }

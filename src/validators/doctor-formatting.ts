@@ -453,6 +453,19 @@ export function formatDoctorResult(result: DoctorResult): string {
         lines.push('');
     }
 
+    if (result.taskHistoryLedgerSummary.file_count > 0) {
+        lines.push('Task History Ledgers');
+        lines.push('  Root: ' + result.taskHistoryLedgerSummary.root_path);
+        lines.push('  Files: ' + result.taskHistoryLedgerSummary.file_count);
+        lines.push(
+            '  Status: verified=' + result.taskHistoryLedgerSummary.verified_count +
+            ', incomplete=' + result.taskHistoryLedgerSummary.incomplete_count +
+            ', contradictory=' + result.taskHistoryLedgerSummary.contradictory_count +
+            ', invalid=' + result.taskHistoryLedgerSummary.invalid_count
+        );
+        lines.push('');
+    }
+
     // Profile health
     if (result.profileHealthEvidence) {
         lines.push('Profile Health');

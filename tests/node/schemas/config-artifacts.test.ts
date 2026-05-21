@@ -731,6 +731,7 @@ test('buildRuntimeRetentionPreview classifies complete DONE tasks as compact led
         assert.deepEqual(preview.tasks[0].candidate_categories, ['task-events']);
         assert.equal(preview.tasks[0].health_state, 'healthy_done');
         assert.equal(preview.tasks[0].retention_tier, 'compact_ledger_candidate');
+        assert.equal(preview.tasks[0].ledger_status, 'MISSING');
         assert.equal(preview.tasks[0].eligible_now, true);
         assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('ledger exists')));
     } finally {
@@ -774,6 +775,7 @@ test('buildRuntimeRetentionPreview classifies blocked tasks as compressed forens
         assert.equal(preview.tiers.compressed_forensic_candidate, 1);
         assert.equal(preview.tasks[0].health_state, 'blocked');
         assert.equal(preview.tasks[0].retention_tier, 'compressed_forensic_candidate');
+        assert.equal(preview.tasks[0].ledger_status, 'MISSING');
         assert.equal(preview.tasks[0].eligible_now, true);
         assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('blocked')));
     } finally {
@@ -816,6 +818,7 @@ test('buildRuntimeRetentionPreview classifies failed tasks as compressed forensi
         assert.equal(preview.health_states.failed, 1);
         assert.equal(preview.tasks[0].health_state, 'failed');
         assert.equal(preview.tasks[0].retention_tier, 'compressed_forensic_candidate');
+        assert.equal(preview.tasks[0].ledger_status, 'MISSING');
         assert.equal(preview.tasks[0].eligible_now, true);
         assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('failed gate')));
     } finally {
@@ -859,6 +862,7 @@ test('buildRuntimeRetentionPreview keeps active tasks in protected evidence tier
         assert.equal(preview.tiers.active_evidence, 1);
         assert.equal(preview.tasks[0].health_state, 'active');
         assert.equal(preview.tasks[0].retention_tier, 'active_evidence');
+        assert.equal(preview.tasks[0].ledger_status, 'MISSING');
         assert.equal(preview.tasks[0].eligible_now, false);
         assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('protected')));
     } finally {

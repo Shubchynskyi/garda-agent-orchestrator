@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveInitAnswersRelativePath } from '../core/constants';
 import { pathExists } from '../core/filesystem';
+import { scanTaskHistoryLedgerRoot, type TaskHistoryLedgerScanSummary } from '../gate-runtime/task-history-ledger';
 import {
     collectTimelineSummaryForDoctor,
     type DoctorTimelineEvidence
@@ -231,6 +232,7 @@ export interface DoctorResult {
     permissionEvidence: PermissionCheckEvidence;
     partialStateEvidence: PartialStateEvidence;
     rollbackHealthEvidence: RollbackHealthEvidence;
+    taskHistoryLedgerSummary: TaskHistoryLedgerScanSummary;
     profileHealthEvidence: ProfileHealthEvidence | null;
 }
 
@@ -293,6 +295,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
     const partialStateEvidence = checkPartialState(targetRoot);
 
     const rollbackHealthEvidence = checkRollbackHealth(targetRoot);
+    const taskHistoryLedgerSummary = scanTaskHistoryLedgerRoot(bundlePath);
 
     let profileHealthEvidence: ProfileHealthEvidence | null = null;
     try {
@@ -343,6 +346,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         permissionEvidence: permissionEvidence,
         partialStateEvidence: partialStateEvidence,
         rollbackHealthEvidence: rollbackHealthEvidence,
+        taskHistoryLedgerSummary: taskHistoryLedgerSummary,
         profileHealthEvidence: profileHealthEvidence
     };
 }

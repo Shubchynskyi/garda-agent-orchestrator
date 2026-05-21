@@ -160,6 +160,14 @@ export function buildFakeDoctorResult(overrides?: Record<string, unknown>): Doct
         protectedManifestEvidence: null,
         protectedManifestAssessment: null,
         ...DEFAULT_NEW_EVIDENCE,
+        taskHistoryLedgerSummary: {
+            root_path: '/tmp/test/garda-agent-orchestrator/runtime/task-ledger',
+            file_count: 0,
+            verified_count: 0,
+            incomplete_count: 0,
+            contradictory_count: 0,
+            invalid_count: 0
+        },
         ...overrides
     };
     return base as unknown as DoctorResult;
