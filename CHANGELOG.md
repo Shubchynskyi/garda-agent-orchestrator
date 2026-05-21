@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- expanded runtime cleanup coverage across generated runtime zones and metrics retention, including `runtime/tmp`, reviewer scratch, test scratch, cache/report/update-temp directories, `--max-metrics-lines`, and success-log omission for clean compile/full-suite output
 - expanded the official runtime contract to Node 24 LTS primary plus Node 22.13+ compatibility, with aligned engines, warning-only doctor diagnostics outside the tested matrix, CI matrices, docs, release validation checks, and Node 22 typings
 - aligned the documented `garda doctor --compact` success marker with the actual formatter contract (`Doctor: PASSED | verify=PASSED | manifest=PASSED`)
 - made `garda doctor` failure output print a concise blocker summary and next action before the long detailed evidence dump, while preserving JSON output and full human diagnostics

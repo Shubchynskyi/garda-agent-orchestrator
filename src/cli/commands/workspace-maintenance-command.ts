@@ -45,6 +45,18 @@ import {
     resolveWorkspacePaths
 } from './workspace-helpers';
 
+function printMetricsRetention(
+    retention: { pruned: boolean; lines_before: number; lines_after: number } | undefined
+): boolean {
+    if (!retention) return false;
+    const label = retention.pruned ? 'Pruned metrics log:' : 'Metrics log retained:';
+    printHighlightedPair(label, `${retention.lines_before} -> ${retention.lines_after} lines`, {
+        labelColor: cyan,
+        valueColor: green
+    });
+    return retention.pruned;
+}
+
 export async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
     const reinitDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
@@ -309,6 +321,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         '--max-backups': { key: 'maxBackups', type: 'string' },
         '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
         '--max-aggregate-lines': { key: 'maxAggregateLines', type: 'string' },
+        '--max-metrics-lines': { key: 'maxMetricsLines', type: 'string' },
         '--max-reviews': { key: 'maxReviews', type: 'string' },
         '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
         '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
@@ -333,6 +346,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         ['maxBackups', 'maxBackups'],
         ['maxTaskEvents', 'maxTaskEvents'],
         ['maxAggregateLines', 'maxAggregateLines'],
+        ['maxMetricsLines', 'maxMetricsLines'],
         ['maxReviews', 'maxReviews'],
         ['maxWorkingPlans', 'maxWorkingPlans'],
         ['maxUpdateReports', 'maxUpdateReports'],
@@ -369,9 +383,10 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
             console.log(line);
         }
     }
+    const metricsPruned = printMetricsRetention(cleanupResult.metricsRetention);
 
     const removedOrSkipped = dryRun ? cleanupResult.skipped : cleanupResult.removed;
-    if (removedOrSkipped.length === 0) {
+    if (removedOrSkipped.length === 0 && !metricsPruned) {
         console.log(green('Nothing to clean up.'));
         return;
     }
@@ -418,6 +433,7 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         '--max-backups': { key: 'maxBackups', type: 'string' },
         '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
         '--max-aggregate-lines': { key: 'maxAggregateLines', type: 'string' },
+        '--max-metrics-lines': { key: 'maxMetricsLines', type: 'string' },
         '--max-reviews': { key: 'maxReviews', type: 'string' },
         '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
         '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
@@ -446,6 +462,7 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         ['maxBackups', 'maxBackups'],
         ['maxTaskEvents', 'maxTaskEvents'],
         ['maxAggregateLines', 'maxAggregateLines'],
+        ['maxMetricsLines', 'maxMetricsLines'],
         ['maxReviews', 'maxReviews'],
         ['maxWorkingPlans', 'maxWorkingPlans'],
         ['maxUpdateReports', 'maxUpdateReports'],
@@ -496,10 +513,11 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
             console.log(line);
         }
     }
+    const metricsPruned = printMetricsRetention(gcResult.metricsRetention);
 
     const actionItems = gcResult.dryRun ? gcResult.skipped : gcResult.removed;
     const storagePolicyActions = countStoragePolicyActions(gcResult.storagePolicyResult);
-    if (actionItems.length === 0 && gcResult.staleLocksCleaned === 0 && storagePolicyActions === 0) {
+    if (actionItems.length === 0 && gcResult.staleLocksCleaned === 0 && storagePolicyActions === 0 && !metricsPruned) {
         console.log(green('Nothing to clean up.'));
         return;
     }

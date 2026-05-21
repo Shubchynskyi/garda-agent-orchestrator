@@ -71,6 +71,11 @@ function daysAgo(days: number): Date {
     return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
+function agePath(filePath: string, days: number): void {
+    const past = daysAgo(days);
+    fs.utimesSync(filePath, past, past);
+}
+
 function createTaskEventFile(eventsDir: string, taskId: string): string {
     const filePath = path.join(eventsDir, `${taskId}.jsonl`);
     fs.writeFileSync(filePath, `{"event":"TASK_MODE_ENTERED","task_id":"${taskId}"}\n`);
@@ -293,6 +298,7 @@ describe('buildDefaultRetentionPolicy', () => {
         assert.equal(policy.maxUpdateReports, 10);
         assert.equal(policy.maxUpdateRollbacks, 5);
         assert.equal(policy.maxBundleBackups, 5);
+        assert.equal(policy.maxMetricsLines, 2000);
     });
 });
 
@@ -821,6 +827,52 @@ describe('runCleanup', () => {
 
         assert.equal(result.aggregateRetention, undefined);
         const remaining = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter(l => l.trim());
+        assert.equal(remaining.length, 25);
+    });
+
+    it('prunes metrics log when over maxMetricsLines', () => {
+        const metricsPath = path.join(runtimeDir, 'metrics.jsonl');
+        const lines = Array.from({ length: 25 }, (_, i) =>
+            JSON.stringify({ seq: i })
+        );
+        fs.writeFileSync(metricsPath, lines.join('\n') + '\n', 'utf8');
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            retentionPolicy: { maxMetricsLines: 10 }
+        });
+
+        assert.ok(result.metricsRetention, 'metricsRetention should be present');
+        assert.equal(result.metricsRetention!.pruned, true);
+        assert.equal(result.metricsRetention!.lines_before, 25);
+        assert.equal(result.metricsRetention!.lines_after, 10);
+
+        const remaining = fs.readFileSync(metricsPath, 'utf8')
+            .split('\n')
+            .filter(l => l.trim());
+        assert.equal(remaining.length, 10);
+        assert.equal(JSON.parse(remaining[0]).seq, 15);
+    });
+
+    it('does not prune metrics log in dry-run mode', () => {
+        const metricsPath = path.join(runtimeDir, 'metrics.jsonl');
+        const lines = Array.from({ length: 25 }, (_, i) =>
+            JSON.stringify({ seq: i })
+        );
+        fs.writeFileSync(metricsPath, lines.join('\n') + '\n', 'utf8');
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: true,
+            retentionPolicy: { maxMetricsLines: 10 }
+        });
+
+        assert.equal(result.metricsRetention, undefined);
+        const remaining = fs.readFileSync(metricsPath, 'utf8')
             .split('\n')
             .filter(l => l.trim());
         assert.equal(remaining.length, 25);
@@ -1576,6 +1628,12 @@ describe('GC_ALLOWLIST', () => {
         assert.ok(GC_ALLOWLIST.includes('plans'));
         assert.ok(GC_ALLOWLIST.includes('project-memory'));
         assert.ok(GC_ALLOWLIST.includes('task-events'));
+        assert.ok(GC_ALLOWLIST.includes('tmp'));
+        assert.ok(GC_ALLOWLIST.includes('test-scratch'));
+        assert.ok(GC_ALLOWLIST.includes('cache'));
+        assert.ok(GC_ALLOWLIST.includes('reports'));
+        assert.ok(GC_ALLOWLIST.includes('update-temp'));
+        assert.ok(GC_ALLOWLIST.includes('metrics'));
         assert.ok(GC_ALLOWLIST.includes('isolation-sandbox'));
         assert.ok(GC_ALLOWLIST.includes('stale-locks'));
         assert.ok(GC_ALLOWLIST.includes('update-rollbacks'));
@@ -1935,6 +1993,100 @@ describe('runGc', () => {
         const backupItems = result.removed.filter(i => i.category === 'backups');
         assert.ok(sandboxItems.length >= 1, 'should remove old sandbox');
         assert.equal(backupItems.length, 0, 'should not touch backups when filtered');
+    });
+
+    it('cleans aged generated runtime zones while preserving active reviewer scratch', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-001', status: '🟨 IN_PROGRESS', title: 'Active task' }
+        ]);
+        const zones = [
+            ['.test-scratch', 'test-scratch'],
+            ['cache', 'cache'],
+            ['reports', 'reports'],
+            ['update-temp', 'update-temp']
+        ] as const;
+        for (const [dirName] of zones) {
+            const oldEntry = path.join(runtimeDir, dirName, 'old-entry');
+            fs.mkdirSync(oldEntry, { recursive: true });
+            fs.writeFileSync(path.join(oldEntry, 'payload.txt'), dirName, 'utf8');
+            agePath(path.join(oldEntry, 'payload.txt'), 45);
+            agePath(oldEntry, 45);
+        }
+
+        const tmpOldEntry = path.join(runtimeDir, 'tmp', 'old-batch');
+        fs.mkdirSync(tmpOldEntry, { recursive: true });
+        fs.writeFileSync(path.join(tmpOldEntry, 'payload.txt'), 'tmp', 'utf8');
+        agePath(path.join(tmpOldEntry, 'payload.txt'), 45);
+        agePath(tmpOldEntry, 45);
+
+        const runtimeTempFile = path.join(runtimeDir, 'orphan.partial');
+        fs.writeFileSync(runtimeTempFile, 'partial', 'utf8');
+        agePath(runtimeTempFile, 45);
+
+        const activeScratch = path.join(runtimeDir, 'tmp', 'reviews', 'T-001');
+        const inactiveScratch = path.join(runtimeDir, 'tmp', 'reviews', 'T-002');
+        fs.mkdirSync(activeScratch, { recursive: true });
+        fs.mkdirSync(inactiveScratch, { recursive: true });
+        fs.writeFileSync(path.join(activeScratch, 'review.md'), 'active', 'utf8');
+        fs.writeFileSync(path.join(inactiveScratch, 'review.md'), 'inactive', 'utf8');
+
+        const liveProjectMemory = path.join(bundleRoot, 'live', 'docs', 'project-memory', 'compact.md');
+        fs.mkdirSync(path.dirname(liveProjectMemory), { recursive: true });
+        fs.writeFileSync(liveProjectMemory, '# Memory\n', 'utf8');
+
+        const dryRun = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            retentionPolicy: { maxAgeDays: 30 }
+        });
+        assert.ok(dryRun.skipped.some((item) => item.category === 'tmp' && item.path === inactiveScratch));
+        assert.ok(dryRun.skipped.some((item) => item.category === 'tmp' && item.path === runtimeTempFile));
+        for (const [, category] of zones) {
+            assert.ok(dryRun.categories[category], `dry-run should report ${category}`);
+        }
+        assert.ok(!dryRun.skipped.some((item) => item.path === activeScratch), 'active reviewer scratch must not be a cleanup candidate');
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxAgeDays: 30 }
+        });
+
+        assert.ok(result.removed.some((item) => item.category === 'tmp' && item.path === inactiveScratch));
+        assert.equal(fs.existsSync(activeScratch), true, 'active reviewer scratch must survive cleanup');
+        assert.equal(fs.existsSync(inactiveScratch), false, 'inactive reviewer scratch should be removed');
+        assert.equal(fs.existsSync(tmpOldEntry), false, 'aged runtime tmp entry should be removed');
+        assert.equal(fs.existsSync(runtimeTempFile), false, 'aged runtime root temp file should be removed');
+        for (const [dirName] of zones) {
+            assert.equal(fs.existsSync(path.join(runtimeDir, dirName, 'old-entry')), false, `${dirName} should be removed`);
+        }
+        assert.equal(fs.existsSync(liveProjectMemory), true, 'live project memory is canonical and must not be cleaned');
+    });
+
+    it('filters generated runtime zone cleanup by category', () => {
+        const tmpOldEntry = path.join(runtimeDir, 'tmp', 'old-batch');
+        const cacheOldEntry = path.join(runtimeDir, 'cache', 'old-entry');
+        fs.mkdirSync(tmpOldEntry, { recursive: true });
+        fs.mkdirSync(cacheOldEntry, { recursive: true });
+        fs.writeFileSync(path.join(tmpOldEntry, 'payload.txt'), 'tmp', 'utf8');
+        fs.writeFileSync(path.join(cacheOldEntry, 'payload.txt'), 'cache', 'utf8');
+        agePath(path.join(tmpOldEntry, 'payload.txt'), 45);
+        agePath(path.join(cacheOldEntry, 'payload.txt'), 45);
+        agePath(tmpOldEntry, 45);
+        agePath(cacheOldEntry, 45);
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            categories: ['tmp'],
+            retentionPolicy: { maxAgeDays: 30 }
+        });
+
+        assert.ok(result.removed.some((item) => item.category === 'tmp' && item.path === tmpOldEntry));
+        assert.equal(fs.existsSync(tmpOldEntry), false, 'tmp filter should remove tmp candidates');
+        assert.equal(fs.existsSync(cacheOldEntry), true, 'tmp filter must not remove cache candidates');
     });
 
     it('returns SUCCESS when runtime is empty', () => {
@@ -2600,6 +2752,55 @@ describe('runGc aggregate retention', () => {
         const policy = buildDefaultRetentionPolicy();
         assert.equal(typeof policy.maxAggregateLines, 'number');
         assert.ok(policy.maxAggregateLines > 0, 'default maxAggregateLines must be positive');
+    });
+
+    it('prunes metrics log when confirm=true and over maxMetricsLines', () => {
+        const metricsPath = path.join(runtimeDir, 'metrics.jsonl');
+        const lines = Array.from({ length: 25 }, (_, i) =>
+            JSON.stringify({ seq: i })
+        );
+        fs.writeFileSync(metricsPath, lines.join('\n') + '\n', 'utf8');
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            categories: ['metrics'],
+            retentionPolicy: { maxMetricsLines: 10 }
+        });
+
+        assert.ok(result.metricsRetention, 'metricsRetention should be present');
+        assert.equal(result.metricsRetention!.pruned, true);
+        assert.equal(result.metricsRetention!.lines_before, 25);
+        assert.equal(result.metricsRetention!.lines_after, 10);
+
+        const remaining = fs.readFileSync(metricsPath, 'utf8')
+            .split('\n')
+            .filter(l => l.trim());
+        assert.equal(remaining.length, 10);
+        assert.equal(JSON.parse(remaining[0]).seq, 15);
+    });
+
+    it('does not prune metrics log in dry-run mode', () => {
+        const metricsPath = path.join(runtimeDir, 'metrics.jsonl');
+        const lines = Array.from({ length: 25 }, (_, i) =>
+            JSON.stringify({ seq: i })
+        );
+        fs.writeFileSync(metricsPath, lines.join('\n') + '\n', 'utf8');
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            categories: ['metrics'],
+            retentionPolicy: { maxMetricsLines: 10 }
+        });
+
+        assert.equal(result.metricsRetention, undefined,
+            'metricsRetention should not be set in dry-run');
+        const remaining = fs.readFileSync(metricsPath, 'utf8')
+            .split('\n')
+            .filter(l => l.trim());
+        assert.equal(remaining.length, 25, 'original metrics lines should be preserved');
     });
 });
 

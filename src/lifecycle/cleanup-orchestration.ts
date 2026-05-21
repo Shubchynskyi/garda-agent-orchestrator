@@ -3,6 +3,7 @@ import { invalidateIndex as invalidateReviewsIndex } from '../gate-runtime/revie
 import { pruneAggregateLogLocked } from '../gate-runtime/task-events';
 import { resolveActiveTaskIds } from '../core/active-task-state';
 import { pruneTimelineSummaryEntries } from '../gate-runtime/timeline-summary';
+import { DEFAULT_METRICS_MAX_LINES, pruneMetricsFile } from '../runtime/toxin-metrics';
 import { validateTargetRoot } from './lifecycle-common';
 import { withLifecycleOperationLock } from './lifecycle-lock';
 import { applyForensicCompressionPolicy, applyStoragePolicy, loadStoragePolicy } from './cleanup-storage-policy';
@@ -34,6 +35,7 @@ const DEFAULT_MAX_UPDATE_REPORTS = 10;
 const DEFAULT_MAX_UPDATE_ROLLBACKS = 5;
 const DEFAULT_MAX_BUNDLE_BACKUPS = 5;
 const DEFAULT_MAX_AGGREGATE_LINES = 10000;
+const DEFAULT_MAX_METRICS_LINES = DEFAULT_METRICS_MAX_LINES;
 
 export function buildDefaultRetentionPolicy(): RetentionPolicy {
     return {
@@ -45,7 +47,8 @@ export function buildDefaultRetentionPolicy(): RetentionPolicy {
         maxUpdateReports: DEFAULT_MAX_UPDATE_REPORTS,
         maxUpdateRollbacks: DEFAULT_MAX_UPDATE_ROLLBACKS,
         maxBundleBackups: DEFAULT_MAX_BUNDLE_BACKUPS,
-        maxAggregateLines: DEFAULT_MAX_AGGREGATE_LINES
+        maxAggregateLines: DEFAULT_MAX_AGGREGATE_LINES,
+        maxMetricsLines: DEFAULT_MAX_METRICS_LINES
     };
 }
 
@@ -106,6 +109,20 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
         }
     }
 
+    let metricsRetention: CleanupResult['metricsRetention'];
+    if (!dryRun && policy.maxMetricsLines > 0) {
+        try {
+            const pruned = pruneMetricsFile(path.join(runtimeDir, 'metrics.jsonl'), policy.maxMetricsLines);
+            metricsRetention = {
+                pruned: pruned.pruned,
+                lines_before: pruned.linesBefore,
+                lines_after: pruned.linesAfter
+            };
+        } catch {
+            // Best-effort cleanup.
+        }
+    }
+
     return {
         targetRoot,
         dryRun,
@@ -116,6 +133,7 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
         totalFreedBytes,
         result: errors.length > 0 ? 'PARTIAL' : 'SUCCESS',
         aggregateRetention,
+        metricsRetention,
         runtimeRetentionPreview
     };
 }
@@ -277,6 +295,23 @@ export function runGc(options: GcOptions): GcResult {
         }
     }
 
+    const shouldPruneMetrics = !filterCategories || filterCategories.has('metrics');
+    let metricsRetention: GcResult['metricsRetention'];
+    if (shouldPruneMetrics && policy.maxMetricsLines > 0) {
+        try {
+            if (confirm) {
+                const pruned = pruneMetricsFile(path.join(runtimeDir, 'metrics.jsonl'), policy.maxMetricsLines);
+                metricsRetention = {
+                    pruned: pruned.pruned,
+                    lines_before: pruned.linesBefore,
+                    lines_after: pruned.linesAfter
+                };
+            }
+        } catch {
+            // Best-effort cleanup.
+        }
+    }
+
     return {
         targetRoot,
         dryRun,
@@ -291,6 +326,7 @@ export function runGc(options: GcOptions): GcResult {
         categories: buildCategorySummary(actionItems),
         storagePolicyResult,
         aggregateRetention,
+        metricsRetention,
         runtimeRetentionPreview
     };
 }

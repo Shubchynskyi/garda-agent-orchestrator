@@ -25,6 +25,12 @@ export const GC_ALLOWLIST: readonly string[] = Object.freeze([
     'reviews',
     'plans',
     'project-memory',
+    'tmp',
+    'test-scratch',
+    'cache',
+    'reports',
+    'update-temp',
+    'metrics',
     'update-rollbacks',
     'update-reports',
     'isolation-sandbox',
@@ -41,6 +47,7 @@ export interface RetentionPolicy {
     maxUpdateRollbacks: number;
     maxBundleBackups: number;
     maxAggregateLines: number;
+    maxMetricsLines: number;
 }
 
 export interface CleanupItem {
@@ -63,6 +70,7 @@ export interface CleanupResult {
     totalFreedBytes: number;
     result: string;
     aggregateRetention?: { pruned: boolean; lines_before: number; lines_after: number };
+    metricsRetention?: { pruned: boolean; lines_before: number; lines_after: number };
     runtimeRetentionPreview?: RuntimeRetentionPreviewSummary;
 }
 

@@ -205,6 +205,97 @@ function collectUpdateNamedDirs(dirPath: string, category: string, maxCount: num
     return items;
 }
 
+function collectAgedEntries(dirPath: string, category: string, maxAgeDays: number, now: Date): CleanupItem[] {
+    const entries = directoryEntries(dirPath);
+    const items: CleanupItem[] = [];
+    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+
+    for (const entryName of entries) {
+        const entryPath = path.join(dirPath, entryName);
+        try {
+            const stat = fs.statSync(entryPath);
+            if (stat.mtime >= cutoff) {
+                continue;
+            }
+            items.push({
+                path: entryPath,
+                category,
+                reason: 'age',
+                sizeBytes: stat.isDirectory() ? dirSizeBytes(entryPath) : stat.size
+            });
+        } catch {
+            // Skip unreadable entries.
+        }
+    }
+
+    return items;
+}
+
+function collectRuntimeRootTempFiles(runtimeDir: string, maxAgeDays: number, now: Date): CleanupItem[] {
+    const entries = directoryEntries(runtimeDir);
+    const items: CleanupItem[] = [];
+    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+    for (const entry of entries) {
+        if (!entry.endsWith('.tmp') && !entry.endsWith('.partial')) {
+            continue;
+        }
+        const entryPath = path.join(runtimeDir, entry);
+        try {
+            const stat = fs.statSync(entryPath);
+            if (!stat.isFile()) {
+                continue;
+            }
+            if (stat.mtime >= cutoff) {
+                continue;
+            }
+            items.push({
+                path: entryPath,
+                category: 'tmp',
+                reason: 'orphaned-temp-file',
+                sizeBytes: stat.size
+            });
+        } catch {
+            // Skip unreadable temp files.
+        }
+    }
+    return items;
+}
+
+function collectRuntimeTmp(runtimeDir: string, maxAgeDays: number, now: Date, activeTaskIds: ReadonlySet<string>): CleanupItem[] {
+    const tmpDir = path.join(runtimeDir, 'tmp');
+    const items = collectAgedEntries(tmpDir, 'tmp', maxAgeDays, now)
+        .filter((item) => path.basename(item.path) !== 'reviews');
+    const reviewScratchDir = path.join(tmpDir, 'reviews');
+    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
+
+    for (const entry of directoryEntries(reviewScratchDir)) {
+        const entryPath = path.join(reviewScratchDir, entry);
+        try {
+            const stat = fs.statSync(entryPath);
+            if (!stat.isDirectory()) {
+                if (stat.mtime < new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000)) {
+                    items.push({ path: entryPath, category: 'tmp', reason: 'age', sizeBytes: stat.size });
+                }
+                continue;
+            }
+            if (isCanonicalTaskId(entry) && activeTaskIdsLower.has(entry.toLowerCase())) {
+                continue;
+            }
+            items.push({
+                path: entryPath,
+                category: 'tmp',
+                reason: 'inactive-reviewer-scratch',
+                sizeBytes: dirSizeBytes(entryPath),
+                taskId: isCanonicalTaskId(entry) ? entry : undefined
+            });
+        } catch {
+            // Skip unreadable scratch entries.
+        }
+    }
+
+    return items;
+}
+
 function parseMarkdownWorkingPlanTaskId(fileName: string): string | null {
     if (!fileName.endsWith('.md')) {
         return null;
@@ -585,11 +676,21 @@ export function collectStandardCandidates(
     const updateReportsDir = path.join(runtimeDir, 'update-reports');
     const updateRollbacksDir = path.join(runtimeDir, 'update-rollbacks');
     const bundleBackupsDir = path.join(runtimeDir, 'bundle-backups');
+    const testScratchDir = path.join(runtimeDir, '.test-scratch');
+    const cacheDir = path.join(runtimeDir, 'cache');
+    const reportsDir = path.join(runtimeDir, 'reports');
+    const updateTempDir = path.join(runtimeDir, 'update-temp');
 
     return [
         ...collectTimestampedDirs(backupsDir, 'backups', policy.maxBackups, policy.maxAgeDays, now),
         ...collectTimestampedDirs(bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
         ...collectOrphanedCompletenessCaches(taskEventsDir, activeTaskIds),
+        ...collectRuntimeRootTempFiles(runtimeDir, policy.maxAgeDays, now),
+        ...collectRuntimeTmp(runtimeDir, policy.maxAgeDays, now, activeTaskIds),
+        ...collectAgedEntries(testScratchDir, 'test-scratch', policy.maxAgeDays, now),
+        ...collectAgedEntries(cacheDir, 'cache', policy.maxAgeDays, now),
+        ...collectAgedEntries(reportsDir, 'reports', policy.maxAgeDays, now),
+        ...collectAgedEntries(updateTempDir, 'update-temp', policy.maxAgeDays, now),
         ...collectUpdateNamedDirs(updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
         ...collectUpdateNamedDirs(updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
     ];
