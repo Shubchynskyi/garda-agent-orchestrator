@@ -180,6 +180,57 @@ test('cleanup policy persists updates through CLI flags', () => {
     }
 });
 
+test('cleanup policy --json round-trips daily maintenance dry-run during updates', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-cleanup-policy-'));
+    try {
+        const bundleRoot = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeFixture(path.join(bundleRoot, 'VERSION'), '1.0.0\n');
+        writeFixture(
+            path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json'),
+            JSON.stringify(TEMPLATE_POLICY, null, 2)
+        );
+        writeFixture(
+            path.join(bundleRoot, 'live', 'config', 'runtime-retention.json'),
+            JSON.stringify({
+                ...TEMPLATE_RUNTIME_RETENTION,
+                daily_maintenance: {
+                    ...TEMPLATE_RUNTIME_RETENTION.daily_maintenance,
+                    enabled: true,
+                    dry_run: true
+                }
+            }, null, 2)
+        );
+
+        const result = spawnSync(process.execPath, [
+            CLI_ENTRY,
+            'cleanup',
+            'policy',
+            '--target-root', tmpDir,
+            '--retention-mode', 'summary',
+            '--json'
+        ], {
+            cwd: NEUTRAL_CWD,
+            encoding: 'utf8',
+            timeout: 30_000
+        });
+
+        const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
+        assert.equal(result.status, 0, combined);
+        const parsed = JSON.parse(result.stdout);
+        assert.equal(parsed.action, 'update');
+        assert.equal(parsed.runtime_retention_policy.daily_maintenance.enabled, true);
+        assert.equal(parsed.runtime_retention_policy.daily_maintenance.dry_run, true);
+
+        const persistedRuntimeRetention = JSON.parse(fs.readFileSync(
+            path.join(bundleRoot, 'live', 'config', 'runtime-retention.json'),
+            'utf8'
+        ));
+        assert.equal(persistedRuntimeRetention.daily_maintenance.dry_run, true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('cleanup policy reset restores bundled template defaults', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-cleanup-policy-'));
     try {
