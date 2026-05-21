@@ -1,15 +1,17 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { cleanupStaleTaskEventLocks, scanTaskEventLocks } from '../gate-runtime/task-events';
+import { resolveTaskHistoryLedgerPath } from '../gate-runtime/task-history-ledger';
 import { KNOWN_SUFFIXES } from '../gate-runtime/reviews-index';
 import {
     isCanonicalTaskId,
     parseActiveReviewArtifactTaskId,
-    parseConventionalReviewArtifactTaskId,
     parseKnownReviewArtifactTaskId
 } from '../core/task-ids';
 import { LIFECYCLE_OPERATION_LOCK_DIR_NAME } from './lifecycle-lock';
-import { removePathRecursive } from './generic-utils';
+import { ensureWithinRoot, removePathRecursive } from './generic-utils';
+import { buildRuntimeRetentionPreview } from './runtime-retention-policy';
+import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
 import type { CleanupItem, RetentionPolicy } from './cleanup-types';
 
 export interface ProcessCleanupCandidatesResult {
@@ -17,6 +19,19 @@ export interface ProcessCleanupCandidatesResult {
     skipped: CleanupItem[];
     errors: Array<{ path: string; message: string }>;
     totalFreedBytes: number;
+}
+
+export interface RuntimeRetentionCandidateSelection {
+    previewCandidates: CleanupItem[];
+    compactionCandidates: CleanupItem[];
+}
+
+function parseReviewArtifactTaskId(filePath: string, fileName: string): string | null {
+    const knownTaskId = parseKnownReviewArtifactTaskId(fileName, KNOWN_SUFFIXES);
+    if (knownTaskId) {
+        return knownTaskId;
+    }
+    return resolveStructuredOrJsonReviewArtifactTaskId(filePath, fileName);
 }
 
 function directoryEntries(dirPath: string): string[] {
@@ -58,23 +73,6 @@ function fileSizeBytes(filePath: string): number {
     }
 }
 
-function fileMtimeMs(filePath: string): number {
-    try {
-        return fs.statSync(filePath).mtimeMs;
-    } catch {
-        return 0;
-    }
-}
-
-function maxGroupMtime(dir: string, files: string[]): number {
-    let max = 0;
-    for (const file of files) {
-        const mtime = fileMtimeMs(path.join(dir, file));
-        if (mtime > max) max = mtime;
-    }
-    return max;
-}
-
 function isNotFoundError(error: unknown): boolean {
     return typeof error === 'object'
         && error !== null
@@ -82,29 +80,45 @@ function isNotFoundError(error: unknown): boolean {
         && (error as { code?: unknown }).code === 'ENOENT';
 }
 
-export function processCleanupCandidates(candidates: CleanupItem[], dryRun: boolean): ProcessCleanupCandidatesResult {
+export function processCleanupCandidates(
+    candidates: CleanupItem[],
+    dryRun: boolean,
+    runtimeRoot?: string
+): ProcessCleanupCandidatesResult {
     const removed: CleanupItem[] = [];
     const skipped: CleanupItem[] = [];
     const errors: Array<{ path: string; message: string }> = [];
     let totalFreedBytes = 0;
 
     for (const item of candidates) {
+        let safePath = path.resolve(item.path);
+        if (runtimeRoot) {
+            try {
+                safePath = ensureWithinRoot(runtimeRoot, item.path, 'Cleanup candidate');
+            } catch (error: unknown) {
+                errors.push({
+                    path: item.path,
+                    message: error instanceof Error ? error.message : String(error)
+                });
+                continue;
+            }
+        }
         if (dryRun) {
             skipped.push(item);
             totalFreedBytes += item.sizeBytes;
             continue;
         }
 
-        if (!fs.existsSync(item.path)) {
+        if (!fs.existsSync(safePath)) {
             continue;
         }
 
         try {
-            const stat = fs.statSync(item.path);
+            const stat = fs.statSync(safePath);
             if (stat.isDirectory()) {
-                removePathRecursive(item.path);
+                removePathRecursive(safePath);
             } else {
-                fs.unlinkSync(item.path);
+                fs.unlinkSync(safePath);
             }
             removed.push(item);
             totalFreedBytes += item.sizeBytes;
@@ -191,77 +205,6 @@ function collectUpdateNamedDirs(dirPath: string, category: string, maxCount: num
     return items;
 }
 
-function collectReviewArtifacts(
-    reviewsDir: string,
-    maxReviews: number,
-    maxAgeDays: number,
-    now: Date,
-    activeTaskIds: ReadonlySet<string>
-): CleanupItem[] {
-    if (!fs.existsSync(reviewsDir)) return [];
-    const items: CleanupItem[] = [];
-    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
-
-    let entries: string[];
-    try {
-        entries = fs.readdirSync(reviewsDir).sort();
-    } catch {
-        return [];
-    }
-
-    const taskGroups = new Map<string, string[]>();
-    for (const entry of entries) {
-        const activeTaskId = parseActiveReviewArtifactTaskId(entry, activeTaskIds);
-        if (activeTaskId) {
-            continue;
-        }
-        const taskId = parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES)
-            ?? parseConventionalReviewArtifactTaskId(entry);
-        if (!taskId) {
-            continue;
-        }
-        const group = taskGroups.get(taskId) || [];
-        group.push(entry);
-        taskGroups.set(taskId, group);
-    }
-
-    const sortedTaskIds = Array.from(taskGroups.keys()).sort((a, b) => {
-        const mtimeA = maxGroupMtime(reviewsDir, taskGroups.get(a) || []);
-        const mtimeB = maxGroupMtime(reviewsDir, taskGroups.get(b) || []);
-        if (mtimeA !== mtimeB) return mtimeA - mtimeB;
-        return parseInt(a.replace('T-', ''), 10) - parseInt(b.replace('T-', ''), 10);
-    });
-
-    const excessTaskCount = Math.max(0, sortedTaskIds.length - maxReviews);
-
-    for (let i = 0; i < excessTaskCount; i += 1) {
-        const taskId = sortedTaskIds[i];
-        const files = taskGroups.get(taskId) || [];
-        for (const file of files) {
-            const filePath = path.join(reviewsDir, file);
-            items.push({ path: filePath, category: 'reviews', reason: 'count', sizeBytes: fileSizeBytes(filePath) });
-        }
-    }
-
-    for (let i = excessTaskCount; i < sortedTaskIds.length; i += 1) {
-        const taskId = sortedTaskIds[i];
-        const files = taskGroups.get(taskId) || [];
-        for (const file of files) {
-            const filePath = path.join(reviewsDir, file);
-            try {
-                const stat = fs.statSync(filePath);
-                if (stat.mtime < cutoff) {
-                    items.push({ path: filePath, category: 'reviews', reason: 'age', sizeBytes: stat.size });
-                }
-            } catch {
-                // Skip unreadable files.
-            }
-        }
-    }
-
-    return items;
-}
-
 function parseMarkdownWorkingPlanTaskId(fileName: string): string | null {
     if (!fileName.endsWith('.md')) {
         return null;
@@ -270,147 +213,277 @@ function parseMarkdownWorkingPlanTaskId(fileName: string): string | null {
     return /^T-\d+(?:-[A-Za-z0-9]+)*$/u.test(taskId) && isCanonicalTaskId(taskId) ? taskId : null;
 }
 
-function collectWorkingPlans(
-    plansDir: string,
-    maxWorkingPlans: number,
-    maxAgeDays: number,
-    now: Date,
+function collectTaskReviewArtifactsInventory(
+    reviewsDir: string,
     activeTaskIds: ReadonlySet<string>
 ): CleanupItem[] {
-    if (!fs.existsSync(plansDir)) return [];
+    if (!fs.existsSync(reviewsDir)) return [];
     const items: CleanupItem[] = [];
-    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
-    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
 
     let entries: string[];
     try {
-        entries = fs.readdirSync(plansDir).filter((entry) => {
-            const taskId = parseMarkdownWorkingPlanTaskId(entry);
-            if (!taskId || activeTaskIdsLower.has(taskId.toLowerCase())) {
-                return false;
-            }
-            try {
-                return fs.statSync(path.join(plansDir, entry)).isFile();
-            } catch {
-                return false;
-            }
-        });
+        entries = fs.readdirSync(reviewsDir).sort();
     } catch {
         return [];
     }
 
-    entries.sort((a, b) => {
-        const mtimeA = fileMtimeMs(path.join(plansDir, a));
-        const mtimeB = fileMtimeMs(path.join(plansDir, b));
-        if (mtimeA !== mtimeB) return mtimeA - mtimeB;
-        return a.localeCompare(b);
-    });
-
-    const excessCount = Math.max(0, entries.length - maxWorkingPlans);
-    for (let i = 0; i < entries.length; i += 1) {
-        const entryName = entries[i];
-        const entryPath = path.join(plansDir, entryName);
-        let reason: string | null = null;
-        if (i < excessCount) {
-            reason = 'count';
-        } else {
-            try {
-                const stat = fs.statSync(entryPath);
-                if (stat.mtime < cutoff) {
-                    reason = 'age';
-                }
-            } catch {
-                // Skip unreadable files.
-            }
+    for (const entry of entries) {
+        const activeTaskId = parseActiveReviewArtifactTaskId(entry, activeTaskIds);
+        if (activeTaskId) {
+            continue;
         }
-        if (reason) {
-            items.push({ path: entryPath, category: 'plans', reason, sizeBytes: fileSizeBytes(entryPath) });
+        const entryPath = path.join(reviewsDir, entry);
+        const taskId = parseReviewArtifactTaskId(entryPath, entry);
+        if (!taskId) {
+            continue;
+        }
+        try {
+            if (!fs.statSync(entryPath).isFile()) {
+                continue;
+            }
+        } catch {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'reviews',
+            reason: 'retention-inventory',
+            sizeBytes: fileSizeBytes(entryPath),
+            taskId
+        });
+    }
+
+    return items;
+}
+
+function collectTaskTimelineArtifactsInventory(
+    eventsDir: string,
+    activeTaskIds: ReadonlySet<string>
+): CleanupItem[] {
+    if (!fs.existsSync(eventsDir)) return [];
+    const items: CleanupItem[] = [];
+
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(eventsDir).sort();
+    } catch {
+        return [];
+    }
+
+    for (const entry of entries) {
+        if (!entry.endsWith('.jsonl') || entry === 'all-tasks.jsonl') {
+            continue;
+        }
+        const taskId = entry.replace(/\.jsonl$/, '');
+        if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+            continue;
+        }
+        const entryPath = path.join(eventsDir, entry);
+        try {
+            if (!fs.statSync(entryPath).isFile()) {
+                continue;
+            }
+        } catch {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'task-events',
+            reason: 'retention-inventory',
+            sizeBytes: fileSizeBytes(entryPath),
+            taskId
+        });
+
+        const cachePath = path.join(eventsDir, `${taskId}.completeness.json`);
+        if (fs.existsSync(cachePath)) {
+            items.push({
+                path: cachePath,
+                category: 'task-events',
+                reason: 'retention-inventory',
+                sizeBytes: fileSizeBytes(cachePath),
+                taskId
+            });
         }
     }
 
     return items;
 }
 
-function collectTaskEventFiles(
+function collectOrphanedCompletenessCaches(
     eventsDir: string,
-    maxTaskEvents: number,
-    maxAgeDays: number,
-    now: Date,
     activeTaskIds: ReadonlySet<string>
 ): CleanupItem[] {
     if (!fs.existsSync(eventsDir)) return [];
     const items: CleanupItem[] = [];
-    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
 
-    let entries: string[];
+    let cacheEntries: string[];
     try {
-        entries = fs.readdirSync(eventsDir).filter((entry) => {
-            if (!entry.endsWith('.jsonl') || entry === 'all-tasks.jsonl') {
-                return false;
-            }
-            const taskId = entry.replace(/\.jsonl$/, '');
-            return !activeTaskIds.has(taskId);
-        });
+        cacheEntries = fs.readdirSync(eventsDir).filter((entry) => entry.endsWith('.completeness.json')).sort();
     } catch {
         return [];
     }
 
-    entries.sort((a, b) => {
-        const mtimeA = fileMtimeMs(path.join(eventsDir, a));
-        const mtimeB = fileMtimeMs(path.join(eventsDir, b));
-        if (mtimeA !== mtimeB) return mtimeA - mtimeB;
-        return a.localeCompare(b);
-    });
-
-    const excessCount = Math.max(0, entries.length - maxTaskEvents);
-
-    for (let i = 0; i < entries.length; i += 1) {
-        const entryName = entries[i];
-        const entryPath = path.join(eventsDir, entryName);
-
-        let reason: string | null = null;
-        if (i < excessCount) {
-            reason = 'count';
-        } else {
-            try {
-                const stat = fs.statSync(entryPath);
-                if (stat.mtime < cutoff) {
-                    reason = 'age';
-                }
-            } catch {
-                // Skip
-            }
+    for (const cacheName of cacheEntries) {
+        const taskId = cacheName.replace(/\.completeness\.json$/, '');
+        if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+            continue;
         }
-
-        if (reason) {
-            items.push({ path: entryPath, category: 'task-events', reason, sizeBytes: fileSizeBytes(entryPath) });
-            const cacheName = entryName.replace(/\.jsonl$/, '.completeness.json');
-            const cachePath = path.join(eventsDir, cacheName);
-            if (fs.existsSync(cachePath)) {
-                items.push({ path: cachePath, category: 'task-events', reason, sizeBytes: fileSizeBytes(cachePath) });
-            }
+        const timelinePath = path.join(eventsDir, `${taskId}.jsonl`);
+        if (fs.existsSync(timelinePath)) {
+            continue;
         }
-    }
-
-    try {
-        const cacheEntries = fs.readdirSync(eventsDir).filter((entry) => entry.endsWith('.completeness.json'));
-        const timelineSet = new Set(entries);
-        for (const cacheName of cacheEntries) {
-            const timelineName = cacheName.replace(/\.completeness\.json$/, '.jsonl');
-            const taskId = timelineName.replace(/\.jsonl$/, '');
-            if (activeTaskIds.has(taskId)) {
-                continue;
-            }
-            if (!timelineSet.has(timelineName)) {
-                const orphanPath = path.join(eventsDir, cacheName);
-                items.push({ path: orphanPath, category: 'task-events', reason: 'orphaned-cache', sizeBytes: fileSizeBytes(orphanPath) });
-            }
-        }
-    } catch {
-        // Best-effort orphan scan.
+        const cachePath = path.join(eventsDir, cacheName);
+        items.push({
+            path: cachePath,
+            category: 'task-events',
+            reason: 'orphaned-cache',
+            sizeBytes: fileSizeBytes(cachePath),
+            taskId
+        });
     }
 
     return items;
+}
+
+function collectTaskProjectMemoryArtifactsInventory(
+    projectMemoryDir: string,
+    activeTaskIds: ReadonlySet<string>
+): CleanupItem[] {
+    if (!fs.existsSync(projectMemoryDir)) return [];
+    const items: CleanupItem[] = [];
+
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(projectMemoryDir).sort();
+    } catch {
+        return [];
+    }
+
+    for (const entry of entries) {
+        const taskId = parseProjectMemoryArtifactTaskId(entry);
+        if (!taskId) {
+            continue;
+        }
+        if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+            continue;
+        }
+        const entryPath = path.join(projectMemoryDir, entry);
+        try {
+            if (!fs.statSync(entryPath).isFile()) {
+                continue;
+            }
+        } catch {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'project-memory',
+            reason: 'retention-inventory',
+            sizeBytes: fileSizeBytes(entryPath),
+            taskId
+        });
+    }
+
+    return items;
+}
+
+function parseProjectMemoryArtifactTaskId(fileName: string): string | null {
+    for (const suffix of ['-impact.json', '-update.json']) {
+        if (!fileName.endsWith(suffix)) {
+            continue;
+        }
+        const taskId = fileName.slice(0, -suffix.length);
+        return isCanonicalTaskId(taskId) ? taskId : null;
+    }
+    return null;
+}
+
+function collectTaskWorkingPlanArtifactsInventory(
+    plansDir: string,
+    activeTaskIds: ReadonlySet<string>
+): CleanupItem[] {
+    if (!fs.existsSync(plansDir)) return [];
+    const items: CleanupItem[] = [];
+    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
+
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(plansDir).sort();
+    } catch {
+        return [];
+    }
+
+    for (const entry of entries) {
+        const taskId = parseMarkdownWorkingPlanTaskId(entry);
+        if (!taskId || activeTaskIdsLower.has(taskId.toLowerCase())) {
+            continue;
+        }
+        const entryPath = path.join(plansDir, entry);
+        try {
+            if (!fs.statSync(entryPath).isFile()) {
+                continue;
+            }
+        } catch {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'plans',
+            reason: 'retention-inventory',
+            sizeBytes: fileSizeBytes(entryPath),
+            taskId
+        });
+    }
+
+    return items;
+}
+
+function collectTaskScopedArtifactInventory(
+    runtimeDir: string,
+    activeTaskIds: ReadonlySet<string>
+): CleanupItem[] {
+    return [
+        ...collectTaskReviewArtifactsInventory(path.join(runtimeDir, 'reviews'), activeTaskIds),
+        ...collectTaskTimelineArtifactsInventory(path.join(runtimeDir, 'task-events'), activeTaskIds),
+        ...collectTaskWorkingPlanArtifactsInventory(path.join(runtimeDir, 'plans'), activeTaskIds),
+        ...collectTaskProjectMemoryArtifactsInventory(path.join(runtimeDir, 'project-memory'), activeTaskIds)
+    ];
+}
+
+export function collectRuntimeRetentionCandidates(
+    targetRoot: string,
+    bundleRoot: string,
+    activeTaskIds: ReadonlySet<string>
+): RuntimeRetentionCandidateSelection {
+    const runtimeDir = path.join(bundleRoot, 'runtime');
+    const previewCandidates = collectTaskScopedArtifactInventory(runtimeDir, activeTaskIds);
+    const preview = buildRuntimeRetentionPreview(
+        targetRoot,
+        bundleRoot,
+        previewCandidates.map((item) => ({ path: item.path, category: item.category }))
+    );
+    const eligibleTasks = new Set(
+        preview.tasks
+            .filter((task) =>
+                task.health_state === 'healthy_done'
+                && task.retention_tier === 'compact_ledger_candidate'
+                && task.ledger_status === 'VERIFIED'
+                && task.eligible_now
+            )
+            .map((task) => task.task_id)
+    );
+
+    return {
+        previewCandidates,
+        compactionCandidates: previewCandidates
+            .filter((item) => item.taskId && eligibleTasks.has(item.taskId))
+            .map((item) => ({
+                ...item,
+                reason: 'ledger-compaction',
+                retainedLedgerPath: item.taskId ? resolveTaskHistoryLedgerPath(bundleRoot, item.taskId) : null,
+                retentionDisposition: 'ledger-only'
+            }))
+    };
 }
 
 export function collectIsolationSandbox(runtimeDir: string, maxAgeDays: number, now: Date): CleanupItem[] {
@@ -509,8 +582,6 @@ export function collectStandardCandidates(
 ): CleanupItem[] {
     const backupsDir = path.join(runtimeDir, 'backups');
     const taskEventsDir = path.join(runtimeDir, 'task-events');
-    const reviewsDir = path.join(runtimeDir, 'reviews');
-    const plansDir = path.join(runtimeDir, 'plans');
     const updateReportsDir = path.join(runtimeDir, 'update-reports');
     const updateRollbacksDir = path.join(runtimeDir, 'update-rollbacks');
     const bundleBackupsDir = path.join(runtimeDir, 'bundle-backups');
@@ -518,9 +589,7 @@ export function collectStandardCandidates(
     return [
         ...collectTimestampedDirs(backupsDir, 'backups', policy.maxBackups, policy.maxAgeDays, now),
         ...collectTimestampedDirs(bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
-        ...collectTaskEventFiles(taskEventsDir, policy.maxTaskEvents, policy.maxAgeDays, now, activeTaskIds),
-        ...collectReviewArtifacts(reviewsDir, policy.maxReviews, policy.maxAgeDays, now, activeTaskIds),
-        ...collectWorkingPlans(plansDir, policy.maxWorkingPlans, policy.maxAgeDays, now, activeTaskIds),
+        ...collectOrphanedCompletenessCaches(taskEventsDir, activeTaskIds),
         ...collectUpdateNamedDirs(updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
         ...collectUpdateNamedDirs(updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
     ];

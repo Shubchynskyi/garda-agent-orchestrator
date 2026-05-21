@@ -24,6 +24,7 @@ export const GC_ALLOWLIST: readonly string[] = Object.freeze([
     'task-events',
     'reviews',
     'plans',
+    'project-memory',
     'update-rollbacks',
     'update-reports',
     'isolation-sandbox',
@@ -47,6 +48,9 @@ export interface CleanupItem {
     category: string;
     reason: string;
     sizeBytes: number;
+    taskId?: string;
+    retainedLedgerPath?: string | null;
+    retentionDisposition?: string | null;
 }
 
 export interface CleanupResult {
