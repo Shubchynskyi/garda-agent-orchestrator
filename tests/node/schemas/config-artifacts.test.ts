@@ -667,7 +667,8 @@ test('validateRuntimeRetentionConfig normalizes valid config', () => {
         },
         daily_maintenance: {
             enabled: 'false',
-            max_tasks_per_run: '25'
+            max_tasks_per_run: '25',
+            dry_run: 'yes'
         }
     });
     assert.equal(result.version, 1);
@@ -677,6 +678,14 @@ test('validateRuntimeRetentionConfig normalizes valid config', () => {
     assert.equal((result.problem_tasks as Record<string, unknown>).compress_after_days, 45);
     assert.equal((result.purge as Record<string, unknown>).require_confirm, true);
     assert.equal((result.daily_maintenance as Record<string, unknown>).max_tasks_per_run, 25);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).dry_run, true);
+});
+
+test('validateRuntimeRetentionConfig defaults legacy daily maintenance dry_run to true', () => {
+    const config = readTemplateConfig('runtime-retention') as Record<string, unknown>;
+    delete ((config.daily_maintenance as Record<string, unknown>).dry_run);
+    const result = validateRuntimeRetentionConfig(config);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).dry_run, true);
 });
 
 test('validateRuntimeRetentionConfig validates template config', () => {
@@ -776,8 +785,9 @@ test('buildRuntimeRetentionPreview classifies blocked tasks as compressed forens
         assert.equal(preview.tasks[0].health_state, 'blocked');
         assert.equal(preview.tasks[0].retention_tier, 'compressed_forensic_candidate');
         assert.equal(preview.tasks[0].ledger_status, 'MISSING');
-        assert.equal(preview.tasks[0].eligible_now, true);
+        assert.equal(preview.tasks[0].eligible_now, false);
         assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('blocked')));
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('preserved by policy')));
     } finally {
         workspace.cleanup();
     }
@@ -819,8 +829,9 @@ test('buildRuntimeRetentionPreview classifies failed tasks as compressed forensi
         assert.equal(preview.tasks[0].health_state, 'failed');
         assert.equal(preview.tasks[0].retention_tier, 'compressed_forensic_candidate');
         assert.equal(preview.tasks[0].ledger_status, 'MISSING');
-        assert.equal(preview.tasks[0].eligible_now, true);
+        assert.equal(preview.tasks[0].eligible_now, false);
         assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('failed gate')));
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('preserved by policy')));
     } finally {
         workspace.cleanup();
     }

@@ -74,6 +74,7 @@ import {
 } from './task-audit-summary-collectors';
 import { buildCommitCommandSuggestion, formatFinalCloseoutMarkdown } from './task-audit-summary-renderers';
 import { cleanupTerminalReviewTempOutputs } from '../cli/commands/gates-artifacts';
+import { runDailyRetentionMaintenance } from '../lifecycle/daily-retention-maintenance';
 import {
     buildTaskQueueStatusContract,
     type TaskQueueStatusContract
@@ -1997,6 +1998,10 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         writeFileAtomically(jsonPath, JSON.stringify(closeout, null, 2) + '\n', { encoding: 'utf8' });
         writeFileAtomically(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', { encoding: 'utf8' });
         cleanupTerminalReviewTempOutputs(path.resolve(path.dirname(jsonPath), '..', '..', '..'), summary.task_id);
+        runDailyRetentionMaintenance({
+            targetRoot: path.resolve(path.dirname(jsonPath), '..', '..', '..'),
+            bundleRoot
+        });
         summary.final_closeout = closeout;
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);

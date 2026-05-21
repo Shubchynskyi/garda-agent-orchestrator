@@ -52,6 +52,7 @@ export interface RuntimeRetentionPolicyDocument {
     daily_maintenance: {
         enabled: boolean;
         max_tasks_per_run: number;
+        dry_run: boolean;
     };
     [key: string]: unknown;
 }
@@ -77,6 +78,7 @@ export interface RuntimeRetentionPolicy {
     dailyMaintenance: {
         enabled: boolean;
         maxTasksPerRun: number;
+        dryRun: boolean;
     };
 }
 
@@ -139,7 +141,8 @@ const DEFAULT_POLICY_DOCUMENT: RuntimeRetentionPolicyDocument = Object.freeze({
     },
     daily_maintenance: {
         enabled: false,
-        max_tasks_per_run: 25
+        max_tasks_per_run: 25,
+        dry_run: true
     }
 });
 
@@ -164,7 +167,8 @@ function buildDefaultPolicy(): RuntimeRetentionPolicy {
         },
         dailyMaintenance: {
             enabled: DEFAULT_POLICY_DOCUMENT.daily_maintenance.enabled,
-            maxTasksPerRun: DEFAULT_POLICY_DOCUMENT.daily_maintenance.max_tasks_per_run
+            maxTasksPerRun: DEFAULT_POLICY_DOCUMENT.daily_maintenance.max_tasks_per_run,
+            dryRun: DEFAULT_POLICY_DOCUMENT.daily_maintenance.dry_run
         }
     };
 }
@@ -216,7 +220,8 @@ export function loadRuntimeRetentionPolicy(bundleRoot: string): RuntimeRetention
         },
         dailyMaintenance: {
             enabled: Boolean(document.daily_maintenance?.enabled ?? defaults.dailyMaintenance.enabled),
-            maxTasksPerRun: Number(document.daily_maintenance?.max_tasks_per_run ?? defaults.dailyMaintenance.maxTasksPerRun)
+            maxTasksPerRun: Number(document.daily_maintenance?.max_tasks_per_run ?? defaults.dailyMaintenance.maxTasksPerRun),
+            dryRun: Boolean(document.daily_maintenance?.dry_run ?? defaults.dailyMaintenance.dryRun)
         }
     };
 }
@@ -468,11 +473,17 @@ function classifyTaskPreview(
     const ledgerRequirementSatisfied = healthState !== 'healthy_done'
         || !policy.healthyDone.requireLedger
         || ledgerStatus === 'VERIFIED';
+    const problemEvidencePreservationSatisfied = retentionTier !== 'compressed_forensic_candidate'
+        || !policy.problemTasks.preserveDetailedEvidence;
     const eligibleNow = ageDays !== null
         && thresholdDays !== null
         && ageDays >= thresholdDays
         && healthState !== 'active'
-        && ledgerRequirementSatisfied;
+        && ledgerRequirementSatisfied
+        && problemEvidencePreservationSatisfied;
+    if (retentionTier === 'compressed_forensic_candidate' && policy.problemTasks.preserveDetailedEvidence) {
+        reasons.push('Problem task detailed evidence is preserved by policy.');
+    }
 
     return {
         task_id: taskId,

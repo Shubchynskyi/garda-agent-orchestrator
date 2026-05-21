@@ -17,7 +17,8 @@
     "require_confirm": true
   },
   "daily_maintenance": {
-    "enabled": false,
-    "max_tasks_per_run": 25
+    "enabled": true,
+    "max_tasks_per_run": 25,
+    "dry_run": true
   }
 }

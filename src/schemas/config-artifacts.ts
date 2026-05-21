@@ -697,12 +697,12 @@ export function validateRuntimeRetentionConfig(input: unknown): Record<string, u
     const dailyMaintenance = ensurePlainObject(raw.daily_maintenance, 'runtime-retention.daily_maintenance');
     assertNoCaseMismatchedKnownKeys(
         dailyMaintenance,
-        ['enabled', 'max_tasks_per_run'],
+        ['enabled', 'max_tasks_per_run', 'dry_run'],
         'runtime-retention.daily_maintenance'
     );
     assertNoUnknownKeys(
         dailyMaintenance,
-        ['enabled', 'max_tasks_per_run'],
+        ['enabled', 'max_tasks_per_run', 'dry_run'],
         'runtime-retention.daily_maintenance'
     );
     normalized.daily_maintenance = {
@@ -714,7 +714,13 @@ export function validateRuntimeRetentionConfig(input: unknown): Record<string, u
             dailyMaintenance.max_tasks_per_run,
             'runtime-retention.daily_maintenance.max_tasks_per_run',
             { minimum: 1 }
-        )
+        ),
+        dry_run: dailyMaintenance.dry_run === undefined
+            ? true
+            : normalizeBooleanLike(
+                dailyMaintenance.dry_run,
+                'runtime-retention.daily_maintenance.dry_run'
+            )
     };
 
     return normalized;

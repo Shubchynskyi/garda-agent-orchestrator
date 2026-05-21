@@ -292,7 +292,8 @@ export const runtimeRetentionSchema: Record<string, unknown> = Object.freeze({
             type: 'object',
             properties: {
                 enabled: { type: 'boolean' },
-                max_tasks_per_run: { type: 'integer', minimum: 1 }
+                max_tasks_per_run: { type: 'integer', minimum: 1 },
+                dry_run: { type: 'boolean' }
             },
             required: ['enabled', 'max_tasks_per_run'],
             additionalProperties: false

@@ -24,6 +24,7 @@ export interface ProcessCleanupCandidatesResult {
 export interface RuntimeRetentionCandidateSelection {
     previewCandidates: CleanupItem[];
     compactionCandidates: CleanupItem[];
+    selectedTaskIds: Set<string>;
 }
 
 function parseReviewArtifactTaskId(filePath: string, fileName: string): string | null {
@@ -544,7 +545,8 @@ function collectTaskScopedArtifactInventory(
 export function collectRuntimeRetentionCandidates(
     targetRoot: string,
     bundleRoot: string,
-    activeTaskIds: ReadonlySet<string>
+    activeTaskIds: ReadonlySet<string>,
+    options: { maxEligibleTasks?: number } = {}
 ): RuntimeRetentionCandidateSelection {
     const runtimeDir = path.join(bundleRoot, 'runtime');
     const previewCandidates = collectTaskScopedArtifactInventory(runtimeDir, activeTaskIds);
@@ -553,10 +555,30 @@ export function collectRuntimeRetentionCandidates(
         bundleRoot,
         previewCandidates.map((item) => ({ path: item.path, category: item.category }))
     );
-    const eligibleTasks = new Set(
+    const eligibleTaskIds = preview.tasks
+            .filter((task) =>
+                task.eligible_now
+                && (
+                    (
+                        task.health_state === 'healthy_done'
+                        && task.retention_tier === 'compact_ledger_candidate'
+                        && task.ledger_status === 'VERIFIED'
+                    )
+                    || task.retention_tier === 'compressed_forensic_candidate'
+                )
+            )
+            .map((task) => task.task_id);
+    const maxEligibleTasks = options.maxEligibleTasks;
+    const selectedTaskIds = new Set(
+        typeof maxEligibleTasks === 'number' && Number.isFinite(maxEligibleTasks) && maxEligibleTasks > 0
+            ? eligibleTaskIds.slice(0, Math.floor(maxEligibleTasks))
+            : eligibleTaskIds
+    );
+    const compactableLedgerTaskIds = new Set(
         preview.tasks
             .filter((task) =>
-                task.health_state === 'healthy_done'
+                selectedTaskIds.has(task.task_id)
+                && task.health_state === 'healthy_done'
                 && task.retention_tier === 'compact_ledger_candidate'
                 && task.ledger_status === 'VERIFIED'
                 && task.eligible_now
@@ -566,8 +588,9 @@ export function collectRuntimeRetentionCandidates(
 
     return {
         previewCandidates,
+        selectedTaskIds,
         compactionCandidates: previewCandidates
-            .filter((item) => item.taskId && eligibleTasks.has(item.taskId))
+            .filter((item) => item.taskId && compactableLedgerTaskIds.has(item.taskId))
             .map((item) => ({
                 ...item,
                 reason: 'ledger-compaction',

@@ -7,7 +7,7 @@ import { DEFAULT_METRICS_MAX_LINES, pruneMetricsFile } from '../runtime/toxin-me
 import { validateTargetRoot } from './lifecycle-common';
 import { withLifecycleOperationLock } from './lifecycle-lock';
 import { applyForensicCompressionPolicy, applyStoragePolicy, loadStoragePolicy } from './cleanup-storage-policy';
-import { buildRuntimeRetentionPreview } from './runtime-retention-policy';
+import { buildRuntimeRetentionPreview, loadRuntimeRetentionPolicy } from './runtime-retention-policy';
 import {
     buildCategorySummary,
     cleanupStaleTaskEventLocks,
@@ -58,6 +58,7 @@ export interface CleanupOptions {
     dryRun?: boolean;
     retentionPolicy?: Partial<RetentionPolicy>;
     activeTaskIds?: string[];
+    runtimeRetentionTaskLimit?: number;
 }
 
 export function runCleanup(options: CleanupOptions): CleanupResult {
@@ -72,7 +73,9 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
     const runtimeDir = path.join(bundleRoot, 'runtime');
     const now = new Date();
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
-    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds);
+    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds, {
+        maxEligibleTasks: options.runtimeRetentionTaskLimit
+    });
     const candidates = [
         ...collectStandardCandidates(runtimeDir, policy, now, activeTaskIds),
         ...runtimeRetentionCandidates.compactionCandidates
@@ -150,6 +153,8 @@ export interface GcOptions {
     categories?: string[];
     storagePolicy?: ReviewArtifactStoragePolicy;
     activeTaskIds?: string[];
+    runtimeRetentionTaskLimit?: number;
+    runtimeRetentionOnly?: boolean;
 }
 
 export function validateGcCategories(categories: string[]): void {
@@ -161,7 +166,7 @@ export function validateGcCategories(categories: string[]): void {
 }
 
 export function runGc(options: GcOptions): GcResult {
-    const { targetRoot, bundleRoot, confirm = false } = options;
+    const { targetRoot, bundleRoot, confirm = false, runtimeRetentionOnly = false } = options;
     validateTargetRoot(targetRoot, bundleRoot);
 
     if (options.categories && options.categories.length > 0) {
@@ -181,14 +186,18 @@ export function runGc(options: GcOptions): GcResult {
     const runtimeDir = path.join(bundleRoot, 'runtime');
     const now = new Date();
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
-    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds);
-    const standardCandidates = [
-        ...collectStandardCandidates(runtimeDir, policy, now, activeTaskIds),
-        ...runtimeRetentionCandidates.compactionCandidates
-    ];
-    const isolationItems = collectIsolationSandbox(runtimeDir, policy.maxAgeDays, now);
-    const staleLockItems = collectStaleLifecycleLock(runtimeDir);
-    const shouldCleanTaskEventLocks = !filterCategories || filterCategories.has('task-events');
+    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds, {
+        maxEligibleTasks: options.runtimeRetentionTaskLimit
+    });
+    const standardCandidates = runtimeRetentionOnly
+        ? [...runtimeRetentionCandidates.compactionCandidates]
+        : [
+            ...collectStandardCandidates(runtimeDir, policy, now, activeTaskIds),
+            ...runtimeRetentionCandidates.compactionCandidates
+        ];
+    const isolationItems = runtimeRetentionOnly ? [] : collectIsolationSandbox(runtimeDir, policy.maxAgeDays, now);
+    const staleLockItems = runtimeRetentionOnly ? [] : collectStaleLifecycleLock(runtimeDir);
+    const shouldCleanTaskEventLocks = !runtimeRetentionOnly && (!filterCategories || filterCategories.has('task-events'));
     const taskEventLockCandidates = shouldCleanTaskEventLocks
         ? collectStaleTaskEventLockCandidates(bundleRoot)
         : [];
@@ -255,19 +264,25 @@ export function runGc(options: GcOptions): GcResult {
     let storagePolicyResult: GcResult['storagePolicyResult'];
     if (shouldApplyStoragePolicy && confirm) {
         const storagePolicy = options.storagePolicy ?? loadStoragePolicy(bundleRoot);
+        const retentionPolicyConfig = loadRuntimeRetentionPolicy(bundleRoot);
         const protectedReviewTaskIds = new Set(activeTaskIds);
         const forensicCompressionTaskIds = new Set<string>();
         for (const task of runtimeRetentionPreview.tasks) {
+            const selectedByBoundedMaintenance = runtimeRetentionCandidates.selectedTaskIds.has(task.task_id);
             const compactableHealthyDone = task.health_state === 'healthy_done'
                 && task.retention_tier === 'compact_ledger_candidate'
                 && task.ledger_status === 'VERIFIED'
                 && task.eligible_now;
             const compressableForensic = task.retention_tier === 'compressed_forensic_candidate'
                 && task.eligible_now;
-            if (compressableForensic) {
+            if (
+                compressableForensic
+                && selectedByBoundedMaintenance
+                && !retentionPolicyConfig.problemTasks.preserveDetailedEvidence
+            ) {
                 forensicCompressionTaskIds.add(task.task_id);
             }
-            if (!compactableHealthyDone) {
+            if (!(compactableHealthyDone && selectedByBoundedMaintenance)) {
                 protectedReviewTaskIds.add(task.task_id);
             }
         }
@@ -283,7 +298,7 @@ export function runGc(options: GcOptions): GcResult {
         storagePolicyResult.preserved.push(...forensicCompressionResult.preserved);
     }
 
-    const shouldPruneAggregate = !filterCategories || filterCategories.has('task-events');
+    const shouldPruneAggregate = !runtimeRetentionOnly && (!filterCategories || filterCategories.has('task-events'));
     let aggregateRetention: GcResult['aggregateRetention'];
     if (shouldPruneAggregate && policy.maxAggregateLines > 0) {
         try {
@@ -295,7 +310,7 @@ export function runGc(options: GcOptions): GcResult {
         }
     }
 
-    const shouldPruneMetrics = !filterCategories || filterCategories.has('metrics');
+    const shouldPruneMetrics = !runtimeRetentionOnly && (!filterCategories || filterCategories.has('metrics'));
     let metricsRetention: GcResult['metricsRetention'];
     if (shouldPruneMetrics && policy.maxMetricsLines > 0) {
         try {
