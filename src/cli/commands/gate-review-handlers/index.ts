@@ -230,6 +230,38 @@ function toRepoRelativeCommandPath(repoRoot: string, artifactPath: string): stri
     return normalizePath(relativePath);
 }
 
+function toReviewerHandoffAbsolutePath(repoRoot: string, artifactPath: string): string {
+    const trimmedPath = String(artifactPath || '').trim();
+    if (!trimmedPath) {
+        return '';
+    }
+    return normalizePath(path.isAbsolute(trimmedPath) ? trimmedPath : path.resolve(repoRoot, trimmedPath));
+}
+
+function getObjectField(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
+    const value = record[key];
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function getReviewerScopedDiffHandoffPaths(repoRoot: string, reviewContext: Record<string, unknown>) {
+    const scopedDiff = getObjectField(reviewContext, 'scoped_diff');
+    if (!scopedDiff) {
+        return {
+            metadataPath: '',
+            outputPath: '',
+            cachePath: ''
+        };
+    }
+    const metadata = getObjectField(scopedDiff, 'metadata');
+    return {
+        metadataPath: toReviewerHandoffAbsolutePath(repoRoot, getStringField(scopedDiff, 'metadata_path')),
+        outputPath: toReviewerHandoffAbsolutePath(repoRoot, metadata ? getStringField(metadata, 'output_path') : ''),
+        cachePath: toReviewerHandoffAbsolutePath(repoRoot, metadata ? getStringField(metadata, 'cache_path', 'diff_cache_path') : getStringField(scopedDiff, 'diff_cache_path'))
+    };
+}
+
 function buildRecordReviewInvocationCommand(options: {
     repoRoot: string;
     taskId: string;
@@ -2572,7 +2604,7 @@ export async function handleRecordReviewRouting(gateArgv: string[]): Promise<voi
     }
     console.log(
         `REVIEW_ROUTING_RECORDED: ${reviewType} ` +
-        `(Context: ${normalizePath(contextPath)}, Sha256: ${routingUpdate.contextSha256 || 'n/a'})`
+        `(Context: ${toReviewerHandoffAbsolutePath(repoRoot, contextPath)}, Sha256: ${routingUpdate.contextSha256 || 'n/a'})`
     );
 }
 
@@ -2710,6 +2742,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         gateName: 'prepare-reviewer-launch'
     });
     const promptPath = promptBinding.promptPath;
+    const scopedDiffHandoffPaths = getReviewerScopedDiffHandoffPaths(repoRoot, parsedReviewContext);
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
     const reviewTreeStateSummary = getReviewTreeStateLaunchSummary(parsedReviewContext);
     const providerLaunch = resolveProviderLaunchMetadata(runtimeIdentity);
@@ -2753,19 +2786,29 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             const existingLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
             console.log(`REVIEWER_LAUNCH_PREPARED: ${reviewType}`);
             console.log(`ReviewerIdentity: ${reviewerIdentity}`);
-            console.log(`ReviewContextPath: ${normalizePath(contextPath)}`);
+            console.log(`RepoRoot: ${toReviewerHandoffAbsolutePath(repoRoot, repoRoot)}`);
+            console.log(`ReviewContextPath: ${toReviewerHandoffAbsolutePath(repoRoot, contextPath)}`);
             console.log(`ReviewContextSha256: ${contextSha256}`);
             console.log(`RoutingEventSha256: ${routingEventProvenance.event_sha256}`);
             console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
             console.log(`PreparedLaunchEventSha256: ${getStringField(existingArtifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256')}`);
-            console.log(`ReviewerPromptPath: ${normalizePath(promptPath)}`);
-            console.log(`PromptTemplatePath: ${normalizePath(handoffBindings.promptTemplatePath)}`);
-            console.log(`OutputTemplatePath: ${normalizePath(handoffBindings.outputTemplatePath)}`);
-            console.log(`EvidenceManifestPath: ${normalizePath(handoffBindings.evidenceManifestPath)}`);
+            console.log(`ReviewerPromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, promptPath)}`);
+            console.log(`PromptTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath)}`);
+            console.log(`OutputTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath)}`);
+            console.log(`EvidenceManifestPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath)}`);
+            if (scopedDiffHandoffPaths.metadataPath) {
+                console.log(`ScopedDiffMetadataPath: ${scopedDiffHandoffPaths.metadataPath}`);
+            }
+            if (scopedDiffHandoffPaths.outputPath) {
+                console.log(`ScopedDiffPath: ${scopedDiffHandoffPaths.outputPath}`);
+            }
+            if (scopedDiffHandoffPaths.cachePath) {
+                console.log(`ScopedDiffCachePath: ${scopedDiffHandoffPaths.cachePath}`);
+            }
             if (reviewTreeStateSha256) {
                 console.log(`ReviewTreeStateSha256: ${reviewTreeStateSha256}`);
             }
-            console.log(`ReviewerLaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
+            console.log(`ReviewerLaunchArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchArtifactPath)}`);
             console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
@@ -2941,23 +2984,33 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
 
     console.log(`REVIEWER_LAUNCH_PREPARED: ${reviewType}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
-    console.log(`ReviewContextPath: ${normalizePath(contextPath)}`);
+    console.log(`RepoRoot: ${toReviewerHandoffAbsolutePath(repoRoot, repoRoot)}`);
+    console.log(`ReviewContextPath: ${toReviewerHandoffAbsolutePath(repoRoot, contextPath)}`);
     console.log(`ReviewContextSha256: ${contextSha256}`);
     console.log(`RoutingEventSha256: ${routingEventProvenance.event_sha256}`);
     console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
     console.log(`PreparedLaunchEventSha256: ${preparedLaunchEventSha256}`);
-    console.log(`ReviewerPromptPath: ${normalizePath(promptPath)}`);
-    console.log(`PromptTemplatePath: ${normalizePath(handoffBindings.promptTemplatePath)}`);
-    console.log(`OutputTemplatePath: ${normalizePath(handoffBindings.outputTemplatePath)}`);
-    console.log(`EvidenceManifestPath: ${normalizePath(handoffBindings.evidenceManifestPath)}`);
+    console.log(`ReviewerPromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, promptPath)}`);
+    console.log(`PromptTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath)}`);
+    console.log(`OutputTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath)}`);
+    console.log(`EvidenceManifestPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath)}`);
+    if (scopedDiffHandoffPaths.metadataPath) {
+        console.log(`ScopedDiffMetadataPath: ${scopedDiffHandoffPaths.metadataPath}`);
+    }
+    if (scopedDiffHandoffPaths.outputPath) {
+        console.log(`ScopedDiffPath: ${scopedDiffHandoffPaths.outputPath}`);
+    }
+    if (scopedDiffHandoffPaths.cachePath) {
+        console.log(`ScopedDiffCachePath: ${scopedDiffHandoffPaths.cachePath}`);
+    }
     if (reviewTreeStateSha256) {
         console.log(`ReviewTreeStateSha256: ${reviewTreeStateSha256}`);
     }
-    console.log(`ReviewerLaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
+    console.log(`ReviewerLaunchArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchArtifactPath)}`);
     console.log(`ReviewerLaunchArtifactSha256: ${launchArtifactSha256}`);
     console.log('AttestationState: prepared');
     if (supersededLaunchArtifact) {
-        console.log(`SupersededLaunchArtifactSnapshotPath: ${supersededLaunchArtifact.snapshot_path}`);
+        console.log(`SupersededLaunchArtifactSnapshotPath: ${toReviewerHandoffAbsolutePath(repoRoot, supersededLaunchArtifact.snapshot_path)}`);
         console.log(`SupersededLaunchArtifactSha256: ${supersededLaunchArtifact.artifact_sha256}`);
         console.log(`SupersededLaunchArtifactReason: ${supersededLaunchArtifact.superseded_reason}`);
     }

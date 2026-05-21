@@ -3908,7 +3908,7 @@ describe('cli/commands/gates', () => {
             capturedLogs.push(args.map((value) => String(value)).join(' '));
         };
         try {
-            process.chdir(repoRoot);
+            process.chdir(path.join(repoRoot, 'src'));
             await runCliMainWithHandling([
                 'gate',
                 'prepare-reviewer-launch',
@@ -3995,9 +3995,14 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewTreeStateSha256: ${fixture.reviewTreeStateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`RoutingEventSha256: ${fixture.routingEventSha256}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`RepoRoot: ${repoRoot.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextPath: ${fixture.reviewContextPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewerPromptPath: ${fixture.reviewerPromptPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplatePath: ${fixture.outputTemplatePath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`EvidenceManifestPath: ${fixture.evidenceManifestPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ScopedDiffMetadataPath: ${path.join(getReviewsRoot(repoRoot), `${taskId}-code-scoped.json`).replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchArtifactPath: ${launchArtifactPath.replace(/\\/g, '/')}`)));
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('PreparedLaunchEventSha256:')));
