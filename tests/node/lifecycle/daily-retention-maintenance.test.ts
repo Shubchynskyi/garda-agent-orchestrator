@@ -85,26 +85,59 @@ function writeTimelineSummary(bundleRoot: string, taskId: string): void {
     const eventsDir = path.join(bundleRoot, 'runtime', 'task-events');
     const timelinePath = path.join(eventsDir, `${taskId}.jsonl`);
     const stat = fs.statSync(timelinePath);
+    const summaryPath = path.join(eventsDir, '.timeline-summary.json');
+    let entries: Record<string, unknown> = {};
+    if (fs.existsSync(summaryPath)) {
+        try {
+            const existing = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { entries?: Record<string, unknown> };
+            entries = existing.entries ?? {};
+        } catch {
+            entries = {};
+        }
+    }
+    entries[taskId] = {
+        task_id: taskId,
+        file_size_bytes: stat.size,
+        file_mtime_ms: Math.floor(stat.mtimeMs),
+        code_changed: false,
+        completeness_status: 'COMPLETE',
+        events_found: ['TASK_MODE_ENTERED', 'STATUS_CHANGED', 'COMPLETION_GATE_PASSED'],
+        events_missing: [],
+        completeness_violations: [],
+        integrity_status: 'PASS',
+        events_scanned: 3,
+        integrity_event_count: 3,
+        integrity_violations: []
+    };
     fs.writeFileSync(path.join(eventsDir, '.timeline-summary.json'), JSON.stringify({
         version: 2,
         updated_at_utc: '2026-05-21T10:00:00.000Z',
-        entries: {
-            [taskId]: {
-                task_id: taskId,
-                file_size_bytes: stat.size,
-                file_mtime_ms: Math.floor(stat.mtimeMs),
-                code_changed: false,
-                completeness_status: 'COMPLETE',
-                events_found: ['TASK_MODE_ENTERED', 'STATUS_CHANGED', 'COMPLETION_GATE_PASSED'],
-                events_missing: [],
-                completeness_violations: [],
-                integrity_status: 'PASS',
-                events_scanned: 3,
-                integrity_event_count: 3,
-                integrity_violations: []
-            }
-        }
+        entries
     }, null, 2) + '\n', 'utf8');
+}
+
+function createHealthyDoneRetentionCandidate(bundleRoot: string, taskId: string): { finalCloseoutPath: string; timelinePath: string } {
+    const reviewsDir = path.join(bundleRoot, 'runtime', 'reviews');
+    fs.mkdirSync(reviewsDir, { recursive: true });
+    const finalCloseoutPath = path.join(reviewsDir, `${taskId}-final-closeout.json`);
+    fs.writeFileSync(finalCloseoutPath, JSON.stringify({ task_id: taskId, status: 'READY' }), 'utf8');
+
+    appendTaskEvent(bundleRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+    appendTaskEvent(bundleRoot, taskId, 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+        previous_status: 'IN_REVIEW',
+        new_status: 'DONE'
+    }, { passThru: true });
+    appendTaskEvent(bundleRoot, taskId, 'COMPLETION_GATE_PASSED', 'PASS', 'Completion gate passed.', {}, { passThru: true });
+    writeTimelineSummary(bundleRoot, taskId);
+    writeVerifiedLedger(bundleRoot, taskId);
+
+    const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
+    const ledgerPath = path.join(bundleRoot, 'runtime', 'task-ledger', `${taskId}.json`);
+    const old = new Date('2026-01-01T00:00:00.000Z');
+    for (const candidatePath of [finalCloseoutPath, timelinePath, ledgerPath]) {
+        fs.utimesSync(candidatePath, old, old);
+    }
+    return { finalCloseoutPath, timelinePath };
 }
 
 function createEscapingRuntimeRetentionCandidate(targetRoot: string, bundleRoot: string): string {
@@ -282,6 +315,39 @@ describe('daily retention maintenance', () => {
             assert.equal(second.status, 'FAILED');
             assert.equal(second.skipped_reason, null);
             assert.equal(second.lock_acquired, true);
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('bounds selected runtime-retention tasks during daily maintenance', () => {
+        const workspace = makeWorkspace('daily-retention-task-limit-');
+        try {
+            writeRuntimeRetentionConfig(workspace.bundleRoot, {
+                enabled: true,
+                dryRun: false,
+                maxTasksPerRun: 1,
+                purgeRequireConfirm: false
+            });
+            const selectedCandidate = createHealthyDoneRetentionCandidate(workspace.bundleRoot, 'T-700');
+            const deferredCandidate = createHealthyDoneRetentionCandidate(workspace.bundleRoot, 'T-701');
+
+            const result = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(result.status, 'SUCCESS');
+            assert.equal(result.gc_result?.selected_task_limit, 1);
+            assert.equal(result.gc_result?.eligible_now_count, 1);
+            assert.ok((result.gc_result?.removed_count ?? 0) > 0);
+            assert.equal(fs.existsSync(selectedCandidate.finalCloseoutPath), false,
+                'selected daily retention task should compact heavy review evidence');
+            assert.equal(fs.existsSync(deferredCandidate.finalCloseoutPath), true,
+                'task outside max_tasks_per_run window must remain untouched for a later pass');
+            assert.equal(fs.existsSync(deferredCandidate.timelinePath), true,
+                'daily maintenance must not compact task-event evidence outside the selected task set');
         } finally {
             workspace.cleanup();
         }
