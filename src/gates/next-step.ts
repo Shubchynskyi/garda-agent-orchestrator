@@ -3854,6 +3854,63 @@ function getLatestReviewEventSequence(
     return latestSequence;
 }
 
+function findRestartedStrictSequentialUpstreamNeedingCurrentCycleRecord(params: {
+    eventsRoot: string;
+    taskId: string;
+    targetReviewType: string;
+    requiredReviews: Record<string, boolean>;
+    policyMode: EffectiveReviewExecutionPolicyMode;
+    reviewStates: readonly ReviewArtifactState[];
+}): { upstreamState: ReviewArtifactState; upstreamReviewType: string; latestCompileSequence: number } | null {
+    if (params.policyMode !== 'strict_sequential') {
+        return null;
+    }
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(
+        params.eventsRoot,
+        params.taskId,
+        ['COMPILE_GATE_PASSED']
+    );
+    const latestCompletionFailureSequence = getLatestTaskSequenceForEventTypes(
+        params.eventsRoot,
+        params.taskId,
+        ['COMPLETION_GATE_FAILED']
+    );
+    if (
+        latestCompileSequence == null
+        || latestCompletionFailureSequence == null
+        || latestCompletionFailureSequence > latestCompileSequence
+    ) {
+        return null;
+    }
+    const timelineEvents = readTaskTimelineEventLikes(params.eventsRoot, params.taskId);
+    const stateByReviewType = new Map(params.reviewStates.map((state) => [state.reviewType, state]));
+    const upstreamReviewTypes = getReviewExecutionDependencies(
+        params.targetReviewType,
+        params.requiredReviews,
+        params.policyMode
+    );
+    for (const upstreamReviewType of upstreamReviewTypes) {
+        const upstreamState = stateByReviewType.get(upstreamReviewType);
+        if (!upstreamState?.ready || !upstreamState.domainScopeCurrent) {
+            continue;
+        }
+        const upstreamRecordedSequence = getLatestReviewEventSequence(
+            timelineEvents,
+            'REVIEW_RECORDED',
+            upstreamReviewType
+        );
+        if (upstreamRecordedSequence != null && upstreamRecordedSequence > latestCompileSequence) {
+            continue;
+        }
+        return {
+            upstreamState,
+            upstreamReviewType,
+            latestCompileSequence
+        };
+    }
+    return null;
+}
+
 function findDownstreamReviewNeedingDependencyRebind(params: {
     eventsRoot: string;
     taskId: string;
@@ -8357,6 +8414,91 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     buildCommand(
                         'Finish upstream review first',
                         navigatorCommand
+                    )
+                ]
+            });
+        }
+        const restartedCycleUpstreamReuse = findRestartedStrictSequentialUpstreamNeedingCurrentCycleRecord({
+            eventsRoot,
+            taskId,
+            targetReviewType: reviewType,
+            requiredReviews: summary.required_reviews,
+            policyMode: reviewPolicy.mode,
+            reviewStates
+        });
+        if (restartedCycleUpstreamReuse) {
+            const upstreamReviewType = restartedCycleUpstreamReuse.upstreamReviewType;
+            const upstreamState = restartedCycleUpstreamReuse.upstreamState;
+            const upstreamScopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${upstreamReviewType}-scoped.json`);
+            const upstreamScopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${upstreamReviewType}-scoped.diff`);
+            const upstreamScopedDiffReadiness = scopedDiffExpectedForReview({
+                preflight,
+                reviewType: upstreamReviewType
+            })
+                ? getScopedDiffMetadataReadiness({
+                    metadataPath: upstreamScopedDiffMetadataPath,
+                    preflight,
+                    preflightPath,
+                    preflightSha256,
+                    reviewType: upstreamReviewType
+                })
+                : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
+            const upstreamReviewerReadinessChain = buildReviewerReadinessChainSummary(
+                repoRoot,
+                eventsRoot,
+                taskId,
+                upstreamReviewType,
+                upstreamState
+            );
+            const upstreamReviewContextChain = buildReviewGateChainStatusSummary({
+                repoRoot,
+                eventsRoot,
+                taskId,
+                reviewType: upstreamReviewType,
+                edgeId: 'compile-to-review-context',
+                reason:
+                    `latest compile evidence is current before materializing '${upstreamReviewType}' review reuse ` +
+                    `for downstream '${reviewType}' preparation`,
+                preflightPath: preflightCommandPath,
+                reviewContextPath: upstreamState.contextPath
+                    ? toRepoDisplayPath(repoRoot, upstreamState.contextPath)
+                    : undefined,
+                depth: reviewDepth
+            });
+            if (!upstreamScopedDiffReadiness.ready) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'build-scoped-diff',
+                    title: `Prepare '${upstreamReviewType}' scoped diff metadata before downstream review.`,
+                    reason:
+                        `${upstreamScopedDiffReadiness.reason} After a failed completion cycle, strict_sequential ` +
+                        `review recovery must materialize current-cycle '${upstreamReviewType}' REVIEW_RECORDED reuse ` +
+                        `evidence before preparing downstream '${reviewType}'. ${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
+                    commands: [
+                        buildCommand(
+                            'Build scoped diff',
+                            `${cliPrefix} gate build-scoped-diff --review-type "${upstreamReviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, upstreamScopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, upstreamScopedDiffMetadataPath)}" --repo-root "."`
+                        )
+                    ]
+                });
+            }
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'build-review-context',
+                title: `Materialize '${upstreamReviewType}' review reuse before downstream '${reviewType}'.`,
+                reason:
+                    `After a failed completion cycle, configured review policy '${reviewPolicy.mode}' requires current-cycle ` +
+                    `'${upstreamReviewType}' REVIEW_RECORDED reuse evidence before '${reviewType}' review-context preparation. ` +
+                    `The existing '${upstreamReviewType}' receipt is lane-domain current but has no REVIEW_RECORDED record after ` +
+                    `latest compile sequence ${restartedCycleUpstreamReuse.latestCompileSequence}; run build-review-context for ` +
+                    `'${upstreamReviewType}' first so reuse materialization happens before downstream rebind. ` +
+                    `${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
+                commands: [
+                    buildCommand(
+                        'Build upstream review context',
+                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, upstreamReviewType, reviewDepth, preflightCommandPath, taskModePath)
                     )
                 ]
             });

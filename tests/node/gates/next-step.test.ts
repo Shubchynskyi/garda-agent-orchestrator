@@ -6388,6 +6388,52 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
+    it('routes restarted downstream rebind through upstream reuse materialization first', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', { review_type: 'test' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', { review_type: 'code' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', { review_type: 'code' });
+        appendEvent(repoRoot, TASK_ID, 'COMPLETION_GATE_FAILED', 'FAIL');
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', { restarted: true });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        appendEvent(repoRoot, TASK_ID, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
+        appendEvent(repoRoot, TASK_ID, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
+
+        const testFile = path.join(repoRoot, 'tests', 'restart-cycle.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("restart cycle", () => {});\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['src/app.ts', 'tests/restart-cycle.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse before downstream 'test'/);
+        assert.ok(result.reason.includes("current-cycle 'code' REVIEW_RECORDED reuse evidence"), result.reason);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
     it('does not rebind downstream strict-sequential review after the review gate passed', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
