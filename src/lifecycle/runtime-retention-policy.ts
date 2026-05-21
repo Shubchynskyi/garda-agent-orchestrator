@@ -11,8 +11,9 @@ import {
 } from '../core/active-task-state';
 import {
     assertCanonicalTaskId,
-    parseConventionalReviewArtifactTaskId,
-    parseKnownReviewArtifactTaskId
+    parseKnownReviewArtifactTaskId,
+    parseStructuredTaskArtifactTaskId,
+    taskIdsEqualCaseInsensitive
 } from '../core/task-ids';
 import { validateManagedConfigByName } from '../schemas/config-artifacts';
 
@@ -220,9 +221,29 @@ export function loadRuntimeRetentionPolicy(bundleRoot: string): RuntimeRetention
     };
 }
 
-function parseTaskIdFromReviewArtifact(fileName: string): string | null {
-    return parseKnownReviewArtifactTaskId(fileName, KNOWN_SUFFIXES)
-        ?? parseConventionalReviewArtifactTaskId(fileName);
+function parseTaskIdFromReviewArtifact(candidatePath: string, fileName: string): string | null {
+    const knownTaskId = parseKnownReviewArtifactTaskId(fileName, KNOWN_SUFFIXES);
+    if (knownTaskId) {
+        return knownTaskId;
+    }
+    if (fileName.endsWith('.json')) {
+        const structuredTaskId = parseStructuredTaskArtifactTaskId(fileName);
+        try {
+            const parsed = JSON.parse(fs.readFileSync(candidatePath, 'utf8')) as Record<string, unknown>;
+            const taskId = parsed.task_id;
+            if (taskId != null) {
+                const jsonTaskId = assertCanonicalTaskId(taskId);
+                if (structuredTaskId && !taskIdsEqualCaseInsensitive(structuredTaskId, jsonTaskId)) {
+                    return null;
+                }
+                return structuredTaskId ?? jsonTaskId;
+            }
+        } catch {
+            return structuredTaskId;
+        }
+        return structuredTaskId;
+    }
+    return parseStructuredTaskArtifactTaskId(fileName);
 }
 
 function parseTaskIdFromTaskEvents(fileName: string): string | null {
@@ -247,11 +268,25 @@ function parseTaskIdFromWorkingPlan(fileName: string): string | null {
     }
 }
 
+function parseTaskIdFromProjectMemoryArtifact(fileName: string): string | null {
+    for (const suffix of ['-impact.json', '-update.json']) {
+        if (!fileName.endsWith(suffix)) {
+            continue;
+        }
+        try {
+            return assertCanonicalTaskId(fileName.slice(0, -suffix.length));
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
 function parseTaskIdFromCandidatePath(candidatePath: string, category: string): string | null {
     const fileName = path.basename(candidatePath);
     switch (category) {
         case 'reviews':
-            return parseTaskIdFromReviewArtifact(fileName);
+            return parseTaskIdFromReviewArtifact(candidatePath, fileName);
         case 'task-events':
             return parseTaskIdFromTaskEvents(fileName)
                 ?? (fileName.endsWith('.completeness.json')
@@ -259,6 +294,8 @@ function parseTaskIdFromCandidatePath(candidatePath: string, category: string): 
                     : null);
         case 'plans':
             return parseTaskIdFromWorkingPlan(fileName);
+        case 'project-memory':
+            return parseTaskIdFromProjectMemoryArtifact(fileName);
         default:
             return null;
     }
@@ -372,19 +409,24 @@ function classifyTaskPreview(
     let healthState: RuntimeRetentionHealthState = 'ambiguous';
     const reasons: string[] = [];
 
-    if (activeByRuntime || queueStatus === 'IN_PROGRESS' || queueStatus === 'IN_REVIEW') {
-        healthState = 'active';
-        reasons.push('Active task evidence is protected.');
-    } else if (integrityStatus !== 'PASS') {
+    const hasCompleteDoneEvidence = (
+        (queueStatus === 'DONE' || timelineEvidence.hasCompletionPass)
+        && timelineSummary?.completeness_status === 'COMPLETE'
+    );
+
+    if (integrityStatus !== 'PASS') {
         healthState = 'tampered';
         reasons.push(`Timeline integrity status is ${integrityStatus}.`);
+    } else if (activeByRuntime) {
+        healthState = 'active';
+        reasons.push('Active task evidence is protected.');
     } else if (queueStatus === 'BLOCKED' || timelineEvidence.hasBlockedEvent) {
         healthState = 'blocked';
         reasons.push('Task is blocked or completion failed.');
     } else if (timelineEvidence.hasFailureEvent) {
         healthState = 'failed';
         reasons.push('Timeline contains failed gate or review events.');
-    } else if ((queueStatus === 'DONE' || timelineEvidence.hasCompletionPass) && timelineSummary?.completeness_status === 'COMPLETE') {
+    } else if (hasCompleteDoneEvidence) {
         healthState = 'healthy_done';
         reasons.push('Terminal DONE evidence is complete and integrity passed.');
         if (policy.healthyDone.requireLedger && ledgerStatus === 'VERIFIED') {
@@ -392,6 +434,9 @@ function classifyTaskPreview(
         } else if (policy.healthyDone.requireLedger) {
             reasons.push('Heavy artifacts stay authoritative until a ledger exists and is verified.');
         }
+    } else if (queueStatus === 'IN_PROGRESS' || queueStatus === 'IN_REVIEW') {
+        healthState = 'active';
+        reasons.push('Queue status still marks the task as active.');
     } else if (queueStatus === 'DONE' || timelineEvidence.hasCompletionPass) {
         healthState = 'incomplete';
         reasons.push('Terminal task evidence is present but completeness is not COMPLETE.');
@@ -420,10 +465,14 @@ function classifyTaskPreview(
             break;
     }
 
+    const ledgerRequirementSatisfied = healthState !== 'healthy_done'
+        || !policy.healthyDone.requireLedger
+        || ledgerStatus === 'VERIFIED';
     const eligibleNow = ageDays !== null
         && thresholdDays !== null
         && ageDays >= thresholdDays
-        && healthState !== 'active';
+        && healthState !== 'active'
+        && ledgerRequirementSatisfied;
 
     return {
         task_id: taskId,

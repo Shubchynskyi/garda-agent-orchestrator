@@ -72,6 +72,34 @@ export function parseConventionalReviewArtifactTaskId(fileName: string): string 
     return isCanonicalTaskId(taskId) ? taskId : null;
 }
 
+export function parseStructuredTaskArtifactTaskId(fileName: string): string | null {
+    const stem = fileName
+        .replace(/\.gz$/iu, '')
+        .replace(/\.[A-Za-z0-9]+$/u, '');
+    const segments = stem.split('-');
+    if (segments.length < 2 || segments[0] !== 'T') {
+        return null;
+    }
+    const second = segments[1]?.trim();
+    if (!second || !/^[A-Za-z0-9._]+$/u.test(second)) {
+        return null;
+    }
+    const taskSegments = ['T', second];
+    for (let index = 2; index < segments.length; index += 1) {
+        const segment = segments[index]?.trim();
+        if (!segment) {
+            break;
+        }
+        if (/^\d+$/u.test(segment) || /^[A-Za-z]+\d+$/u.test(segment)) {
+            taskSegments.push(segment);
+            continue;
+        }
+        break;
+    }
+    const taskId = taskSegments.join('-');
+    return isCanonicalTaskId(taskId) ? taskId : null;
+}
+
 export function taskIdsEqualCaseInsensitive(left: string, right: string): boolean {
     return left.toLowerCase() === right.toLowerCase();
 }

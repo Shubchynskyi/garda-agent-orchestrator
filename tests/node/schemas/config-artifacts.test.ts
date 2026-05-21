@@ -725,15 +725,15 @@ test('buildRuntimeRetentionPreview classifies complete DONE tasks as compact led
         );
 
         assert.equal(preview.task_count, 1);
-        assert.equal(preview.eligible_now_count, 1);
+        assert.equal(preview.eligible_now_count, 0);
         assert.equal(preview.tiers.compact_ledger_candidate, 1);
         assert.equal(preview.health_states.healthy_done, 1);
         assert.deepEqual(preview.tasks[0].candidate_categories, ['task-events']);
         assert.equal(preview.tasks[0].health_state, 'healthy_done');
         assert.equal(preview.tasks[0].retention_tier, 'compact_ledger_candidate');
         assert.equal(preview.tasks[0].ledger_status, 'MISSING');
-        assert.equal(preview.tasks[0].eligible_now, true);
-        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('ledger exists')));
+        assert.equal(preview.tasks[0].eligible_now, false);
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('Heavy artifacts stay authoritative until a ledger exists')));
     } finally {
         workspace.cleanup();
     }
@@ -821,6 +821,109 @@ test('buildRuntimeRetentionPreview classifies failed tasks as compressed forensi
         assert.equal(preview.tasks[0].ledger_status, 'MISSING');
         assert.equal(preview.tasks[0].eligible_now, true);
         assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('failed gate')));
+    } finally {
+        workspace.cleanup();
+    }
+});
+
+test('buildRuntimeRetentionPreview does not classify problematic DONE history as healthy_done', () => {
+    const workspace = makeRetentionPreviewWorkspace();
+    try {
+        const taskId = 'T-403-F1';
+        writeTaskQueue(workspace.targetRoot, [{ id: taskId, status: 'DONE', title: 'Problematic done retention task' }]);
+        appendStatusEvent(workspace.bundleRoot, taskId, 'DONE');
+        appendTaskEvent(workspace.bundleRoot, taskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', {});
+        appendTaskEvent(workspace.bundleRoot, taskId, 'COMPLETION_GATE_PASSED', 'PASS', 'Completion gate passed.', {});
+        const taskEventPath = path.join(workspace.eventsRoot, `${taskId}.jsonl`);
+        setFileAgeDays(taskEventPath, 45);
+        writeTimelineSummary(workspace.eventsRoot, {
+            [taskId]: {
+                task_id: taskId,
+                file_size_bytes: fs.statSync(taskEventPath).size,
+                file_mtime_ms: Math.floor(fs.statSync(taskEventPath).mtimeMs),
+                code_changed: false,
+                completeness_status: 'COMPLETE',
+                events_found: ['STATUS_CHANGED', 'COMPILE_GATE_FAILED', 'COMPLETION_GATE_PASSED'],
+                events_missing: [],
+                completeness_violations: [],
+                integrity_status: 'PASS',
+                events_scanned: 3,
+                integrity_event_count: 3,
+                integrity_violations: []
+            }
+        });
+
+        const preview = buildRuntimeRetentionPreview(
+            workspace.targetRoot,
+            workspace.bundleRoot,
+            [{ path: taskEventPath, category: 'task-events' }]
+        );
+
+        assert.equal(preview.health_states.healthy_done ?? 0, 0);
+        assert.equal(preview.health_states.failed, 1);
+        assert.equal(preview.tasks[0].health_state, 'failed');
+        assert.equal(preview.tasks[0].retention_tier, 'compressed_forensic_candidate');
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('failed gate')));
+    } finally {
+        workspace.cleanup();
+    }
+});
+
+test('buildRuntimeRetentionPreview owns lowercase follow-up review artifacts when JSON task_id differs only by case', () => {
+    const workspace = makeRetentionPreviewWorkspace();
+    try {
+        const taskId = 'T-506-f1';
+        writeTaskQueue(workspace.targetRoot, [{ id: taskId, status: 'DONE', title: 'Lowercase follow-up retention task' }]);
+        const reviewRoot = path.join(workspace.bundleRoot, 'runtime', 'reviews');
+        fs.mkdirSync(reviewRoot, { recursive: true });
+        const reviewArtifactPath = path.join(reviewRoot, `${taskId}-reset-report.json`);
+        fs.writeFileSync(reviewArtifactPath, JSON.stringify({ task_id: 'T-506-F1', status: 'PASS' }), 'utf8');
+        setFileAgeDays(reviewArtifactPath, 45);
+
+        const preview = buildRuntimeRetentionPreview(
+            workspace.targetRoot,
+            workspace.bundleRoot,
+            [{ path: reviewArtifactPath, category: 'reviews' }]
+        );
+
+        assert.equal(preview.task_count, 1);
+        assert.equal(preview.tasks[0].task_id, taskId);
+        assert.deepEqual(preview.tasks[0].candidate_categories, ['reviews']);
+        assert.equal(preview.tasks[0].candidate_count, 1);
+    } finally {
+        workspace.cleanup();
+    }
+});
+
+test('buildRuntimeRetentionPreview owns review artifacts with expanded known suffixes', () => {
+    const workspace = makeRetentionPreviewWorkspace();
+    try {
+        const taskId = 'T-507';
+        writeTaskQueue(workspace.targetRoot, [{ id: taskId, status: 'DONE', title: 'Known suffix retention task' }]);
+        const reviewRoot = path.join(workspace.bundleRoot, 'runtime', 'reviews');
+        fs.mkdirSync(reviewRoot, { recursive: true });
+        const reviewArtifactPaths = [
+            path.join(reviewRoot, `${taskId}-test-review-output.md`),
+            path.join(reviewRoot, `${taskId}-full-suite-validation.json`),
+            path.join(reviewRoot, `${taskId}-refactor-scoped.diff`)
+        ];
+        fs.writeFileSync(reviewArtifactPaths[0], '# Test Review\n\nTEST REVIEW PASSED\n', 'utf8');
+        fs.writeFileSync(reviewArtifactPaths[1], JSON.stringify({ status: 'PASS' }), 'utf8');
+        fs.writeFileSync(reviewArtifactPaths[2], 'diff --git a/file b/file\n', 'utf8');
+        for (const reviewArtifactPath of reviewArtifactPaths) {
+            setFileAgeDays(reviewArtifactPath, 45);
+        }
+
+        const preview = buildRuntimeRetentionPreview(
+            workspace.targetRoot,
+            workspace.bundleRoot,
+            reviewArtifactPaths.map((reviewArtifactPath) => ({ path: reviewArtifactPath, category: 'reviews' }))
+        );
+
+        assert.equal(preview.task_count, 1);
+        assert.equal(preview.tasks[0].task_id, taskId);
+        assert.deepEqual(preview.tasks[0].candidate_categories, ['reviews']);
+        assert.equal(preview.tasks[0].candidate_count, 3);
     } finally {
         workspace.cleanup();
     }
