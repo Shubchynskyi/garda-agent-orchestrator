@@ -589,6 +589,137 @@ export function validateReviewArtifactStorageConfig(input: unknown): Record<stri
     return normalized;
 }
 
+export function validateRuntimeRetentionConfig(input: unknown): Record<string, unknown> {
+    const raw = ensurePlainObject(input, 'runtime-retention');
+    const knownKeys = new Set([
+        'version',
+        'active_tasks',
+        'healthy_done',
+        'problem_tasks',
+        'purge',
+        'daily_maintenance'
+    ]);
+    const normalized = cloneUnknownProperties(raw, knownKeys);
+
+    normalized.version = normalizeInteger(raw.version, 'runtime-retention.version', { minimum: 1 });
+
+    const activeTasks = ensurePlainObject(raw.active_tasks, 'runtime-retention.active_tasks');
+    assertNoCaseMismatchedKnownKeys(
+        activeTasks,
+        ['protect_runtime_grace_days', 'protect_current_cycle_artifacts'],
+        'runtime-retention.active_tasks'
+    );
+    assertNoUnknownKeys(
+        activeTasks,
+        ['protect_runtime_grace_days', 'protect_current_cycle_artifacts'],
+        'runtime-retention.active_tasks'
+    );
+    normalized.active_tasks = {
+        protect_runtime_grace_days: normalizeInteger(
+            activeTasks.protect_runtime_grace_days,
+            'runtime-retention.active_tasks.protect_runtime_grace_days',
+            { minimum: 0 }
+        ),
+        protect_current_cycle_artifacts: normalizeBooleanLike(
+            activeTasks.protect_current_cycle_artifacts,
+            'runtime-retention.active_tasks.protect_current_cycle_artifacts'
+        )
+    };
+
+    const healthyDone = ensurePlainObject(raw.healthy_done, 'runtime-retention.healthy_done');
+    assertNoCaseMismatchedKnownKeys(
+        healthyDone,
+        ['compact_after_days', 'require_ledger', 'retain_task_events_until_ledger_verified'],
+        'runtime-retention.healthy_done'
+    );
+    assertNoUnknownKeys(
+        healthyDone,
+        ['compact_after_days', 'require_ledger', 'retain_task_events_until_ledger_verified'],
+        'runtime-retention.healthy_done'
+    );
+    normalized.healthy_done = {
+        compact_after_days: normalizeInteger(
+            healthyDone.compact_after_days,
+            'runtime-retention.healthy_done.compact_after_days',
+            { minimum: 0 }
+        ),
+        require_ledger: normalizeBooleanLike(
+            healthyDone.require_ledger,
+            'runtime-retention.healthy_done.require_ledger'
+        ),
+        retain_task_events_until_ledger_verified: normalizeBooleanLike(
+            healthyDone.retain_task_events_until_ledger_verified,
+            'runtime-retention.healthy_done.retain_task_events_until_ledger_verified'
+        )
+    };
+
+    const problemTasks = ensurePlainObject(raw.problem_tasks, 'runtime-retention.problem_tasks');
+    assertNoCaseMismatchedKnownKeys(
+        problemTasks,
+        ['compress_after_days', 'preserve_detailed_evidence'],
+        'runtime-retention.problem_tasks'
+    );
+    assertNoUnknownKeys(
+        problemTasks,
+        ['compress_after_days', 'preserve_detailed_evidence'],
+        'runtime-retention.problem_tasks'
+    );
+    normalized.problem_tasks = {
+        compress_after_days: normalizeInteger(
+            problemTasks.compress_after_days,
+            'runtime-retention.problem_tasks.compress_after_days',
+            { minimum: 0 }
+        ),
+        preserve_detailed_evidence: normalizeBooleanLike(
+            problemTasks.preserve_detailed_evidence,
+            'runtime-retention.problem_tasks.preserve_detailed_evidence'
+        )
+    };
+
+    const purge = ensurePlainObject(raw.purge, 'runtime-retention.purge');
+    assertNoCaseMismatchedKnownKeys(
+        purge,
+        ['require_confirm'],
+        'runtime-retention.purge'
+    );
+    assertNoUnknownKeys(
+        purge,
+        ['require_confirm'],
+        'runtime-retention.purge'
+    );
+    normalized.purge = {
+        require_confirm: normalizeBooleanLike(
+            purge.require_confirm,
+            'runtime-retention.purge.require_confirm'
+        )
+    };
+
+    const dailyMaintenance = ensurePlainObject(raw.daily_maintenance, 'runtime-retention.daily_maintenance');
+    assertNoCaseMismatchedKnownKeys(
+        dailyMaintenance,
+        ['enabled', 'max_tasks_per_run'],
+        'runtime-retention.daily_maintenance'
+    );
+    assertNoUnknownKeys(
+        dailyMaintenance,
+        ['enabled', 'max_tasks_per_run'],
+        'runtime-retention.daily_maintenance'
+    );
+    normalized.daily_maintenance = {
+        enabled: normalizeBooleanLike(
+            dailyMaintenance.enabled,
+            'runtime-retention.daily_maintenance.enabled'
+        ),
+        max_tasks_per_run: normalizeInteger(
+            dailyMaintenance.max_tasks_per_run,
+            'runtime-retention.daily_maintenance.max_tasks_per_run',
+            { minimum: 1 }
+        )
+    };
+
+    return normalized;
+}
+
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
     const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'orchestrator_work_policy'] as const;
@@ -965,6 +1096,7 @@ const MANAGED_CONFIG_VALIDATORS = Object.freeze({
     'isolation-mode': validateIsolationModeConfig,
     profiles: validateProfilesConfig,
     'review-artifact-storage': validateReviewArtifactStorageConfig,
+    'runtime-retention': validateRuntimeRetentionConfig,
     'workflow-config': validateWorkflowConfig
 });
 

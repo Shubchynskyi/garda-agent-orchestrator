@@ -23,6 +23,7 @@ import {
     isolationModeSchema,
     profilesSchema,
     reviewArtifactStorageSchema,
+    runtimeRetentionSchema,
     workflowConfigSchema,
     gardaConfigSchema
 } from '../../../src/schemas/config-schemas';
@@ -77,6 +78,7 @@ function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: 
         'isolation-mode.json',
         'profiles.json',
         'review-artifact-storage.json',
+        'runtime-retention.json',
         'workflow-config.json',
         'garda.config.json'
     ]) {
@@ -94,9 +96,9 @@ function cleanupTempBundleRoot(tmpDir: string): void {
 }
 
 
-test('getConfigSchemas returns entries for all ten managed configs', () => {
+test('getConfigSchemas returns entries for all eleven managed configs', () => {
     const schemas = getConfigSchemas();
-    assert.equal(schemas.length, 10);
+    assert.equal(schemas.length, 11);
     const names = schemas.map((s) => s.name);
     assert.ok(names.includes('review-capabilities'));
     assert.ok(names.includes('token-economy'));
@@ -107,6 +109,7 @@ test('getConfigSchemas returns entries for all ten managed configs', () => {
     assert.ok(names.includes('isolation-mode'));
     assert.ok(names.includes('profiles'));
     assert.ok(names.includes('review-artifact-storage'));
+    assert.ok(names.includes('runtime-retention'));
     assert.ok(names.includes('workflow-config'));
 });
 
@@ -133,6 +136,8 @@ test('all schema objects have $schema, $id, title, and type', () => {
         isolationModeSchema,
         profilesSchema,
         reviewArtifactStorageSchema,
+        runtimeRetentionSchema,
+        workflowConfigSchema,
         gardaConfigSchema
     ]) {
         assert.equal(typeof (schema as Record<string, unknown>).$schema, 'string');
@@ -202,6 +207,12 @@ test('template profiles.json validates against schema', () => {
 test('template review-artifact-storage.json validates against schema', () => {
     const data = readTemplateConfig('review-artifact-storage.json');
     const result = validateAgainstSchema(data, reviewArtifactStorageSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('template runtime-retention.json validates against schema', () => {
+    const data = readTemplateConfig('runtime-retention.json');
+    const result = validateAgainstSchema(data, runtimeRetentionSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
@@ -362,7 +373,7 @@ test('validateAllConfigs validates the live config directory when present', () =
     }
 
     const report = validateAllConfigs(bundleRoot);
-    assert.equal(report.configs.length, 10);
+    assert.equal(report.configs.length, 11);
     for (const cfg of report.configs) {
         assert.equal(cfg.exists, true, `${cfg.name} should exist`);
         assert.equal(cfg.parseable, true, `${cfg.name} should be parseable`);

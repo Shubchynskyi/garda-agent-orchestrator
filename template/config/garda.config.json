@@ -11,6 +11,7 @@
     "isolation-mode": "isolation-mode.json",
     "profiles": "profiles.json",
     "review-artifact-storage": "review-artifact-storage.json",
+    "runtime-retention": "runtime-retention.json",
     "workflow-config": "workflow-config.json"
   }
 }

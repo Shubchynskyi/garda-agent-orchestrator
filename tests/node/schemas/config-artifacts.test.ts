@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
+import { writeTimelineSummaryIndex, type TimelineSummaryIndex } from '../../../src/gate-runtime/timeline-summary';
+import { buildRuntimeRetentionPreview } from '../../../src/lifecycle/runtime-retention-policy';
 import {
     getManagedConfigValidators,
     validateManagedConfigByName,
@@ -12,6 +16,7 @@ import {
     validateTokenEconomyConfig,
     validateProfilesConfig,
     validateReviewArtifactStorageConfig,
+    validateRuntimeRetentionConfig,
     validateWorkflowConfig
 } from '../../../src/schemas/config-artifacts';
 
@@ -19,6 +24,69 @@ function readTemplateConfig(configName: string): Record<string, unknown> {
     return JSON.parse(
         fs.readFileSync(path.join(process.cwd(), 'template', 'config', `${configName}.json`), 'utf8')
     );
+}
+
+function makeRetentionPreviewWorkspace(): {
+    cleanup: () => void;
+    targetRoot: string;
+    bundleRoot: string;
+    eventsRoot: string;
+} {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-retention-preview-'));
+    const targetRoot = tmpDir;
+    const bundleRoot = path.join(targetRoot, 'garda-agent-orchestrator');
+    const eventsRoot = path.join(bundleRoot, 'runtime', 'task-events');
+    fs.mkdirSync(eventsRoot, { recursive: true });
+    fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+    return {
+        cleanup: () => fs.rmSync(tmpDir, { recursive: true, force: true }),
+        targetRoot,
+        bundleRoot,
+        eventsRoot
+    };
+}
+
+function writeTaskQueue(
+    targetRoot: string,
+    tasks: Array<{ id: string; status: string; title?: string }>
+): void {
+    const lines = [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|'
+    ];
+
+    for (const task of tasks) {
+        lines.push(
+            `| ${task.id} | ${task.status} | P2 | runtime/retention | ${task.title || task.id} | gpt-5.4 | 2026-05-20 | balanced | note |`
+        );
+    }
+
+    fs.writeFileSync(path.join(targetRoot, 'TASK.md'), `${lines.join('\n')}\n`, 'utf8');
+}
+
+function appendStatusEvent(bundleRoot: string, taskId: string, nextStatus: string): void {
+    appendTaskEvent(bundleRoot, taskId, 'STATUS_CHANGED', 'INFO', `Status changed to ${nextStatus}.`, {
+        new_status: nextStatus
+    });
+}
+
+function writeTimelineSummary(
+    eventsRoot: string,
+    entries: TimelineSummaryIndex['entries']
+): void {
+    writeTimelineSummaryIndex(eventsRoot, {
+        version: 2,
+        updated_at_utc: new Date().toISOString(),
+        entries
+    });
+}
+
+function setFileAgeDays(filePath: string, ageDays: number): void {
+    const timestamp = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000);
+    fs.utimesSync(filePath, timestamp, timestamp);
 }
 
 test('tracked template managed configs validate successfully', () => {
@@ -576,4 +644,224 @@ test('validateManagedConfigByName handles review-artifact-storage', () => {
     const config = readTemplateConfig('review-artifact-storage');
     const result = validateManagedConfigByName('review-artifact-storage', config);
     assert.equal(result.retention_mode, 'full');
+});
+
+test('validateRuntimeRetentionConfig normalizes valid config', () => {
+    const result = validateRuntimeRetentionConfig({
+        version: 1,
+        active_tasks: {
+            protect_runtime_grace_days: '7',
+            protect_current_cycle_artifacts: 'true'
+        },
+        healthy_done: {
+            compact_after_days: '30',
+            require_ledger: 'yes',
+            retain_task_events_until_ledger_verified: 1
+        },
+        problem_tasks: {
+            compress_after_days: '45',
+            preserve_detailed_evidence: 'true'
+        },
+        purge: {
+            require_confirm: 'true'
+        },
+        daily_maintenance: {
+            enabled: 'false',
+            max_tasks_per_run: '25'
+        }
+    });
+    assert.equal(result.version, 1);
+    assert.equal((result.active_tasks as Record<string, unknown>).protect_runtime_grace_days, 7);
+    assert.equal((result.active_tasks as Record<string, unknown>).protect_current_cycle_artifacts, true);
+    assert.equal((result.healthy_done as Record<string, unknown>).compact_after_days, 30);
+    assert.equal((result.problem_tasks as Record<string, unknown>).compress_after_days, 45);
+    assert.equal((result.purge as Record<string, unknown>).require_confirm, true);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).max_tasks_per_run, 25);
+});
+
+test('validateRuntimeRetentionConfig validates template config', () => {
+    const config = readTemplateConfig('runtime-retention');
+    const result = validateRuntimeRetentionConfig(config);
+    assert.equal(result.version, 1);
+    assert.equal((result.healthy_done as Record<string, unknown>).compact_after_days, 30);
+});
+
+test('validateManagedConfigByName handles runtime-retention', () => {
+    const config = readTemplateConfig('runtime-retention');
+    const result = validateManagedConfigByName('runtime-retention', config);
+    assert.equal((result.problem_tasks as Record<string, unknown>).preserve_detailed_evidence, true);
+});
+
+test('buildRuntimeRetentionPreview classifies complete DONE tasks as compact ledger candidates', () => {
+    const workspace = makeRetentionPreviewWorkspace();
+    try {
+        const taskId = 'T-401';
+        writeTaskQueue(workspace.targetRoot, [{ id: taskId, status: 'DONE', title: 'Completed retention task' }]);
+        appendStatusEvent(workspace.bundleRoot, taskId, 'DONE');
+        appendTaskEvent(workspace.bundleRoot, taskId, 'COMPLETION_GATE_PASSED', 'PASS', 'Completion gate passed.', {});
+        const taskEventPath = path.join(workspace.eventsRoot, `${taskId}.jsonl`);
+        setFileAgeDays(taskEventPath, 45);
+        writeTimelineSummary(workspace.eventsRoot, {
+            [taskId]: {
+                task_id: taskId,
+                file_size_bytes: fs.statSync(taskEventPath).size,
+                file_mtime_ms: Math.floor(fs.statSync(taskEventPath).mtimeMs),
+                code_changed: false,
+                completeness_status: 'COMPLETE',
+                events_found: ['STATUS_CHANGED', 'COMPLETION_GATE_PASSED'],
+                events_missing: [],
+                completeness_violations: [],
+                integrity_status: 'PASS',
+                events_scanned: 2,
+                integrity_event_count: 2,
+                integrity_violations: []
+            }
+        });
+
+        const preview = buildRuntimeRetentionPreview(
+            workspace.targetRoot,
+            workspace.bundleRoot,
+            [{ path: taskEventPath, category: 'task-events' }]
+        );
+
+        assert.equal(preview.task_count, 1);
+        assert.equal(preview.eligible_now_count, 1);
+        assert.equal(preview.tiers.compact_ledger_candidate, 1);
+        assert.equal(preview.health_states.healthy_done, 1);
+        assert.deepEqual(preview.tasks[0].candidate_categories, ['task-events']);
+        assert.equal(preview.tasks[0].health_state, 'healthy_done');
+        assert.equal(preview.tasks[0].retention_tier, 'compact_ledger_candidate');
+        assert.equal(preview.tasks[0].eligible_now, true);
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('ledger exists')));
+    } finally {
+        workspace.cleanup();
+    }
+});
+
+test('buildRuntimeRetentionPreview classifies blocked tasks as compressed forensic candidates', () => {
+    const workspace = makeRetentionPreviewWorkspace();
+    try {
+        const taskId = 'T-402';
+        writeTaskQueue(workspace.targetRoot, [{ id: taskId, status: 'BLOCKED', title: 'Blocked retention task' }]);
+        appendStatusEvent(workspace.bundleRoot, taskId, 'BLOCKED');
+        appendTaskEvent(workspace.bundleRoot, taskId, 'TASK_BLOCKED', 'FAIL', 'Task is blocked.', {});
+        const taskEventPath = path.join(workspace.eventsRoot, `${taskId}.jsonl`);
+        setFileAgeDays(taskEventPath, 45);
+        writeTimelineSummary(workspace.eventsRoot, {
+            [taskId]: {
+                task_id: taskId,
+                file_size_bytes: fs.statSync(taskEventPath).size,
+                file_mtime_ms: Math.floor(fs.statSync(taskEventPath).mtimeMs),
+                code_changed: false,
+                completeness_status: 'INCOMPLETE',
+                events_found: ['STATUS_CHANGED', 'TASK_BLOCKED'],
+                events_missing: [],
+                completeness_violations: [],
+                integrity_status: 'PASS',
+                events_scanned: 2,
+                integrity_event_count: 2,
+                integrity_violations: []
+            }
+        });
+
+        const preview = buildRuntimeRetentionPreview(
+            workspace.targetRoot,
+            workspace.bundleRoot,
+            [{ path: taskEventPath, category: 'task-events' }]
+        );
+
+        assert.equal(preview.health_states.blocked, 1);
+        assert.equal(preview.tiers.compressed_forensic_candidate, 1);
+        assert.equal(preview.tasks[0].health_state, 'blocked');
+        assert.equal(preview.tasks[0].retention_tier, 'compressed_forensic_candidate');
+        assert.equal(preview.tasks[0].eligible_now, true);
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('blocked')));
+    } finally {
+        workspace.cleanup();
+    }
+});
+
+test('buildRuntimeRetentionPreview classifies failed tasks as compressed forensic candidates', () => {
+    const workspace = makeRetentionPreviewWorkspace();
+    try {
+        const taskId = 'T-403';
+        writeTaskQueue(workspace.targetRoot, [{ id: taskId, status: 'DONE', title: 'Failed retention task' }]);
+        appendStatusEvent(workspace.bundleRoot, taskId, 'DONE');
+        appendTaskEvent(workspace.bundleRoot, taskId, 'COMPILE_GATE_FAILED', 'FAIL', 'Compile gate failed.', {});
+        const taskEventPath = path.join(workspace.eventsRoot, `${taskId}.jsonl`);
+        setFileAgeDays(taskEventPath, 45);
+        writeTimelineSummary(workspace.eventsRoot, {
+            [taskId]: {
+                task_id: taskId,
+                file_size_bytes: fs.statSync(taskEventPath).size,
+                file_mtime_ms: Math.floor(fs.statSync(taskEventPath).mtimeMs),
+                code_changed: false,
+                completeness_status: 'INCOMPLETE',
+                events_found: ['STATUS_CHANGED', 'COMPILE_GATE_FAILED'],
+                events_missing: [],
+                completeness_violations: [],
+                integrity_status: 'PASS',
+                events_scanned: 2,
+                integrity_event_count: 2,
+                integrity_violations: []
+            }
+        });
+
+        const preview = buildRuntimeRetentionPreview(
+            workspace.targetRoot,
+            workspace.bundleRoot,
+            [{ path: taskEventPath, category: 'task-events' }]
+        );
+
+        assert.equal(preview.health_states.failed, 1);
+        assert.equal(preview.tasks[0].health_state, 'failed');
+        assert.equal(preview.tasks[0].retention_tier, 'compressed_forensic_candidate');
+        assert.equal(preview.tasks[0].eligible_now, true);
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('failed gate')));
+    } finally {
+        workspace.cleanup();
+    }
+});
+
+test('buildRuntimeRetentionPreview keeps active tasks in protected evidence tier', () => {
+    const workspace = makeRetentionPreviewWorkspace();
+    try {
+        const taskId = 'T-404';
+        writeTaskQueue(workspace.targetRoot, [{ id: taskId, status: 'IN_PROGRESS', title: 'Active retention task' }]);
+        appendStatusEvent(workspace.bundleRoot, taskId, 'IN_PROGRESS');
+        appendTaskEvent(workspace.bundleRoot, taskId, 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {});
+        const taskEventPath = path.join(workspace.eventsRoot, `${taskId}.jsonl`);
+        setFileAgeDays(taskEventPath, 45);
+        writeTimelineSummary(workspace.eventsRoot, {
+            [taskId]: {
+                task_id: taskId,
+                file_size_bytes: fs.statSync(taskEventPath).size,
+                file_mtime_ms: Math.floor(fs.statSync(taskEventPath).mtimeMs),
+                code_changed: false,
+                completeness_status: 'INCOMPLETE',
+                events_found: ['STATUS_CHANGED', 'TASK_MODE_ENTERED'],
+                events_missing: [],
+                completeness_violations: [],
+                integrity_status: 'PASS',
+                events_scanned: 2,
+                integrity_event_count: 2,
+                integrity_violations: []
+            }
+        });
+
+        const preview = buildRuntimeRetentionPreview(
+            workspace.targetRoot,
+            workspace.bundleRoot,
+            [{ path: taskEventPath, category: 'task-events' }]
+        );
+
+        assert.equal(preview.health_states.active, 1);
+        assert.equal(preview.tiers.active_evidence, 1);
+        assert.equal(preview.tasks[0].health_state, 'active');
+        assert.equal(preview.tasks[0].retention_tier, 'active_evidence');
+        assert.equal(preview.tasks[0].eligible_now, false);
+        assert.ok(preview.tasks[0].reasons.some((reason) => reason.includes('protected')));
+    } finally {
+        workspace.cleanup();
+    }
 });

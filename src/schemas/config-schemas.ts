@@ -244,6 +244,64 @@ export const reviewArtifactStorageSchema: Record<string, unknown> = Object.freez
     additionalProperties: false
 });
 
+export const runtimeRetentionSchema: Record<string, unknown> = Object.freeze({
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    $id: 'garda-agent-orchestrator/runtime-retention.schema.json',
+    title: 'Runtime Retention Policy',
+    description: 'Tiered retention defaults for active evidence, healthy DONE compaction, problem-task compression, purge safety, and future daily maintenance.',
+    type: 'object',
+    properties: {
+        version: { type: 'integer', minimum: 1 },
+        active_tasks: {
+            type: 'object',
+            properties: {
+                protect_runtime_grace_days: { type: 'integer', minimum: 0 },
+                protect_current_cycle_artifacts: { type: 'boolean' }
+            },
+            required: ['protect_runtime_grace_days', 'protect_current_cycle_artifacts'],
+            additionalProperties: false
+        },
+        healthy_done: {
+            type: 'object',
+            properties: {
+                compact_after_days: { type: 'integer', minimum: 0 },
+                require_ledger: { type: 'boolean' },
+                retain_task_events_until_ledger_verified: { type: 'boolean' }
+            },
+            required: ['compact_after_days', 'require_ledger', 'retain_task_events_until_ledger_verified'],
+            additionalProperties: false
+        },
+        problem_tasks: {
+            type: 'object',
+            properties: {
+                compress_after_days: { type: 'integer', minimum: 0 },
+                preserve_detailed_evidence: { type: 'boolean' }
+            },
+            required: ['compress_after_days', 'preserve_detailed_evidence'],
+            additionalProperties: false
+        },
+        purge: {
+            type: 'object',
+            properties: {
+                require_confirm: { type: 'boolean' }
+            },
+            required: ['require_confirm'],
+            additionalProperties: false
+        },
+        daily_maintenance: {
+            type: 'object',
+            properties: {
+                enabled: { type: 'boolean' },
+                max_tasks_per_run: { type: 'integer', minimum: 1 }
+            },
+            required: ['enabled', 'max_tasks_per_run'],
+            additionalProperties: false
+        }
+    },
+    required: ['version', 'active_tasks', 'healthy_done', 'problem_tasks', 'purge', 'daily_maintenance'],
+    additionalProperties: false
+});
+
 export const OUT_OF_SCOPE_FAILURE_POLICIES = Object.freeze([
     'AUDIT_AND_BLOCK',
     'AUDIT_AND_WARN'
@@ -543,12 +601,13 @@ export const gardaConfigSchema: Record<string, unknown> = Object.freeze({
                 'isolation-mode':      { type: 'string', minLength: 1 },
                 profiles:              { type: 'string', minLength: 1 },
                 'review-artifact-storage': { type: 'string', minLength: 1 },
+                'runtime-retention':   { type: 'string', minLength: 1 },
                 'workflow-config':     { type: 'string', minLength: 1 }
             },
             required: [
                 'review-capabilities', 'token-economy', 'paths',
                 'output-filters', 'skill-packs', 'isolation-mode', 'profiles',
-                'review-artifact-storage'
+                'review-artifact-storage', 'runtime-retention'
             ],
             additionalProperties: false
         }
@@ -573,6 +632,7 @@ const CONFIG_SCHEMAS: readonly ConfigSchemaEntry[] = Object.freeze([
     { name: 'isolation-mode',      schema: isolationModeSchema,      fileName: 'isolation-mode.json' },
     { name: 'profiles',            schema: profilesSchema,           fileName: 'profiles.json' },
     { name: 'review-artifact-storage', schema: reviewArtifactStorageSchema, fileName: 'review-artifact-storage.json' },
+    { name: 'runtime-retention',   schema: runtimeRetentionSchema,   fileName: 'runtime-retention.json' },
     { name: 'workflow-config',     schema: workflowConfigSchema,     fileName: 'workflow-config.json' }
 ]);
 

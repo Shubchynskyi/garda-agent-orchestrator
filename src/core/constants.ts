@@ -237,6 +237,7 @@ export const MANAGED_CONFIG_NAMES: readonly string[] = Object.freeze([
     'isolation-mode',
     'profiles',
     'review-artifact-storage',
+    'runtime-retention',
     'workflow-config'
 ]);
 

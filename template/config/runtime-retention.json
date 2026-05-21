@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "active_tasks": {
+    "protect_runtime_grace_days": 7,
+    "protect_current_cycle_artifacts": true
+  },
+  "healthy_done": {
+    "compact_after_days": 30,
+    "require_ledger": true,
+    "retain_task_events_until_ledger_verified": true
+  },
+  "problem_tasks": {
+    "compress_after_days": 30,
+    "preserve_detailed_evidence": true
+  },
+  "purge": {
+    "require_confirm": true
+  },
+  "daily_maintenance": {
+    "enabled": false,
+    "max_tasks_per_run": 25
+  }
+}
