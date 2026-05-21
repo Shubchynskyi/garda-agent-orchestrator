@@ -3996,8 +3996,8 @@ function findDownstreamReviewNeedingDependencyRebind(params: {
         if (!downstreamState?.ready || !downstreamState.contextExists) {
             continue;
         }
-        const downstreamPhaseSequence = getLatestReviewEventSequence(timelineEvents, 'REVIEW_PHASE_STARTED', reviewType);
-        if (downstreamPhaseSequence == null) {
+        const downstreamRebindSequence = getLatestDownstreamReviewRebindSequence(timelineEvents, downstreamState);
+        if (downstreamRebindSequence == null) {
             continue;
         }
         const upstreamReviewTypes = getReviewExecutionDependencies(
@@ -4007,12 +4007,59 @@ function findDownstreamReviewNeedingDependencyRebind(params: {
         );
         for (const upstreamReviewType of upstreamReviewTypes) {
             const upstreamRecordedSequence = getLatestReviewEventSequence(timelineEvents, 'REVIEW_RECORDED', upstreamReviewType);
-            if (upstreamRecordedSequence != null && upstreamRecordedSequence > downstreamPhaseSequence) {
+            if (upstreamRecordedSequence != null && upstreamRecordedSequence > downstreamRebindSequence) {
                 return { downstreamState, upstreamReviewType };
             }
         }
     }
     return null;
+}
+
+function getLatestDownstreamReviewRebindSequence(
+    timelineEvents: readonly ReviewReuseTelemetryEventLike[],
+    state: ReviewArtifactState
+): number | null {
+    const reviewPhaseSequence = getLatestReviewEventSequence(timelineEvents, 'REVIEW_PHASE_STARTED', state.reviewType);
+    const reuseAcceptedSequence = getLatestReviewContextReuseAcceptedSequence(timelineEvents, state);
+    if (reviewPhaseSequence == null) {
+        return reuseAcceptedSequence;
+    }
+    if (reuseAcceptedSequence == null) {
+        return reviewPhaseSequence;
+    }
+    return Math.max(reviewPhaseSequence, reuseAcceptedSequence);
+}
+
+function getLatestReviewContextReuseAcceptedSequence(
+    timelineEvents: readonly ReviewReuseTelemetryEventLike[],
+    state: ReviewArtifactState
+): number | null {
+    const expectedContextPath = normalizePath(state.contextPath).toLowerCase();
+    let latestSequence: number | null = null;
+    for (const event of timelineEvents) {
+        if (event.event_type !== 'REVIEW_CONTEXT_REUSE_ACCEPTED') {
+            continue;
+        }
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const eventReviewType = String(details.review_type || details.reviewType || '').trim();
+        if (eventReviewType !== state.reviewType || details.current_pass_review_evidence !== true) {
+            continue;
+        }
+        const outputPath = normalizePath(
+            details.output_path || details.outputPath || details.review_context_path || details.reviewContextPath || ''
+        ).toLowerCase();
+        if (!outputPath || outputPath !== expectedContextPath) {
+            continue;
+        }
+        const sequence = getTimelineEventTaskSequence(event);
+        if (sequence == null) {
+            continue;
+        }
+        latestSequence = latestSequence == null
+            ? sequence
+            : Math.max(latestSequence, sequence);
+    }
+    return latestSequence;
 }
 
 function readCompileReadiness(

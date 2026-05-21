@@ -803,7 +803,15 @@ describe('cli/commands/gates – review-reuse suites', () => {
         assert.ok(result.outputLines.some((line) => line.includes('review context rebuild skipped')));
         assert.equal(fs.readFileSync(reviewContextPath, 'utf8'), originalContextText);
         assert.equal(fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8'), originalReceiptText);
-        assert.deepEqual(readTaskTimelineEvents(repoRoot, taskId), eventsBefore);
+        const eventsAfter = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(eventsAfter.length, eventsBefore.length + 1);
+        const reuseAcceptedEvent = eventsAfter.at(-1);
+        assert.equal(reuseAcceptedEvent?.event_type, 'REVIEW_CONTEXT_REUSE_ACCEPTED');
+        assert.equal(reuseAcceptedEvent?.outcome, 'PASS');
+        const reuseAcceptedDetails = reuseAcceptedEvent?.details as Record<string, unknown>;
+        assert.equal(reuseAcceptedDetails.review_type, 'code');
+        assert.equal(reuseAcceptedDetails.current_pass_review_evidence, true);
+        assert.equal(reuseAcceptedDetails.output_path, reviewContextPath.replace(/\\/g, '/'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

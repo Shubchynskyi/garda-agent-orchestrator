@@ -6388,6 +6388,37 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
+    it('advances to review gate when downstream current PASS context reuse is accepted after upstream remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', { review_type: 'test' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', { review_type: 'code' });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', { review_type: 'code' });
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_CONTEXT_REUSE_ACCEPTED', 'PASS', {
+            review_type: 'test',
+            current_pass_review_evidence: true,
+            output_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-test-review-context.json`)
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'required-reviews-check', result.reason);
+        assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(!result.reason.includes('latest review phase predates the upstream review record'));
+    });
+
     it('routes restarted downstream rebind through upstream reuse materialization first', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

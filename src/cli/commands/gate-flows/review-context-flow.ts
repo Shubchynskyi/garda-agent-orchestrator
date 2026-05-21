@@ -143,6 +143,55 @@ async function serializeReviewContextTelemetry<T>(
     }
 }
 
+async function emitCurrentPassReviewContextReuseAccepted(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    depth: number;
+    preflightPath: string;
+    reviewContextPath: string;
+    ruleContextArtifactPath: string | null;
+    currentPassReviewEvidence: CurrentPassReviewEvidenceResult;
+    telemetryLockTimeoutMs?: unknown;
+    telemetryLockRetryMs?: unknown;
+}): Promise<void> {
+    const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
+    const telemetryAppendOptions = {
+        passThru: true,
+        lockTimeoutMs: parsePositiveInteger(options.telemetryLockTimeoutMs, REVIEW_CONTEXT_TELEMETRY_LOCK_TIMEOUT_MS),
+        lockRetryMs: parsePositiveInteger(options.telemetryLockRetryMs, REVIEW_CONTEXT_TELEMETRY_LOCK_RETRY_MS)
+    };
+    await serializeReviewContextTelemetry(orchestratorRoot, options.taskId, async () => {
+        assertReviewPreparationTelemetryCommitted(
+            await appendMandatoryTaskEventAsync(
+                orchestratorRoot,
+                options.taskId,
+                'REVIEW_CONTEXT_REUSE_ACCEPTED',
+                'PASS',
+                'Current PASS review context reuse accepted.',
+                {
+                    review_type: options.reviewType,
+                    depth: options.depth,
+                    preflight_path: gateHelpers.normalizePath(options.preflightPath),
+                    output_path: gateHelpers.normalizePath(options.reviewContextPath),
+                    review_context_path: gateHelpers.normalizePath(options.reviewContextPath),
+                    review_context_artifact_path: options.ruleContextArtifactPath
+                        ? gateHelpers.normalizePath(options.ruleContextArtifactPath)
+                        : null,
+                    current_pass_review_evidence: true,
+                    review_reuse_evidence: options.currentPassReviewEvidence.reusedExistingReview ? 'REUSED' : 'FRESH',
+                    reused_existing_review: options.currentPassReviewEvidence.reusedExistingReview,
+                    receipt_path: options.currentPassReviewEvidence.receiptPath,
+                    reviewer_execution_mode: options.currentPassReviewEvidence.reviewerExecutionMode,
+                    reviewer_identity: options.currentPassReviewEvidence.reviewerIdentity
+                },
+                telemetryAppendOptions
+            ),
+            'REVIEW_CONTEXT_REUSE_ACCEPTED'
+        );
+    });
+}
+
 interface CompileEvidenceSummary {
     status: string | null;
     preflightPath: string | null;
@@ -1217,6 +1266,18 @@ export async function runBuildReviewContextCommand(
         })
         : null;
     if (currentPassReviewEvidence?.accepted) {
+        await emitCurrentPassReviewContextReuseAccepted({
+            repoRoot,
+            taskId,
+            reviewType,
+            depth,
+            preflightPath,
+            reviewContextPath: currentPassReviewEvidence.reviewContextPath,
+            ruleContextArtifactPath: currentPassReviewEvidence.ruleContextArtifactPath,
+            currentPassReviewEvidence,
+            telemetryLockTimeoutMs: options.telemetryLockTimeoutMs,
+            telemetryLockRetryMs: options.telemetryLockRetryMs
+        });
         const reviewContextSha256 = gateHelpers.fileSha256(currentPassReviewEvidence.reviewContextPath) || '';
         const outputKV: Record<string, unknown> = {
             reviewContextPath: currentPassReviewEvidence.reviewContextPath,
