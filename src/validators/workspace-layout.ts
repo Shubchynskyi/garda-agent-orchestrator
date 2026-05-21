@@ -147,6 +147,7 @@ export const BUNDLE_RUNTIME_INVENTORY_PATHS = Object.freeze([
     'live/config/skill-packs.json',
     'live/config/isolation-mode.json',
     'live/config/profiles.json',
+    'live/config/runtime-retention.json',
     'live/config/skills-index.json',
     'live/config/skills-headlines.json',
     'live/config/garda.config.json'

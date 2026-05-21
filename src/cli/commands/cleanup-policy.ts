@@ -2,6 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { validateManagedConfigByName } from '../../schemas/config-artifacts';
 import {
+    readRuntimeRetentionPolicyDocument,
+    resolveRuntimeRetentionPolicyConfigPath
+} from '../../lifecycle/runtime-retention-policy';
+import {
     parseBooleanText,
     promptSingleSelect,
     promptTextInput,
@@ -100,13 +104,17 @@ export function buildCleanupPolicyOutput(
     action: 'show' | 'edit' | 'update' | 'reset',
     configPath: string,
     policy: ReviewArtifactStorageDocument,
+    runtimeRetentionConfigPath: string,
+    runtimeRetentionPolicy: Record<string, unknown>,
     jsonMode: boolean
 ): string {
     if (jsonMode) {
         return JSON.stringify({
             action,
             config_path: configPath,
-            policy
+            policy,
+            runtime_retention_config_path: runtimeRetentionConfigPath,
+            runtime_retention_policy: runtimeRetentionPolicy
         }, null, 2);
     }
 
@@ -119,6 +127,10 @@ export function buildCleanupPolicyOutput(
     lines.push(`CompressionFormat: ${policy.compression_format}`);
     lines.push(`PreserveGateReceipts: ${policy.preserve_gate_receipts}`);
     lines.push(`GateReceiptSuffixes: ${policy.gate_receipt_suffixes.join(', ')}`);
+    lines.push(`RuntimeRetentionConfigPath: ${runtimeRetentionConfigPath}`);
+    lines.push(`RuntimeRetentionHealthyDoneCompactAfterDays: ${runtimeRetentionPolicy.healthy_done && typeof runtimeRetentionPolicy.healthy_done === 'object' ? String((runtimeRetentionPolicy.healthy_done as Record<string, unknown>).compact_after_days ?? 'n/a') : 'n/a'}`);
+    lines.push(`RuntimeRetentionProblemCompressAfterDays: ${runtimeRetentionPolicy.problem_tasks && typeof runtimeRetentionPolicy.problem_tasks === 'object' ? String((runtimeRetentionPolicy.problem_tasks as Record<string, unknown>).compress_after_days ?? 'n/a') : 'n/a'}`);
+    lines.push(`RuntimeRetentionRequireConfirmPurge: ${runtimeRetentionPolicy.purge && typeof runtimeRetentionPolicy.purge === 'object' ? String((runtimeRetentionPolicy.purge as Record<string, unknown>).require_confirm ?? 'n/a') : 'n/a'}`);
     if (action !== 'show') {
         lines.push('Status: UPDATED');
     }
@@ -261,6 +273,8 @@ export function handleCleanupPolicyCommand(
 ): MaybePromise<void> {
     const configPath = resolveCleanupPolicyConfigPath(bundleRoot);
     const currentPolicy = readCleanupPolicyDocument(bundleRoot);
+    const runtimeRetentionConfigPath = resolveRuntimeRetentionPolicyConfigPath(bundleRoot);
+    const runtimeRetentionPolicy = readRuntimeRetentionPolicyDocument(bundleRoot) as Record<string, unknown>;
 
     if (options.edit) {
         if (options.json === true) {
@@ -273,12 +287,12 @@ export function handleCleanupPolicyCommand(
             const nextPolicy = await promptForCleanupPolicyEdit(bundleRoot, currentPolicy);
             fs.mkdirSync(path.dirname(configPath), { recursive: true });
             fs.writeFileSync(configPath, JSON.stringify(nextPolicy, null, 2) + '\n', 'utf8');
-            console.log(buildCleanupPolicyOutput('edit', configPath, nextPolicy, false));
+            console.log(buildCleanupPolicyOutput('edit', configPath, nextPolicy, runtimeRetentionConfigPath, runtimeRetentionPolicy, false));
         })();
     }
 
     if (!hasUpdateOverrides(options)) {
-        console.log(buildCleanupPolicyOutput('show', configPath, currentPolicy, options.json === true));
+        console.log(buildCleanupPolicyOutput('show', configPath, currentPolicy, runtimeRetentionConfigPath, runtimeRetentionPolicy, options.json === true));
         return;
     }
 
@@ -295,5 +309,5 @@ export function handleCleanupPolicyCommand(
     )
         ? 'reset'
         : 'update';
-    console.log(buildCleanupPolicyOutput(action, configPath, nextPolicy, options.json === true));
+    console.log(buildCleanupPolicyOutput(action, configPath, nextPolicy, runtimeRetentionConfigPath, runtimeRetentionPolicy, options.json === true));
 }

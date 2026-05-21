@@ -483,6 +483,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     var imv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/isolation-mode.json');
     var prv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/profiles.json');
     var rasv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-artifact-storage.json');
+    var rrpv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/runtime-retention.json');
     var ocv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/garda.config.json');
     var six = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skills-index.json');
     var rfr = detectRuleFileViolations(targetRoot);
@@ -514,7 +515,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
         ruleFileViolations: rfr.ruleFileViolations.concat(tmv),
         templatePlaceholderViolations: rfr.templatePlaceholderViolations,
         commandsContractViolations: cv,
-        manifestContractViolations: mv.concat(ossv, imv, prv, rasv, ocv),
+        manifestContractViolations: mv.concat(ossv, imv, prv, rasv, rrpv, ocv),
         coreRuleContractViolations: crv,
         entrypointContractViolations: ev,
         taskContractViolations: tv,

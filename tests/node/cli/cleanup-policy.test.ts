@@ -67,6 +67,30 @@ const TEMPLATE_POLICY = {
     privacy_notice: 'Template defaults'
 };
 
+const TEMPLATE_RUNTIME_RETENTION = {
+    version: 1,
+    active_tasks: {
+        protect_runtime_grace_days: 7,
+        protect_current_cycle_artifacts: true
+    },
+    healthy_done: {
+        compact_after_days: 30,
+        require_ledger: true,
+        retain_task_events_until_ledger_verified: true
+    },
+    problem_tasks: {
+        compress_after_days: 45,
+        preserve_detailed_evidence: true
+    },
+    purge: {
+        require_confirm: true
+    },
+    daily_maintenance: {
+        enabled: false,
+        max_tasks_per_run: 25
+    }
+};
+
 test('cleanup policy --json shows the current persisted review artifact policy', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-cleanup-policy-'));
     try {
@@ -75,6 +99,10 @@ test('cleanup policy --json shows the current persisted review artifact policy',
         writeFixture(
             path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json'),
             JSON.stringify(TEMPLATE_POLICY, null, 2)
+        );
+        writeFixture(
+            path.join(bundleRoot, 'live', 'config', 'runtime-retention.json'),
+            JSON.stringify(TEMPLATE_RUNTIME_RETENTION, null, 2)
         );
 
         const result = spawnSync(process.execPath, [
@@ -95,6 +123,8 @@ test('cleanup policy --json shows the current persisted review artifact policy',
         assert.equal(parsed.action, 'show');
         assert.equal(parsed.policy.retention_mode, 'full');
         assert.equal(parsed.policy.compress_after_days, 7);
+        assert.equal(parsed.runtime_retention_policy.healthy_done.compact_after_days, 30);
+        assert.equal(parsed.runtime_retention_policy.problem_tasks.compress_after_days, 45);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -108,6 +138,10 @@ test('cleanup policy persists updates through CLI flags', () => {
         writeFixture(
             path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json'),
             JSON.stringify(TEMPLATE_POLICY, null, 2)
+        );
+        writeFixture(
+            path.join(bundleRoot, 'live', 'config', 'runtime-retention.json'),
+            JSON.stringify(TEMPLATE_RUNTIME_RETENTION, null, 2)
         );
 
         const result = spawnSync(process.execPath, [
@@ -129,6 +163,8 @@ test('cleanup policy persists updates through CLI flags', () => {
         assert.equal(result.status, 0, combined);
         assert.ok(combined.includes('GARDA_CLEANUP_POLICY'), combined);
         assert.ok(combined.includes('Action: update'), combined);
+        assert.ok(combined.includes('RuntimeRetentionHealthyDoneCompactAfterDays: 30'), combined);
+        assert.ok(combined.includes('RuntimeRetentionProblemCompressAfterDays: 45'), combined);
 
         const persisted = JSON.parse(fs.readFileSync(
             path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json'),
@@ -151,6 +187,10 @@ test('cleanup policy reset restores bundled template defaults', () => {
         writeFixture(
             path.join(bundleRoot, 'template', 'config', 'review-artifact-storage.json'),
             JSON.stringify(TEMPLATE_POLICY, null, 2)
+        );
+        writeFixture(
+            path.join(bundleRoot, 'live', 'config', 'runtime-retention.json'),
+            JSON.stringify(TEMPLATE_RUNTIME_RETENTION, null, 2)
         );
         writeFixture(
             path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json'),
@@ -198,6 +238,10 @@ test('cleanup policy edit uses interactive prompts to update the policy', async 
     writeFixture(
         path.join(bundleRoot, 'template', 'config', 'review-artifact-storage.json'),
         JSON.stringify(TEMPLATE_POLICY, null, 2)
+    );
+    writeFixture(
+        path.join(bundleRoot, 'live', 'config', 'runtime-retention.json'),
+        JSON.stringify(TEMPLATE_RUNTIME_RETENTION, null, 2)
     );
     writeFixture(
         path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json'),

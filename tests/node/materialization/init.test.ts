@@ -668,6 +668,46 @@ describe('runInit', () => {
         }
     });
 
+    it('preserves runtime-retention values and reports runtime-retention merge status on reinit', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const runtimeRetentionPath = path.join(bundleRoot, 'live', 'config', 'runtime-retention.json');
+            fs.writeFileSync(runtimeRetentionPath, JSON.stringify({
+                version: 1,
+                healthy_done: {
+                    compact_after_days: 45
+                }
+            }, null, 2), 'utf8');
+
+            const result = runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const materializedConfig = JSON.parse(fs.readFileSync(runtimeRetentionPath, 'utf8'));
+            assert.equal(materializedConfig.healthy_done.compact_after_days, 45);
+            assert.equal(materializedConfig.purge.require_confirm, true);
+            assert.equal(result.runtimeRetentionConfigMergeStatus, 'existing_values_preserved_and_missing_keys_filled');
+
+            const report = fs.readFileSync(result.initReportPath, 'utf8');
+            assert.ok(report.includes('Runtime retention config sync policy: preserve existing live values, fill missing keys from template.'));
+            assert.ok(report.includes('Runtime retention config merge status: existing_values_preserved_and_missing_keys_filled'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
     it('fails when another live lifecycle operation lock exists', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {

@@ -155,6 +155,7 @@ function seedMatchingSourceCheckoutParity(tmpDir: string) {
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'optional-skill-selection-policy.json'), '{}\n');
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'isolation-mode.json'), '{}\n');
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'profiles.json'), '{}\n');
+    writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'runtime-retention.json'), '{}\n');
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'skills-index.json'), '{}\n');
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'skills-headlines.json'), '{}\n');
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'config', 'garda.config.json'), '{}\n');

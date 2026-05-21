@@ -222,6 +222,7 @@ test('detectSourceBundleParity passes when matching', () => {
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'optional-skill-selection-policy.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'isolation-mode.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'runtime-retention.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'skills-index.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'skills-headlines.json'), '{}', 'utf8');
         fs.writeFileSync(path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'garda.config.json'), '{}', 'utf8');
@@ -289,6 +290,26 @@ test('validateBundleInvariants fails when isolation-mode inventory entry is miss
         const result = validateBundleInvariants(bundlePath);
         assert.equal(result.isValid, false);
         assert.ok(result.violations.some(v => v.includes('live/config/isolation-mode.json')));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('validateBundleInvariants fails when runtime-retention inventory entry is missing', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-invariants-test-'));
+    const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+    try {
+        for (const relPath of [...CRITICAL_BUNDLE_PATHS, ...BUNDLE_RUNTIME_INVENTORY_PATHS]) {
+            const fullPath = path.join(bundlePath, relPath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, '{}', 'utf8');
+        }
+
+        fs.rmSync(path.join(bundlePath, 'live', 'config', 'runtime-retention.json'));
+
+        const result = validateBundleInvariants(bundlePath);
+        assert.equal(result.isValid, false);
+        assert.ok(result.violations.some(v => v.includes('live/config/runtime-retention.json')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -402,6 +423,7 @@ test('BASE_REQUIRED_PATHS is a frozen non-empty array', () => {
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/skills-headlines.json'));
     assert.ok(!BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/optional-skill-selection-policy.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/isolation-mode.json'));
+    assert.ok(BUNDLE_RUNTIME_INVENTORY_PATHS.includes('live/config/runtime-retention.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/config/garda.config.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/template/config/garda.config.json'));
     assert.ok(BASE_REQUIRED_PATHS.includes('garda-agent-orchestrator/live/skills/orchestration/skill.json'));

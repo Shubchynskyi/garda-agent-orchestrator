@@ -589,6 +589,27 @@ test('runVerify reports missing garda.config.json in manifest contract violation
     }
 });
 
+test('runVerify reports missing runtime-retention.json in manifest contract violations', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        writeInitAnswersFixture(tmpDir);
+
+        const result = runVerify({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            initAnswersPath: 'garda-agent-orchestrator/runtime/init-answers.json'
+        });
+
+        assert.ok(
+            result.violations.manifestContractViolations.some(
+                (violation) => violation.includes('live/config/runtime-retention.json') && violation.includes('missing')
+            )
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('runVerify tolerates missing optional-skill-selection-policy.json for backward-compatible workspaces', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
     try {

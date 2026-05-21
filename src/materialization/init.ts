@@ -318,7 +318,7 @@ export function runInit(options: RunInitOptions) {
         });
     }
 
-    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'workflow-config', 'garda.config'];
+    const managedConfigNames = ['review-capabilities', 'paths', 'token-economy', 'output-filters', 'skill-packs', 'optional-skill-selection-policy', 'isolation-mode', 'profiles', 'review-artifact-storage', 'runtime-retention', 'workflow-config', 'garda.config'];
     const managedConfigFileNames = new Set(managedConfigNames.map((configName) => `${configName}.json`.toLowerCase()));
 
     // Scaffold new style templates if on legacy guidance
@@ -609,6 +609,7 @@ export function runInit(options: RunInitOptions) {
         isolationModeConfigMergeStatus: configMergeStatuses['isolation-mode'] || 'n/a',
         profilesConfigMergeStatus: configMergeStatuses['profiles'] || 'n/a',
         reviewArtifactStorageConfigMergeStatus: configMergeStatuses['review-artifact-storage'] || 'n/a',
+        runtimeRetentionConfigMergeStatus: configMergeStatuses['runtime-retention'] || 'n/a',
         workflowConfigMergeStatus: configMergeStatuses['workflow-config'] || 'n/a',
         gardaConfigMergeStatus: configMergeStatuses['garda.config'] || 'n/a',
         reviewCapabilitiesSync,
@@ -772,6 +773,8 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         `- Profiles config merge status: ${configMergeStatuses['profiles'] || 'n/a'}`,
         '- Review artifact storage config sync policy: preserve existing live values, fill missing keys from template.',
         `- Review artifact storage config merge status: ${configMergeStatuses['review-artifact-storage'] || 'n/a'}`,
+        '- Runtime retention config sync policy: preserve existing live values, fill missing keys from template.',
+        `- Runtime retention config merge status: ${configMergeStatuses['runtime-retention'] || 'n/a'}`,
         '- Workflow config sync policy: preserve existing live values, fill missing keys from template; if the live file is missing, malformed, or non-object, apply template defaults and report the effective full-suite setting.',
         `- Workflow config merge status: ${configMergeStatuses['workflow-config'] || 'n/a'}`,
         '- Root config manifest sync policy: rewrite the canonical root manifest from template on every init/update.',
