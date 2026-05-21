@@ -286,6 +286,45 @@ function writeTaskQueue(
     fs.writeFileSync(path.join(targetRoot, 'TASK.md'), `${lines.join('\n')}\n`, 'utf8');
 }
 
+function writeRuntimeRetentionPolicy(
+    bundleRoot: string,
+    options: {
+        preserveDetailedEvidence?: boolean;
+        omitPreserveDetailedEvidence?: boolean;
+        dailyDryRun?: boolean;
+        purgeRequireConfirm?: boolean;
+    } = {}
+): void {
+    const configDir = path.join(bundleRoot, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'runtime-retention.json'), JSON.stringify({
+        version: 1,
+        active_tasks: {
+            protect_runtime_grace_days: 7,
+            protect_current_cycle_artifacts: true
+        },
+        healthy_done: {
+            compact_after_days: 30,
+            require_ledger: true,
+            retain_task_events_until_ledger_verified: true
+        },
+        problem_tasks: {
+            compress_after_days: 30,
+            ...(options.omitPreserveDetailedEvidence
+                ? {}
+                : { preserve_detailed_evidence: options.preserveDetailedEvidence ?? true })
+        },
+        purge: {
+            require_confirm: options.purgeRequireConfirm ?? true
+        },
+        daily_maintenance: {
+            enabled: true,
+            max_tasks_per_run: 25,
+            dry_run: options.dailyDryRun ?? true
+        }
+    }, null, 2) + '\n', 'utf8');
+}
+
 describe('buildDefaultRetentionPolicy', () => {
     it('returns sensible defaults', () => {
         const policy = buildDefaultRetentionPolicy();
@@ -2533,6 +2572,7 @@ describe('runGc with storage policy', () => {
         writeTaskQueue(tmpDir, [
             { id: 'T-700', status: '🟥 BLOCKED', title: 'Blocked task' }
         ]);
+        writeRuntimeRetentionPolicy(bundleRoot, { preserveDetailedEvidence: false });
 
         const reviewsDir = path.join(runtimeDir, 'reviews');
         const eventsDir = path.join(runtimeDir, 'task-events');
@@ -2603,6 +2643,164 @@ describe('runGc with storage policy', () => {
         assert.equal(fs.existsSync(verdictPath), true, 'review verdict remains readable');
         assert.equal(fs.existsSync(timelinePath), true, 'timeline remains authoritative for diagnostics');
         assert.equal(result.storagePolicyResult?.removed.some((entry) => entry.startsWith('T-700-')), false);
+    });
+
+    it('preserves heavy forensic artifacts for problem tasks when detailed evidence is protected', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-701', status: '🟥 BLOCKED', title: 'Blocked task' }
+        ]);
+        writeRuntimeRetentionPolicy(bundleRoot, { preserveDetailedEvidence: true });
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const taskModePath = path.join(reviewsDir, 'T-701-task-mode.json');
+        const preflightPath = path.join(reviewsDir, 'T-701-preflight.json');
+        const compileLogPath = path.join(reviewsDir, 'T-701-compile-output.log');
+        const reviewContextPath = path.join(reviewsDir, 'T-701-code-review-context.json');
+        const scopedDiffPath = path.join(reviewsDir, 'T-701-code-scoped.diff');
+        const verdictPath = path.join(reviewsDir, 'T-701-code.md');
+        fs.writeFileSync(taskModePath, JSON.stringify({ task_id: 'T-701' }), 'utf8');
+        fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-701' }), 'utf8');
+        fs.writeFileSync(compileLogPath, 'large compile failure output\n', 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({ task_id: 'T-701', context: 'large' }), 'utf8');
+        fs.writeFileSync(scopedDiffPath, 'diff --git a/file b/file\n', 'utf8');
+        fs.writeFileSync(verdictPath, '# Review verdict\n', 'utf8');
+        appendTaskEvent(bundleRoot, 'T-701', 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-701', 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+            previous_status: 'IN_PROGRESS',
+            new_status: 'BLOCKED'
+        }, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-701', 'TASK_BLOCKED', 'FAIL', 'Task blocked.', {}, { passThru: true });
+        writeTimelineSummary(eventsDir, 'T-701', {
+            completenessStatus: 'INCOMPLETE',
+            eventsFound: ['TASK_MODE_ENTERED', 'STATUS_CHANGED', 'TASK_BLOCKED']
+        });
+
+        const timelinePath = path.join(eventsDir, 'T-701.jsonl');
+        const past = daysAgo(45);
+        for (const artifactPath of [taskModePath, preflightPath, compileLogPath, reviewContextPath, scopedDiffPath, verdictPath, timelinePath]) {
+            fs.utimesSync(artifactPath, past, past);
+        }
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxAgeDays: 365, maxReviews: 1000, maxTaskEvents: 1000 },
+            storagePolicy: {
+                retentionMode: 'none',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: false,
+                gateReceiptSuffixes: []
+            }
+        });
+
+        const preview = result.runtimeRetentionPreview?.tasks.find((task) => task.task_id === 'T-701');
+        assert.equal(preview?.retention_tier, 'compressed_forensic_candidate');
+        assert.equal(preview?.eligible_now, false);
+        assert.equal(result.storagePolicyResult?.compressed.some((entry) => entry.startsWith('T-701-')), false);
+        assert.equal(fs.existsSync(compileLogPath), true);
+        assert.equal(fs.existsSync(`${compileLogPath}.gz`), false);
+        assert.equal(fs.existsSync(reviewContextPath), true);
+        assert.equal(fs.existsSync(scopedDiffPath), true);
+    });
+
+    it('preserves heavy forensic artifacts for problem tasks by default when detailed evidence policy is omitted', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-702', status: '🟥 BLOCKED', title: 'Blocked task' }
+        ]);
+        writeRuntimeRetentionPolicy(bundleRoot, { omitPreserveDetailedEvidence: true });
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const compileLogPath = path.join(reviewsDir, 'T-702-compile-output.log');
+        const reviewContextPath = path.join(reviewsDir, 'T-702-code-review-context.json');
+        const scopedDiffPath = path.join(reviewsDir, 'T-702-code-scoped.diff');
+        fs.writeFileSync(path.join(reviewsDir, 'T-702-task-mode.json'), JSON.stringify({ task_id: 'T-702' }), 'utf8');
+        fs.writeFileSync(path.join(reviewsDir, 'T-702-preflight.json'), JSON.stringify({ task_id: 'T-702' }), 'utf8');
+        fs.writeFileSync(compileLogPath, 'large compile failure output\n', 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({ task_id: 'T-702', context: 'large' }), 'utf8');
+        fs.writeFileSync(scopedDiffPath, 'diff --git a/file b/file\n', 'utf8');
+        appendTaskEvent(bundleRoot, 'T-702', 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-702', 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+            previous_status: 'IN_PROGRESS',
+            new_status: 'BLOCKED'
+        }, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-702', 'TASK_BLOCKED', 'FAIL', 'Task blocked.', {}, { passThru: true });
+        writeTimelineSummary(eventsDir, 'T-702', {
+            completenessStatus: 'INCOMPLETE',
+            eventsFound: ['TASK_MODE_ENTERED', 'STATUS_CHANGED', 'TASK_BLOCKED']
+        });
+
+        const timelinePath = path.join(eventsDir, 'T-702.jsonl');
+        const past = daysAgo(45);
+        for (const artifactPath of [compileLogPath, reviewContextPath, scopedDiffPath, timelinePath]) {
+            fs.utimesSync(artifactPath, past, past);
+        }
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxAgeDays: 365, maxReviews: 1000, maxTaskEvents: 1000 },
+            storagePolicy: {
+                retentionMode: 'none',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: false,
+                gateReceiptSuffixes: []
+            }
+        });
+
+        const preview = result.runtimeRetentionPreview?.tasks.find((task) => task.task_id === 'T-702');
+        assert.equal(preview?.retention_tier, 'compressed_forensic_candidate');
+        assert.equal(preview?.eligible_now, false);
+        assert.equal(result.storagePolicyResult?.compressed.some((entry) => entry.startsWith('T-702-')), false);
+        assert.equal(fs.existsSync(compileLogPath), true);
+        assert.equal(fs.existsSync(`${compileLogPath}.gz`), false);
+        assert.equal(fs.existsSync(reviewContextPath), true);
+        assert.equal(fs.existsSync(scopedDiffPath), true);
+    });
+
+    it('bounds review artifact storage policy mutations to selected healthy DONE tasks', () => {
+        seedHealthyDoneTaskArtifacts({ bundleRoot, taskId: 'T-800', ageDays: 45 });
+        seedHealthyDoneTaskArtifacts({ bundleRoot, taskId: 'T-801', ageDays: 45 });
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            runtimeRetentionTaskLimit: 1,
+            retentionPolicy: { maxAgeDays: 365, maxReviews: 1000, maxTaskEvents: 1000 },
+            storagePolicy: {
+                retentionMode: 'none',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: false,
+                gateReceiptSuffixes: []
+            }
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.equal(fs.existsSync(path.join(reviewsDir, 'T-800-task-mode.json')), false);
+        assert.equal(
+            fs.existsSync(path.join(reviewsDir, 'T-801-task-mode.json')),
+            true,
+            'bounded maintenance must protect eligible healthy DONE tasks outside the selected limit'
+        );
+        assert.equal(
+            result.storagePolicyResult?.removed.some((entry) => entry.startsWith('T-801-')),
+            false,
+            'storage policy must not mutate review artifacts outside runtimeRetentionTaskLimit'
+        );
     });
 
     it('does not recompress already compressed forensic artifacts', () => {
