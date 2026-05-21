@@ -3911,6 +3911,73 @@ function findRestartedStrictSequentialUpstreamNeedingCurrentCycleRecord(params: 
     return null;
 }
 
+function findReviewGateStaleUpstreamRecovery(params: {
+    repoRoot: string;
+    eventsRoot: string;
+    taskId: string;
+    requiredReviewTypes: string[];
+    requiredReviews: Record<string, boolean>;
+    policyMode: EffectiveReviewExecutionPolicyMode;
+    reviewStates: readonly ReviewArtifactState[];
+}): { downstreamReviewType: string; upstreamState: ReviewArtifactState; upstreamReviewType: string; latestReviewGateFailureSequence: number } | null {
+    const latestReviewGateFailureSequence = getLatestTaskSequenceForEventTypes(
+        params.eventsRoot,
+        params.taskId,
+        ['REVIEW_GATE_FAILED']
+    );
+    if (latestReviewGateFailureSequence == null) {
+        return null;
+    }
+    const latestReviewGatePassSequence = getLatestTaskSequenceForEventTypes(
+        params.eventsRoot,
+        params.taskId,
+        ['REVIEW_GATE_PASSED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE']
+    );
+    if (latestReviewGatePassSequence != null && latestReviewGatePassSequence > latestReviewGateFailureSequence) {
+        return null;
+    }
+    const latestCompileSequence = getLatestTaskSequenceForEventTypes(
+        params.eventsRoot,
+        params.taskId,
+        ['COMPILE_GATE_PASSED']
+    );
+    if (latestCompileSequence == null || latestReviewGateFailureSequence <= latestCompileSequence) {
+        return null;
+    }
+    const stateByReviewType = new Map(params.reviewStates.map((state) => [state.reviewType, state]));
+    for (const downstreamReviewType of params.requiredReviewTypes) {
+        const downstreamState = stateByReviewType.get(downstreamReviewType);
+        if (!downstreamState || !reviewStateHasSatisfiedEvidence(params.repoRoot, params.eventsRoot, params.taskId, downstreamState)) {
+            continue;
+        }
+        const upstreamReviewTypes = getReviewExecutionDependencies(
+            downstreamReviewType,
+            params.requiredReviews,
+            params.policyMode
+        );
+        for (const upstreamReviewType of upstreamReviewTypes) {
+            const upstreamState = stateByReviewType.get(upstreamReviewType);
+            if (
+                !upstreamState
+                || !upstreamState.ready
+                || !upstreamState.domainScopeCurrent
+                || upstreamState.contextCurrent
+                || upstreamState.reusedExistingReview
+                || !reviewStateHasSatisfiedEvidence(params.repoRoot, params.eventsRoot, params.taskId, upstreamState)
+            ) {
+                continue;
+            }
+            return {
+                downstreamReviewType,
+                upstreamState,
+                upstreamReviewType,
+                latestReviewGateFailureSequence
+            };
+        }
+    }
+    return null;
+}
+
 function findDownstreamReviewNeedingDependencyRebind(params: {
     eventsRoot: string;
     taskId: string;
@@ -8957,6 +9024,94 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             commands: [
                 buildCommand(
                     'Build review context',
+                    buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
+                )
+            ]
+        });
+    }
+
+    const reviewGateStaleUpstreamRecovery = reviewGateAlreadyPassed
+        ? null
+        : findReviewGateStaleUpstreamRecovery({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            requiredReviewTypes,
+            requiredReviews: summary.required_reviews,
+            policyMode: reviewPolicy.mode,
+            reviewStates
+        });
+    if (reviewGateStaleUpstreamRecovery) {
+        const reviewType = reviewGateStaleUpstreamRecovery.upstreamReviewType;
+        const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
+        const reviewerReadinessChain = buildReviewerReadinessChainSummary(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            reviewGateStaleUpstreamRecovery.upstreamState
+        );
+        const reviewContextChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'compile-to-review-context',
+            reason:
+                `latest review gate failure seq ${reviewGateStaleUpstreamRecovery.latestReviewGateFailureSequence} ` +
+                `rejected stale upstream '${reviewType}' context/routing before downstream ` +
+                `'${reviewGateStaleUpstreamRecovery.downstreamReviewType}' closeout validation`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: reviewGateStaleUpstreamRecovery.upstreamState.contextPath
+                ? toRepoDisplayPath(repoRoot, reviewGateStaleUpstreamRecovery.upstreamState.contextPath)
+                : undefined,
+            depth: reviewDepth
+        });
+        const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
+        const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
+        const scopedDiffReadiness = scopedDiffExpectedForReview({
+            preflight,
+            reviewType
+        })
+            ? getScopedDiffMetadataReadiness({
+                metadataPath: scopedDiffMetadataPath,
+                preflight,
+                preflightPath,
+                preflightSha256,
+                reviewType
+            })
+            : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
+        if (!scopedDiffReadiness.ready) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'build-scoped-diff',
+                title: `Prepare '${reviewType}' scoped diff metadata after review gate failure.`,
+                reason:
+                    `${scopedDiffReadiness.reason} The latest required-reviews-check failure indicates stale upstream ` +
+                    `'${reviewType}' context/routing evidence; rebuild scoped metadata before re-binding that upstream lane. ` +
+                    `${reviewerReadinessChain} ${reviewContextChain}`,
+                commands: [
+                    buildCommand(
+                        'Build scoped diff',
+                        `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                    )
+                ]
+            });
+        }
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'build-review-context',
+            title: `Recover stale upstream '${reviewType}' review evidence after review gate failure.`,
+            reason:
+                `The latest required-reviews-check failed after compile, and upstream '${reviewType}' is lane-domain current ` +
+                `but its review-context/routing binding is stale for the current preflight. Rebind '${reviewType}' through ` +
+                `build-review-context/reuse before rerunning required-reviews-check, preserving fail-closed review validation. ` +
+                `${reviewerReadinessChain} ${reviewContextChain}`,
+            commands: [
+                buildCommand(
+                    'Build upstream review context',
                     buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
                 )
             ]

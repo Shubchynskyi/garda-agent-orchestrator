@@ -6494,6 +6494,50 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "code"'));
     });
 
+    it('routes review-gate stale upstream failures to upstream rebind instead of retrying the review gate', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+
+        const testFile = path.join(repoRoot, 'tests', 'review-gate-stale-upstream.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("review gate stale upstream", () => {});\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['src/app.ts', 'tests/review-gate-stale-upstream.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_GATE_FAILED', 'FAIL', {
+            violations: [
+                "Review 'code' is missing matching REVIEWER_DELEGATION_ROUTED telemetry in the current cycle."
+            ]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.match(result.title, /Recover stale upstream 'code' review evidence/);
+        assert.ok(result.reason.includes('required-reviews-check failed after compile'), result.reason);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+    });
+
     it('rejects receipt-spoofed lane-domain freshness when review context evidence changed', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
