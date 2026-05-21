@@ -23,6 +23,11 @@ import {
 } from '../../../gates/full-suite-validation';
 import { getTaskModeEvidence } from '../../../gates/task-mode';
 import {
+    getCycleBindingSnapshotFromPayload,
+    taskCycleScopeBindingsMatch,
+    type TaskCycleBindingSnapshot
+} from '../../../gates/task-events-summary';
+import {
     getCurrentWorkflowConfigChanges,
     getWorkflowConfigWorkViolations
 } from '../../../gates/workflow-config-work';
@@ -298,6 +303,72 @@ function readFullSuiteScopeBinding(
     };
 }
 
+function buildCurrentTaskCycleBinding(cycleBinding: FullSuiteValidationCycleBinding): TaskCycleBindingSnapshot {
+    return {
+        preflight_path: gateHelpers.normalizePath(cycleBinding.preflight_path),
+        preflight_sha256: String(cycleBinding.preflight_sha256 || '').trim().toLowerCase() || null,
+        compile_gate_timestamp: cycleBinding.compile_gate_timestamp,
+        scope_binding: cycleBinding.scope_binding ?? null
+    };
+}
+
+function tryReadRebindableFullSuiteValidationArtifact(options: {
+    artifactPath: string;
+    repoRoot: string;
+    taskId: string;
+    configCommand: string;
+    cycleBinding: FullSuiteValidationCycleBinding;
+}): FullSuiteValidationResult | null {
+    if (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile()) {
+        return null;
+    }
+
+    try {
+        const raw = JSON.parse(fs.readFileSync(options.artifactPath, 'utf8')) as Record<string, unknown>;
+        const status = String(raw.status || '').trim().toUpperCase();
+        if (status !== 'PASSED' && status !== 'WARNED') {
+            return null;
+        }
+        if (raw.enabled !== true) {
+            return null;
+        }
+        if (String(raw.command || '').trim() !== options.configCommand) {
+            return null;
+        }
+        const currentCycle = buildCurrentTaskCycleBinding(options.cycleBinding);
+        const candidateCycle = getCycleBindingSnapshotFromPayload(raw, options.repoRoot);
+        if (!candidateCycle?.compile_gate_timestamp || !currentCycle.compile_gate_timestamp) {
+            return null;
+        }
+        const strictCurrent =
+            candidateCycle.preflight_path === currentCycle.preflight_path
+            && candidateCycle.preflight_sha256 === currentCycle.preflight_sha256
+            && candidateCycle.compile_gate_timestamp === currentCycle.compile_gate_timestamp;
+        if (strictCurrent) {
+            return null;
+        }
+        const rawCycleBinding = raw.cycle_binding;
+        if (!rawCycleBinding || typeof rawCycleBinding !== 'object' || Array.isArray(rawCycleBinding)) {
+            return null;
+        }
+        if (String((rawCycleBinding as Record<string, unknown>).task_id || '').trim() !== options.taskId) {
+            return null;
+        }
+        if (candidateCycle.preflight_path !== currentCycle.preflight_path) {
+            return null;
+        }
+        if (!taskCycleScopeBindingsMatch(currentCycle, candidateCycle)) {
+            return null;
+        }
+        return {
+            ...(raw as unknown as FullSuiteValidationResult),
+            cycle_binding: options.cycleBinding
+        };
+    } catch {
+        return null;
+    }
+}
+
 function readGeneratedLockOwnerPid(lockPath: string): number | null {
     const ownerPath = path.join(lockPath, 'owner.json');
     try {
@@ -549,6 +620,36 @@ export async function runFullSuiteValidationCommand(
         });
         return {
             outputText: `${formatFullSuiteValidationResult(skippedResult)}\n`,
+            exitCode: 0
+        };
+    }
+
+    const reboundResult = tryReadRebindableFullSuiteValidationArtifact({
+        artifactPath,
+        repoRoot,
+        taskId,
+        configCommand: config.command,
+        cycleBinding
+    });
+    if (reboundResult) {
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, reboundResult.status, reboundResult, {
+            status: reboundResult.status,
+            enabled: reboundResult.enabled,
+            command: reboundResult.command,
+            exit_code: reboundResult.exit_code,
+            timed_out: reboundResult.timed_out,
+            preflight_path: cycleBinding.preflight_path,
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            cycle_binding: reboundResult.cycle_binding,
+            out_of_scope_audit_verdict: reboundResult.out_of_scope_audit_verdict,
+            violations: reboundResult.violations,
+            warnings: reboundResult.warnings,
+            reused_existing_evidence: true
+        });
+        return {
+            outputText:
+                `${formatFullSuiteValidationResult(reboundResult)}\n`
+                + 'Rebound existing full-suite evidence to the current compile/preflight cycle without rerunning the configured command.\n',
             exitCode: 0
         };
     }

@@ -2244,12 +2244,15 @@ function hasAcceptedDocsOnlyFullSuiteSkipArtifact(
 }
 
 function fullSuiteArtifactMatchesCurrentCycle(
-    artifact: Record<string, unknown>,
+    artifact: Record<string, unknown> | null,
     taskId: string,
     preflightPath: string,
     preflightSha256: string | null,
     summary: TaskAuditSummaryResult
 ): boolean {
+    if (!artifact) {
+        return false;
+    }
     const rawCycleBinding = artifact.cycle_binding;
     if (!rawCycleBinding || typeof rawCycleBinding !== 'object' || Array.isArray(rawCycleBinding)) {
         return false;
@@ -6942,7 +6945,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             )
         : fullSuiteNotRequiredForZeroDiffNoReviewableScope
             ? true
-            : isGatePassed(summary, 'full-suite-validation');
+            : isGatePassed(summary, 'full-suite-validation')
+                && fullSuiteArtifactMatchesCurrentCycle(
+                    safeReadJson(path.join(reviewsRoot, `${taskId}-full-suite-validation.json`)) as Record<string, unknown> | null,
+                    taskId,
+                    preflightPath,
+                    preflightSha256,
+                    summary
+                );
     const fullSuiteSummary: NextStepFullSuiteSummary = {
         enabled: fullSuiteConfig.enabled,
         command: fullSuiteConfig.command,

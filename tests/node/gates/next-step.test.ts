@@ -5435,7 +5435,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
-    it('reuses prior full-suite pass before test review when newer compile has unchanged scope binding', () => {
+    it('routes full-suite refresh before test review when newer compile has unchanged scope binding', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
@@ -5482,10 +5482,11 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.next_gate, 'full-suite-validation');
         assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.ok(result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
+        assert.match(result.title, /before test review/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
     it('reruns full-suite before test review when prior full-suite failure is stale after a newer compile', () => {

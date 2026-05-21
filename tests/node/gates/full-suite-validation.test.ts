@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { EXIT_GATE_FAILURE } from '../../../src/cli/exit-codes';
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../src/core/constants';
@@ -1683,6 +1684,140 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.status, 'PASSED');
             assert.equal(fs.existsSync(pendingArtifactPath), false);
             assert.equal(fs.existsSync(pendingMetaPath), false);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('rebinds same-scope passed evidence to the current compile cycle without rerunning the command', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-rebind-current-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const executedMarker = path.join(tempDir, 'command-executed.txt');
+            const helperScript = path.join(tempDir, 'pass-rebind-current.js');
+            fs.writeFileSync(
+                helperScript,
+                `require('node:fs').writeFileSync(${JSON.stringify(executedMarker)}, 'executed\\n', 'utf8'); process.stdout.write("should not run\\n"); process.exit(0);`,
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const taskId = 'T-REBIND-CURRENT';
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: taskId,
+                changed_files: ['src/changed.ts']
+            });
+            const preflightSha256 = createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
+            const changedFilesSha = '1'.repeat(64);
+            const scopeSha = '2'.repeat(64);
+            const scopeContentSha = '3'.repeat(64);
+            const currentCompileTimestamp = '2026-01-01T00:00:02.000Z';
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-compile-gate.json`), JSON.stringify({
+                status: 'PASSED',
+                timestamp_utc: currentCompileTimestamp,
+                preflight_path: preflightPath,
+                preflight_hash_sha256: preflightSha256,
+                preflight_changed_files_sha256: changedFilesSha,
+                preflight_scope_sha256: scopeSha,
+                preflight_scope_content_sha256: scopeContentSha
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(eventsDir, `${taskId}.jsonl`), [
+                JSON.stringify({
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    timestamp_utc: '2026-01-01T00:00:01.000Z',
+                    outcome: 'PASS',
+                    details: {
+                        cycle_binding: {
+                            task_id: taskId,
+                            preflight_path: preflightPath.replace(/\\/g, '/'),
+                            preflight_sha256: 'old-cycle',
+                            compile_gate_timestamp: '2026-01-01T00:00:00.000Z',
+                            scope_binding: {
+                                changed_files_sha256: changedFilesSha,
+                                scope_sha256: scopeSha,
+                                scope_content_sha256: scopeContentSha
+                            }
+                        }
+                    }
+                }),
+                JSON.stringify({
+                    event_type: 'COMPILE_GATE_PASSED',
+                    timestamp_utc: currentCompileTimestamp,
+                    outcome: 'PASS',
+                    details: {
+                        preflight_path: preflightPath.replace(/\\/g, '/'),
+                        preflight_hash_sha256: preflightSha256,
+                        preflight_changed_files_sha256: changedFilesSha,
+                        preflight_scope_sha256: scopeSha,
+                        preflight_scope_content_sha256: scopeContentSha
+                    }
+                }),
+                ''
+            ].join('\n'), 'utf8');
+            const outputArtifactPath = path.join(reviewsDir, `${taskId}-full-suite-output.log`);
+            fs.writeFileSync(outputArtifactPath, 'cached pass output\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), JSON.stringify({
+                status: 'PASSED',
+                enabled: true,
+                command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                exit_code: 0,
+                timed_out: false,
+                output_artifact_path: outputArtifactPath,
+                compact_summary: ['cached pass output'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: [],
+                cycle_binding: {
+                    task_id: taskId,
+                    preflight_path: preflightPath.replace(/\\/g, '/'),
+                    preflight_sha256: 'old-cycle',
+                    compile_gate_timestamp: '2026-01-01T00:00:00.000Z',
+                    scope_binding: {
+                        changed_files_sha256: changedFilesSha,
+                        scope_sha256: scopeSha,
+                        scope_content_sha256: scopeContentSha
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', taskId,
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            assert.equal(fs.existsSync(executedMarker), false);
+            assert.ok(result.logs.some((line) => line.includes('Rebound existing full-suite evidence')));
+            const artifact = JSON.parse(fs.readFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), 'utf8'));
+            assert.equal(artifact.cycle_binding.preflight_sha256, preflightSha256);
+            assert.equal(artifact.cycle_binding.compile_gate_timestamp, currentCompileTimestamp);
+            const timelineLines = fs.readFileSync(path.join(eventsDir, `${taskId}.jsonl`), 'utf8')
+                .split('\n')
+                .filter((line) => line.trim())
+                .map((line) => JSON.parse(line) as Record<string, unknown>);
+            const latestEvent = timelineLines[timelineLines.length - 1];
+            assert.equal(latestEvent.event_type, 'FULL_SUITE_VALIDATION_PASSED');
+            assert.equal(((latestEvent.details as Record<string, unknown>).reused_existing_evidence), true);
+            assert.equal((((latestEvent.details as Record<string, unknown>).cycle_binding as Record<string, unknown>).compile_gate_timestamp), currentCompileTimestamp);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
