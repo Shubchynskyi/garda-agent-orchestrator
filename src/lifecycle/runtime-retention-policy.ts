@@ -592,6 +592,7 @@ export function formatRuntimeRetentionPreviewLines(preview: RuntimeRetentionPrev
         + `contradictory=${preview.ledger_statuses.CONTRADICTORY}, `
         + `invalid=${preview.ledger_statuses.INVALID}`
     );
+    lines.push('RuntimeRetentionTiersLegend: active_evidence=preserve, compact_ledger_candidate=ledger-history-after-verified-ledger, compressed_forensic_candidate=compress-heavy-problem-evidence, purge=confirm-only');
     if (preview.tasks.length > 0) {
         const sampleTasks = preview.tasks
             .slice(0, 5)

@@ -512,6 +512,7 @@ test('formatToxinSummaryLines produces expected structure', () => {
     assert.ok(lines[1].includes('GateEvents: ~'));
     assert.ok(lines[1].includes('StaleLocks:'));
     assert.ok(lines[2].includes('MetricsLines:'));
+    assert.ok(summary.warnings.some((warning) => warning.includes('run garda gc to preview')));
 });
 
 // ── pruneMetricsFile ─────────────────────────────────────────────────

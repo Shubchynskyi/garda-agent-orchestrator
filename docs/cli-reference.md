@@ -102,6 +102,7 @@ Notes:
 - `doctor` reports task-event lock health under `garda-agent-orchestrator/runtime/task-events/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
 - `doctor` also reports review-artifact lock health under `garda-agent-orchestrator/runtime/reviews/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
 - `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks and stale review-artifact locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
+- `doctor` reports task-history ledger scan counts when ledger files exist. Verified ledgers are the lightweight history record that allows healthy `DONE` tasks to move out of detailed runtime evidence later; incomplete, contradictory, or invalid ledgers keep the task out of ledger-only compaction.
 - `doctor explain <FAILURE_ID>` prints remediation steps for known failure IDs such as `TASK_MODE_NOT_ENTERED`, `COMPILE_GATE_FAILED`, and `TIMELINE_INCOMPLETE`.
 - `doctor explain --list` prints the current remediation database keys.
 - `doctor` uses the same runtime-consistency vocabulary as the operator runbook: canonical per-task JSONL, derived indexes, trusted protected manifest, and stale lock cleanup.
@@ -412,7 +413,7 @@ Notes:
 
 ### `garda cleanup`
 
-Remove retained runtime artifacts under `garda-agent-orchestrator/runtime/` using count- and age-based retention limits. Use `--dry-run` to preview removals without deleting anything.
+Preview or apply retained runtime artifact cleanup under `garda-agent-orchestrator/runtime/` using count-, age-, and runtime-retention policy limits. Use `--dry-run` to preview removals and compression without deleting anything.
 
 ```text
 garda cleanup --target-root "."
@@ -424,19 +425,25 @@ garda cleanup policy edit --target-root "."
 garda cleanup policy --edit --target-root "."
 garda cleanup policy reset --target-root "."
 garda cleanup policy --retention-mode summary --compress-after-days 14 --target-root "."
+garda gc --target-root "." --category reviews
+garda gc --target-root "." --confirm --category reviews
 ```
 
 Notes:
-- `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, Markdown working plans, update-rollbacks, and update-reports.
-- `--dry-run` reports projected removals and bytes reclaimed without mutating the filesystem.
+- `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, Markdown working plans, generated temp/cache/report/update zones, project-memory impact artifacts, metrics, update-rollbacks, and update-reports.
+- `--dry-run` reports projected removals, compression, retention tiers, and bytes reclaimed without mutating the filesystem.
 - Retention accepts both a global age limit (`--max-age-days`) and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-working-plans`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
 - Count-based eviction uses **real filesystem recency** (file modification time), not task-id ordering. When the number of items exceeds the cap, the least recently modified entries are removed first. When modification times are equal, task-id / filename order is used as a deterministic tie-breaker.
 - For review artifacts, recency is determined per task group: the most recent `mtime` among all files in a `T-xxx-*` group represents that group's freshness.
+- Runtime retention is tiered. Active tasks remain active evidence. Healthy `DONE` tasks can compact detailed runtime artifacts into `runtime/task-ledger/<task-id>.json` history only after the ledger verifies. Blocked, failed, incomplete, tampered, or ambiguous tasks keep recovery-readable evidence and may only compress heavy forensic artifacts such as raw outputs, review contexts/outputs, and scoped diffs.
+- Clean-success compile and full-suite raw logs may not exist after a green run. Those gates keep compact retention evidence with status, duration, hashes, and line/char counts; warning, failure, timeout, and non-clean runs retain raw output.
+- Full purge is not automatic. Review the dry-run output first, then rerun with `--confirm` only when you intentionally accept the deletion or compression plan.
 - Working-plan retention is limited to `garda-agent-orchestrator/runtime/plans/*.md` files named after canonical task IDs. Active task plans are preserved, and cleanup never targets user project `plans/` directories outside the Garda runtime path.
 - `runtime/task-events/all-tasks.jsonl` is subject to aggregate line-count retention (`--max-aggregate-lines` via cleanup/gc policy). Tail pruning keeps the most recent entries and discards the oldest when the aggregate exceeds the configured cap. The file is never deleted outright by cleanup.
 - `runtime/task-events/all-tasks.jsonl` is a derived aggregate index; the canonical task record remains `runtime/task-events/<task-id>.jsonl`.
 - Cleanup runs under the lifecycle operation lock to avoid concurrent mutation of the same runtime state.
 - `cleanup policy` shows the current persistent review-artifact storage settings from `live/config/review-artifact-storage.json`.
+- `cleanup policy` also shows read-only runtime-retention settings from `live/config/runtime-retention.json`: healthy-DONE compaction age, problem-task compression age, confirm-only purge, and daily maintenance posture.
 - `cleanup policy edit` is the dialog-first editor for retention mode, compression threshold, and receipt preservation. `cleanup policy --edit` is an alias.
 - `cleanup policy reset` restores the bundled default policy template. `cleanup policy --reset` is an alias.
 
@@ -465,7 +472,7 @@ Notes:
 
 ### `garda gc`
 
-Extended cleanup helper with dry-run default, category filters, and `clean` alias support.
+Extended cleanup helper with dry-run default, category filters, runtime-retention preview, and `clean` alias support.
 
 ```text
 garda gc --target-root "."
@@ -479,6 +486,8 @@ Notes:
 - `gc` is dry-run by default; pass `--confirm` to apply removals.
 - `clean` is a public alias for `gc`.
 - `--category plans` limits `gc` to retained Markdown working plans under `garda-agent-orchestrator/runtime/plans/*.md`; active task plans are preserved.
+- `--category reviews` previews or applies retention-approved review artifact removal/compression. Healthy `DONE` tasks require verified ledger evidence before ledger-only compaction; problem tasks stay recoverable and compress only heavy forensic artifacts.
+- Daily opportunistic maintenance after final closeout uses the same retention-only GC path, is lock-bound and non-critical, and defaults to dry-run. It writes a small daily report sentinel and does not perform broad generated-zone cleanup from the finalization path.
 
 ### Task Reset Aliases
 

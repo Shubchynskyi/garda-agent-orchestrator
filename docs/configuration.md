@@ -2,7 +2,7 @@
 
 All configuration files live in `garda-agent-orchestrator/live/config/`.
 
-The root manifest `garda.config.json` references the nine managed config files validated by the orchestrator and can be checked with:
+The root manifest `garda.config.json` references the managed config files validated by the orchestrator and can be checked with:
 
 ```bash
 node bin/garda.js gate validate-config
@@ -22,6 +22,7 @@ node bin/garda.js gate validate-config
 | `isolation-mode.json` | Control-plane isolation and sandbox settings | Yes |
 | `profiles.json` | Active profile selection plus built-in and user profile definitions | Yes, through `garda profile ...` |
 | `review-artifact-storage.json` | Review artifact retention and storage policy | Yes, through `garda cleanup policy ...` |
+| `runtime-retention.json` | Tiered runtime-retention policy for active evidence, healthy `DONE` ledger compaction, problem-task compression, confirm-only purge, and daily maintenance | Yes, through template/config review for now; `garda cleanup policy` shows it read-only |
 | `skills-index.json` | Compact optional-skill discovery index; generated runtime index and not part of `garda.config.json` | No, generated from pack manifests |
 | `skills-headlines.json` | Compact task-start optional-skill selection surface with installed skill headlines and pack summaries | No, generated from live skill/pack manifests |
 
@@ -40,7 +41,7 @@ node bin/garda.js gate validate-config --bundle-root garda-agent-orchestrator
 node bin/garda.js gate validate-config --compact
 ```
 
-Validates the nine managed config files referenced by `garda.config.json` against portable JSON Schemas and runtime validators.
+Validates the managed config files referenced by `garda.config.json` against portable JSON Schemas and runtime validators.
 Exits non-zero on validation failure.
 
 ### CI Script
@@ -120,6 +121,48 @@ Contains profiles for:
 | `passthrough_ceiling` | Below this line count, output passes through unfiltered |
 
 Success profiles typically use `drop_lines_matching: ".*"` to drop 100% of output on green builds.
+
+## Runtime Retention
+
+Controls how Garda-owned runtime artifacts are classified for cleanup and GC.
+
+**File:** `live/config/runtime-retention.json`
+
+```json
+{
+  "version": 1,
+  "active_tasks": {
+    "protect_runtime_grace_days": 7,
+    "protect_current_cycle_artifacts": true
+  },
+  "healthy_done": {
+    "compact_after_days": 30,
+    "require_ledger": true,
+    "retain_task_events_until_ledger_verified": true
+  },
+  "problem_tasks": {
+    "compress_after_days": 30,
+    "preserve_detailed_evidence": true
+  },
+  "purge": {
+    "require_confirm": true
+  },
+  "daily_maintenance": {
+    "enabled": true,
+    "max_tasks_per_run": 25,
+    "dry_run": true
+  }
+}
+```
+
+| Tier | Meaning |
+|---|---|
+| `active_evidence` | Current or protected task artifacts stay readable. |
+| `compact_ledger_candidate` | Healthy `DONE` task artifacts may compact to `runtime/task-ledger/<task-id>.json` history only after verified ledger evidence exists. |
+| `compressed_forensic_candidate` | Blocked, failed, incomplete, tampered, or ambiguous tasks keep recovery-readable evidence; only heavy forensic artifacts are compression candidates. |
+| confirm-only purge | Full deletion requires an explicit confirmed cleanup/GC action; purge is not automatic. |
+
+Clean-success compile and full-suite raw output logs may be intentionally omitted by the gates. Retained evidence still records status, duration, hashes, and line/char counts; warning, failure, timeout, and non-clean runs retain raw output.
 
 ## Review Capabilities
 

@@ -1147,6 +1147,8 @@ test('runCliMain command help does not execute side-effect-prone command bodies'
     for (const argv of cleanupInvocations) {
         const text = await captureRunCliMain(argv);
         assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+        assert.ok(text.includes('ledger history') || text.includes('ledger-only') || text.includes('verified ledger'), `${argv.join(' ')} should explain ledger retention`);
+        assert.ok(text.includes('confirmed purge') || text.includes('Full purge is never automatic'), `${argv.join(' ')} should explain confirm-only purge`);
         assert.ok(!text.includes('GARDA_CLEANUP'), `${argv.join(' ')} should not run cleanup`);
     }
 

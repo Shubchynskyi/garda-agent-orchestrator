@@ -126,6 +126,8 @@ test('cleanup policy --json shows the current persisted review artifact policy',
         assert.equal(parsed.policy.compress_after_days, 7);
         assert.equal(parsed.runtime_retention_policy.healthy_done.compact_after_days, 30);
         assert.equal(parsed.runtime_retention_policy.problem_tasks.compress_after_days, 45);
+        assert.ok(parsed.operator_notes.some((note: string) => note.includes('verified ledger evidence')));
+        assert.ok(parsed.operator_notes.some((note: string) => note.includes('Clean-success compile/full-suite raw logs may be intentionally omitted')));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -166,6 +168,9 @@ test('cleanup policy persists updates through CLI flags', () => {
         assert.ok(combined.includes('Action: update'), combined);
         assert.ok(combined.includes('RuntimeRetentionHealthyDoneCompactAfterDays: 30'), combined);
         assert.ok(combined.includes('RuntimeRetentionProblemCompressAfterDays: 45'), combined);
+        assert.ok(combined.includes('RuntimeRetentionTiers: active_evidence=preserve'), combined);
+        assert.ok(combined.includes('OperatorNote: Runtime retention tiers: active evidence is preserved'), combined);
+        assert.ok(combined.includes('Clean-success compile/full-suite raw logs may be intentionally omitted'), combined);
 
         const persisted = JSON.parse(fs.readFileSync(
             path.join(bundleRoot, 'live', 'config', 'review-artifact-storage.json'),

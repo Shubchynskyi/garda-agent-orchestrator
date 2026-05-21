@@ -486,11 +486,11 @@ export function buildToxinStatusSummary(snapshot: ToxinSnapshot): ToxinStatusSum
     const warnings: string[] = [];
 
     if (snapshot.stale_lock_count > 0) {
-        warnings.push(`${snapshot.stale_lock_count} stale lock(s) detected; run garda gc --confirm to clean`);
+        warnings.push(`${snapshot.stale_lock_count} stale lock(s) detected; run garda gc to preview, then rerun with --confirm to clean`);
     }
     if (snapshot.cleanup_candidate_count > 0) {
         warnings.push(
-            `${snapshot.cleanup_candidate_count} cleanup candidate(s) (${formatBytes(snapshot.cleanup_candidate_bytes)}); run garda gc --confirm`
+            `${snapshot.cleanup_candidate_count} cleanup candidate(s) (${formatBytes(snapshot.cleanup_candidate_bytes)}); run garda gc to preview retention tiers before --confirm`
         );
     }
     if (snapshot.noisy_artifact_count > 0) {

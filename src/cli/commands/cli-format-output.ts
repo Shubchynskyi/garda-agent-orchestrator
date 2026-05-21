@@ -698,7 +698,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
         ])
     }),
     cleanup: Object.freeze({
-        summary: 'Remove stale runtime artifacts and manage review-artifact storage policy.',
+        summary: 'Remove stale runtime artifacts and inspect tiered retention policy.',
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} cleanup [--target-root PATH] [--dry-run] [--confirm] [--max-age-days N] [--max-backups N] [--max-working-plans N] [--max-aggregate-lines N] [--max-metrics-lines N]`,
             `${PRIMARY_CLI_NAME} cleanup policy [show|edit] [--target-root PATH]`
@@ -710,6 +710,8 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
         ]),
         hints: Object.freeze([
             'Use dry-run first when removing runtime artifacts.',
+            'Runtime retention tiers are active evidence, ledger history for healthy DONE tasks, compressed forensic evidence for problem tasks, and confirmed purge.',
+            'Clean-success compile/full-suite raw logs may be omitted at gate time; warnings, failures, and non-clean runs retain raw output.',
             'Working-plan cleanup is limited to runtime/plans/*.md and preserves active task plans.',
             'The policy subcommand is the human-facing review-artifact storage policy editor/viewer.'
         ])
@@ -736,18 +738,21 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
         ])
     }),
     gc: Object.freeze({
-        summary: 'Extended cleanup with dry-run default, allowlist, stale locks, and isolation sandbox cleanup.',
+        summary: 'Extended cleanup with dry-run default, retention tiers, stale locks, and generated-zone cleanup.',
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} gc [--target-root PATH] [--category NAME] [--max-age-days N] [--max-working-plans N] [--max-aggregate-lines N] [--max-metrics-lines N] [--confirm]`,
             `${PRIMARY_CLI_NAME} clean [--target-root PATH] [--category NAME] [--confirm]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} gc`,
+            `${PRIMARY_CLI_NAME} gc --category reviews`,
             `${PRIMARY_CLI_NAME} gc --category stale-locks`,
             `${PRIMARY_CLI_NAME} gc --confirm`
         ]),
         hints: Object.freeze([
-            'gc is dry-run by default; pass --confirm to delete.',
+            'gc is dry-run by default; pass --confirm to apply retention-approved removal or compression.',
+            'Healthy DONE task compaction requires verified ledger evidence; problem tasks keep recovery-readable evidence and compress only heavy forensic artifacts.',
+            'Full purge is never automatic; use explicit confirmed cleanup after reviewing the dry-run output.',
             'Use --category plans to limit cleanup to retained runtime working-plan files.'
         ])
     }),
@@ -959,8 +964,10 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
             '  - older snapshots created before rollback metadata persistence cannot be restored automatically.',
             '  - cleanup uses retention defaults (30 days, 20 backups, 50 task events, 100 review sets, 100 working plans, 10 update reports, 5 rollbacks, 5 bundle backups, 10000 aggregate task-event lines, 2000 metrics lines); override with --max-age-days, --max-backups, --max-working-plans, --max-aggregate-lines, and --max-metrics-lines.',
+            '  - runtime retention is tiered: active evidence is preserved, healthy DONE tasks can compact to ledger history after verified ledger evidence, problem tasks keep recovery-readable evidence and compress heavy forensic artifacts, and purge requires explicit confirmation.',
+            '  - clean-success compile/full-suite raw logs may be intentionally omitted at gate time; retained summaries still record status, duration, hashes, and line/char counts.',
             `  - use \`${PRIMARY_CLI_NAME} cleanup policy edit\` for the dialog-first review-artifact storage policy editor, or \`${PRIMARY_CLI_NAME} cleanup policy\` to inspect current settings.`,
-            '  - gc/clean is dry-run by default; pass --confirm to actually delete. Supports --category, --max-working-plans, --max-aggregate-lines, and --max-metrics-lines.',
+            '  - gc/clean is dry-run by default; pass --confirm to apply retention-approved removal or compression. Supports --category, --max-working-plans, --max-aggregate-lines, and --max-metrics-lines.',
             `  - running \`${PRIMARY_CLI_NAME} profile create\` with no profile name in a TTY starts the full interactive profile builder.`,
             `  - use \`${PRIMARY_CLI_NAME} help <command>\` or \`${PRIMARY_CLI_NAME} <command> help\` for command-specific usage.`,
             `  - use \`${PRIMARY_CLI_NAME} gate help <gate-name>\` or \`${PRIMARY_CLI_NAME} gate <gate-name> --help\` for gate-specific usage.`,

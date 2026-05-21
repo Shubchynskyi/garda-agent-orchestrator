@@ -108,13 +108,18 @@ export function buildCleanupPolicyOutput(
     runtimeRetentionPolicy: Record<string, unknown>,
     jsonMode: boolean
 ): string {
+    const operatorNotes = [
+        'Runtime retention tiers: active evidence is preserved; healthy DONE tasks become ledger history only after verified ledger evidence; problem tasks keep recovery-readable evidence and may compress heavy forensic artifacts; purge requires explicit confirmation.',
+        'Clean-success compile/full-suite raw logs may be intentionally omitted at gate time; warnings, failures, and non-clean runs retain raw output.'
+    ];
     if (jsonMode) {
         return JSON.stringify({
             action,
             config_path: configPath,
             policy,
             runtime_retention_config_path: runtimeRetentionConfigPath,
-            runtime_retention_policy: runtimeRetentionPolicy
+            runtime_retention_policy: runtimeRetentionPolicy,
+            operator_notes: operatorNotes
         }, null, 2);
     }
 
@@ -131,6 +136,10 @@ export function buildCleanupPolicyOutput(
     lines.push(`RuntimeRetentionHealthyDoneCompactAfterDays: ${runtimeRetentionPolicy.healthy_done && typeof runtimeRetentionPolicy.healthy_done === 'object' ? String((runtimeRetentionPolicy.healthy_done as Record<string, unknown>).compact_after_days ?? 'n/a') : 'n/a'}`);
     lines.push(`RuntimeRetentionProblemCompressAfterDays: ${runtimeRetentionPolicy.problem_tasks && typeof runtimeRetentionPolicy.problem_tasks === 'object' ? String((runtimeRetentionPolicy.problem_tasks as Record<string, unknown>).compress_after_days ?? 'n/a') : 'n/a'}`);
     lines.push(`RuntimeRetentionRequireConfirmPurge: ${runtimeRetentionPolicy.purge && typeof runtimeRetentionPolicy.purge === 'object' ? String((runtimeRetentionPolicy.purge as Record<string, unknown>).require_confirm ?? 'n/a') : 'n/a'}`);
+    lines.push('RuntimeRetentionTiers: active_evidence=preserve, compact_ledger_candidate=verified-ledger-history, compressed_forensic_candidate=problem-task-heavy-artifact-compression, purge=confirm-only');
+    for (const note of operatorNotes) {
+        lines.push(`OperatorNote: ${note}`);
+    }
     if (action !== 'show') {
         lines.push('Status: UPDATED');
     }
