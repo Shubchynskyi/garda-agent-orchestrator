@@ -29,6 +29,38 @@ const DEFAULT_STORAGE_POLICY: ReviewArtifactStoragePolicy = {
     ]
 };
 
+const HEAVY_FORENSIC_REVIEW_SUFFIXES: readonly string[] = Object.freeze([
+    '-compile-output.log',
+    '-full-suite-output.log',
+    '-dependency-review-context.json',
+    '-performance-review-context.json',
+    '-security-review-context.json',
+    '-refactor-review-context.json',
+    '-infra-review-context.json',
+    '-code-review-context.json',
+    '-test-review-context.json',
+    '-api-review-context.json',
+    '-db-review-context.json',
+    '-dependency-review-output.md',
+    '-performance-review-output.md',
+    '-security-review-output.md',
+    '-refactor-review-output.md',
+    '-infra-review-output.md',
+    '-code-review-output.md',
+    '-test-review-output.md',
+    '-api-review-output.md',
+    '-db-review-output.md',
+    '-dependency-scoped.diff',
+    '-performance-scoped.diff',
+    '-security-scoped.diff',
+    '-refactor-scoped.diff',
+    '-infra-scoped.diff',
+    '-code-scoped.diff',
+    '-test-scoped.diff',
+    '-api-scoped.diff',
+    '-db-scoped.diff'
+]);
+
 function validateRetentionMode(value: unknown): ReviewArtifactRetentionMode {
     if (value === 'none' || value === 'summary' || value === 'full') return value;
     return 'full';
@@ -76,18 +108,93 @@ export function compressFileGzip(filePath: string): string {
     return compressedPath;
 }
 
+function isHeavyForensicReviewArtifact(fileName: string): boolean {
+    return HEAVY_FORENSIC_REVIEW_SUFFIXES.some((suffix) => fileName.endsWith(suffix));
+}
+
+function buildEmptyStoragePolicyResult(retentionMode: ReviewArtifactRetentionMode): StoragePolicyResult {
+    return {
+        compressed: [],
+        removed: [],
+        preserved: [],
+        retentionMode
+    };
+}
+
+export function applyForensicCompressionPolicy(
+    reviewsDir: string,
+    forensicTaskIds: ReadonlySet<string>,
+    runtimeRoot = path.dirname(reviewsDir)
+): StoragePolicyResult {
+    const result = buildEmptyStoragePolicyResult('full');
+    if (forensicTaskIds.size === 0) return result;
+
+    let safeReviewsDir: string;
+    try {
+        safeReviewsDir = ensureWithinRoot(runtimeRoot, reviewsDir, 'Reviews directory');
+    } catch {
+        return result;
+    }
+
+    if (!fs.existsSync(safeReviewsDir)) return result;
+
+    let entries: string[];
+    try {
+        entries = fs.readdirSync(safeReviewsDir).sort();
+    } catch {
+        return result;
+    }
+
+    for (const entry of entries) {
+        if (entry.endsWith('.gz') || !isHeavyForensicReviewArtifact(entry)) continue;
+
+        const knownTaskId = parseKnownReviewArtifactTaskId(entry, KNOWN_SUFFIXES);
+        if (!knownTaskId || !forensicTaskIds.has(knownTaskId)) continue;
+
+        const filePath = path.join(safeReviewsDir, entry);
+        let safeFilePath: string;
+        try {
+            safeFilePath = ensureWithinRoot(runtimeRoot, filePath, 'Review artifact');
+            if (!fs.statSync(safeFilePath).isFile()) {
+                result.preserved.push(entry);
+                continue;
+            }
+        } catch {
+            result.preserved.push(entry);
+            continue;
+        }
+
+        if (fs.existsSync(`${safeFilePath}.gz`)) {
+            result.preserved.push(entry);
+            continue;
+        }
+
+        try {
+            compressFileGzip(safeFilePath);
+            result.compressed.push(entry);
+        } catch {
+            result.preserved.push(entry);
+        }
+    }
+
+    if (result.compressed.length > 0) {
+        try {
+            invalidateReviewsIndex(safeReviewsDir);
+        } catch {
+            // Best-effort index invalidation.
+        }
+    }
+
+    return result;
+}
+
 export function applyStoragePolicy(
     reviewsDir: string,
     policy: ReviewArtifactStoragePolicy,
     protectedTaskIds: Set<string>,
     runtimeRoot = path.dirname(reviewsDir)
 ): StoragePolicyResult {
-    const result: StoragePolicyResult = {
-        compressed: [],
-        removed: [],
-        preserved: [],
-        retentionMode: policy.retentionMode
-    };
+    const result = buildEmptyStoragePolicyResult(policy.retentionMode);
 
     let safeReviewsDir: string;
     try {

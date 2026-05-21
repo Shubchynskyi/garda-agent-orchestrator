@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import * as zlib from 'node:zlib';
 
 import {
     runCleanup,
@@ -2374,6 +2375,128 @@ describe('runGc with storage policy', () => {
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'inactive review artifact should be removed');
         assert.equal(fs.existsSync(activeEventPath), true, 'active task timeline should survive gc');
         assert.equal(fs.existsSync(compactableDone.timelinePath), false, 'inactive task timeline should be removed by gc');
+    });
+
+    it('compresses heavy forensic artifacts for eligible problem tasks without deleting recovery evidence', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-700', status: '🟥 BLOCKED', title: 'Blocked task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const taskModePath = path.join(reviewsDir, 'T-700-task-mode.json');
+        const preflightPath = path.join(reviewsDir, 'T-700-preflight.json');
+        const compileLogPath = path.join(reviewsDir, 'T-700-compile-output.log');
+        const reviewContextPath = path.join(reviewsDir, 'T-700-code-review-context.json');
+        const scopedDiffPath = path.join(reviewsDir, 'T-700-code-scoped.diff');
+        const verdictPath = path.join(reviewsDir, 'T-700-code.md');
+        fs.writeFileSync(taskModePath, JSON.stringify({ task_id: 'T-700' }), 'utf8');
+        fs.writeFileSync(preflightPath, JSON.stringify({ task_id: 'T-700' }), 'utf8');
+        fs.writeFileSync(compileLogPath, 'large compile failure output\n', 'utf8');
+        fs.writeFileSync(reviewContextPath, JSON.stringify({ task_id: 'T-700', context: 'large' }), 'utf8');
+        fs.writeFileSync(scopedDiffPath, 'diff --git a/file b/file\n', 'utf8');
+        fs.writeFileSync(verdictPath, '# Review verdict\n', 'utf8');
+        appendTaskEvent(bundleRoot, 'T-700', 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-700', 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+            previous_status: 'IN_PROGRESS',
+            new_status: 'BLOCKED'
+        }, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-700', 'TASK_BLOCKED', 'FAIL', 'Task blocked.', {}, { passThru: true });
+        writeTimelineSummary(eventsDir, 'T-700', {
+            completenessStatus: 'INCOMPLETE',
+            eventsFound: ['TASK_MODE_ENTERED', 'STATUS_CHANGED', 'TASK_BLOCKED']
+        });
+
+        const timelinePath = path.join(eventsDir, 'T-700.jsonl');
+        const past = daysAgo(45);
+        for (const artifactPath of [
+            taskModePath,
+            preflightPath,
+            compileLogPath,
+            reviewContextPath,
+            scopedDiffPath,
+            verdictPath,
+            timelinePath
+        ]) {
+            fs.utimesSync(artifactPath, past, past);
+        }
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxAgeDays: 365, maxReviews: 1000, maxTaskEvents: 1000 },
+            storagePolicy: {
+                retentionMode: 'none',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: false,
+                gateReceiptSuffixes: []
+            }
+        });
+
+        assert.equal(result.runtimeRetentionPreview?.tasks.find((task) => task.task_id === 'T-700')?.retention_tier, 'compressed_forensic_candidate');
+        assert.equal(result.runtimeRetentionPreview?.tasks.find((task) => task.task_id === 'T-700')?.eligible_now, true);
+        assert.ok(result.storagePolicyResult?.compressed.includes('T-700-compile-output.log'));
+        assert.ok(result.storagePolicyResult?.compressed.includes('T-700-code-review-context.json'));
+        assert.ok(result.storagePolicyResult?.compressed.includes('T-700-code-scoped.diff'));
+        assert.equal(fs.existsSync(compileLogPath), false);
+        assert.equal(fs.existsSync(`${compileLogPath}.gz`), true);
+        assert.equal(zlib.gunzipSync(fs.readFileSync(`${compileLogPath}.gz`)).toString('utf8'), 'large compile failure output\n');
+        assert.equal(fs.existsSync(taskModePath), true, 'gate evidence remains readable');
+        assert.equal(fs.existsSync(preflightPath), true, 'preflight remains readable');
+        assert.equal(fs.existsSync(verdictPath), true, 'review verdict remains readable');
+        assert.equal(fs.existsSync(timelinePath), true, 'timeline remains authoritative for diagnostics');
+        assert.equal(result.storagePolicyResult?.removed.some((entry) => entry.startsWith('T-700-')), false);
+    });
+
+    it('does not recompress already compressed forensic artifacts', () => {
+        writeTaskQueue(tmpDir, [
+            { id: 'T-701', status: '🟥 BLOCKED', title: 'Blocked task' }
+        ]);
+
+        const reviewsDir = path.join(runtimeDir, 'reviews');
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+
+        const compressedLogPath = path.join(reviewsDir, 'T-701-full-suite-output.log.gz');
+        fs.writeFileSync(compressedLogPath, zlib.gzipSync('prior failure output\n'));
+        appendTaskEvent(bundleRoot, 'T-701', 'TASK_MODE_ENTERED', 'PASS', 'Task mode entered.', {}, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-701', 'STATUS_CHANGED', 'PASS', 'Task status changed.', {
+            previous_status: 'IN_PROGRESS',
+            new_status: 'BLOCKED'
+        }, { passThru: true });
+        appendTaskEvent(bundleRoot, 'T-701', 'TASK_BLOCKED', 'FAIL', 'Task blocked.', {}, { passThru: true });
+        writeTimelineSummary(eventsDir, 'T-701', {
+            completenessStatus: 'INCOMPLETE',
+            eventsFound: ['TASK_MODE_ENTERED', 'STATUS_CHANGED', 'TASK_BLOCKED']
+        });
+
+        const past = daysAgo(45);
+        fs.utimesSync(compressedLogPath, past, past);
+        fs.utimesSync(path.join(eventsDir, 'T-701.jsonl'), past, past);
+
+        const result = runGc({
+            targetRoot: tmpDir,
+            bundleRoot,
+            confirm: true,
+            retentionPolicy: { maxAgeDays: 365, maxReviews: 1000, maxTaskEvents: 1000 },
+            storagePolicy: {
+                retentionMode: 'none',
+                compressAfterDays: 0,
+                compressionFormat: 'gzip',
+                preserveGateReceipts: false,
+                gateReceiptSuffixes: []
+            }
+        });
+
+        assert.equal(fs.existsSync(compressedLogPath), true);
+        assert.equal(fs.existsSync(`${compressedLogPath}.gz`), false);
+        assert.equal(result.storagePolicyResult?.compressed.includes('T-701-full-suite-output.log'), false);
     });
 });
 

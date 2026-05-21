@@ -5,7 +5,7 @@ import { resolveActiveTaskIds } from '../core/active-task-state';
 import { pruneTimelineSummaryEntries } from '../gate-runtime/timeline-summary';
 import { validateTargetRoot } from './lifecycle-common';
 import { withLifecycleOperationLock } from './lifecycle-lock';
-import { applyStoragePolicy, loadStoragePolicy } from './cleanup-storage-policy';
+import { applyForensicCompressionPolicy, applyStoragePolicy, loadStoragePolicy } from './cleanup-storage-policy';
 import { buildRuntimeRetentionPreview } from './runtime-retention-policy';
 import {
     buildCategorySummary,
@@ -238,16 +238,31 @@ export function runGc(options: GcOptions): GcResult {
     if (shouldApplyStoragePolicy && confirm) {
         const storagePolicy = options.storagePolicy ?? loadStoragePolicy(bundleRoot);
         const protectedReviewTaskIds = new Set(activeTaskIds);
+        const forensicCompressionTaskIds = new Set<string>();
         for (const task of runtimeRetentionPreview.tasks) {
             const compactableHealthyDone = task.health_state === 'healthy_done'
                 && task.retention_tier === 'compact_ledger_candidate'
                 && task.ledger_status === 'VERIFIED'
                 && task.eligible_now;
+            const compressableForensic = task.retention_tier === 'compressed_forensic_candidate'
+                && task.eligible_now;
+            if (compressableForensic) {
+                forensicCompressionTaskIds.add(task.task_id);
+            }
             if (!compactableHealthyDone) {
                 protectedReviewTaskIds.add(task.task_id);
             }
         }
         storagePolicyResult = applyStoragePolicy(path.join(runtimeDir, 'reviews'), storagePolicy, protectedReviewTaskIds, runtimeDir);
+        const forensicCompressionResult = applyForensicCompressionPolicy(
+            path.join(runtimeDir, 'reviews'),
+            forensicCompressionTaskIds,
+            runtimeDir
+        );
+        const forensicCompressed = new Set(forensicCompressionResult.compressed);
+        storagePolicyResult.preserved = storagePolicyResult.preserved.filter((entry) => !forensicCompressed.has(entry));
+        storagePolicyResult.compressed.push(...forensicCompressionResult.compressed);
+        storagePolicyResult.preserved.push(...forensicCompressionResult.preserved);
     }
 
     const shouldPruneAggregate = !filterCategories || filterCategories.has('task-events');
