@@ -28,6 +28,10 @@ import {
     type TaskCycleBindingSnapshot
 } from '../../../gates/task-events-summary';
 import {
+    buildRawOutputRetentionEvidence,
+    serializeCapturedOutputLines
+} from '../../../gate-runtime/output-log-retention';
+import {
     getCurrentWorkflowConfigChanges,
     getWorkflowConfigWorkViolations
 } from '../../../gates/workflow-config-work';
@@ -310,6 +314,39 @@ function buildCurrentTaskCycleBinding(cycleBinding: FullSuiteValidationCycleBind
         compile_gate_timestamp: cycleBinding.compile_gate_timestamp,
         scope_binding: cycleBinding.scope_binding ?? null
     };
+}
+
+function normalizeSuccessfulFullSuiteOutputRetention(
+    repoRoot: string,
+    artifactOutputPath: string,
+    result: FullSuiteValidationResult
+): FullSuiteValidationResult {
+    if (!shouldOmitSuccessfulFullSuiteOutput(result)) {
+        return result;
+    }
+
+    let rawOutputText = '';
+    const resolvedOutputArtifactPath = gateHelpers.resolvePathInsideRepo(
+        result.output_artifact_path || artifactOutputPath,
+        repoRoot,
+        { allowMissing: true }
+    );
+    if (resolvedOutputArtifactPath && fs.existsSync(resolvedOutputArtifactPath) && fs.statSync(resolvedOutputArtifactPath).isFile()) {
+        rawOutputText = fs.readFileSync(resolvedOutputArtifactPath, 'utf8');
+        fs.rmSync(resolvedOutputArtifactPath, { force: true });
+    }
+
+    return {
+        ...result,
+        output_artifact_path: null,
+        output_retention: result.output_retention || buildRawOutputRetentionEvidence(rawOutputText, false)
+    };
+}
+
+export function shouldOmitSuccessfulFullSuiteOutput(
+    result: Pick<FullSuiteValidationResult, 'status' | 'warnings'>
+): boolean {
+    return result.status === 'PASSED' && result.warnings.length === 0;
 }
 
 function tryReadRebindableFullSuiteValidationArtifact(options: {
@@ -632,23 +669,25 @@ export async function runFullSuiteValidationCommand(
         cycleBinding
     });
     if (reboundResult) {
-        await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, reboundResult.status, reboundResult, {
-            status: reboundResult.status,
-            enabled: reboundResult.enabled,
-            command: reboundResult.command,
-            exit_code: reboundResult.exit_code,
-            timed_out: reboundResult.timed_out,
+        const retainedReboundResult = normalizeSuccessfulFullSuiteOutputRetention(repoRoot, outputArtifactPath, reboundResult);
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, retainedReboundResult.status, retainedReboundResult, {
+            status: retainedReboundResult.status,
+            enabled: retainedReboundResult.enabled,
+            command: retainedReboundResult.command,
+            exit_code: retainedReboundResult.exit_code,
+            timed_out: retainedReboundResult.timed_out,
             preflight_path: cycleBinding.preflight_path,
             artifact_path: gateHelpers.normalizePath(artifactPath),
-            cycle_binding: reboundResult.cycle_binding,
-            out_of_scope_audit_verdict: reboundResult.out_of_scope_audit_verdict,
-            violations: reboundResult.violations,
-            warnings: reboundResult.warnings,
+            cycle_binding: retainedReboundResult.cycle_binding,
+            out_of_scope_audit_verdict: retainedReboundResult.out_of_scope_audit_verdict,
+            violations: retainedReboundResult.violations,
+            warnings: retainedReboundResult.warnings,
+            output_retention: retainedReboundResult.output_retention,
             reused_existing_evidence: true
         });
         return {
             outputText:
-                `${formatFullSuiteValidationResult(reboundResult)}\n`
+                `${formatFullSuiteValidationResult(retainedReboundResult)}\n`
                 + 'Rebound existing full-suite evidence to the current compile/preflight cycle without rerunning the configured command.\n',
             exitCode: 0
         };
@@ -721,12 +760,7 @@ export async function runFullSuiteValidationCommand(
         ];
     }
     outputLines = outputLines.map((line) => redactSecretText(line));
-
-    fs.writeFileSync(
-        outputArtifactPath,
-        outputLines.length > 0 ? `${outputLines.join('\n')}\n` : '',
-        'utf8'
-    );
+    const rawOutputText = serializeCapturedOutputLines(outputLines);
     const result = buildValidationResult(
         executionConfig,
         commandExitCode,
@@ -736,6 +770,8 @@ export async function runFullSuiteValidationCommand(
         changedFiles,
         cycleBinding
     );
+    fs.writeFileSync(outputArtifactPath, rawOutputText, 'utf8');
+    result.output_retention = buildRawOutputRetentionEvidence(rawOutputText, true);
     if (generatedLockCleanup.length > 0) {
         result.warnings.push(...generatedLockCleanup.map(formatGeneratedLockCleanupObservation));
     }
@@ -759,6 +795,7 @@ export async function runFullSuiteValidationCommand(
             postWorkflowConfigChanges.scan_error
         );
         blockedResult.output_artifact_path = gateHelpers.normalizePath(outputArtifactPath);
+        blockedResult.output_retention = buildRawOutputRetentionEvidence(rawOutputText, true);
         blockedResult.duration_ms = durationMs;
         if (blockedResult.status !== 'SKIPPED') {
             recordFullSuiteValidationDuration(repoRoot, config, {
@@ -786,7 +823,8 @@ export async function runFullSuiteValidationCommand(
             cycle_binding: blockedResult.cycle_binding,
             violations: blockedResult.violations,
             warnings: blockedResult.warnings,
-            output_telemetry: blockedResult.output_telemetry
+            output_telemetry: blockedResult.output_telemetry,
+            output_retention: blockedResult.output_retention
         });
         return {
             outputText: `${formatFullSuiteValidationResult(blockedResult)}\n`,
@@ -803,6 +841,11 @@ export async function runFullSuiteValidationCommand(
             exit_code: commandExitCode
         });
     }
+    if (shouldOmitSuccessfulFullSuiteOutput(result)) {
+        fs.rmSync(outputArtifactPath, { force: true });
+        result.output_artifact_path = null;
+        result.output_retention = buildRawOutputRetentionEvidence(rawOutputText, false);
+    }
     result.timeout_forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
     result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);
     await writeArtifactThenEmitMandatoryFullSuiteEvent(repoRoot, eventsRoot, taskId, artifactPath, result.status, result, {
@@ -813,14 +856,15 @@ export async function runFullSuiteValidationCommand(
         timed_out: result.timed_out,
         preflight_path: cycleBinding.preflight_path,
         artifact_path: gateHelpers.normalizePath(artifactPath),
-        output_artifact_path: gateHelpers.normalizePath(outputArtifactPath),
+        output_artifact_path: result.output_artifact_path,
         duration_ms: result.duration_ms,
         timeout_forecast: result.timeout_forecast,
         cycle_binding: result.cycle_binding,
         out_of_scope_audit_verdict: result.out_of_scope_audit_verdict,
         violations: result.violations,
         warnings: result.warnings,
-        output_telemetry: result.output_telemetry
+        output_telemetry: result.output_telemetry,
+        output_retention: result.output_retention
     });
 
     return {

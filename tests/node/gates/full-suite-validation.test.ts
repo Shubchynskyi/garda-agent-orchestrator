@@ -24,6 +24,7 @@ import {
     resolveFullSuiteDurationHistoryPath,
     type FullSuiteValidationConfig
 } from '../../../src/gates/full-suite-validation';
+import { shouldOmitSuccessfulFullSuiteOutput } from '../../../src/cli/commands/gate-flows/full-suite-validation-flow';
 import { getCurrentWorkflowConfigFileHashes } from '../../../src/gates/workflow-config-work';
 import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
 import { countTextChars } from '../../../src/gate-runtime/text-utils';
@@ -219,6 +220,21 @@ describe('gates/full-suite-validation', () => {
     });
 
     describe('result builders', () => {
+        it('omits raw output only for clean PASSED full-suite results', () => {
+            assert.equal(shouldOmitSuccessfulFullSuiteOutput({
+                status: 'PASSED',
+                warnings: []
+            }), true);
+            assert.equal(shouldOmitSuccessfulFullSuiteOutput({
+                status: 'PASSED',
+                warnings: ['warning']
+            }), false);
+            assert.equal(shouldOmitSuccessfulFullSuiteOutput({
+                status: 'WARNED',
+                warnings: []
+            }), false);
+        });
+
         it('buildSkippedResult keeps cycle binding', () => {
             const config = loadFullSuiteValidationConfig('/nonexistent');
             const result = buildSkippedResult(config, {
@@ -780,10 +796,16 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.cycle_binding.task_id, 'T-WARN');
             assert.ok(artifact.output_telemetry);
             assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
+            const outputArtifactPath = path.join(reviewsDir, 'T-WARN-full-suite-output.log');
+            assert.equal(String(artifact.output_artifact_path).replace(/\\/g, '/'), outputArtifactPath.replace(/\\/g, '/'));
+            assert.equal(artifact.output_retention.raw_output_retained, true);
+            assert.equal(artifact.output_retention.retention_reason, 'FULL_OUTPUT_RETAINED');
+            assert.equal(fs.existsSync(outputArtifactPath), true);
             const timelinePath = path.join(eventsDir, 'T-WARN.jsonl');
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_WARNED"/);
+            assert.match(timeline, /"retention_reason":"FULL_OUTPUT_RETAINED"/);
             assert.match(timeline, /"output_telemetry":\{/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
@@ -846,12 +868,11 @@ describe('gates/full-suite-validation', () => {
             assert.ok(artifact.output_telemetry);
             assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
             const outputArtifactPath = path.join(reviewsDir, 'T-PASS-full-suite-output.log');
-            const outputArtifact = fs.readFileSync(outputArtifactPath, 'utf8');
-            assert.ok(!outputArtifact.includes('full-suite-secret-value'));
-            assert.ok(!outputArtifact.includes('full suite line one'));
-            assert.ok(!outputArtifact.includes('full suite line two'));
-            assert.ok(outputArtifact.includes('ACCESS_TOKEN=<redacted>'));
-            assert.ok(outputArtifact.includes('API_TOKEN="<redacted>"'));
+            assert.equal(fs.existsSync(outputArtifactPath), false);
+            assert.equal(artifact.output_artifact_path, null);
+            assert.equal(artifact.output_retention.raw_output_retained, false);
+            assert.equal(artifact.output_retention.retention_reason, 'SUCCESS_LOG_OMITTED');
+            assert.equal(typeof artifact.output_retention.raw_output_sha256, 'string');
             assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full-suite-secret-value'));
             assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full suite line one'));
             assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full suite line two'));
@@ -860,6 +881,7 @@ describe('gates/full-suite-validation', () => {
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
             assert.match(timeline, /"output_telemetry":\{/);
+            assert.match(timeline, /"retention_reason":"SUCCESS_LOG_OMITTED"/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -1169,12 +1191,14 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.timed_out, false);
             assert.ok(artifact.compact_summary.some((line: string) => line.includes('# pass 1')));
             assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
-
-            const outputArtifactPath = path.join(reviewsDir, 'T-LARGE-PASS-full-suite-output.log');
-            assert.ok(fs.statSync(outputArtifactPath).size > 1024 * 1024);
+            assert.equal(artifact.output_artifact_path, null);
+            assert.equal(artifact.output_retention.raw_output_retained, false);
+            assert.equal(artifact.output_retention.retention_reason, 'SUCCESS_LOG_OMITTED');
+            assert.ok(Number(artifact.output_retention.raw_output_char_count) > 1024 * 1024);
             const timelinePath = path.join(eventsDir, 'T-LARGE-PASS.jsonl');
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_PASSED"/);
+            assert.match(timeline, /"retention_reason":"SUCCESS_LOG_OMITTED"/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -1235,10 +1259,14 @@ describe('gates/full-suite-validation', () => {
             assert.ok(artifact.violations.some((line: string) => line.includes('exit code 7')));
 
             const outputArtifactPath = path.join(reviewsDir, 'T-LARGE-FAIL-full-suite-output.log');
+            assert.equal(String(artifact.output_artifact_path).replace(/\\/g, '/'), outputArtifactPath.replace(/\\/g, '/'));
+            assert.equal(artifact.output_retention.raw_output_retained, true);
+            assert.equal(artifact.output_retention.retention_reason, 'FULL_OUTPUT_RETAINED');
             assert.ok(fs.statSync(outputArtifactPath).size > 1024 * 1024);
             const timelinePath = path.join(eventsDir, 'T-LARGE-FAIL.jsonl');
             const timeline = fs.readFileSync(timelinePath, 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/);
+            assert.match(timeline, /"retention_reason":"FULL_OUTPUT_RETAINED"/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -1440,8 +1468,9 @@ describe('gates/full-suite-validation', () => {
             fs.writeFileSync(
                 helperScript,
                 [
-                    'process.stdout.write(`prebuilt=${process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT || ""}\\n`);',
-                    'process.stdout.write(`reuse=${process.env.GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME || ""}\\n`);'
+                    'if (process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT !== "1") process.exit(41);',
+                    'if (process.env.GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME !== "1") process.exit(42);',
+                    'process.stdout.write("node-foundation env ok\\n");'
                 ].join('\n'),
                 'utf8'
             );
@@ -1471,10 +1500,14 @@ describe('gates/full-suite-validation', () => {
             ], { cwd: repoRoot });
 
             assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
-            const outputPath = path.join(reviewsDir, 'T-SHARD-ENV-full-suite-output.log');
-            const outputText = fs.readFileSync(outputPath, 'utf8');
-            assert.match(outputText, /prebuilt=1/);
-            assert.match(outputText, /reuse=1/);
+            const artifactPath = path.join(reviewsDir, 'T-SHARD-ENV-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('node-foundation env ok')));
+            assert.equal(artifact.output_artifact_path, null);
+            assert.equal(artifact.output_retention.raw_output_retained, false);
+            assert.equal(artifact.output_retention.retention_reason, 'SUCCESS_LOG_OMITTED');
+            assert.equal(artifact.output_retention.raw_output_line_count, 1);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -1818,6 +1851,132 @@ describe('gates/full-suite-validation', () => {
             assert.equal(latestEvent.event_type, 'FULL_SUITE_VALIDATION_PASSED');
             assert.equal(((latestEvent.details as Record<string, unknown>).reused_existing_evidence), true);
             assert.equal((((latestEvent.details as Record<string, unknown>).cycle_binding as Record<string, unknown>).compile_gate_timestamp), currentCompileTimestamp);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('retains raw output when rebinding PASSED evidence that carries warnings', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-rebind-warning-pass-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const executedMarker = path.join(tempDir, 'command-executed.txt');
+            const helperScript = path.join(tempDir, 'pass-rebind-warning-pass.js');
+            fs.writeFileSync(
+                helperScript,
+                `require('node:fs').writeFileSync(${JSON.stringify(executedMarker)}, 'executed\\n', 'utf8'); process.stdout.write("should not run\\n"); process.exit(0);`,
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const taskId = 'T-REBIND-WARNING-PASS';
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: taskId,
+                changed_files: ['src/changed.ts']
+            });
+            const preflightSha256 = createHash('sha256').update(fs.readFileSync(preflightPath, 'utf8')).digest('hex');
+            const changedFilesSha = '4'.repeat(64);
+            const scopeSha = '5'.repeat(64);
+            const scopeContentSha = '6'.repeat(64);
+            const currentCompileTimestamp = '2026-01-01T00:00:02.000Z';
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-compile-gate.json`), JSON.stringify({
+                status: 'PASSED',
+                timestamp_utc: currentCompileTimestamp,
+                preflight_path: preflightPath,
+                preflight_hash_sha256: preflightSha256,
+                preflight_changed_files_sha256: changedFilesSha,
+                preflight_scope_sha256: scopeSha,
+                preflight_scope_content_sha256: scopeContentSha
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(eventsDir, `${taskId}.jsonl`), [
+                JSON.stringify({
+                    event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                    timestamp_utc: '2026-01-01T00:00:01.000Z',
+                    outcome: 'PASS',
+                    details: {
+                        cycle_binding: {
+                            task_id: taskId,
+                            preflight_path: preflightPath.replace(/\\/g, '/'),
+                            preflight_sha256: 'old-cycle',
+                            compile_gate_timestamp: '2026-01-01T00:00:00.000Z',
+                            scope_binding: {
+                                changed_files_sha256: changedFilesSha,
+                                scope_sha256: scopeSha,
+                                scope_content_sha256: scopeContentSha
+                            }
+                        }
+                    }
+                }),
+                JSON.stringify({
+                    event_type: 'COMPILE_GATE_PASSED',
+                    timestamp_utc: currentCompileTimestamp,
+                    outcome: 'PASS',
+                    details: {
+                        preflight_path: preflightPath.replace(/\\/g, '/'),
+                        preflight_hash_sha256: preflightSha256,
+                        preflight_changed_files_sha256: changedFilesSha,
+                        preflight_scope_sha256: scopeSha,
+                        preflight_scope_content_sha256: scopeContentSha
+                    }
+                }),
+                ''
+            ].join('\n'), 'utf8');
+            const outputArtifactPath = path.join(reviewsDir, `${taskId}-full-suite-output.log`);
+            fs.writeFileSync(outputArtifactPath, 'cached pass output with warning\n', 'utf8');
+            fs.writeFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), JSON.stringify({
+                status: 'PASSED',
+                enabled: true,
+                command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                exit_code: 0,
+                timed_out: false,
+                output_artifact_path: outputArtifactPath,
+                compact_summary: ['cached pass output with warning'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: ['non-blocking warning'],
+                cycle_binding: {
+                    task_id: taskId,
+                    preflight_path: preflightPath.replace(/\\/g, '/'),
+                    preflight_sha256: 'old-cycle',
+                    compile_gate_timestamp: '2026-01-01T00:00:00.000Z',
+                    scope_binding: {
+                        changed_files_sha256: changedFilesSha,
+                        scope_sha256: scopeSha,
+                        scope_content_sha256: scopeContentSha
+                    }
+                }
+            }, null, 2), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', taskId,
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            assert.equal(fs.existsSync(executedMarker), false);
+            const artifact = JSON.parse(fs.readFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), 'utf8'));
+            assert.equal(String(artifact.output_artifact_path).replace(/\\/g, '/'), outputArtifactPath.replace(/\\/g, '/'));
+            assert.equal(artifact.output_retention, undefined);
+            assert.equal(fs.existsSync(outputArtifactPath), true);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

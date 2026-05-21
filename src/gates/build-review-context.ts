@@ -946,6 +946,7 @@ export interface ReviewContextFullSuiteValidationEvidence {
     exit_code: number | null;
     timed_out: boolean | null;
     output_artifact_path: string | null;
+    output_retention: Record<string, unknown> | null;
     compact_summary: string[];
     violations: string[];
     warnings: string[];
@@ -1099,6 +1100,7 @@ function buildFullSuiteValidationEvidence(options: {
             exit_code: null,
             timed_out: null,
             output_artifact_path: null,
+            output_retention: null,
             compact_summary: [],
             violations: [],
             warnings: [],
@@ -1129,6 +1131,7 @@ function buildFullSuiteValidationEvidence(options: {
             exit_code: null,
             timed_out: null,
             output_artifact_path: null,
+            output_retention: null,
             compact_summary: [],
             violations: [],
             warnings: [],
@@ -1208,6 +1211,7 @@ function buildFullSuiteValidationEvidence(options: {
             exit_code: normalizeNullableNumber(raw.exit_code),
             timed_out: normalizeNullableBoolean(raw.timed_out),
             output_artifact_path: normalizeNullablePath(raw.output_artifact_path),
+            output_retention: asPlainRecord(raw.output_retention),
             compact_summary: toStringArray(raw.compact_summary, { trimValues: true }),
             violations: toStringArray(raw.violations, { trimValues: true }),
             warnings: toStringArray(raw.warnings, { trimValues: true }),
@@ -1233,6 +1237,7 @@ function buildFullSuiteValidationEvidence(options: {
             exit_code: null,
             timed_out: null,
             output_artifact_path: null,
+            output_retention: null,
             compact_summary: [],
             violations: [],
             warnings: [],
@@ -1263,7 +1268,10 @@ function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContextFullSui
         `- Command: ${evidence.command || 'unavailable'}`,
         `- Exit code: ${evidence.exit_code == null ? 'unknown' : String(evidence.exit_code)}`,
         `- Timed out: ${evidence.timed_out == null ? 'unknown' : String(evidence.timed_out)}`,
-        `- Output artifact: ${evidence.output_artifact_path || 'unavailable'}`,
+        `- Output artifact: ${evidence.output_artifact_path
+            || (evidence.output_retention?.raw_output_retained === false
+                ? 'intentionally omitted for clean success retention policy'
+                : 'unavailable')}`,
         `- Matches current preflight: ${evidence.matches_current_preflight == null ? 'unknown' : String(evidence.matches_current_preflight)}`,
         `- Compile gate artifact: ${evidence.compile_gate_artifact_path || 'unavailable'}`,
         `- Compile gate timestamp: ${evidence.compile_gate_timestamp_utc || 'unavailable'}`,
@@ -1288,6 +1296,15 @@ function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContextFullSui
         for (const summaryLine of evidence.compact_summary) {
             lines.push(`  - ${summaryLine}`);
         }
+    }
+    if (evidence.output_retention) {
+        lines.push(
+            `- Output retention: retained=${String(evidence.output_retention.raw_output_retained)}; `
+            + `reason=${String(evidence.output_retention.retention_reason || 'unknown')}; `
+            + `sha256=${String(evidence.output_retention.raw_output_sha256 || 'null')}; `
+            + `lines=${String(evidence.output_retention.raw_output_line_count || 0)}; `
+            + `chars=${String(evidence.output_retention.raw_output_char_count || 0)}`
+        );
     }
     if (evidence.violations.length > 0) {
         lines.push('- Violations:');

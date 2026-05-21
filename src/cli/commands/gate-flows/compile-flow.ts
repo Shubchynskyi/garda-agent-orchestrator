@@ -16,6 +16,7 @@ import {
     spawnSyncWithTimeout
 } from '../../../core/subprocess';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../../gate-runtime/token-telemetry';
+import { buildRawOutputRetentionEvidence } from '../../../gate-runtime/output-log-retention';
 import { applyOutputFilterProfile } from '../../../gate-runtime/output-filters';
 import {
     emitMandatoryImplementationStartedEventAsync,
@@ -1483,9 +1484,6 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
                     selectedCommandIndex = 1;
                 }
             }
-            if (compileOutputPath && compileOutputInitialized) {
-                writeTextArtifact(compileOutputPath, compileOutputChunks.join(''));
-            }
         }
         if (!exceptionMessage) {
             const postCompileWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile, {
@@ -1585,6 +1583,16 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         filtered_lines: filteredOutput.lines.length
     };
     const visibleSavingsLine = formatVisibleSavingsLine(outputTelemetry);
+    const compileOutputText = compileOutputChunks.join('');
+    const retainCompileOutput = !!exceptionMessage || warningCount > 0 || errorCount > 0;
+    const compileOutputRetention = buildRawOutputRetentionEvidence(compileOutputText, retainCompileOutput);
+    if (compileOutputPath && compileOutputInitialized) {
+        if (retainCompileOutput) {
+            writeTextArtifact(compileOutputPath, compileOutputText);
+        } else {
+            removeArtifactIfExists(compileOutputPath);
+        }
+    }
 
     const gateContext: Record<string, unknown> = {
         commands_path: normalizeOptionalPath(resolvedCommandsPath),
@@ -1624,7 +1632,8 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             changed_files: protectedManifestGuard.manifest_evidence.changed_files
         } : null,
         evidence_path: normalizeOptionalPath(compileEvidencePath),
-        compile_output_path: normalizeOptionalPath(compileOutputPath),
+        compile_output_path: retainCompileOutput ? normalizeOptionalPath(compileOutputPath) : null,
+        compile_output_retention: compileOutputRetention,
         output_filters_path: normalizeOptionalPath(outputFiltersPath),
         command_kind: effectiveProfile.kind,
         command_filter_strategy: effectiveProfile.strategy,
@@ -1668,6 +1677,13 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (compileOutputPath) {
             outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
         }
+        outputLines.push(
+            `CompileOutputRetention: retained=${String(compileOutputRetention.raw_output_retained)} `
+            + `reason=${compileOutputRetention.retention_reason} `
+            + `sha256=${compileOutputRetention.raw_output_sha256 || 'null'} `
+            + `lines=${compileOutputRetention.raw_output_line_count} `
+            + `chars=${compileOutputRetention.raw_output_char_count}`
+        );
         if (filteredOutput.lines.length > 0) {
             if (telemetrySummary.parser_mode === 'FULL' || telemetrySummary.parser_mode === 'DEGRADED') {
                 outputLines.push(
@@ -1721,9 +1737,16 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             outputLines.push(`PlanDriftExtraFiles: ${planDriftResult.extra_files.join(', ')}`);
         }
     }
-    if (compileOutputPath) {
+    if (retainCompileOutput && compileOutputPath) {
         outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
     }
+    outputLines.push(
+        `CompileOutputRetention: retained=${String(compileOutputRetention.raw_output_retained)} `
+        + `reason=${compileOutputRetention.retention_reason} `
+        + `sha256=${compileOutputRetention.raw_output_sha256 || 'null'} `
+        + `lines=${compileOutputRetention.raw_output_line_count} `
+        + `chars=${compileOutputRetention.raw_output_char_count}`
+    );
     if (visibleSavingsLine) {
         outputLines.push(visibleSavingsLine);
     }

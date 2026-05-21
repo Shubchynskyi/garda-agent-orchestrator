@@ -1139,9 +1139,12 @@ describe('cli/commands/gates', () => {
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.event_source, 'compile-gate');
         const compileOutputPath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-output.log`);
-        const compileOutput = fs.readFileSync(compileOutputPath, 'utf8');
-        assert.ok(!compileOutput.includes('compile-secret-value'));
-        assert.ok(compileOutput.includes('ACCESS_TOKEN=<redacted>'));
+        assert.equal(fs.existsSync(compileOutputPath), false);
+        assert.equal(evidence.compile_output_path, null);
+        assert.equal(evidence.compile_output_retention.raw_output_retained, false);
+        assert.equal(evidence.compile_output_retention.retention_reason, 'SUCCESS_LOG_OMITTED');
+        assert.equal(typeof evidence.compile_output_retention.raw_output_sha256, 'string');
+        assert.ok(result.outputLines.some((line) => line.includes('CompileOutputRetention: retained=false reason=SUCCESS_LOG_OMITTED')));
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'IMPLEMENTATION_STARTED'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -1576,6 +1579,56 @@ describe('cli/commands/gates', () => {
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some(line => line.includes('Task-mode entry evidence missing')));
         assertCompileFailureIncludesNextStepHint(result.outputLines);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('retains raw compile output for failed compile runs', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-compile-fail-retention';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-compile-fail-retention.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.error(\'compile failed detail\'); process.exit(2)"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Retain compile output on failed compile'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        const compileOutputPath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-output.log`);
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.equal(evidence.status, 'FAILED');
+        assert.equal(fs.existsSync(compileOutputPath), true);
+        assert.equal(String(evidence.compile_output_path).replace(/\\/g, '/'), compileOutputPath.replace(/\\/g, '/'));
+        assert.equal(evidence.compile_output_retention.raw_output_retained, true);
+        assert.equal(evidence.compile_output_retention.retention_reason, 'FULL_OUTPUT_RETAINED');
+        assert.ok(result.outputLines.some((line) => line.includes('CompileOutputRetention: retained=true reason=FULL_OUTPUT_RETAINED')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

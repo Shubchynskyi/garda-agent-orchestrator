@@ -9,6 +9,7 @@ import {
     type FullSuiteValidationPlacement
 } from '../core/workflow-config';
 import { buildOutputTelemetry, formatVisibleSavingsLine } from '../gate-runtime/token-telemetry';
+import type { RawOutputRetentionEvidence } from '../gate-runtime/output-log-retention';
 import { joinOrchestratorPath, normalizePath } from './helpers';
 
 export const OUT_OF_SCOPE_FAILURE_POLICIES = Object.freeze([
@@ -90,6 +91,7 @@ export interface FullSuiteValidationResult {
     exit_code: number | null;
     timed_out: boolean;
     output_artifact_path: string | null;
+    output_retention?: RawOutputRetentionEvidence | null;
     compact_summary: string[];
     failure_chunks: string[][];
     out_of_scope_failure_policy: OutOfScopeFailurePolicy;
@@ -751,6 +753,18 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
     }
     if (result.output_artifact_path) {
         lines.push(`OutputArtifact: ${result.output_artifact_path}`);
+    } else if (result.output_retention?.raw_output_retained === false) {
+        lines.push('OutputArtifact: intentionally omitted for clean success retention policy.');
+    }
+    if (result.output_retention) {
+        lines.push(
+            'OutputRetention: '
+            + `retained=${String(result.output_retention.raw_output_retained)}; `
+            + `reason=${result.output_retention.retention_reason}; `
+            + `sha256=${result.output_retention.raw_output_sha256 || 'null'}; `
+            + `lines=${result.output_retention.raw_output_line_count}; `
+            + `chars=${result.output_retention.raw_output_char_count}`
+        );
     }
     if (typeof result.duration_ms === 'number') {
         lines.push(`DurationMs: ${result.duration_ms}`);
@@ -825,7 +839,7 @@ export function buildFullSuiteValidationOutputTelemetry(
     rawOutputLines: string[],
     result: FullSuiteValidationResult
 ): Record<string, unknown> | null {
-    if (!result.output_artifact_path) {
+    if (rawOutputLines.length === 0) {
         return null;
     }
 
