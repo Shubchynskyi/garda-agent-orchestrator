@@ -1,7 +1,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
+import { resolveBundleNameForTarget } from '../core/constants';
 import { buildWorkflowConfigTab } from './report-data-contract';
+import {
+    WORKFLOW_SETTING_DEFINITIONS,
+    type WorkflowSettingOption,
+    type WorkflowSettingValueType
+} from './workflow-setting-metadata';
 
 export type UiActionMode = 'preview' | 'execute';
 
@@ -13,6 +19,7 @@ export interface UiActionCommand {
 
 export interface UiActionDefinition {
     id: string;
+    category: string;
     label: string;
     description: string;
     mutates: boolean;
@@ -21,6 +28,8 @@ export interface UiActionDefinition {
     command: UiActionCommand;
 }
 
+export type UiSwitchModeState = 'on' | 'off' | 'unknown';
+
 export interface UiSettingDefinition {
     id: string;
     key: string;
@@ -28,9 +37,11 @@ export interface UiSettingDefinition {
     description: string;
     flag: string;
     current_value: unknown;
-    value_type: 'integer';
-    min: number;
-    max: number;
+    value_type: WorkflowSettingValueType;
+    options: WorkflowSettingOption[];
+    min?: number;
+    max?: number;
+    placeholder?: string;
     confirmation_phrase: string;
 }
 
@@ -66,6 +77,40 @@ function resolveGardaCliPath(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js');
 }
 
+function resolveBundleRoot(repoRoot: string): string {
+    return path.join(repoRoot, resolveBundleNameForTarget(repoRoot));
+}
+
+export function detectUiSwitchModeState(repoRoot: string): UiSwitchModeState {
+    const bundleRoot = resolveBundleRoot(repoRoot);
+    const statePath = path.join(bundleRoot, 'runtime', 'switch', 'state.json');
+    try {
+        const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8')) as Record<string, unknown>;
+        if (parsed.mode === 'on' || parsed.mode === 'off') {
+            return parsed.mode;
+        }
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            return 'unknown';
+        }
+    }
+
+    const agentsPath = path.join(repoRoot, 'AGENTS.md');
+    try {
+        const content = fs.readFileSync(agentsPath, 'utf8');
+        if (content.includes('garda-agent-orchestrator:managed-start')) {
+            return 'on';
+        }
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            return 'unknown';
+        }
+    }
+
+    const offAgentsPath = path.join(bundleRoot, 'runtime', 'switch', 'off', 'AGENTS.md');
+    return fs.existsSync(offAgentsPath) ? 'off' : 'unknown';
+}
+
 function displayGardaCommand(repoRoot: string, cliPath: string, args: string[]): string {
     const relativeCliPath = path.relative(repoRoot, cliPath).replace(/\\/gu, '/') || cliPath;
     const displayArgs = args.map((argument) => argument === repoRoot ? '.' : argument);
@@ -76,12 +121,14 @@ export function buildUiActionDefinitions(repoRoot: string): UiActionDefinition[]
     const cliPath = resolveGardaCliPath(repoRoot);
     const buildAction = (
         id: string,
+        category: string,
         label: string,
         description: string,
         args: string[],
         options: { mutates?: boolean; confirmationPhrase?: string } = {}
     ): UiActionDefinition => ({
         id,
+        category,
         label,
         description,
         mutates: options.mutates === true,
@@ -95,76 +142,117 @@ export function buildUiActionDefinitions(repoRoot: string): UiActionDefinition[]
     });
     return [
         buildAction(
+            'garda-off',
+            'Garda switch',
+            'Turn Garda Off',
+            'Move managed Garda root instruction files into inactive switch storage.',
+            ['off', '--target-root', repoRoot],
+            { mutates: true, confirmationPhrase: 'TURN GARDA OFF' }
+        ),
+        buildAction(
+            'garda-on',
+            'Garda switch',
+            'Turn Garda On',
+            'Restore managed Garda root instruction files from switch storage.',
+            ['on', '--target-root', repoRoot],
+            { mutates: true, confirmationPhrase: 'TURN GARDA ON' }
+        ),
+        buildAction(
             'status',
+            'Inspection',
             'Status',
             'Run the existing Garda status command for this workspace.',
             ['status', '--target-root', repoRoot]
         ),
         buildAction(
             'doctor',
+            'Inspection',
             'Doctor',
-            'Run the existing Garda doctor command for this workspace.',
+            'Run Garda workspace diagnostics, including init answers, manifests, generated files, locks, and bundle health. This is read-only unless explicit cleanup flags are added elsewhere.',
             ['doctor', '--target-root', repoRoot]
         ),
         buildAction(
             'html-report',
+            'Export',
             'Generate HTML Report',
             'Run the existing Garda html command with lazy task details.',
             ['html', '--target-root', repoRoot, '--max-detailed-tasks', '0'],
             { mutates: true, confirmationPhrase: 'RUN GARDA HTML' }
+        ),
+        buildAction(
+            'cleanup-preview',
+            'Maintenance',
+            'Preview Runtime Cleanup',
+            'Dry-run runtime cleanup. Shows candidate task events, reviews, reports, backups, rollbacks, metrics, and working plans that match retention limits. Nothing is deleted.',
+            ['cleanup', '--target-root', repoRoot, '--dry-run']
+        ),
+        buildAction(
+            'cleanup-apply',
+            'Maintenance',
+            'Apply Runtime Cleanup',
+            'Applies the same retention cleanup shown by preview. Risk: old runtime evidence can be removed or compressed, so review the preview first and do not run while another task is active.',
+            ['cleanup', '--target-root', repoRoot, '--confirm'],
+            { mutates: true, confirmationPhrase: 'RUN GARDA CLEANUP' }
+        )
+    ];
+}
+
+export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): UiActionDefinition[] {
+    const cliPath = resolveGardaCliPath(repoRoot);
+    const buildTaskAction = (
+        id: string,
+        label: string,
+        description: string,
+        args: string[],
+        options: { mutates?: boolean; confirmationPhrase?: string } = {}
+    ): UiActionDefinition => ({
+        id,
+        category: 'Task',
+        label,
+        description,
+        mutates: options.mutates === true,
+        requires_confirmation: Boolean(options.confirmationPhrase),
+        confirmation_phrase: options.confirmationPhrase || null,
+        command: {
+            executable: process.execPath,
+            args: [cliPath, ...args],
+            display: displayGardaCommand(repoRoot, cliPath, args)
+        }
+    });
+    return [
+        buildTaskAction(
+            'task-next-step',
+            'Next lifecycle step',
+            'Run the task router and print the next required lifecycle command.',
+            ['next-step', taskId, '--repo-root', repoRoot],
+            { mutates: true, confirmationPhrase: 'RUN TASK NEXT STEP' }
+        ),
+        buildTaskAction(
+            'task-stats',
+            'Task stats',
+            'Run the focused task stats command.',
+            ['task', taskId, 'stats', '--target-root', repoRoot]
+        ),
+        buildTaskAction(
+            'task-events',
+            'Task events',
+            'Run the focused task events command.',
+            ['task', taskId, 'events', '--target-root', repoRoot]
         )
     ];
 }
 
 const UI_SETTING_CONFIRMATION_PHRASE = 'APPLY GARDA SETTING';
 
-const UI_SETTING_DEFINITIONS = [
-    {
-        id: 'full-suite-green-summary-max-lines',
-        key: 'full_suite_validation.green_summary_max_lines',
-        label: 'Full-suite green summary lines',
-        description: 'Tune how many successful full-suite lines the gate keeps in compact human output.',
-        flag: '--full-suite-green-summary-max-lines',
-        min: 1,
-        max: 200
-    },
-    {
-        id: 'full-suite-red-failure-chunk-lines',
-        key: 'full_suite_validation.red_failure_chunk_lines',
-        label: 'Full-suite failure chunk lines',
-        description: 'Tune how many failing full-suite lines the gate keeps per compact failure chunk.',
-        flag: '--full-suite-red-failure-chunk-lines',
-        min: 10,
-        max: 1000
-    },
-    {
-        id: 'project-memory-max-compact-summary-chars',
-        key: 'project_memory_maintenance.max_compact_summary_chars',
-        label: 'Project-memory compact summary chars',
-        description: 'Tune the maximum generated compact project-memory summary size.',
-        flag: '--project-memory-max-compact-summary-chars',
-        min: 2000,
-        max: 200000
-    },
-    {
-        id: 'project-memory-impact-retention-days',
-        key: 'project_memory_maintenance.impact_artifact_retention_days',
-        label: 'Project-memory impact retention days',
-        description: 'Tune how long project-memory impact artifacts are retained.',
-        flag: '--project-memory-impact-artifact-retention-days',
-        min: 1,
-        max: 3650
-    }
-] as const;
-
 export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition[] {
     const settings = buildWorkflowConfigTab(repoRoot).settings;
-    return UI_SETTING_DEFINITIONS.map((definition) => ({
-        ...definition,
-        current_value: settings.find((setting) => setting.key === definition.key)?.value,
-        value_type: 'integer',
-        confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE
-    }));
+    return WORKFLOW_SETTING_DEFINITIONS
+        .filter((definition) => definition.editable !== false)
+        .map((definition) => ({
+            ...definition,
+            current_value: settings.find((setting) => setting.key === definition.key)?.value,
+            confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE
+        }));
 }
 
 export function findSetting(settings: UiSettingDefinition[], settingId: unknown): UiSettingDefinition | null {
@@ -174,25 +262,75 @@ export function findSetting(settings: UiSettingDefinition[], settingId: unknown)
     return settings.find((setting) => setting.id === settingId) || null;
 }
 
-export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown): number {
-    const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
-    if (!/^\d+$/u.test(raw)) {
-        throw new Error(`${setting.label} must be an integer.`);
-    }
-    const parsed = Number(raw);
-    if (!Number.isSafeInteger(parsed) || parsed < setting.min || parsed > setting.max) {
-        throw new Error(`${setting.label} must be an integer from ${setting.min} to ${setting.max}.`);
-    }
-    return parsed;
+export interface ParsedUiSettingValue {
+    command_value: string;
+    proposed_value: unknown;
 }
 
-function buildUiSettingCommand(repoRoot: string, setting: UiSettingDefinition, value: number, timestampUtc: string): UiActionCommand {
+export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown): ParsedUiSettingValue {
+    const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+    if (setting.value_type === 'integer') {
+        if (!/^\d+$/u.test(raw)) {
+            throw new Error(`${setting.label} must be an integer.`);
+        }
+        const parsed = Number(raw);
+        const min = setting.min ?? 1;
+        const max = setting.max ?? Number.MAX_SAFE_INTEGER;
+        if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+            throw new Error(`${setting.label} must be an integer from ${min} to ${max}.`);
+        }
+        return {
+            command_value: String(parsed),
+            proposed_value: parsed
+        };
+    }
+    if (setting.value_type === 'boolean') {
+        const normalized = raw.toLowerCase();
+        if (!['true', 'false', 'on', 'off', 'yes', 'no', '1', '0'].includes(normalized)) {
+            throw new Error(`${setting.label} must be on or off.`);
+        }
+        const enabled = ['true', 'on', 'yes', '1'].includes(normalized);
+        return {
+            command_value: String(enabled),
+            proposed_value: enabled
+        };
+    }
+    if (setting.value_type === 'enum') {
+        const option = setting.options.find((candidate) => candidate.value === raw);
+        if (!option) {
+            throw new Error(`${setting.label} must be one of: ${setting.options.map((candidate) => candidate.value).join(', ')}.`);
+        }
+        return {
+            command_value: option.value,
+            proposed_value: option.value
+        };
+    }
+    if (setting.value_type === 'string_list') {
+        const values = [...new Set(raw.split(',').map((entry) => entry.trim()).filter(Boolean))];
+        if (values.length === 0) {
+            throw new Error(`${setting.label} must contain at least one value.`);
+        }
+        return {
+            command_value: values.join(','),
+            proposed_value: values
+        };
+    }
+    if (!raw) {
+        throw new Error(`${setting.label} must not be empty.`);
+    }
+    return {
+        command_value: raw,
+        proposed_value: raw
+    };
+}
+
+function buildUiSettingCommand(repoRoot: string, setting: UiSettingDefinition, commandValue: string, timestampUtc: string): UiActionCommand {
     const cliPath = resolveGardaCliPath(repoRoot);
     const args = [
         'workflow',
         'set',
         setting.flag,
-        String(value),
+        commandValue,
         '--target-root',
         repoRoot,
         '--operator-confirmed',
@@ -207,19 +345,20 @@ function buildUiSettingCommand(repoRoot: string, setting: UiSettingDefinition, v
     };
 }
 
-export function buildUiSettingAction(repoRoot: string, setting: UiSettingDefinition, value: number, timestampUtc: string): UiActionDefinition {
+export function buildUiSettingAction(repoRoot: string, setting: UiSettingDefinition, commandValue: string, timestampUtc: string): UiActionDefinition {
     return {
         id: `setting:${setting.id}`,
+        category: 'Workflow Config',
         label: setting.label,
         description: setting.description,
         mutates: true,
         requires_confirmation: true,
         confirmation_phrase: setting.confirmation_phrase,
-        command: buildUiSettingCommand(repoRoot, setting, value, timestampUtc)
+        command: buildUiSettingCommand(repoRoot, setting, commandValue, timestampUtc)
     };
 }
 
-function capOutput(value: string, maxChars = 32000): string {
+function capOutput(value: string, maxChars = 512000): string {
     if (value.length <= maxChars) {
         return value;
     }
@@ -311,6 +450,7 @@ export function findAction(actions: UiActionDefinition[], actionId: unknown): Ui
 export function formatPublicAction(action: UiActionDefinition): Record<string, unknown> {
     return {
         id: action.id,
+        category: action.category,
         label: action.label,
         description: action.description,
         mutates: action.mutates,

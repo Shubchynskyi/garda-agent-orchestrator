@@ -1,0 +1,487 @@
+import {
+    FULL_SUITE_VALIDATION_PLACEMENTS,
+    PROJECT_MEMORY_MAINTENANCE_MODES,
+    PROJECT_MEMORY_READ_STRATEGIES
+} from '../core/workflow-config';
+import { REVIEW_EXECUTION_POLICY_MODES, describeReviewExecutionPolicy } from '../core/review-execution-policy';
+import { SCOPE_BUDGET_GUARD_ACTIONS } from '../core/scope-budget-guard';
+import { REVIEW_CYCLE_GUARD_ACTIONS } from '../core/review-cycle-guard';
+import { OUT_OF_SCOPE_FAILURE_POLICIES } from '../gates/full-suite-validation';
+
+export type WorkflowSettingValueType = 'boolean' | 'enum' | 'integer' | 'string' | 'string_list';
+
+export interface WorkflowSettingOption {
+    value: string;
+    label: string;
+    description: string;
+}
+
+export interface WorkflowSettingDefinition {
+    id: string;
+    key: string;
+    label: string;
+    description: string;
+    flag: string;
+    value_type: WorkflowSettingValueType;
+    options: WorkflowSettingOption[];
+    min?: number;
+    max?: number;
+    placeholder?: string;
+    editable?: boolean;
+}
+
+const BOOLEAN_OPTIONS: WorkflowSettingOption[] = [
+    {
+        value: 'true',
+        label: 'On',
+        description: 'The guard or workflow feature is active.'
+    },
+    {
+        value: 'false',
+        label: 'Off',
+        description: 'The guard or workflow feature is disabled.'
+    }
+];
+
+const fullSuitePlacementOptions: WorkflowSettingOption[] = FULL_SUITE_VALIDATION_PLACEMENTS.map((placement) => {
+    switch (placement) {
+        case 'after_compile_before_reviews':
+            return {
+                value: placement,
+                label: 'After compile, before reviews',
+                description: 'Runs the full suite after compile passes and before reviewer work starts.'
+            };
+        case 'before_test_review':
+            return {
+                value: placement,
+                label: 'Before test review',
+                description: 'Runs the full suite immediately before the test-review lane needs its evidence.'
+            };
+        case 'before_completion':
+            return {
+                value: placement,
+                label: 'Before completion',
+                description: 'Defers the full suite until the final completion path.'
+            };
+        default:
+            return {
+                value: placement,
+                label: placement,
+                description: 'Full-suite placement mode.'
+            };
+    }
+});
+
+const outOfScopeFailurePolicyOptions: WorkflowSettingOption[] = OUT_OF_SCOPE_FAILURE_POLICIES.map((policy) => {
+    switch (policy) {
+        case 'AUDIT_AND_BLOCK':
+            return {
+                value: policy,
+                label: 'Audit and block',
+                description: 'Records the out-of-scope failure and stops the workflow until it is resolved.'
+            };
+        case 'AUDIT_AND_WARN':
+            return {
+                value: policy,
+                label: 'Audit and warn',
+                description: 'Records the out-of-scope failure but allows the workflow to continue with a warning.'
+            };
+        default:
+            return {
+                value: policy,
+                label: policy,
+                description: 'Out-of-scope failure policy.'
+            };
+    }
+});
+
+const reviewExecutionPolicyOptions: WorkflowSettingOption[] = REVIEW_EXECUTION_POLICY_MODES.map((mode) => ({
+    value: mode,
+    label: mode.replace(/_/gu, ' '),
+    description: describeReviewExecutionPolicy(mode)
+}));
+
+const scopeBudgetActionOptions: WorkflowSettingOption[] = SCOPE_BUDGET_GUARD_ACTIONS.map((action) => {
+    if (action === 'BLOCK_FOR_SPLIT') {
+        return {
+            value: action,
+            label: 'Block for split',
+            description: 'Stops oversized work and asks the operator or agent to split it.'
+        };
+    }
+    return {
+        value: action,
+        label: 'Warn only',
+        description: 'Shows the scope warning but does not stop the next lifecycle step.'
+    };
+});
+
+const reviewCycleActionOptions: WorkflowSettingOption[] = REVIEW_CYCLE_GUARD_ACTIONS.map((action) => {
+    if (action === 'BLOCK_FOR_OPERATOR_DECISION') {
+        return {
+            value: action,
+            label: 'Block for operator decision',
+            description: 'Stops repeated review loops until an operator chooses the recovery path.'
+        };
+    }
+    return {
+        value: action,
+        label: 'Warn only',
+        description: 'Reports review-cycle pressure but lets the workflow continue.'
+    };
+});
+
+const projectMemoryModeOptions: WorkflowSettingOption[] = PROJECT_MEMORY_MAINTENANCE_MODES.map((mode) => {
+    switch (mode) {
+        case 'off':
+            return {
+                value: mode,
+                label: 'Off',
+                description: 'Do not run project-memory maintenance during closeout.'
+            };
+        case 'check':
+            return {
+                value: mode,
+                label: 'Check',
+                description: 'Check whether memory updates are needed without writing them.'
+            };
+        case 'update':
+            return {
+                value: mode,
+                label: 'Update',
+                description: 'Allow the workflow to update focused project-memory files when needed.'
+            };
+        case 'strict':
+            return {
+                value: mode,
+                label: 'Strict',
+                description: 'Require memory evidence before closeout can pass.'
+            };
+        default:
+            return {
+                value: mode,
+                label: mode,
+                description: 'Project-memory maintenance mode.'
+            };
+    }
+});
+
+const projectMemoryReadStrategyOptions: WorkflowSettingOption[] = PROJECT_MEMORY_READ_STRATEGIES.map((strategy) => ({
+    value: strategy,
+    label: strategy.replace(/_/gu, ' '),
+    description: 'Read the memory index first and open detailed files only when the index points to them.'
+}));
+
+export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] = Object.freeze([
+    {
+        id: 'full-suite-enabled',
+        key: 'full_suite_validation.enabled',
+        label: 'Mandatory full-suite validation',
+        description: 'Controls whether the configured full-suite test command is part of the task lifecycle.',
+        flag: '--full-suite-enabled',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'full-suite-command',
+        key: 'full_suite_validation.command',
+        label: 'Full-suite command',
+        description: 'Command the full-suite gate runs when mandatory full-suite validation is enabled.',
+        flag: '--full-suite-command',
+        value_type: 'string',
+        options: [],
+        placeholder: 'npm test'
+    },
+    {
+        id: 'full-suite-timeout-ms',
+        key: 'full_suite_validation.timeout_ms',
+        label: 'Full-suite timeout',
+        description: 'Maximum runtime for the full-suite command, in milliseconds.',
+        flag: '--full-suite-timeout-ms',
+        value_type: 'integer',
+        min: 1000,
+        max: 86_400_000,
+        options: []
+    },
+    {
+        id: 'full-suite-green-summary-max-lines',
+        key: 'full_suite_validation.green_summary_max_lines',
+        label: 'Green full-suite summary length',
+        description: 'How many successful full-suite output lines stay visible in compact task evidence.',
+        flag: '--full-suite-green-summary-max-lines',
+        value_type: 'integer',
+        min: 1,
+        max: 200,
+        options: []
+    },
+    {
+        id: 'full-suite-red-failure-chunk-lines',
+        key: 'full_suite_validation.red_failure_chunk_lines',
+        label: 'Failure output chunk length',
+        description: 'How many failing full-suite lines are kept per compact failure chunk.',
+        flag: '--full-suite-red-failure-chunk-lines',
+        value_type: 'integer',
+        min: 10,
+        max: 1000,
+        options: []
+    },
+    {
+        id: 'full-suite-out-of-scope-failure-policy',
+        key: 'full_suite_validation.out_of_scope_failure_policy',
+        label: 'Out-of-scope failure handling',
+        description: 'What the workflow does when full-suite output shows a failure outside the current task scope.',
+        flag: '--full-suite-out-of-scope-failure-policy',
+        value_type: 'enum',
+        options: outOfScopeFailurePolicyOptions
+    },
+    {
+        id: 'full-suite-placement',
+        key: 'full_suite_validation.placement',
+        label: 'Full-suite placement',
+        description: 'Where the mandatory full-suite gate runs in the task lifecycle.',
+        flag: '--full-suite-placement',
+        value_type: 'enum',
+        options: fullSuitePlacementOptions
+    },
+    {
+        id: 'review-execution-policy',
+        key: 'review_execution_policy.mode',
+        label: 'Review execution mode',
+        description: 'Controls whether required review lanes run in parallel, wait for code review, or run sequentially.',
+        flag: '--review-execution-policy',
+        value_type: 'enum',
+        options: reviewExecutionPolicyOptions
+    },
+    {
+        id: 'scope-budget-enabled',
+        key: 'scope_budget_guard.enabled',
+        label: 'Scope budget guard',
+        description: 'Warns or blocks when a task is too large for the configured profile budget.',
+        flag: '--scope-budget-enabled',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'scope-budget-action',
+        key: 'scope_budget_guard.action',
+        label: 'Scope budget action',
+        description: 'What happens when the scope budget is exceeded.',
+        flag: '--scope-budget-action',
+        value_type: 'enum',
+        options: scopeBudgetActionOptions
+    },
+    {
+        id: 'scope-budget-profiles',
+        key: 'scope_budget_guard.profiles',
+        label: 'Scope budget profiles',
+        description: 'Comma-separated task profiles where the scope budget guard applies.',
+        flag: '--scope-budget-profiles',
+        value_type: 'string_list',
+        options: [],
+        placeholder: 'strict,balanced'
+    },
+    {
+        id: 'scope-budget-max-files',
+        key: 'scope_budget_guard.max_files',
+        label: 'Scope budget file limit',
+        description: 'Maximum changed-file count before the scope budget guard reacts.',
+        flag: '--scope-budget-max-files',
+        value_type: 'integer',
+        min: 1,
+        max: 10000,
+        options: []
+    },
+    {
+        id: 'scope-budget-max-changed-lines',
+        key: 'scope_budget_guard.max_changed_lines',
+        label: 'Scope budget changed-line limit',
+        description: 'Maximum changed-line count before the scope budget guard reacts.',
+        flag: '--scope-budget-max-changed-lines',
+        value_type: 'integer',
+        min: 1,
+        max: 1_000_000,
+        options: []
+    },
+    {
+        id: 'scope-budget-max-required-reviews',
+        key: 'scope_budget_guard.max_required_reviews',
+        label: 'Scope budget review-lane limit',
+        description: 'Maximum required review-lane count before the scope budget guard reacts.',
+        flag: '--scope-budget-max-required-reviews',
+        value_type: 'integer',
+        min: 1,
+        max: 100,
+        options: []
+    },
+    {
+        id: 'scope-budget-max-review-tokens',
+        key: 'scope_budget_guard.max_review_tokens',
+        label: 'Scope budget review-token forecast',
+        description: 'Maximum estimated review-token budget before the scope budget guard reacts.',
+        flag: '--scope-budget-max-review-tokens',
+        value_type: 'integer',
+        min: 1,
+        max: 10_000_000,
+        options: []
+    },
+    {
+        id: 'review-cycle-enabled',
+        key: 'review_cycle_guard.enabled',
+        label: 'Review-cycle guard',
+        description: 'Detects repeated non-test review loops before they consume too much work.',
+        flag: '--review-cycle-enabled',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'review-cycle-action',
+        key: 'review_cycle_guard.action',
+        label: 'Review-cycle action',
+        description: 'What happens when repeated review attempts exceed configured limits.',
+        flag: '--review-cycle-action',
+        value_type: 'enum',
+        options: reviewCycleActionOptions
+    },
+    {
+        id: 'review-cycle-max-failed-non-test-reviews',
+        key: 'review_cycle_guard.max_failed_non_test_reviews',
+        label: 'Failed non-test review limit',
+        description: 'Maximum failed non-test review attempts before the review-cycle guard reacts.',
+        flag: '--review-cycle-max-failed-non-test-reviews',
+        value_type: 'integer',
+        min: 1,
+        max: 1000,
+        options: []
+    },
+    {
+        id: 'review-cycle-max-total-non-test-reviews',
+        key: 'review_cycle_guard.max_total_non_test_reviews',
+        label: 'Total non-test review limit',
+        description: 'Maximum total non-test review attempts before the review-cycle guard reacts.',
+        flag: '--review-cycle-max-total-non-test-reviews',
+        value_type: 'integer',
+        min: 1,
+        max: 1000,
+        options: []
+    },
+    {
+        id: 'review-cycle-excluded-review-types',
+        key: 'review_cycle_guard.excluded_review_types',
+        label: 'Excluded review types',
+        description: 'Comma-separated review lanes ignored by the review-cycle guard.',
+        flag: '--review-cycle-excluded-review-types',
+        value_type: 'string_list',
+        options: [],
+        placeholder: 'test'
+    },
+    {
+        id: 'review-cycle-auto-split-enabled',
+        key: 'review_cycle_guard.auto_split_enabled',
+        label: 'Automatic review-cycle split prompt',
+        description: 'Allows review-cycle pressure to emit an auto-split prompt instead of waiting for operator direction.',
+        flag: '--review-cycle-auto-split-enabled',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'project-memory-enabled',
+        key: 'project_memory_maintenance.enabled',
+        label: 'Project-memory maintenance',
+        description: 'Controls whether closeout checks project-memory impact.',
+        flag: '--project-memory-enabled',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'project-memory-mode',
+        key: 'project_memory_maintenance.mode',
+        label: 'Project-memory mode',
+        description: 'How strongly the workflow enforces project-memory impact work.',
+        flag: '--project-memory-mode',
+        value_type: 'enum',
+        options: projectMemoryModeOptions
+    },
+    {
+        id: 'project-memory-run-before-final-closeout',
+        key: 'project_memory_maintenance.run_before_final_closeout',
+        label: 'Run memory check before final closeout',
+        description: 'Runs project-memory maintenance before the final completion step.',
+        flag: '--project-memory-run-before-final-closeout',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'project-memory-require-user-approval-for-writes',
+        key: 'project_memory_maintenance.require_user_approval_for_writes',
+        label: 'Require user approval for memory writes',
+        description: 'Requires explicit user approval before the workflow writes project-memory files.',
+        flag: '--project-memory-require-user-approval-for-writes',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'project-memory-max-compact-summary-chars',
+        key: 'project_memory_maintenance.max_compact_summary_chars',
+        label: 'Project-memory compact summary size',
+        description: 'Maximum generated compact project-memory summary size, in characters.',
+        flag: '--project-memory-max-compact-summary-chars',
+        value_type: 'integer',
+        min: 2000,
+        max: 200000,
+        options: []
+    },
+    {
+        id: 'project-memory-read-strategy',
+        key: 'project_memory_maintenance.read_strategy',
+        label: 'Project-memory read strategy',
+        description: 'How agents should read durable memory at task start.',
+        flag: '--project-memory-read-strategy',
+        value_type: 'enum',
+        options: projectMemoryReadStrategyOptions
+    },
+    {
+        id: 'project-memory-impact-retention-days',
+        key: 'project_memory_maintenance.impact_artifact_retention_days',
+        label: 'Project-memory impact retention',
+        description: 'How many days project-memory impact artifacts are retained.',
+        flag: '--project-memory-impact-artifact-retention-days',
+        value_type: 'integer',
+        min: 1,
+        max: 3650,
+        options: []
+    },
+    {
+        id: 'task-reset-enabled',
+        key: 'task_reset.enabled',
+        label: 'Task reset commands',
+        description: 'Allows confirmed task reset/discard mutations.',
+        flag: '--task-reset-enabled',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'garda-self-guard',
+        key: 'orchestrator_work_policy.mode',
+        label: 'Garda self-guard',
+        description: 'Controls whether agents may directly enter protected Garda control-plane work.',
+        flag: '--garda-self-guard',
+        value_type: 'enum',
+        editable: false,
+        options: [
+            {
+                value: 'deny_agent_entry',
+                label: 'On',
+                description: 'Agents cannot enter protected control-plane work without the operator-owned path.'
+            },
+            {
+                value: 'require_operator_confirmation',
+                label: 'Operator confirmation',
+                description: 'Protected control-plane entry requires explicit operator confirmation.'
+            }
+        ]
+    }
+]);
+
+export function getWorkflowSettingDefinition(key: string): WorkflowSettingDefinition | null {
+    return WORKFLOW_SETTING_DEFINITIONS.find((definition) => definition.key === key) || null;
+}

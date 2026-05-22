@@ -4,6 +4,8 @@ import {
     buildUiActionDefinitions,
     buildUiSettingAction,
     buildUiSettingDefinitions,
+    buildUiTaskActionDefinitions,
+    detectUiSwitchModeState,
     findAction,
     findSetting,
     formatPublicAction,
@@ -114,6 +116,7 @@ export function buildUiActionsPayload(repoRoot: string, actionsEnabled: boolean)
         : [];
     return {
         enabled: actionsEnabled,
+        switch_state: detectUiSwitchModeState(repoRoot),
         actions
     };
 }
@@ -228,6 +231,114 @@ export async function handleUiActionRequest(
     }
 }
 
+export async function handleUiTaskActionRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    taskId: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    if (!options.actionsEnabled) {
+        sendApiError(response, 403, 'UI actions are disabled. Restart with --actions to enable allow-listed commands.', 'actions_disabled');
+        return;
+    }
+    if (!isValidActionRequestBoundary(request, options.actionToken)) {
+        sendApiError(response, 403, 'UI action request failed origin, token, or content-type validation.', 'action_boundary_rejected');
+        return;
+    }
+    const payload = normalizeActionRequest(await readJsonBody(request));
+    const actions = buildUiTaskActionDefinitions(repoRoot, taskId);
+    const action = findAction(actions, payload.action_id);
+    if (!action) {
+        sendApiError(response, 400, 'Unknown task UI action.', 'unknown_task_action');
+        return;
+    }
+    const mode = payload.mode === 'execute' ? 'execute' : 'preview';
+    if (mode === 'preview') {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: `${taskId}:${action.id}`,
+            mode,
+            status: 'previewed',
+            command: action.command.display
+        });
+        sendJson(response, 200, {
+            action_id: action.id,
+            task_id: taskId,
+            mode,
+            status: 'previewed',
+            command: action.command.display,
+            requires_confirmation: action.requires_confirmation,
+            confirmation_phrase: action.confirmation_phrase,
+            audit_path: auditPath
+        });
+        return;
+    }
+    if (action.requires_confirmation && payload.confirmation !== action.confirmation_phrase) {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: `${taskId}:${action.id}`,
+            mode,
+            status: 'confirmation_required',
+            command: action.command.display
+        });
+        sendJson(response, 409, {
+            action_id: action.id,
+            task_id: taskId,
+            mode,
+            status: 'confirmation_required',
+            command: action.command.display,
+            requires_confirmation: true,
+            confirmation_phrase: action.confirmation_phrase,
+            audit_path: auditPath
+        });
+        return;
+    }
+    try {
+        const result = await options.actionRunner(action, repoRoot);
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: `${taskId}:${action.id}`,
+            mode,
+            status: 'executed',
+            command: action.command.display,
+            exit_code: result.exit_code,
+            signal: result.signal
+        });
+        sendJson(response, result.exit_code === 0 ? 200 : 500, {
+            action_id: action.id,
+            task_id: taskId,
+            mode,
+            status: 'executed',
+            command: action.command.display,
+            exit_code: result.exit_code,
+            signal: result.signal,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            audit_path: auditPath
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: `${taskId}:${action.id}`,
+            mode,
+            status: 'failed_to_launch',
+            command: action.command.display,
+            error: message
+        });
+        sendJson(response, 500, {
+            action_id: action.id,
+            task_id: taskId,
+            mode,
+            status: 'failed_to_launch',
+            command: action.command.display,
+            error: message,
+            audit_path: auditPath
+        });
+    }
+}
+
 export async function handleUiSettingRequest(
     request: http.IncomingMessage,
     response: http.ServerResponse,
@@ -249,7 +360,7 @@ export async function handleUiSettingRequest(
         sendApiError(response, 400, 'Unknown editable setting.', 'unknown_setting');
         return;
     }
-    let value: number;
+    let value: ReturnType<typeof parseUiSettingValue>;
     try {
         value = parseUiSettingValue(setting, payload.value);
     } catch (error) {
@@ -258,7 +369,7 @@ export async function handleUiSettingRequest(
     }
     const mode = payload.mode === 'execute' ? 'execute' : 'preview';
     const timestampUtc = new Date().toISOString();
-    const action = buildUiSettingAction(repoRoot, setting, value, timestampUtc);
+    const action = buildUiSettingAction(repoRoot, setting, value.command_value, timestampUtc);
     if (mode === 'preview') {
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: timestampUtc,
@@ -269,11 +380,12 @@ export async function handleUiSettingRequest(
         });
         sendJson(response, 200, {
             setting_id: setting.id,
+            label: setting.label,
             key: setting.key,
             mode,
             status: 'previewed',
             current_value: setting.current_value,
-            proposed_value: value,
+            proposed_value: value.proposed_value,
             changed_keys: [setting.key],
             command: action.command.display,
             requires_confirmation: true,
@@ -292,11 +404,12 @@ export async function handleUiSettingRequest(
         });
         sendJson(response, 409, {
             setting_id: setting.id,
+            label: setting.label,
             key: setting.key,
             mode,
             status: 'confirmation_required',
             current_value: setting.current_value,
-            proposed_value: value,
+            proposed_value: value.proposed_value,
             changed_keys: [setting.key],
             command: action.command.display,
             requires_confirmation: true,
@@ -318,11 +431,12 @@ export async function handleUiSettingRequest(
         });
         sendJson(response, result.exit_code === 0 ? 200 : 500, {
             setting_id: setting.id,
+            label: setting.label,
             key: setting.key,
             mode,
             status: 'executed',
             current_value: setting.current_value,
-            proposed_value: value,
+            proposed_value: value.proposed_value,
             changed_keys: [setting.key],
             command: action.command.display,
             exit_code: result.exit_code,
@@ -343,6 +457,7 @@ export async function handleUiSettingRequest(
         });
         sendJson(response, 500, {
             setting_id: setting.id,
+            label: setting.label,
             key: setting.key,
             mode,
             status: 'failed_to_launch',

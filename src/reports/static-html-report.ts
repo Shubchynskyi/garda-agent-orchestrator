@@ -87,11 +87,14 @@ function renderTaskRow(task: ReportTaskRow, index: number): string {
 }
 
 function renderWorkflowSetting(setting: ReportWorkflowSetting): string {
+    const options = setting.options.length > 0
+        ? setting.options.map((option) => `${option.label} (${option.value}): ${option.description}`).join('\n')
+        : 'No fixed options';
     return [
         '<tr>',
-        `<td><code>${escapeHtml(setting.key)}</code></td>`,
+        `<td><strong>${escapeHtml(setting.label)}</strong><br><code>(${escapeHtml(setting.key)})</code></td>`,
         `<td>${escapeHtml(JSON.stringify(setting.value))}</td>`,
-        `<td>${escapeHtml(setting.description)}</td>`,
+        `<td>${escapeHtml(setting.description)}<br><pre>${escapeHtml(options)}</pre></td>`,
         `<td><code>${escapeHtml(setting.command)}</code></td>`,
         '</tr>'
     ].join('');

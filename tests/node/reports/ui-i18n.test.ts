@@ -30,12 +30,14 @@ test('local UI renders Russian chrome while preserving machine surfaces', () => 
     const html = renderLocalUiHtml(false, 'token', 'ru');
 
     assert.match(html, /<html lang="ru">/u);
-    assert.match(html, /Статус сервера/u);
+    assert.match(html, /Загрузка сессии сервера/u);
     assert.match(html, /Русский/u);
     assert.match(html, /hasOwnProperty\.call\(languagePacks, value\)/u);
     assert.match(html, /localStorage\.setItem\('garda\.ui\.language'/u);
-    assert.match(html, /garda ui --target-root "\."/u);
+    assert.match(html, /garda ui/u);
+    assert.doesNotMatch(html, /garda ui --target-root "\."/u);
     assert.match(html, /safe\(setting\.key\)/u);
     assert.match(html, /safe\(action\.command\)/u);
-    assert.match(html, /JSON\.stringify\(audit, null, 2\)/u);
+    assert.match(html, /Память проекта/u);
+    assert.doesNotMatch(html, /JSON\.stringify\(audit, null, 2\)/u);
 });

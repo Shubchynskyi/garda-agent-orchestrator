@@ -12,7 +12,18 @@ import {
     type TaskEventsSummaryResult
 } from '../gates/task-events-summary';
 import { buildTaskAuditSummary, type TaskAuditSummaryResult } from '../gates/task-audit-summary';
+import { getTaskModeEvidence, readOptionalMarkdownWorkingPlan } from '../gates/task-mode';
 import { validateWorkflowConfig } from '../schemas/config-artifacts';
+import {
+    PROJECT_MEMORY_FILE_DEFINITIONS,
+    PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH
+} from '../core/project-memory';
+import {
+    WORKFLOW_SETTING_DEFINITIONS,
+    getWorkflowSettingDefinition,
+    type WorkflowSettingOption,
+    type WorkflowSettingValueType
+} from './workflow-setting-metadata';
 
 export const REPORT_DATA_CONTRACT_SCHEMA_VERSION = 1;
 export const DEFAULT_REPORT_MAX_DETAILED_TASKS = 0;
@@ -60,6 +71,16 @@ export interface ReportTaskDetail {
         final_report_contract_status: TaskAuditSummaryResult['final_report_contract']['status'];
         final_closeout_artifact_state: TaskAuditSummaryResult['final_closeout']['artifact_state'];
     } | null;
+    plan: {
+        available: boolean;
+        task_id: string;
+        task_title: string | null;
+        task_status: string | null;
+        summary: string | null;
+        plan_path: string | null;
+        markdown_path: string | null;
+        markdown: string | null;
+    };
     artifact_links: ReportArtifactLink[];
     unavailable: ReportDataUnavailableEntry[];
 }
@@ -69,10 +90,18 @@ export interface ReportTaskRow extends ReportTaskQueueRow {
 }
 
 export interface ReportWorkflowSetting {
+    id: string;
     key: string;
+    label: string;
     value: unknown;
+    value_type: WorkflowSettingValueType;
+    options: WorkflowSettingOption[];
     command: string;
     description: string;
+    editable: boolean;
+    min?: number;
+    max?: number;
+    placeholder?: string;
     readonly: true;
 }
 
@@ -85,8 +114,50 @@ export interface ReportWorkflowConfigTab {
 }
 
 export interface ReportInstructionEntry {
+    id: string;
     title: string;
     body: string;
+}
+
+export interface ReportValueRow {
+    id: string;
+    label: string;
+    description: string;
+    value: unknown;
+}
+
+export interface ReportCommandInfo {
+    id: string;
+    title: string;
+    description: string;
+    command: string;
+}
+
+export interface ReportInitSettingsTab {
+    init_answers_path: string;
+    init_answers_status: 'present' | 'missing' | 'invalid';
+    init_answers: ReportValueRow[];
+    agent_init_state_path: string;
+    agent_init_state_status: 'present' | 'missing' | 'invalid';
+    agent_init_state: ReportValueRow[];
+    commands: ReportCommandInfo[];
+    unavailable: ReportDataUnavailableEntry[];
+}
+
+export interface ReportProjectMemoryFile {
+    id: string;
+    path: string;
+    exists: boolean;
+    purpose: string;
+    read_role: 'read_first' | 'focused';
+    size_bytes: number | null;
+    content: string | null;
+}
+
+export interface ReportProjectMemoryTab {
+    status: ReportValueRow[];
+    files: ReportProjectMemoryFile[];
+    unavailable: ReportDataUnavailableEntry[];
 }
 
 export interface ReportDataContract {
@@ -99,6 +170,8 @@ export interface ReportDataContract {
         rows: ReportTaskRow[];
     };
     workflow_config_tab: ReportWorkflowConfigTab;
+    init_settings_tab: ReportInitSettingsTab;
+    project_memory_tab: ReportProjectMemoryTab;
     instructions_tab: {
         entries: ReportInstructionEntry[];
     };
@@ -282,6 +355,38 @@ function buildArtifactLinksFromAudit(audit: TaskAuditSummaryResult | null): Repo
     }));
 }
 
+function readPlanMarkdown(repoRoot: string, planPath: string | null): string | null {
+    if (!planPath) {
+        return null;
+    }
+    const resolvedPath = path.resolve(repoRoot, planPath);
+    if (!resolvedPath.startsWith(path.resolve(repoRoot) + path.sep) && resolvedPath !== path.resolve(repoRoot)) {
+        return null;
+    }
+    if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
+        return null;
+    }
+    return fs.readFileSync(resolvedPath, 'utf8');
+}
+
+function buildTaskPlanDetail(repoRoot: string, taskId: string, taskRow: ReportTaskQueueRow | null): ReportTaskDetail['plan'] {
+    const evidence = getTaskModeEvidence(repoRoot, taskId);
+    const fallbackMarkdownPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
+    const markdownPath = evidence.markdown_working_plan?.working_plan_path || fallbackMarkdownPlan?.working_plan_path || null;
+    const planPath = evidence.plan?.plan_path || null;
+    const markdown = readPlanMarkdown(repoRoot, markdownPath);
+    return {
+        available: Boolean(markdown || evidence.plan || evidence.markdown_working_plan),
+        task_id: taskId,
+        task_title: taskRow?.title || evidence.task_summary || null,
+        task_status: taskRow?.status_token || taskRow?.status || null,
+        summary: evidence.plan?.plan_summary || evidence.task_summary || null,
+        plan_path: planPath,
+        markdown_path: markdownPath,
+        markdown
+    };
+}
+
 export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): ReportTaskDetail {
     const repoRoot = path.resolve(options.repoRoot);
     const eventsRoot = options.eventsRoot
@@ -292,6 +397,7 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const taskId = options.taskId;
     const unavailable: ReportDataUnavailableEntry[] = [];
+    const queueRow = readCanonicalActiveQueueRows(repoRoot).rows.find((row) => row.task_id === taskId) || null;
     let stats: TaskStatsResult | null = null;
     try {
         stats = buildTaskStats(taskId, repoRoot, eventsRoot, reviewsRoot, {
@@ -311,6 +417,7 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
         stats,
         latest_cycle_events: readLatestCycleEvents(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable),
         audit: audit ? summarizeTaskAudit(audit) : null,
+        plan: buildTaskPlanDetail(repoRoot, taskId, queueRow),
         artifact_links: buildArtifactLinksFromAudit(audit),
         unavailable
     };
@@ -334,6 +441,16 @@ function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number): Repor
         stats: null,
         latest_cycle_events: null,
         audit: null,
+        plan: {
+            available: false,
+            task_id: taskId,
+            task_title: null,
+            task_status: null,
+            summary: null,
+            plan_path: null,
+            markdown_path: null,
+            markdown: null
+        },
         artifact_links: [],
         unavailable: [{
             scope: `task:${taskId}:detail`,
@@ -382,67 +499,50 @@ function getConfigValue(config: WorkflowConfigData, key: string): unknown {
     }, config);
 }
 
-function buildWorkflowSetting(config: WorkflowConfigData, key: string, command: string, description: string): ReportWorkflowSetting {
+function buildWorkflowCommand(flag: string, valueType: WorkflowSettingValueType, options: WorkflowSettingOption[]): string {
+    const valueHint = flag === '--garda-self-guard'
+        ? '<on|off>'
+        : options.length > 0
+        ? `<${options.map((option) => option.value).join('|')}>`
+        : valueType === 'integer'
+            ? '<number>'
+            : valueType === 'string_list'
+                ? '<comma-separated values>'
+                : '<value>';
+    return [
+        'garda workflow set',
+        flag,
+        valueHint,
+        '--target-root "."',
+        '--operator-confirmed yes',
+        '--operator-confirmed-at-utc "<ISO-8601 timestamp>"'
+    ].join(' ');
+}
+
+function buildWorkflowSetting(config: WorkflowConfigData, key: string): ReportWorkflowSetting {
+    const definition = getWorkflowSettingDefinition(key);
+    if (!definition) {
+        throw new Error(`Missing local UI workflow setting metadata for ${key}.`);
+    }
     return {
+        id: definition.id,
         key,
+        label: definition.label,
         value: getConfigValue(config, key),
-        command,
-        description,
+        value_type: definition.value_type,
+        options: [...definition.options],
+        command: buildWorkflowCommand(definition.flag, definition.value_type, definition.options),
+        description: definition.description,
+        editable: definition.editable !== false,
+        min: definition.min,
+        max: definition.max,
+        placeholder: definition.placeholder,
         readonly: true
     };
 }
 
 function buildWorkflowSettings(config: WorkflowConfigData): ReportWorkflowSetting[] {
-    return [
-        buildWorkflowSetting(
-            config,
-            'full_suite_validation.enabled',
-            'garda workflow set --full-suite on|off --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Controls whether the configured full-suite command participates in lifecycle closeout.'
-        ),
-        buildWorkflowSetting(
-            config,
-            'full_suite_validation.command',
-            'garda workflow set --full-suite-command "<command>" --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Command executed by full-suite validation when the suite is required.'
-        ),
-        buildWorkflowSetting(
-            config,
-            'review_execution_policy.mode',
-            'garda workflow set --review-execution-policy <mode> --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Determines reviewer launch ordering and dependency behavior.'
-        ),
-        buildWorkflowSetting(
-            config,
-            'scope_budget_guard.enabled',
-            'garda workflow set --scope-budget on|off --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Controls whether large scopes are blocked or warned before expensive gates.'
-        ),
-        buildWorkflowSetting(
-            config,
-            'review_cycle_guard.auto_split_enabled',
-            'garda workflow set --review-cycle-auto-split on|off --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Controls whether review-cycle guard pressure can create split follow-up tasks automatically.'
-        ),
-        buildWorkflowSetting(
-            config,
-            'project_memory_maintenance.mode',
-            'garda workflow set --project-memory-mode <off|check|update|strict> --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Controls project-memory impact checking before final closeout.'
-        ),
-        buildWorkflowSetting(
-            config,
-            'task_reset.enabled',
-            'garda workflow set --task-reset on|off --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Controls whether confirmed task reset/discard mutations are allowed.'
-        ),
-        buildWorkflowSetting(
-            config,
-            'orchestrator_work_policy.mode',
-            'garda workflow set --garda-self-guard on|off --target-root "." --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
-            'Controls whether application agents may enter protected Garda control-plane task work.'
-        )
-    ];
+    return WORKFLOW_SETTING_DEFINITIONS.map((definition) => buildWorkflowSetting(config, definition.key));
 }
 
 export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTab {
@@ -484,19 +584,228 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
     }
 }
 
+function toRepoRelativePath(repoRoot: string, filePath: string): string {
+    const root = path.resolve(repoRoot);
+    const resolved = path.resolve(filePath);
+    const relative = path.relative(root, resolved);
+    if (!relative || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+        return toPosix(relative || '.');
+    }
+    return toPosix(resolved);
+}
+
+function readJsonObjectForReport(
+    repoRoot: string,
+    filePath: string,
+    scope: string,
+    unavailable: ReportDataUnavailableEntry[]
+): { status: 'present' | 'missing' | 'invalid'; value: Record<string, unknown> } {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        unavailable.push({ scope, reason: `${toRepoRelativePath(repoRoot, filePath)} not found.` });
+        return { status: 'missing', value: {} };
+    }
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('JSON root is not an object.');
+        }
+        return { status: 'present', value: parsed as Record<string, unknown> };
+    } catch (error: unknown) {
+        unavailable.push({
+            scope,
+            reason: error instanceof Error ? error.message : String(error)
+        });
+        return { status: 'invalid', value: {} };
+    }
+}
+
+function valueRow(id: string, label: string, description: string, value: unknown): ReportValueRow {
+    return { id, label, description, value: value ?? null };
+}
+
+function pickRows(source: Record<string, unknown>, rows: Array<[string, string, string]>): ReportValueRow[] {
+    return rows.map(([id, label, description]) => valueRow(id, label, description, source[id]));
+}
+
+function buildInitCommand(initAnswersPath: string): string {
+    return [
+        'garda reinit',
+        '--target-root "."',
+        `--init-answers-path "${initAnswersPath}"`
+    ].join(' ');
+}
+
+function buildAgentInitCommand(initAnswersPath: string, activeAgentFiles: unknown): string {
+    const activeFiles = String(activeAgentFiles || '<active-agent-files>');
+    return [
+        'garda agent-init',
+        '--target-root "."',
+        `--init-answers-path "${initAnswersPath}"`,
+        `--active-agent-files "${activeFiles}"`,
+        '--project-rules-updated yes',
+        '--skills-prompted yes'
+    ].join(' ');
+}
+
+export function buildInitSettingsTab(repoRoot: string): ReportInitSettingsTab {
+    const root = path.resolve(repoRoot);
+    const initAnswersPath = joinOrchestratorPath(root, path.join('runtime', 'init-answers.json'));
+    const agentInitStatePath = joinOrchestratorPath(root, path.join('runtime', 'agent-init-state.json'));
+    const unavailable: ReportDataUnavailableEntry[] = [];
+    const initAnswers = readJsonObjectForReport(root, initAnswersPath, 'init-settings:init-answers', unavailable);
+    const agentState = readJsonObjectForReport(root, agentInitStatePath, 'init-settings:agent-init-state', unavailable);
+    const initAnswersRelative = toRepoRelativePath(root, initAnswersPath);
+    const activeAgentFiles = agentState.value.ActiveAgentFiles || initAnswers.value.ActiveAgentFiles;
+
+    return {
+        init_answers_path: initAnswersRelative,
+        init_answers_status: initAnswers.status,
+        init_answers: pickRows(initAnswers.value, [
+            ['AssistantLanguage', 'Assistant language', 'Language the assistant should use with the operator.'],
+            ['AssistantBrevity', 'Assistant verbosity', 'How detailed normal assistant answers should be.'],
+            ['SourceOfTruth', 'Instruction owner', 'Canonical provider file that owns generated agent instructions.'],
+            ['EnforceNoAutoCommit', 'No automatic commits', 'Prevents agents from committing without explicit operator approval.'],
+            ['ClaudeOrchestratorFullAccess', 'Claude full access mode', 'Whether Claude-oriented instructions assume full orchestrator access.'],
+            ['TokenEconomyEnabled', 'Token economy', 'Keeps generated instructions compact and avoids unnecessary context.'],
+            ['ProviderMinimalism', 'Provider minimalism', 'Keeps non-canonical provider entrypoints as redirects when possible.'],
+            ['CollectedVia', 'Collected via', 'How the init answers were collected.'],
+            ['ActiveAgentFiles', 'Active agent files', 'Root/provider instruction files selected during initialization.']
+        ]),
+        agent_init_state_path: toRepoRelativePath(root, agentInitStatePath),
+        agent_init_state_status: agentState.status,
+        agent_init_state: pickRows(agentState.value, [
+            ['UpdatedAt', 'Last updated', 'When the hard agent-init state was last written.'],
+            ['OrchestratorVersion', 'Orchestrator version', 'Garda version that wrote the state.'],
+            ['AssistantLanguageConfirmed', 'Language confirmed', 'Whether the assistant language checkpoint passed.'],
+            ['ActiveAgentFilesConfirmed', 'Agent files confirmed', 'Whether selected active agent files were explicitly confirmed.'],
+            ['ProjectRulesUpdated', 'Project rules updated', 'Whether project rules were reviewed or accepted during agent init.'],
+            ['SkillsPromptCompleted', 'Skills prompted', 'Whether the skills prompt checkpoint completed.'],
+            ['OrdinaryDocPathsConfirmed', 'Ordinary docs confirmed', 'Whether ordinary documentation paths were confirmed.'],
+            ['OrdinaryDocPaths', 'Ordinary docs', 'User-owned documentation paths Garda may mention without treating them as generated rules.'],
+            ['VerificationPassed', 'Verification passed', 'Whether post-init verification passed.'],
+            ['ManifestValidationPassed', 'Manifest valid', 'Whether protected control-plane manifest validation passed.'],
+            ['ActiveAgentFiles', 'Active agent files', 'Canonical files active after agent init.'],
+            ['LastSeededFullSuiteCommand', 'Seeded full-suite command', 'Test command seeded into workflow config during initialization.'],
+            ['ProjectMemoryInitialized', 'Project memory initialized', 'Whether agent-init recorded project-memory initialization.'],
+            ['ProjectMemoryValidated', 'Project memory validated', 'Whether agent-init recorded successful project-memory validation.'],
+            ['ProjectMemoryMode', 'Project memory mode', 'Project-memory bootstrap mode recorded by agent init.'],
+            ['ProjectMemoryDir', 'Project memory directory', 'Directory that contains durable project memory.'],
+            ['ProjectMemoryReadFirst', 'Project memory read-first files', 'Files agents should read before focused memory files.'],
+            ['ProjectMemorySummaryRule', 'Project memory summary rule', 'Generated rule file that summarizes project memory.'],
+            ['ProjectMemoryBootstrapReport', 'Project memory bootstrap report', 'Runtime report from project-memory bootstrap.'],
+            ['ProjectMemoryWarnings', 'Project memory warnings', 'Warnings recorded during project-memory bootstrap or validation.']
+        ]),
+        commands: [
+            {
+                id: 'reinit',
+                title: 'Re-initialize workspace',
+                description: 'Re-materializes Garda generated files from the current init answers. Use it after changing initialization choices.',
+                command: buildInitCommand(initAnswersRelative)
+            },
+            {
+                id: 'agent-init',
+                title: 'Complete agent initialization',
+                description: 'Records the hard onboarding checkpoints, active agent files, project-rule confirmation, skills prompt, and project-memory readiness.',
+                command: buildAgentInitCommand(initAnswersRelative, activeAgentFiles)
+            }
+        ],
+        unavailable
+    };
+}
+
+function buildProjectMemoryStatusRows(workflowTab: ReportWorkflowConfigTab, initTab: ReportInitSettingsTab): ReportValueRow[] {
+    const settingValue = (key: string): unknown => workflowTab.settings.find((setting) => setting.key === key)?.value;
+    const stateValue = (id: string): unknown => initTab.agent_init_state.find((row) => row.id === id)?.value;
+    return [
+        valueRow('memory-enabled', 'Memory maintenance enabled', 'Whether workflow closeout checks durable project memory.', settingValue('project_memory_maintenance.enabled')),
+        valueRow('memory-mode', 'Memory maintenance mode', 'Current workflow mode: off, check, update, or strict.', settingValue('project_memory_maintenance.mode')),
+        valueRow('memory-run-before-closeout', 'Runs before final closeout', 'Whether the project-memory gate runs before completion.', settingValue('project_memory_maintenance.run_before_final_closeout')),
+        valueRow('memory-require-approval', 'Requires approval for writes', 'Whether writes to project-memory files require user approval.', settingValue('project_memory_maintenance.require_user_approval_for_writes')),
+        valueRow('memory-read-strategy', 'Read strategy', 'How agents should read project memory at task start.', settingValue('project_memory_maintenance.read_strategy')),
+        valueRow('memory-initialized', 'Initialized by agent init', 'Whether agent-init recorded project-memory initialization.', stateValue('ProjectMemoryInitialized')),
+        valueRow('memory-validated', 'Validated by agent init', 'Whether agent-init recorded successful project-memory validation.', stateValue('ProjectMemoryValidated')),
+        valueRow('memory-dir', 'Memory directory', 'Directory that contains the user-owned durable memory files.', stateValue('ProjectMemoryDir') || PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH),
+        valueRow('memory-read-first', 'Read first files', 'Files agents should read before focused memory files.', stateValue('ProjectMemoryReadFirst')),
+        valueRow('memory-summary-rule', 'Generated summary rule', 'Generated rule file that summarizes project memory for agent startup.', stateValue('ProjectMemorySummaryRule')),
+        valueRow('memory-bootstrap-report', 'Bootstrap report', 'Runtime report from project-memory bootstrap or validation.', stateValue('ProjectMemoryBootstrapReport'))
+    ];
+}
+
+export function buildProjectMemoryTab(
+    repoRoot: string,
+    workflowTab: ReportWorkflowConfigTab,
+    initTab: ReportInitSettingsTab
+): ReportProjectMemoryTab {
+    const root = path.resolve(repoRoot);
+    const memoryDir = joinOrchestratorPath(root, PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH);
+    const unavailable: ReportDataUnavailableEntry[] = [];
+    const files = PROJECT_MEMORY_FILE_DEFINITIONS.map((definition): ReportProjectMemoryFile => {
+        const filePath = path.join(memoryDir, definition.fileName);
+        const exists = fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+        if (!exists) {
+            unavailable.push({
+                scope: `project-memory:${definition.fileName}`,
+                reason: `${toRepoRelativePath(root, filePath)} not found.`
+            });
+        }
+        return {
+            id: definition.fileName.replace(/[^a-zA-Z0-9_-]+/g, '-'),
+            path: toRepoRelativePath(root, filePath),
+            exists,
+            purpose: definition.purpose,
+            read_role: definition.readRole,
+            size_bytes: exists ? fs.statSync(filePath).size : null,
+            content: exists ? fs.readFileSync(filePath, 'utf8') : null
+        };
+    });
+    return {
+        status: buildProjectMemoryStatusRows(workflowTab, initTab),
+        files,
+        unavailable
+    };
+}
+
 function buildInstructionEntries(): ReportInstructionEntry[] {
     return [
         {
+            id: 'task-execution',
             title: 'Task execution',
-            body: 'Start and resume task work with `garda next-step "<task-id>" --repo-root "."`; follow the single command it prints before moving to the next lifecycle stage.'
+            body: 'Start and resume task work with `garda next-step "<task-id>" --repo-root "."`. Treat the printed command as the current router result, then return to next-step after each gate.'
         },
         {
-            title: 'Read-only inspection',
-            body: 'Use `garda task "<task-id>" stats` and `garda task "<task-id>" events` for per-task inspection; these surfaces do not replace lifecycle routing.'
+            id: 'task-inspection',
+            title: 'Task inspection',
+            body: 'Use the Tasks tab for per-task details. Compact rows come from TASK.md only; loading details reads task events, blockers, reviews, and artifact links for that one task.'
         },
         {
+            id: 'review-execution-modes',
+            title: 'Review execution modes',
+            body: '`parallel_all` launches lanes independently. `test_after_code` makes test wait for code. `code_first_optional` makes selected specialist reviews wait for code and keeps test downstream. `strict_sequential` runs required review lanes one by one.'
+        },
+        {
+            id: 'workflow-guards',
+            title: 'Workflow guards',
+            body: 'Scope budget guards catch oversized tasks. Review-cycle guards catch repeated failed review loops. Project-memory maintenance checks whether durable memory needs a focused update before closeout.'
+        },
+        {
+            id: 'workflow-configuration',
             title: 'Workflow configuration',
-            body: 'Use `garda workflow show` and `garda workflow explain` for read-only configuration inspection. Configuration changes stay in audited CLI commands, not the static HTML report.'
+            body: 'The Workflow Config tab shows a human label first and the real parameter in parentheses. Saves run audited `garda workflow set` commands when the UI was started with `--actions`.'
+        },
+        {
+            id: 'init-settings',
+            title: 'Init settings',
+            body: 'The Init settings tab shows the current initialization answers, the hard agent-init checkpoints, and the two commands normally used to re-materialize generated files or complete agent onboarding.'
+        },
+        {
+            id: 'project-memory',
+            title: 'Project memory',
+            body: 'The Project memory tab shows the current maintenance mode, agent-init memory state, read-first files, and the contents of the durable project-memory files.'
+        },
+        {
+            id: 'workspace-actions',
+            title: 'Workspace actions',
+            body: 'The Actions tab is for fixed workspace commands such as status, doctor, HTML report generation, and runtime cleanup. Task-specific commands are shown in the selected task details.'
         }
     ];
 }
@@ -519,9 +828,13 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
             : buildSkippedTaskDetail(row.task_id, maxDetailedTasks)
     }));
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
+    const initSettingsTab = buildInitSettingsTab(repoRoot);
+    const projectMemoryTab = buildProjectMemoryTab(repoRoot, workflowConfigTab, initSettingsTab);
     const unavailable = [
         ...queue.unavailable,
         ...workflowConfigTab.unavailable,
+        ...initSettingsTab.unavailable,
+        ...projectMemoryTab.unavailable,
         ...tasks.flatMap((task) => task.detail.unavailable).filter((entry) => !isLazyReportDetailEntry(entry))
     ];
 
@@ -535,6 +848,8 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
             rows: tasks
         },
         workflow_config_tab: workflowConfigTab,
+        init_settings_tab: initSettingsTab,
+        project_memory_tab: projectMemoryTab,
         instructions_tab: {
             entries: buildInstructionEntries()
         },

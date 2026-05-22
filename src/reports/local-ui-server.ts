@@ -16,6 +16,7 @@ import {
     buildUiSettingsPayload,
     handleUiActionRequest,
     handleUiSettingRequest,
+    handleUiTaskActionRequest,
     sendApiError,
     type LocalUiServerRuntimeOptions
 } from './ui-action-http';
@@ -254,7 +255,7 @@ function buildLocalUiSessionController(options: {
     const startedMonotonicMs = performance.now();
     const idleTimeoutMs = options.idleMinutes * 60 * 1000;
     const warningDurationMs = options.idleWarningSeconds * 1000;
-    const stopMessage = 'The local Garda UI server has stopped. Rerun `garda ui --target-root "."` from a terminal to launch it again.';
+    const stopMessage = 'The local Garda UI server has stopped. Rerun `garda ui` from a terminal to launch it again.';
     let lastActivityAtMs = currentTimeMs();
     let warningStartedAtMs: number | null = null;
     let shutdownDeadlineAtMs: number | null = null;
@@ -444,6 +445,23 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         if (request.method === 'POST' && pathname === '/api/settings') {
             handleUiSettingRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
                 sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_setting_request');
+            });
+            return;
+        }
+        const taskActionMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/actions$/u);
+        if (request.method === 'POST' && taskActionMatch) {
+            const taskId = decodeTaskIdSegment(taskActionMatch[1]);
+            if (taskId === null || !isCanonicalTaskId(taskId)) {
+                sendApiError(response, 400, 'Invalid task id.', 'invalid_task_id');
+                return;
+            }
+            const report = getCachedReport(resolvedRepoRoot, reportCache);
+            if (!findTask(report, taskId)) {
+                sendApiError(response, 404, 'Task not found.', 'task_not_found');
+                return;
+            }
+            handleUiTaskActionRequest(request, response, resolvedRepoRoot, taskId, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_task_action_request');
             });
             return;
         }

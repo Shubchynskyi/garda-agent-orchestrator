@@ -75,7 +75,11 @@ class FakeElement {
     }
 
     querySelectorAll(selector: string): FakeElement[] {
-        if (selector !== 'button[data-task-id]' && selector !== 'button[data-action-id]' && selector !== 'button[data-setting-id]') {
+        if (selector !== 'button[data-task-id]'
+            && selector !== 'button[data-action-id]'
+            && selector !== 'button[data-setting-id]'
+            && selector !== 'button[data-task-action-id]'
+            && selector !== 'button[data-instruction-tab]') {
             return [];
         }
         if (this.buttonCacheHtml !== this.innerHTML) {
@@ -84,14 +88,23 @@ class FakeElement {
                 ? 'task-id'
                 : selector === 'button[data-action-id]'
                     ? 'action-id'
-                    : 'setting-id';
+                    : selector === 'button[data-setting-id]'
+                        ? 'setting-id'
+                        : selector === 'button[data-task-action-id]'
+                            ? 'task-action-id'
+                            : 'instruction-tab';
             const dataKey = selector === 'button[data-task-id]'
                 ? 'taskId'
                 : selector === 'button[data-action-id]'
                     ? 'actionId'
-                    : 'settingId';
+                    : selector === 'button[data-setting-id]'
+                        ? 'settingId'
+                        : selector === 'button[data-task-action-id]'
+                            ? 'taskActionId'
+                            : 'instructionTab';
             const modePattern = /data-action-mode="([^"]+)"/u;
             const settingModePattern = /data-setting-mode="([^"]+)"/u;
+            const taskActionModePattern = /data-task-action-mode="([^"]+)"/u;
             this.buttonCache = Array.from(this.innerHTML.matchAll(new RegExp(`data-${attributeName}="([^"]+)"`, 'gu')), (match) => {
                 const button = new FakeElement(`button-${match[1]}`);
                 button.dataset[dataKey] = match[1];
@@ -103,6 +116,10 @@ class FakeElement {
                 const settingModeMatch = buttonHtml.match(settingModePattern);
                 if (settingModeMatch) {
                     button.dataset.settingMode = settingModeMatch[1];
+                }
+                const taskActionModeMatch = buttonHtml.match(taskActionModePattern);
+                if (taskActionModeMatch) {
+                    button.dataset.taskActionMode = taskActionModeMatch[1];
                 }
                 return button;
             });
@@ -123,15 +140,23 @@ function createFakeDocument(): {
         'meta',
         'warnings',
         'overview',
+        'garda-switch-panel',
         'workflow',
+        'workflow-config-path',
         'settings-editor',
+        'setting-status',
+        'init-settings',
+        'project-memory',
         'instructions',
         'actions',
         'action-status',
-        'server-status',
+        'session-summary',
         'session-countdown',
         'session-activity',
         'session-shutdown',
+        'plan-modal',
+        'plan-modal-body',
+        'plan-modal-close',
         'language-select',
         'ui-notice',
         'task-search',
@@ -139,16 +164,21 @@ function createFakeDocument(): {
         'priority-filter',
         'tasks-tab',
         'workflow-tab',
+        'init-settings-tab',
+        'project-memory-tab',
         'instructions-tab',
         'actions-tab',
         'task-detail-panel'
     ]) {
-        elements[id] = new FakeElement(id, id.endsWith('-tab') || id === 'task-detail-panel' ? ['tab'] : []);
+        elements[id] = new FakeElement(id, id.endsWith('-tab') ? ['tab'] : []);
     }
     elements['workflow-tab'].hidden = true;
+    elements['init-settings-tab'].hidden = true;
+    elements['project-memory-tab'].hidden = true;
     elements['instructions-tab'].hidden = true;
+    elements['actions-tab'].hidden = true;
 
-    const navButtons = ['tasks-tab', 'workflow-tab', 'instructions-tab', 'actions-tab'].map((tabId, index) => {
+    const navButtons = ['tasks-tab', 'workflow-tab', 'init-settings-tab', 'project-memory-tab', 'instructions-tab', 'actions-tab'].map((tabId, index) => {
         const button = new FakeElement(`nav-${tabId}`, index === 0 ? ['active'] : []);
         button.dataset.tab = tabId;
         return button;
@@ -156,7 +186,10 @@ function createFakeDocument(): {
 
     return {
         elements,
-        getElementById: (id: string) => elements[id],
+        getElementById: (id: string) => {
+            elements[id] = elements[id] || new FakeElement(id);
+            return elements[id];
+        },
         querySelectorAll: (selector: string) => {
             if (selector === 'nav button[data-tab]') {
                 return navButtons;
@@ -165,9 +198,10 @@ function createFakeDocument(): {
                 return [
                     elements['tasks-tab'],
                     elements['workflow-tab'],
+                    elements['init-settings-tab'],
+                    elements['project-memory-tab'],
                     elements['instructions-tab'],
-                    elements['actions-tab'],
-                    elements['task-detail-panel']
+                    elements['actions-tab']
                 ];
             }
             return [];
@@ -209,6 +243,49 @@ function writeRepo(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(buildDefaultWorkflowConfig(), null, 2));
+    const runtimeRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime');
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
+        AssistantLanguage: 'Russian',
+        AssistantBrevity: 'detailed',
+        SourceOfTruth: 'Codex',
+        EnforceNoAutoCommit: 'true',
+        ClaudeOrchestratorFullAccess: 'true',
+        TokenEconomyEnabled: 'true',
+        ProviderMinimalism: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE',
+        ActiveAgentFiles: 'AGENTS.md'
+    }, null, 2));
+    fs.writeFileSync(path.join(runtimeRoot, 'agent-init-state.json'), JSON.stringify({
+        Version: 1,
+        UpdatedAt: '2026-05-17T00:00:00.000Z',
+        OrchestratorVersion: '1.1.0',
+        AssistantLanguage: 'Russian',
+        SourceOfTruth: 'Codex',
+        AssistantLanguageConfirmed: true,
+        ActiveAgentFilesConfirmed: true,
+        ProjectRulesUpdated: true,
+        SkillsPromptCompleted: true,
+        OrdinaryDocPathsConfirmed: true,
+        OrdinaryDocPaths: [],
+        VerificationPassed: true,
+        ManifestValidationPassed: true,
+        ActiveAgentFiles: ['AGENTS.md'],
+        LastSeededFullSuiteCommand: 'npm test',
+        ProjectMemoryInitialized: true,
+        ProjectMemoryValidated: true,
+        ProjectMemoryMode: 'strict',
+        ProjectMemoryDir: 'live/docs/project-memory',
+        ProjectMemoryReadFirst: ['live/docs/project-memory/README.md', 'live/docs/project-memory/compact.md'],
+        ProjectMemorySummaryRule: 'live/docs/agent-rules/15-project-memory.md',
+        ProjectMemoryBootstrapReport: 'runtime/project-memory/bootstrap-report.json',
+        ProjectMemoryWarnings: []
+    }, null, 2));
+    const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+    fs.mkdirSync(memoryRoot, { recursive: true });
+    for (const fileName of ['README.md', 'compact.md', 'context.md', 'stack.md', 'architecture.md', 'module-map.md', 'commands.md', 'conventions.md', 'decisions.md', 'risks.md']) {
+        fs.writeFileSync(path.join(memoryRoot, fileName), `# ${fileName}\n\nMemory for ${fileName}.\n`);
+    }
 }
 
 function writeTaskQueue(repoRoot: string, taskId: string, title: string): void {
@@ -295,9 +372,13 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /id="priority-filter"/u);
         assert.match(html, /id="actions"/u);
         assert.match(html, /id="settings-editor"/u);
-        assert.match(html, /Server Status/u);
+        assert.match(html, /id="session-summary"/u);
+        assert.match(html, /id="top-controls"/u);
         assert.match(html, /id="session-countdown"/u);
         assert.match(html, /api\/session/u);
+        assert.match(html, /\.tab-buttons button \{[^}]*flex: 0 0 136px/u);
+        assert.match(html, /\.session-compact \{[^}]*width: 410px/u);
+        assert.match(html, /\.setting-buttons button, \.action-buttons button, \.switch-buttons button, #tasks button\[data-task-id\] \{[^}]*width: 138px/u);
         assert.match(html, /Gate Timeline/u);
         assert.match(html, /Artifacts/u);
     } finally {
@@ -312,7 +393,7 @@ test('local UI server applies initial language option to rendered dashboard', as
     try {
         const html = await (await fetch(server.url)).text();
         assert.match(html, /<html lang="ru">/u);
-        assert.match(html, /Статус сервера/u);
+        assert.match(html, /Загрузка сессии сервера/u);
         assert.equal(server.language, 'ru');
     } finally {
         await server.close();
@@ -322,7 +403,7 @@ test('local UI server applies initial language option to rendered dashboard', as
 test('local UI dashboard client filters tabs and renders lazy details', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
-    const server = await startLocalUiServer({ repoRoot, port: 0 });
+    const server = await startLocalUiServer({ repoRoot, port: 0, actionsEnabled: true });
     try {
         const html = await (await fetch(server.url)).text();
         const fakeDocument = createFakeDocument();
@@ -339,7 +420,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         area: 'ui/report',
                         title: 'Build UI',
                         owner: 'gpt-5.4',
-                        notes: 'Uses lazy details'
+                        notes: 'Uses lazy details',
+                        detail: { detail_status: 'skipped' }
                     },
                     {
                         task_id: 'T-200',
@@ -349,7 +431,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         area: 'workflow',
                         title: 'Closed task',
                         owner: 'gpt-5.4',
-                        notes: 'Archived'
+                        notes: 'Archived',
+                        detail: { detail_status: 'skipped' }
                     }
                 ]
             },
@@ -386,7 +469,13 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 gates: []
             },
             audit: {
-                blockers: ['blocked item'],
+                status: 'BLOCKED',
+                blockers: [
+                    {
+                        gate: 'post-done-drift',
+                        reason: 'blocked item'
+                    }
+                ],
                 review_attempt_summary: {
                     by_type: [
                         {
@@ -397,6 +486,16 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         }
                     ]
                 }
+            },
+            plan: {
+                available: true,
+                task_id: 'T-100',
+                task_title: 'Build UI',
+                task_status: 'TODO',
+                summary: 'Implementation plan',
+                plan_path: null,
+                markdown_path: 'garda-agent-orchestrator/runtime/plans/T-100.md',
+                markdown: '# T-100 plan\n\n- Build UI'
             },
             artifact_links: [
                 {
@@ -411,9 +510,11 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
             actions: [
                 {
                     id: 'status',
+                    category: 'Inspection',
                     label: 'Status',
                     description: 'Run status',
                     command: 'node bin/garda.js status --target-root "."',
+                    mutates: false,
                     requires_confirmation: false,
                     confirmation_phrase: null
                 }
@@ -428,6 +529,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     label: 'Full-suite green summary lines',
                     description: 'Tune green output',
                     current_value: 5,
+                    value_type: 'integer',
+                    options: [],
+                    flag: '--full-suite-green-summary-max-lines',
                     min: 1,
                     max: 200,
                     confirmation_phrase: 'APPLY GARDA SETTING'
@@ -444,7 +548,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
             shutdown_deadline_at: null,
             seconds_until_warning: 900,
             seconds_until_shutdown: null,
-            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui --target-root "."` from a terminal to launch it again.'
+            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui` from a terminal to launch it again.'
         };
 
         const storedLanguageCalls: Array<[string, string]> = [];
@@ -478,6 +582,15 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     if (url === '/api/settings') {
                         return settings;
                     }
+                    if (url === '/api/tasks/T-100/actions') {
+                        return {
+                            action_id: 'task-stats',
+                            task_id: 'T-100',
+                            status: 'previewed',
+                            command: 'node bin/garda.js task T-100 stats --target-root "."',
+                            audit_path: 'runtime/ui-actions/audit.jsonl'
+                        };
+                    }
                     return detail;
                 }
             })
@@ -487,6 +600,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         const tasksNode = fakeDocument.elements.tasks;
         assert.match(tasksNode.innerHTML, /T-100/u);
         assert.match(tasksNode.innerHTML, /T-200/u);
+        assert.match(tasksNode.innerHTML, /On demand/u);
+        assert.match(tasksNode.innerHTML, /Compact/u);
 
         fakeDocument.elements['task-search'].value = 'Closed';
         await fakeDocument.elements['task-search'].dispatch('input');
@@ -515,11 +630,16 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements['tasks-tab'].hidden, true);
         assert.equal(fakeDocument.elements['workflow-tab'].hidden, false);
         assert.equal(fakeDocument.elements['task-detail-panel'].hidden, false);
-        assert.match(fakeDocument.elements.workflow.innerHTML, /full_suite_validation\.enabled/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-green-summary-max-lines/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full_suite_validation\.green_summary_max_lines/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
         assert.match(fakeDocument.elements.actions.innerHTML, /node bin\/garda\.js status/u);
-        assert.match(fakeDocument.elements['server-status'].innerHTML, /Warning starts in 900 seconds/u);
+        assert.match(fakeDocument.elements['garda-switch-panel'].innerHTML, /Switch action is hidden/u);
+        assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-on"/u);
+        assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-off"/u);
+        assert.match(fakeDocument.elements['session-summary'].innerHTML, /Shutdown in/u);
+        assert.match(fakeDocument.elements['session-summary'].innerHTML, /15m/u);
+        assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /16m/u);
         assert.match(fakeDocument.elements['language-select'].innerHTML, /Русский/u);
         assert.match(fakeDocument.elements['ui-notice'].textContent, /127\.0\.0\.1/u);
 
@@ -527,14 +647,27 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await taskButton.dispatch('click');
         await flushPromises();
         assert.match(fakeDocument.elements.detail.innerHTML, /Gate Timeline/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Runtime diagnostics/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /post-done-drift: blocked item/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Audit status/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /blocked item/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /\[object Object\]/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-code\.md/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-next-step"/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-stats"/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Show plan/u);
+        const taskActionButton = fakeDocument.elements.detail.querySelectorAll('button[data-task-action-id]')
+            .find((button) => button.dataset.taskActionId === 'task-stats' && button.dataset.taskActionMode === 'execute');
+        assert.ok(taskActionButton);
+        await taskActionButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['task-action-status'].innerHTML, /node bin\/garda\.js task T-100 stats/u);
 
         fakeDocument.elements['language-select'].value = 'ru';
         await fakeDocument.elements['language-select'].dispatch('change');
         assert.deepEqual(storedLanguageCalls.at(-1), ['garda.ui.language', 'ru']);
         assert.match(fakeDocument.elements.detail.innerHTML, /События/u);
-        assert.match(fakeDocument.elements['server-status'].innerHTML, /Предупреждение начнётся через 900 секунд/u);
+        assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
     } finally {
         await server.close();
     }
@@ -560,7 +693,8 @@ test('local UI dashboard restores persisted browser language on page load', asyn
                         area: 'ui/report',
                         title: 'Build UI',
                         owner: 'gpt-5.4',
-                        notes: 'Uses lazy details'
+                        notes: 'Uses lazy details',
+                        detail: { detail_status: 'skipped' }
                     }
                 ]
             },
@@ -577,7 +711,7 @@ test('local UI dashboard restores persisted browser language on page load', asyn
             shutdown_deadline_at: null,
             seconds_until_warning: 900,
             seconds_until_shutdown: null,
-            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui --target-root "."` from a terminal to launch it again.'
+            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui` from a terminal to launch it again.'
         };
 
         vm.runInNewContext(extractDashboardScript(html), {
@@ -603,7 +737,7 @@ test('local UI dashboard restores persisted browser language on page load', asyn
                         return report;
                     }
                     if (url === '/api/actions') {
-                        return { enabled: false, actions: [] };
+                        return { enabled: false, switch_state: 'on', actions: [] };
                     }
                     if (url === '/api/settings') {
                         return { enabled: false, settings: [] };
@@ -616,7 +750,7 @@ test('local UI dashboard restores persisted browser language on page load', asyn
 
         assert.equal(fakeDocument.elements['language-select'].value, 'ru');
         assert.match(fakeDocument.elements.overview.innerHTML, /Активные/u);
-        assert.match(fakeDocument.elements['server-status'].innerHTML, /Предупреждение начнётся через 900 секунд/u);
+        assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
     } finally {
         await server.close();
     }
@@ -767,7 +901,7 @@ test('local UI manual session shutdown closes the foreground server', async () =
     assert.equal(response.status, 200);
     const payload = await response.json() as { state: string; stop_message: string };
     assert.equal(payload.state, 'stopping');
-    assert.match(payload.stop_message, /Rerun `garda ui --target-root "\."`/u);
+    assert.match(payload.stop_message, /Rerun `garda ui`/u);
     await closePromise;
 });
 
@@ -796,6 +930,7 @@ test('local UI actions are disabled unless explicitly enabled', async () => {
         assert.equal(listResponse.status, 200);
         assert.deepEqual(await listResponse.json(), {
             enabled: false,
+            switch_state: 'unknown',
             actions: []
         });
 
@@ -820,6 +955,14 @@ test('local UI actions are disabled unless explicitly enabled', async () => {
         });
         assert.equal(settingRunResponse.status, 403);
         assert.equal((await settingRunResponse.json() as { code: string }).code, 'settings_disabled');
+
+        const taskRunResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action_id: 'task-stats', mode: 'preview' })
+        });
+        assert.equal(taskRunResponse.status, 403);
+        assert.equal((await taskRunResponse.json() as { code: string }).code, 'actions_disabled');
     } finally {
         await server.close();
     }
@@ -858,7 +1001,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         };
         assert.equal(list.enabled, true);
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
-        assert.ok(!list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
+        assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
 
         const invalidResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
@@ -948,9 +1091,13 @@ test('local UI actions support preview confirmation execution and audit', async 
         };
         const listResponse = await fetch(`${server.url}api/actions`);
         assert.equal(listResponse.status, 200);
-        const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; command: string }> };
+        const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; category: string; command: string }> };
         assert.equal(list.enabled, true);
         assert.ok(list.actions.some((action) => action.id === 'html-report'));
+        assert.ok(list.actions.some((action) => action.id === 'garda-on' && action.category === 'Garda switch'));
+        assert.ok(list.actions.some((action) => action.id === 'garda-off' && action.category === 'Garda switch'));
+        assert.ok(list.actions.some((action) => action.id === 'cleanup-preview' && action.category === 'Maintenance'));
+        assert.ok(list.actions.some((action) => action.id === 'cleanup-apply' && action.category === 'Maintenance'));
         assert.ok(list.actions.every((action) => action.command.includes('bin/garda.js')));
 
         const previewResponse = await fetch(`${server.url}api/actions`, {
@@ -996,6 +1143,87 @@ test('local UI actions support preview confirmation execution and audit', async 
         assert.match(auditLines[0], /"status":"previewed"/u);
         assert.match(auditLines[1], /"status":"confirmation_required"/u);
         assert.match(auditLines[2], /"status":"executed"/u);
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI task actions support preview confirmation execution and audit', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const executedCommands: string[] = [];
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => {
+            executedCommands.push(action.command.display);
+            return {
+                exit_code: 0,
+                signal: null,
+                stdout: 'task ok',
+                stderr: ''
+            };
+        }
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const actionHeaders = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+
+        const previewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-next-step', mode: 'preview' })
+        });
+        assert.equal(previewResponse.status, 200);
+        const preview = await previewResponse.json() as {
+            status: string;
+            task_id: string;
+            command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
+        };
+        assert.equal(preview.status, 'previewed');
+        assert.equal(preview.task_id, 'T-100');
+        assert.match(preview.command, /next-step T-100 --repo-root/u);
+        assert.equal(preview.requires_confirmation, true);
+        assert.equal(preview.confirmation_phrase, 'RUN TASK NEXT STEP');
+        assert.deepEqual(executedCommands, []);
+
+        const blockedResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-next-step', mode: 'execute', confirmation: 'wrong' })
+        });
+        assert.equal(blockedResponse.status, 409);
+        assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
+        assert.deepEqual(executedCommands, []);
+
+        const statsResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-stats', mode: 'execute' })
+        });
+        assert.equal(statsResponse.status, 200);
+        const stats = await statsResponse.json() as { status: string; stdout: string; audit_path: string };
+        assert.equal(stats.status, 'executed');
+        assert.equal(stats.stdout, 'task ok');
+        assert.equal(executedCommands.length, 1);
+        assert.match(executedCommands[0], /task T-100 stats --target-root/u);
+        const auditLines = fs.readFileSync(stats.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.match(auditLines[auditLines.length - 1], /"action_id":"T-100:task-stats"/u);
+        assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);
+
+        const unknownTaskResponse = await fetch(`${server.url}api/tasks/T-999/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-stats', mode: 'preview' })
+        });
+        assert.equal(unknownTaskResponse.status, 404);
     } finally {
         await server.close();
     }
