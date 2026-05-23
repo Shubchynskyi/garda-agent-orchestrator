@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- fixed `garda uninstall` cleanup so Garda-managed `.agentignore` active/off blocks are removed without restoring stale install-time backups over later user edits
 - fixed applied update output so `garda update git` reports the final applied version, prints the matching version-bound update notes, and formats long workflow/project-memory update details into readable human sections while preserving JSON output
 - bounded daily runtime-retention candidate discovery before heavy task preview classification and constrained storage-policy and forensic-compression mutations to selected task ids, preserving unselected task artifacts
 - expanded runtime cleanup coverage across generated runtime zones and metrics retention, including `runtime/tmp`, reviewer scratch, test scratch, cache/report/update-temp directories, `--max-metrics-lines`, and success-log omission for clean compile/full-suite output

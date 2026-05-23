@@ -14,11 +14,12 @@ import {
     SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
 } from './common';
 import {
+    AGENTIGNORE_OFF_MANAGED_COMMENT,
     MANAGED_END,
     MANAGED_START
 } from './content-builders';
 
-const SWITCH_AGENTIGNORE_COMMENT = '# Garda off-mode agent ignore';
+const SWITCH_AGENTIGNORE_COMMENT = AGENTIGNORE_OFF_MANAGED_COMMENT;
 
 export type SwitchMode = 'on' | 'off';
 

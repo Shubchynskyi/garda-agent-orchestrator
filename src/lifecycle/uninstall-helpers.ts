@@ -280,6 +280,7 @@ export function getUninstallRollbackItems(): string[] {
         QWEN_SETTINGS_RELATIVE,
         CLAUDE_LOCAL_SETTINGS_RELATIVE,
         PRE_COMMIT_HOOK_RELATIVE,
-        '.gitignore'
+        '.gitignore',
+        '.agentignore'
     ];
 }

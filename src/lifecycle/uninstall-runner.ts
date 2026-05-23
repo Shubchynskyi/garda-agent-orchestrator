@@ -6,6 +6,8 @@ import { detectLineEnding } from '../core/line-endings';
 import { readJsonFile } from '../core/json';
 import { SHARED_START_TASK_WORKFLOW_RELATIVE_PATH } from '../materialization/common';
 import {
+    AGENTIGNORE_ACTIVE_MANAGED_COMMENT,
+    AGENTIGNORE_OFF_MANAGED_COMMENT,
     MANAGED_START,
     MANAGED_END,
     COMMIT_GUARD_START,
@@ -425,6 +427,36 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             updateOrRemoveFile(filePath, '.gitignore', updatedContent);
         }
 
+        function cleanupAgentignore(): void {
+            const filePath = path.join(normalizedTarget, '.agentignore');
+            if (!pathExists(filePath)) return;
+
+            const content = readTextFile(filePath);
+            const startCount = content.split(MANAGED_START).length - 1;
+            const endCount = content.split(MANAGED_END).length - 1;
+            if (startCount !== endCount) {
+                addWarning(`Skipping '.agentignore' because managed block markers are incomplete.`);
+                return;
+            }
+
+            const managedBlockPattern = new RegExp(
+                escapeRegex(MANAGED_START) + '[\\s\\S]*?' + escapeRegex(MANAGED_END),
+                'g'
+            );
+            let changed = false;
+            const updatedContent = content.replace(managedBlockPattern, (block) => {
+                if (block.includes(AGENTIGNORE_ACTIVE_MANAGED_COMMENT) || block.includes(AGENTIGNORE_OFF_MANAGED_COMMENT)) {
+                    changed = true;
+                    return '';
+                }
+                return block;
+            });
+
+            if (!changed) return;
+
+            updateOrRemoveFile(filePath, '.agentignore', normalizeTextAfterManagedBlockRemoval(updatedContent));
+        }
+
         function ensureUninstallBackupGitignoreEntries(): void {
             const ignoreEntry = getUninstallBackupGitignoreEntry();
             const legacyWildcardEntry = getLegacyUninstallBackupGitignoreEntry();
@@ -622,6 +654,7 @@ export function runUninstall(options: RunUninstallOptions): RunUninstallResult {
             if (!restoreItemFromInitializationBackup('.gitignore')) {
                 cleanupGitignore();
             }
+            cleanupAgentignore();
             ensureUninstallBackupGitignoreEntries();
 
             if (options._testHooks && typeof options._testHooks.afterFileCleanup === 'function') {

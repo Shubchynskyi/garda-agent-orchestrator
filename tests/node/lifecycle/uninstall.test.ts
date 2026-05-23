@@ -6,7 +6,14 @@ import * as os from 'node:os';
 
 import { runUninstall, parseBooleanAnswer, getUninstallRollbackItems } from '../../../src/lifecycle/uninstall';
 import { removePathRecursive } from '../../../src/lifecycle/common';
-import { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } from '../../../src/materialization/content-builders';
+import {
+    AGENTIGNORE_ACTIVE_MANAGED_COMMENT,
+    AGENTIGNORE_OFF_MANAGED_COMMENT,
+    MANAGED_START,
+    MANAGED_END,
+    COMMIT_GUARD_START,
+    COMMIT_GUARD_END
+} from '../../../src/materialization/content-builders';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -398,6 +405,102 @@ describe('runUninstall', () => {
                 'Legacy wildcard entry must be removed during migration');
             assert.ok(content.includes('# Backup artifacts created by Garda Agent Orchestrator uninstall'),
                 'Explanatory comment must be added during migration');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('removes .agentignore when it contains only Garda managed active and off blocks', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const activeBlock = `${MANAGED_START}\n${AGENTIGNORE_ACTIVE_MANAGED_COMMENT}\ngarda-agent-orchestrator/dist/\n${MANAGED_END}\n`;
+            const offBlock = `${MANAGED_START}\n${AGENTIGNORE_OFF_MANAGED_COMMENT}\ngarda-agent-orchestrator/\n${MANAGED_END}\n`;
+            fs.writeFileSync(path.join(projectRoot, '.agentignore'), `${activeBlock}${offBlock}`, 'utf8');
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            assert.ok(!fs.existsSync(path.join(projectRoot, '.agentignore')),
+                '.agentignore should be removed when only Garda managed blocks remain');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('removes only Garda .agentignore blocks while preserving user content and unrelated managed blocks', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const unrelatedManagedBlock = `${MANAGED_START}\n# Other managed ignore\ncoverage/\n${MANAGED_END}\n`;
+            const activeBlock = `${MANAGED_START}\n${AGENTIGNORE_ACTIVE_MANAGED_COMMENT}\ngarda-agent-orchestrator/dist/\n${MANAGED_END}\n`;
+            const offBlock = `${MANAGED_START}\n${AGENTIGNORE_OFF_MANAGED_COMMENT}\ngarda-agent-orchestrator/\n${MANAGED_END}\n`;
+            fs.writeFileSync(
+                path.join(projectRoot, '.agentignore'),
+                `user-cache/\n${unrelatedManagedBlock}${activeBlock}${offBlock}`,
+                'utf8'
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            const content = fs.readFileSync(path.join(projectRoot, '.agentignore'), 'utf8');
+            assert.equal(content, `user-cache/\n${unrelatedManagedBlock.trimEnd()}`);
+            assert.ok(!content.includes(AGENTIGNORE_ACTIVE_MANAGED_COMMENT));
+            assert.ok(!content.includes(AGENTIGNORE_OFF_MANAGED_COMMENT));
+            assert.ok(!content.includes('garda-agent-orchestrator/dist/'));
+            assert.ok(!content.includes('garda-agent-orchestrator/'));
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('cleans current .agentignore instead of restoring stale initialization backup', () => {
+        const { projectRoot, bundleRoot } = setupDeployedWorkspace(repoRoot);
+        try {
+            const backupDir = path.join(bundleRoot, 'runtime', 'backups', '20250101-120000');
+            fs.mkdirSync(backupDir, { recursive: true });
+            fs.writeFileSync(path.join(backupDir, '.agentignore'), 'pre-existing/\n', 'utf8');
+            fs.writeFileSync(
+                path.join(backupDir, '_install-backup.manifest.json'),
+                JSON.stringify({ PreExistingFiles: ['.agentignore'] }),
+                'utf8'
+            );
+
+            const activeBlock = `${MANAGED_START}\n${AGENTIGNORE_ACTIVE_MANAGED_COMMENT}\ngarda-agent-orchestrator/dist/\n${MANAGED_END}\n`;
+            const offBlock = `${MANAGED_START}\n${AGENTIGNORE_OFF_MANAGED_COMMENT}\ngarda-agent-orchestrator/\n${MANAGED_END}\n`;
+            fs.writeFileSync(
+                path.join(projectRoot, '.agentignore'),
+                `pre-existing/\nlate-user-cache/\n${activeBlock}${offBlock}`,
+                'utf8'
+            );
+
+            const result = runUninstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                noPrompt: true,
+                keepPrimaryEntrypoint: 'no',
+                keepTaskFile: 'no',
+                keepRuntimeArtifacts: 'no'
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            const content = fs.readFileSync(path.join(projectRoot, '.agentignore'), 'utf8');
+            assert.equal(content, 'pre-existing/\nlate-user-cache/');
+            assert.ok(!content.includes(AGENTIGNORE_ACTIVE_MANAGED_COMMENT));
+            assert.ok(!content.includes(AGENTIGNORE_OFF_MANAGED_COMMENT));
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -961,6 +1064,7 @@ describe('runUninstall', () => {
         assert.ok(Array.isArray(items));
         assert.ok(items.includes('TASK.md'));
         assert.ok(items.includes('.gitignore'));
+        assert.ok(items.includes('.agentignore'));
         assert.ok(items.includes('.qwen/settings.json'));
         assert.ok(items.includes('.claude/settings.local.json'));
         assert.ok(items.includes('.git/hooks/pre-commit'));

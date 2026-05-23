@@ -124,6 +124,7 @@ export const COMMIT_GUARD_START = '# garda-agent-orchestrator:commit-guard-start
 export const COMMIT_GUARD_END = '# garda-agent-orchestrator:commit-guard-end';
 export const GITIGNORE_MANAGED_COMMENT = '# garda-agent-orchestrator managed ignores';
 export const AGENTIGNORE_ACTIVE_MANAGED_COMMENT = '# Garda active-mode agent ignore';
+export const AGENTIGNORE_OFF_MANAGED_COMMENT = '# Garda off-mode agent ignore';
 export const UNINSTALL_BACKUP_GITIGNORE_COMMENT = '# Backup artifacts created by Garda Agent Orchestrator uninstall';
 export function getUninstallBackupGitignoreEntry(): string {
     return `${resolveBundleName()}-uninstall-backups/`;
