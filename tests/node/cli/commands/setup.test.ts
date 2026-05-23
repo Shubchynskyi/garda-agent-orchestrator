@@ -506,8 +506,8 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
         assert.ok(initReport.includes(`path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json`));
         assert.ok(initReport.includes('full_suite_validation.enabled=true'));
         assert.ok(initReport.includes('review_cycle_guard.max_total_non_test_reviews=30'));
-        assert.ok(refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
-        assert.ok(refreshText.includes(`ProjectMemoryRefreshHandoff: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+        assert.ok(!refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
+        assert.ok(!refreshText.includes(`ProjectMemoryRefreshHandoff: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
         assert.ok(initReport.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
@@ -568,7 +568,7 @@ test('handleSetup migrates exact legacy generated project-memory maintenance def
         const initReport = readInitReport(workspaceRoot);
         const refreshText = refreshOutput.join('\n');
         assert.ok(refreshText.includes(`WorkflowConfigMerge: existing_values_preserved_and_missing_keys_filled path=${DEFAULT_BUNDLE_NAME}/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update`));
-        assert.ok(refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
+        assert.ok(!refreshText.includes('ProjectMemoryMaintenance: Project memory maintenance: update read_strategy=index_first'));
         assert.ok(initReport.includes('Workflow config merge status: existing_values_preserved_and_missing_keys_filled'));
         assert.ok(initReport.includes('project_memory_maintenance.mode=update'));
     } finally {
@@ -917,12 +917,13 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(text.includes('Use `next-step` as the navigator'));
     assert.ok(text.includes('launch a sub-agent using your internal tools'));
     assert.ok(text.includes('profile current|list|use|create'));
-    assert.ok(text.includes('start marker'));
-    assert.ok(text.includes('Garda captures my mind'));
-    assert.ok(text.includes('Mandatory orchestrator flow:'));
-    assert.ok(text.includes('enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate'));
-    assert.ok(text.includes('Project memory maintenance: update read_strategy=index_first'));
-    assert.ok(text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+    assert.ok(!text.includes('start marker'));
+    assert.ok(!text.includes('Garda captures my mind'));
+    assert.ok(!text.includes('Mandatory orchestrator flow:'));
+    assert.ok(!text.includes('Project memory maintenance: update read_strategy=index_first'));
+    assert.ok(!text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+    assert.ok(text.includes('RecommendedUiCommand: Run `garda ui` to inspect available commands and workspace state.'));
+    assert.match(text.trimEnd(), /RecommendedNextCommand: Give your agent ".*AGENT_INIT_PROMPT\.md" and complete the agent-init flow$/);
 });
 
 test('buildSetupHandoffText renders scannable plain human sections', () => {
@@ -939,12 +940,14 @@ test('buildSetupHandoffText renders scannable plain human sections', () => {
     assert.ok(text.includes('Agent Initialization'));
     assert.ok(text.includes('First Task Command'));
     assert.ok(text.includes('Active Profile'));
-    assert.ok(text.includes('Mandatory Flow'));
-    assert.ok(text.includes('Project Memory Refresh'));
+    assert.ok(text.includes('Workspace UI'));
+    assert.ok(!text.includes('Mandatory Flow'));
+    assert.ok(!text.includes('Project Memory Refresh'));
     assert.ok(text.includes('Give your agent:'));
     assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
     assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
     assert.ok(text.includes('next-step "<task-id>"'));
+    assert.ok(text.trimEnd().endsWith('and complete the agent-init flow'));
 });
 
 test('buildSetupHandoffText colors human setup handoff when FORCE_COLOR is set', () => {
@@ -977,7 +980,8 @@ test('buildSetupHandoffText honors NO_COLOR over FORCE_COLOR', () => {
     assert.equal(hasAnsi(text), false);
     assert.ok(normalizedText.includes('Primary setup is complete.'));
     assert.ok(normalizedText.includes('Next stage: launch your agent and give it the init prompt.'));
-    assert.ok(normalizedText.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+    assert.ok(!normalizedText.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
+    assert.ok(normalizedText.includes('RecommendedNextCommand: Give your agent'));
 });
 
 test('buildSetupHandoffText renders compact report labels in English while preserving assistant language', () => {

@@ -11,7 +11,6 @@ import {
     buildNextStepNavigatorGuidance,
     buildTaskStartNavigatorPrompt
 } from '../../core/onboarding-contract';
-import { buildSetupStartBannerSentence } from '../../core/orchestrator-start-banner';
 import { pathExists, readTextFile } from '../../core/filesystem';
 import { getActiveAgentEntrypointFiles } from '../../materialization/common';
 import { getNodeBundleCliCommand } from '../../materialization/command-constants';
@@ -66,10 +65,6 @@ import { serializeInitAnswers } from '../../schemas/init-answers';
 import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
 import { hasMaterializedWorkflowConfigBaseline } from '../../core/workflow-config';
-import {
-    PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
-    readProjectMemoryMaintenanceRolloutSummaryFromBundle
-} from '../../core/project-memory-rollout';
 import { validateManifest } from '../../validators/validate-manifest';
 import { runVerify } from '../../validators/verify';
 import { writeProtectedControlPlaneManifest } from '../../gates/helpers';
@@ -263,13 +258,11 @@ function formatSetupHandoffLabel(label: string): string {
 
 export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     const initPromptPath = getAgentInitPromptPath(snapshot.bundlePath);
-    const gateFlow = 'enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> full-suite-validation (when enabled) -> completion-gate';
     const activeProfileHint = readActiveProfileHint(snapshot.bundlePath);
     const reportMessages = getAgentReportMessages();
     const activeProfileSummary = activeProfileHint.activeProfile || null;
     const reviewModeSummary = reportMessages.summaries.mandatoryOrchestratorGates;
     const optionalSkillsSummary = reportMessages.summaries.askDuringAgentInit;
-    const projectMemoryRolloutSummary = readProjectMemoryMaintenanceRolloutSummaryFromBundle(snapshot.bundlePath);
     const deployedCliCommand = getNodeBundleCliCommand();
     const activeProfileLine = buildActiveProfileGuidance(activeProfileHint.activeProfile, deployedCliCommand);
     const firstTaskPrompt = buildTaskStartNavigatorPrompt('T-001');
@@ -304,19 +297,14 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push(`  ${buildNextStepNavigatorGuidance(deployedCliCommand)}`);
     lines.push('');
     lines.push(formatSetupHandoffHeading('Active Profile'));
-    lines.push(`  ${formatSetupHandoffLabel('Start banner:')} ${buildSetupStartBannerSentence()}`);
     lines.push(`  ${activeProfileLine}`);
     if (snapshot.mandatoryFullSuiteEnabled === false) {
         lines.push(`  ${buildFullSuiteDisabledGuidance(deployedCliCommand)}`);
     }
     lines.push('');
-    lines.push(formatSetupHandoffHeading('Mandatory Flow'));
-    lines.push('  Mandatory orchestrator flow:');
-    lines.push(`  ${gateFlow}`);
-    lines.push('');
-    lines.push(formatSetupHandoffHeading('Project Memory Refresh'));
-    lines.push(`  ${projectMemoryRolloutSummary.summary_line}`);
-    lines.push(`  ${formatSetupHandoffLabel('Project memory init/refresh prompt:')} ${projectMemoryRolloutSummary.refresh_handoff_prompt}`);
+    lines.push(formatSetupHandoffHeading('Workspace UI'));
+    lines.push(`  ${formatSetupHandoffLabel('RecommendedUiCommand:')} Run \`garda ui\` to inspect available commands and workspace state.`);
+    lines.push(`RecommendedNextCommand: Give your agent "${initPromptPath}" and complete the agent-init flow`);
     return lines.join('\n');
 }
 
@@ -525,10 +513,6 @@ export async function handleSetup(
         if (typeof installResult.workflowConfigMergeStatus === 'string') {
             console.log(`WorkflowConfigMerge: ${installResult.workflowConfigMergeStatus}`);
         }
-        if (typeof installResult.projectMemoryMaintenanceSummaryLine === 'string') {
-            console.log(`ProjectMemoryMaintenance: ${installResult.projectMemoryMaintenanceSummaryLine}`);
-        }
-        console.log(`ProjectMemoryRefreshHandoff: ${PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT}`);
         console.log('');
         printBanner(
             packageJson,
