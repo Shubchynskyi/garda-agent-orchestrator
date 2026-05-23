@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- fixed applied update output so `garda update git` reports the final applied version, prints the matching version-bound update notes, and formats long workflow/project-memory update details into readable human sections while preserving JSON output
 - bounded daily runtime-retention candidate discovery before heavy task preview classification and constrained storage-policy and forensic-compression mutations to selected task ids, preserving unselected task artifacts
 - expanded runtime cleanup coverage across generated runtime zones and metrics retention, including `runtime/tmp`, reviewer scratch, test scratch, cache/report/update-temp directories, `--max-metrics-lines`, and success-log omission for clean compile/full-suite output
 - expanded the official runtime contract to Node 24 LTS primary plus Node 22.13+ compatibility, with aligned engines, warning-only doctor diagnostics outside the tested matrix, CI matrices, docs, release validation checks, and Node 22 typings

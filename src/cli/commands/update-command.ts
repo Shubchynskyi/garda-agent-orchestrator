@@ -31,6 +31,17 @@ import {
 
 type UpdateStatusTone = 'success' | 'attention' | 'failure';
 
+const STRUCTURED_HUMAN_UPDATE_KEYS = new Set([
+    'workflowConfigMergeStatus',
+    'projectMemoryMaintenanceSummaryLine',
+    'projectMemoryRefreshHandoffPrompt'
+]);
+
+interface WrappedField {
+    label: string;
+    value: unknown;
+}
+
 function resolveUpdateStatusBanner(result: Record<string, unknown>): {
     title: string;
     detail: string;
@@ -111,6 +122,72 @@ function printColoredVersionDelta(result: Record<string, unknown>): void {
     console.log('');
 }
 
+function wrapText(value: string, width: number = 100): string[] {
+    const words = value.trim().split(/\s+/).filter((word) => word.length > 0);
+    if (words.length === 0) {
+        return [];
+    }
+    const lines: string[] = [];
+    let current = '';
+    for (const word of words) {
+        if (!current) {
+            current = word;
+            continue;
+        }
+        if (`${current} ${word}`.length > width) {
+            lines.push(current);
+            current = word;
+            continue;
+        }
+        current = `${current} ${word}`;
+    }
+    if (current) {
+        lines.push(current);
+    }
+    return lines;
+}
+
+function printWrappedField(field: WrappedField): void {
+    const value = String(field.value ?? '').trim();
+    if (!value) {
+        return;
+    }
+    const lines = wrapText(value);
+    if (lines.length === 0) {
+        return;
+    }
+    console.log(`  ${field.label}: ${lines[0]}`);
+    for (const line of lines.slice(1)) {
+        console.log(`    ${line}`);
+    }
+}
+
+function printHumanUpdateSection(title: string, fields: WrappedField[]): void {
+    const printableFields = fields.filter((field) => String(field.value ?? '').trim().length > 0);
+    if (printableFields.length === 0) {
+        return;
+    }
+    console.log('');
+    console.log(bold(title));
+    for (const field of printableFields) {
+        printWrappedField(field);
+    }
+}
+
+function formatHumanUpdateOutput(result: Record<string, unknown>, keys: string[]): void {
+    formatKeyValueOutput(
+        result,
+        keys.filter((key) => !STRUCTURED_HUMAN_UPDATE_KEYS.has(key))
+    );
+    printHumanUpdateSection('Workflow Config', [
+        { label: 'MergeStatus', value: result.workflowConfigMergeStatus }
+    ]);
+    printHumanUpdateSection('Project Memory', [
+        { label: 'Maintenance', value: result.projectMemoryMaintenanceSummaryLine },
+        { label: 'RefreshHandoffPrompt', value: result.projectMemoryRefreshHandoffPrompt }
+    ]);
+}
+
 export async function handleUpdate(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
     if (commandArgv.length > 0 && String(commandArgv[0] || '').trim().toLowerCase() === 'git') {
         await handleUpdateGit(commandArgv.slice(1), packageJson);
@@ -183,7 +260,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
     } else {
         printUpdateStatusBanner(mergedUpdateResult);
         printColoredVersionDelta(mergedUpdateResult);
-        formatKeyValueOutput(mergedUpdateResult, [
+        formatHumanUpdateOutput(mergedUpdateResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
@@ -263,7 +340,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
     } else {
         printUpdateStatusBanner(mergedUpdateGitResult);
         printColoredVersionDelta(mergedUpdateGitResult);
-        formatKeyValueOutput(mergedUpdateGitResult, [
+        formatHumanUpdateOutput(mergedUpdateGitResult, [
             'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
@@ -342,7 +419,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
     } else {
         printUpdateStatusBanner(mergedCheckResult);
         printColoredVersionDelta(mergedCheckResult);
-        formatKeyValueOutput(mergedCheckResult, [
+        formatHumanUpdateOutput(mergedCheckResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',

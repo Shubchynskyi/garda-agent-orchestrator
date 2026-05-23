@@ -266,16 +266,15 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.equal(plainTextLines.includes('ExactPackageSpec: garda-agent-orchestrator@1.1.0'), true);
             assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
             assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-output'), true);
-            assert.equal(
-                plainTextLines.includes(`WorkflowConfigMergeStatus: ${WORKFLOW_CONFIG_MERGE_STATUS}`),
-                true
-            );
-            assert.equal(plainTextLines.includes('ProjectMemoryMaintenanceSummaryLine: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'), true);
-            assert.equal(plainTextLines.includes(`ProjectMemoryRefreshHandoffPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`), true);
+            assert.equal(plainTextLines.some((line) => line.includes('Workflow Config')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('MergeStatus: live_config_missing_template_applied')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('Project Memory')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('Maintenance: Project memory maintenance: update')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('RefreshHandoffPrompt: Initialize or refresh Garda project memory.')), true);
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
-            assert.equal(plainTextLines.includes('- 1.1.0: Major registry note'), true);
+            assert.equal(plainTextLines.includes('  1.1.0 - Major registry note'), true);
             assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
-            assert.equal(plainTextLines.includes('  - added versioned notes'), true);
+            assert.equal(plainTextLines.includes('    - added versioned notes'), true);
             assert.equal(require.cache[fixture.bundleUpdateModulePath], undefined);
 
             const noColorLines = await captureConsoleLogsWithNoColor(async () => {
@@ -285,7 +284,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                     '--trust-override'
                 ], packageJson);
             });
-            assert.equal(/\u001b\[/.test(noColorLines.slice(0, 3).join('\n')), false);
+            assert.equal(/\u001b\[/.test(noColorLines.join('\n')), false);
             assert.equal(noColorLines[0], 'UPDATE STATUS');
             assert.equal(noColorLines[1], 'Updated successfully');
             assert.equal(noColorLines[2], 'The available update was applied to this workspace.');
@@ -406,12 +405,11 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
             assert.equal(plainTextLines.includes('ExactPackageSpec: garda-agent-orchestrator@1.1.0'), true);
             assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
             assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-check'), true);
-            assert.equal(
-                plainTextLines.includes(`WorkflowConfigMergeStatus: ${WORKFLOW_CONFIG_MERGE_STATUS}`),
-                true
-            );
-            assert.equal(plainTextLines.includes('ProjectMemoryMaintenanceSummaryLine: Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true'), true);
-            assert.equal(plainTextLines.includes(`ProjectMemoryRefreshHandoffPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`), true);
+            assert.equal(plainTextLines.some((line) => line.includes('Workflow Config')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('MergeStatus: live_config_missing_template_applied')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('Project Memory')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('Maintenance: Project memory maintenance: update')), true);
+            assert.equal(plainTextLines.some((line) => line.includes('RefreshHandoffPrompt: Initialize or refresh Garda project memory.')), true);
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
             assert.equal(require.cache[fixture.bundleUpdateModulePath], undefined);
@@ -874,6 +872,112 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
             assert.equal(parsed.sourceType, 'git');
             assert.equal(parsed.repoUrl, 'https://example.test/repo.git');
             assert.equal(parsed.updatedVersion, '1.1.0');
+        } finally {
+            reloaded.restore();
+            restoreCachedModule(fixture.bundleUpdateModulePath, originalBundleModule);
+        }
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test('handleUpdateGit uses latest applied version for announcements when lifecycle output is stale', async () => {
+    const packageJson: PackageJsonLike = {
+        name: 'garda-agent-orchestrator',
+        version: '1.0.0'
+    };
+    const updateGitModulePath = require.resolve('../../../../src/lifecycle/update-git');
+    const fixture = makeTempBundleFixture();
+    const bundleRoot = path.join(fixture.workspaceRoot, 'garda-agent-orchestrator');
+
+    try {
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n', 'utf8');
+        fs.writeFileSync(
+            path.join(bundleRoot, 'live', 'version.json'),
+            JSON.stringify({ Version: '1.0.0', UpdatedAt: '2026-05-18T00:00:00.000Z' }, null, 2),
+            'utf8'
+        );
+        const originalBundleModule = require.cache[fixture.bundleUpdateModulePath];
+        require.cache[fixture.bundleUpdateModulePath] = makeCacheModule(fixture.bundleUpdateModulePath, {
+            runUpdate() {
+                return {
+                    previousVersion: '1.0.0',
+                    updatedVersion: '1.0.0',
+                    projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first',
+                    projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
+                    rollbackSnapshotPath: 'garda-agent-orchestrator/runtime/update-rollbacks/update-stale',
+                    rollbackStatus: 'NOT_TRIGGERED',
+                    updateReportPath: 'garda-agent-orchestrator/runtime/update-reports/update-stale.md'
+                };
+            }
+        });
+
+        const reloaded = loadFreshUpdateCommandWithStubs({
+            [updateGitModulePath]: {
+                async runUpdateFromGit(options: { updateRunner?: (runnerOptions: Record<string, unknown>) => void }) {
+                    if (typeof options.updateRunner === 'function') {
+                        options.updateRunner({
+                            targetRoot: fixture.workspaceRoot,
+                            initAnswersPath: 'garda-agent-orchestrator/runtime/init-answers.json',
+                            skipVerify: false,
+                            skipManifestValidation: false,
+                            trustPolicy: 'enforced',
+                            trustOverrideUsed: false,
+                            trustOverrideSource: 'none',
+                            sourceType: 'git',
+                            sourceReference: 'https://example.test/repo.git'
+                        });
+                    }
+                    return {
+                        targetRoot: fixture.workspaceRoot,
+                        repoUrl: 'https://example.test/repo.git',
+                        branch: 'dev',
+                        sourceType: 'git',
+                        sourceReference: 'https://example.test/repo.git',
+                        currentVersion: '1.0.0',
+                        latestVersion: '1.1.0',
+                        updateAvailable: true,
+                        updateApplied: true,
+                        checkUpdateResult: 'UPDATED',
+                        trustPolicy: 'enforced',
+                        trustOverrideUsed: false,
+                        trustOverrideSource: 'none'
+                    };
+                }
+            }
+        });
+
+        try {
+            const plainTextLines = await captureConsoleLogsWithNoColor(async () => {
+                await reloaded.module.handleUpdateGit([
+                    '--target-root', fixture.workspaceRoot,
+                    '--repo-url', 'https://example.test/repo.git',
+                    '--branch', 'dev',
+                    '--no-prompt',
+                    '--trust-override'
+                ], packageJson);
+            });
+
+            assert.equal(/\u001b\[/.test(plainTextLines.join('\n')), false);
+            assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
+            assert.equal(plainTextLines.includes('UpdatedVersion: 1.0.0'), false);
+            assert.equal(plainTextLines.includes('UpdateMessages:'), true);
+            assert.equal(plainTextLines.includes('  1.1.0 - Major registry note'), true);
+            assert.equal(plainTextLines.some((line) => line.includes('RefreshHandoffPrompt: Initialize or refresh Garda project memory.')), true);
+
+            const jsonLines = await captureConsoleLogs(async () => {
+                await reloaded.module.handleUpdateGit([
+                    '--target-root', fixture.workspaceRoot,
+                    '--repo-url', 'https://example.test/repo.git',
+                    '--branch', 'dev',
+                    '--no-prompt',
+                    '--trust-override',
+                    '--json'
+                ], packageJson);
+            });
+            const parsed = JSON.parse(jsonLines.join('\n'));
+            assert.equal(parsed.updatedVersion, '1.1.0');
+            assert.equal(parsed.latestVersion, '1.1.0');
         } finally {
             reloaded.restore();
             restoreCachedModule(fixture.bundleUpdateModulePath, originalBundleModule);

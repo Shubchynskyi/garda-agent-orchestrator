@@ -7,6 +7,7 @@ import {
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../validators';
 import { runContractMigrations } from '../../lifecycle/contract-migrations';
 import { collectUpdateAnnouncements } from '../../lifecycle/update-announcements';
+import { compareVersionStrings } from '../../lifecycle/generic-utils';
 import { runUpdate } from '../../lifecycle/update';
 import { type CheckUpdateRunnerOptions } from '../../lifecycle/check-update';
 import { getBundlePath } from './cli-helpers';
@@ -116,6 +117,10 @@ function toPrintableLines(value: unknown): string[] {
         .filter((entry) => entry.length > 0);
 }
 
+function stripMarkdownBulletPrefix(line: string): string {
+    return line.replace(/^[-*]\s+/, '').trim();
+}
+
 function printAnnouncementSection(title: string, lines: string[]): void {
     if (lines.length === 0) {
         return;
@@ -148,8 +153,8 @@ export function printUpdateAnnouncementSections(result: Record<string, unknown> 
             return [];
         }
         return [
-            `- ${version}: ${title}`,
-            ...body.map((line) => `  ${line}`)
+            `  ${version} - ${title}`,
+            ...body.map((line) => `    - ${stripMarkdownBulletPrefix(line)}`)
         ];
     });
     const releaseNoteLines = releaseNotes.flatMap((entry) => {
@@ -159,8 +164,8 @@ export function printUpdateAnnouncementSections(result: Record<string, unknown> 
             return [];
         }
         return [
-            `- ${version}`,
-            ...lines.map((line) => `  ${line}`)
+            `  ${version}`,
+            ...lines.map((line) => `    - ${stripMarkdownBulletPrefix(line)}`)
         ];
     });
 
@@ -433,6 +438,46 @@ function readCurrentBundleVersion(bundlePath: string): string | null {
     }
 }
 
+function compareVersionsSafe(left: string, right: string): number | null {
+    try {
+        return compareVersionStrings(left, right);
+    } catch {
+        return null;
+    }
+}
+
+function resolveAppliedUpdatedVersion(
+    result: Record<string, unknown>,
+    finalVersion: string | null
+): string | null {
+    const previousVersion = String(result.previousVersion || result.currentVersion || '').trim();
+    const latestVersion = String(result.latestVersion || '').trim();
+    const candidates = [
+        finalVersion,
+        String(result.updatedVersion || '').trim(),
+        latestVersion
+    ].filter((value): value is string => Boolean(value));
+    const selectedVersion = candidates[0] || null;
+
+    if (!previousVersion || !latestVersion) {
+        return selectedVersion;
+    }
+
+    const latestAfterPrevious = compareVersionsSafe(previousVersion, latestVersion);
+    if (latestAfterPrevious === null || latestAfterPrevious >= 0) {
+        return selectedVersion;
+    }
+
+    if (!selectedVersion) {
+        return latestVersion;
+    }
+
+    const selectedAfterPrevious = compareVersionsSafe(previousVersion, selectedVersion);
+    return selectedAfterPrevious === null || selectedAfterPrevious <= 0
+        ? latestVersion
+        : selectedVersion;
+}
+
 function resolveUpdateReportPath(result: Record<string, unknown>): string | null {
     const updateReportPath = String(result.updateReportPath || '').trim();
     if (!updateReportPath || updateReportPath === 'not-generated-in-dry-run') {
@@ -498,12 +543,12 @@ export function finalizeAppliedUpdateOutput(
         return baseResult;
     }
 
-    const finalVersion = readCurrentBundleVersion(bundlePath);
-    const versionCorrectedResult = finalVersion
-        ? { ...baseResult, updatedVersion: finalVersion }
+    const appliedVersion = resolveAppliedUpdatedVersion(baseResult, readCurrentBundleVersion(bundlePath));
+    const versionCorrectedResult = appliedVersion
+        ? { ...baseResult, updatedVersion: appliedVersion }
         : baseResult;
-    if (finalVersion) {
-        rewriteUpdateReportUpdatedVersion(versionCorrectedResult, finalVersion);
+    if (appliedVersion) {
+        rewriteUpdateReportUpdatedVersion(versionCorrectedResult, appliedVersion);
     }
     return enrichUpdateOutputWithCurrentBundleAnnouncements(versionCorrectedResult, bundlePath);
 }
