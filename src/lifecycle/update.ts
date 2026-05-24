@@ -25,6 +25,7 @@ import {
 import { collectUpdateAnnouncements } from './update-announcements';
 import { writeUpdateReport, buildUpdateResult } from './update-reporting';
 import { assertNoRuntimeLocksBeforeUpdateApply } from './runtime-lock-preflight';
+import { assertUpdateApplyAllowedInSwitchMode } from './update-off-mode';
 
 interface RollbackRecord {
     relativePath: string;
@@ -165,6 +166,14 @@ function runValidatedUpdate(
         resolvedPackageVersion: null,
         resolvedPackageIntegrity: null
     };
+
+    assertUpdateApplyAllowedInSwitchMode({
+        targetRoot: normalizedTarget,
+        bundleRoot,
+        applyRequested: true,
+        dryRun,
+        commandName: 'update apply'
+    });
 
     if (!dryRun) {
         assertNoRuntimeLocksBeforeUpdateApply(bundleRoot);

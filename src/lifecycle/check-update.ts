@@ -33,6 +33,7 @@ import {
 } from './update-trust';
 import { classifyNpmDiagnostic, createLifecycleDiagnosticError } from './update-diagnostics';
 import { assertNoRuntimeLocksBeforeUpdateApply } from './runtime-lock-preflight';
+import { assertUpdateApplyAllowedInSwitchMode } from './update-off-mode';
 
 export const DEFAULT_PACKAGE_NAME = PRIMARY_PACKAGE_NAME;
 export const DEFAULT_UPDATE_TEMP_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1104,6 +1105,13 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
     if (!pathExists(deployedBundleRoot)) {
         throw new Error(`Deployed bundle not found: ${deployedBundleRoot}`);
     }
+    assertUpdateApplyAllowedInSwitchMode({
+        targetRoot: normalizedTarget,
+        bundleRoot: deployedBundleRoot,
+        applyRequested: apply,
+        dryRun,
+        commandName: 'update apply'
+    });
 
     let currentVersion = readCurrentBundleVersionOrThrow(deployedBundleRoot);
 

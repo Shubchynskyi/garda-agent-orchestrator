@@ -275,6 +275,7 @@ Notes:
 - `TASK.md` remains visible; the switch is for root agent instruction surfaces, not task queue removal.
 - Setup/update/reinit keep an active managed `.agentignore` block for bulky Garda-generated artifacts while leaving command, rule, config, and explicit runtime evidence paths readable.
 - `garda off` writes a separate managed `.agentignore` block pointing agents away from `garda-agent-orchestrator/`; `garda on` removes only that off-mode block and leaves the active block in place.
+- Update apply paths are blocked while Garda is off. Run `garda on` before `garda update`, `garda check-update --apply`, or applying `garda update git`; read-only checks such as `check-update`, `check-update --dry-run`, and `update git --check-only` remain available.
 - Conflicts fail closed without overwriting user-authored files. Use `--dry-run` to inspect planned moves before changing a workspace.
 
 ### `garda bootstrap`
@@ -348,6 +349,7 @@ Notes:
 - `--source-path` is for local testing against an unpacked repo or bundle directory.
 - `--trust-override` is an explicit bypass for non-allowlisted npm specs, git sources, or local `--source-path` testing, and the public CLI only accepts it together with `--no-prompt`.
 - Ordinary CLI/runtime flows ignore `GARDA_UPDATE_TRUST_OVERRIDE`; that environment variable is reserved for test-only harness paths, not for production or CI.
+- If Garda is off, `--apply` fails before source acquisition, bundle sync, rollback, verify, or manifest validation. Run `garda on` first. Read-only `check-update` and `--dry-run` checks remain available in off mode.
 - `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, applies built-in live-rule contract migrations for existing workspaces, runs verify plus manifest validation, enforces a hard atomic consistency invariant for the deployed bundle, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
 - Successful apply runs also invalidate cached bundle runtime modules so long-lived host processes reload the freshly synced bundle on later commands.
 
@@ -364,6 +366,7 @@ garda update --target-root "." --init-answers-path "garda-agent-orchestrator/run
 
 Notes:
 - `update` always applies the update workflow unless `--dry-run` is used.
+- If Garda is off, `update` fails before rollback snapshot creation, install, verify, or manifest validation. Run `garda on` first; `--dry-run` remains available.
 - Trusted npm registry specs are resolved before install to an exact package version with integrity metadata, and the resolved provenance is recorded in CLI output and update reports.
 - Use `--trust-override --no-prompt` only when you intentionally bypass the trusted-source allowlist for a local or non-standard source; the update report records that override.
 - Successful applies sync bundle files, run install, re-materialize `live/`, apply built-in live-rule contract migrations for existing workspaces, run verify plus manifest validation, and only then write the final `VERSION` marker.
@@ -386,6 +389,7 @@ garda update git
 Notes:
 - `update git` uses `git clone --depth 1` into a temp directory, then runs the same update lifecycle as npm-based `update`.
 - `--check-only` compares the git source without applying it.
+- If Garda is off, applying `update git` fails before cloning the update source. Run `garda on` first; `--check-only` remains available.
 - Trusted git sources stay in enforced mode; if you bypass git-source trust with `--trust-override --no-prompt`, that override is recorded in CLI output and the update report.
 - With no extra flags, `garda update git` targets the current directory and uses the default GitHub repository URL.
 - Successful applies invalidate cached bundle runtime modules just like npm-based `update`, so long-lived host processes reload the new bundle on later commands.

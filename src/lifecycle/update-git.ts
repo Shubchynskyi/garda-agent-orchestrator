@@ -20,6 +20,7 @@ import {
 } from './update-diagnostics';
 import { registerTempRoot } from '../cli/signal-handler';
 import { pathExists } from '../core/filesystem';
+import { assertUpdateApplyAllowedInSwitchMode } from './update-off-mode';
 
 export const DEFAULT_GIT_UPDATE_REPO_URL = 'https://github.com/Shubchynskyi/garda-agent-orchestrator.git';
 
@@ -276,6 +277,13 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
     const normalizedBranch = branch ? String(branch).trim() : null;
 
     const trustResult = validateGitSourceTrust(normalizedRepoUrl, { trustOverride });
+    assertUpdateApplyAllowedInSwitchMode({
+        targetRoot,
+        bundleRoot,
+        applyRequested: !checkOnly,
+        dryRun,
+        commandName: 'update git'
+    });
 
     const gitSource = await cloneGitUpdateSource(normalizedRepoUrl, normalizedBranch);
 

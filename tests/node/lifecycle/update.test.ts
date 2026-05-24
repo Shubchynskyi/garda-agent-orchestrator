@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
+import { runUpdateFromGit } from '../../../src/lifecycle/update-git';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
 import { getLifecycleOperationLockPath, removePathRecursive, writeUpdateSentinel } from '../../../src/lifecycle/common';
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
@@ -101,6 +103,38 @@ function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: 
         target_root: path.resolve(projectRoot)
     }, null, 2), 'utf8');
     return lockPath;
+}
+
+function seedOffModeState(bundleRoot: string) {
+    const switchRoot = path.join(bundleRoot, 'runtime', 'switch');
+    fs.mkdirSync(switchRoot, { recursive: true });
+    fs.writeFileSync(path.join(switchRoot, 'state.json'), JSON.stringify({
+        schema_version: 1,
+        mode: 'off',
+        updated_at_utc: '2026-05-24T00:00:00.000Z',
+        candidates: [],
+        root_files: [],
+        off_storage_files: [],
+        on_storage_files: []
+    }, null, 2), 'utf8');
+}
+
+function seedGitRepository(repoPath: string) {
+    const commands = [
+        ['init'],
+        ['config', 'user.email', 'test@example.com'],
+        ['config', 'user.name', 'Garda Test'],
+        ['add', '.'],
+        ['commit', '-m', 'seed update source']
+    ];
+    for (const args of commands) {
+        const result = spawnSync('git', args, { cwd: repoPath, encoding: 'utf8' });
+        assert.equal(
+            result.status,
+            0,
+            `git ${args.join(' ')} failed: ${result.stderr || result.stdout}`
+        );
+    }
 }
 
 function setupUpdateWorkspace(repoRoot: string) {
@@ -354,6 +388,107 @@ describe('runUpdate', () => {
         }
     });
 
+    it('blocks check-update apply in off mode before source acquisition or sync', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            seedOffModeState(bundleRoot);
+
+            await assert.rejects(() => runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: path.join(projectRoot, 'missing-update-source'),
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner() {
+                    throw new Error('updateRunner should not execute while Garda is off');
+                }
+            }), /GARDA_UPDATE_OFF_MODE_BLOCKED: update apply cannot apply while Garda is off.*garda on/);
+
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'off-mode check-update apply must stop before bundle sync starts');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('allows check-update read-only mode while Garda is off', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'VERSION'), '9.9.9\n', 'utf8');
+            seedOffModeState(bundleRoot);
+
+            const result = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                apply: false,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner() {
+                    throw new Error('updateRunner should not execute for read-only checks');
+                }
+            });
+
+            assert.equal(result.updateApplied, false);
+            assert.equal(result.checkUpdateResult, 'UPDATE_AVAILABLE');
+            assert.equal(result.updateAvailable, true);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'read-only off-mode check must not sync bundle items');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks update git apply in off mode before cloning the update source', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            seedOffModeState(bundleRoot);
+
+            await assert.rejects(() => runUpdateFromGit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                branch: 'dev',
+                updateRunner() {
+                    throw new Error('updateRunner should not execute while Garda is off');
+                }
+            }), /GARDA_UPDATE_OFF_MODE_BLOCKED: update git cannot apply while Garda is off.*garda on/);
+
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'off-mode update git must stop before bundle sync starts');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('allows update git check-only while Garda is off', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'VERSION'), '9.9.9\n', 'utf8');
+            seedGitRepository(sourceBundleRoot);
+            seedOffModeState(bundleRoot);
+
+            const result = await runUpdateFromGit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                repoUrl: sourceBundleRoot,
+                checkOnly: true,
+                trustOverride: true,
+                updateRunner() {
+                    throw new Error('updateRunner should not execute for update git check-only');
+                }
+            });
+
+            assert.equal(result.updateApplied, false);
+            assert.equal(result.checkUpdateResult, 'UPDATE_AVAILABLE');
+            assert.equal(result.updateAvailable, true);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'check-only off-mode update git must not sync bundle items');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('does not bypass foreign-host lifecycle locks when legacy update sentinel is present', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
@@ -401,6 +536,33 @@ describe('runUpdate', () => {
 
             assert.equal(installRunnerCalled, false, 'installRunner must not execute while runtime locks exist');
             assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'update-rollbacks')), 'update must stop before rollback snapshot creation');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks direct update apply in off mode before rollback or install', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            let installRunnerCalled = false;
+            seedOffModeState(bundleRoot);
+
+            assert.throws(
+                () => runUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    initAnswersPath: answersPath,
+                    skipVerify: true,
+                    skipManifestValidation: true,
+                    installRunner: () => {
+                        installRunnerCalled = true;
+                    }
+                }),
+                /GARDA_UPDATE_OFF_MODE_BLOCKED: update apply cannot apply while Garda is off.*garda on/
+            );
+
+            assert.equal(installRunnerCalled, false, 'installRunner must not execute while Garda is off');
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'update-rollbacks')), 'off-mode update must stop before rollback snapshot creation');
         } finally {
             removePathRecursive(projectRoot);
         }
