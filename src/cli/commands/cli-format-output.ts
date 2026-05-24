@@ -436,7 +436,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
         hints: Object.freeze([
             'This command has no subcommands and requires explicit completion flags.',
             'Complete the AGENT_INIT_PROMPT style-policy question before running this command; final answer tokens remain exactly default or custom.',
-            'Confirm --ordinary-doc-paths only after explaining they are auditable planning/changelog doc exceptions, not a global ignore list.',
+            'Confirm --ordinary-doc-paths only after explaining they are auditable planning/status/changelog/product doc routing hints, not a global ignore list or a way to hide files.',
             'Use status first if you need to confirm whether agent-init is still required.'
         ])
     }),

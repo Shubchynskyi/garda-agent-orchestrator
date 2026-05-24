@@ -100,11 +100,15 @@ test('AGENT_INIT_PROMPT requires explicit code-style policy for empty repositori
 
 test('AGENT_INIT_PROMPT explains ordinary document paths before confirmation', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
-    assert.match(content, /explain in `<assistant-language>` that ordinary document paths identify planning, status, or changelog documents that may skip code\/test review while still being listed in preflight and doc-impact evidence/i);
+    assert.match(content, /ordinary document paths are ordinary planning, status, changelog, roadmap, or product documentation path patterns/i);
+    assert.match(content, /lighter documentation-impact routing instead of code\/test review/i);
     assert.match(content, /confirm the proposed `ordinary_doc_paths` list/i);
     assert.match(content, /concise example answer in `<assistant-language>`, such as `CHANGELOG\.md,docs\/plan\.md`/i);
     assert.match(content, /empty answer means no ordinary document path exceptions should be persisted/i);
+    assert.match(content, /matched files still appear in preflight\/doc-impact evidence/i);
     assert.match(content, /not a global ignore list/i);
+    assert.match(content, /not a way to hide files from the agent/i);
+    assert.match(content, /not a bypass for protected control-plane docs, runtime code, config\/dependency\/security\/API\/database surfaces, or mixed source changes/i);
     assert.match(content, /`agent-init --ordinary-doc-paths` argument/i);
 });
 

@@ -835,7 +835,8 @@ test('buildCommandHelpText explains agent-init confirmation flags without changi
     const text = stripAnsi(buildCommandHelpText('agent-init'));
     assert.ok(text.includes('default or custom'));
     assert.ok(text.includes('--ordinary-doc-paths'));
-    assert.ok(text.includes('auditable planning/changelog doc exceptions'));
+    assert.ok(text.includes('auditable planning/status/changelog/product doc routing hints'));
+    assert.ok(text.includes('not a global ignore list or a way to hide files'));
     assert.ok(text.includes('not a global ignore list'));
 });
 
