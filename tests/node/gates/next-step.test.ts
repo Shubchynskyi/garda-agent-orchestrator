@@ -6460,7 +6460,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.match(result.title, /Materialize 'code' review reuse before downstream 'test'/);
-        assert.ok(result.reason.includes("current-cycle 'code' REVIEW_RECORDED reuse evidence"), result.reason);
+        assert.match(result.reason, /instead of launching a fresh 'code' reviewer/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
@@ -6491,7 +6491,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.reason.includes('latest review phase predates the upstream review record'));
     });
 
-    it('keeps passed code review satisfied when only test-domain scope changes after preflight refresh', () => {
+    it('materializes upstream code reuse before downstream test after test-only remediation', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, {
@@ -6521,8 +6521,76 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.match(result.title, /Materialize 'code' review reuse before downstream 'test'/);
+        assert.match(result.reason, /instead of launching a fresh 'code' reviewer/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+    });
+
+    it('materializes upstream code reuse before downstream refactor after test-only remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const testFile = path.join(repoRoot, 'tests', 'strict-reuse-remediation.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("strict reuse remediation", () => {});\n', 'utf8');
+        const changedFiles = ['src/app.ts', 'tests/strict-reuse-remediation.test.ts'];
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+
+        fs.writeFileSync(
+            testFile,
+            'test("strict reuse remediation", () => { assert.equal(1, 1); });\n',
+            'utf8'
+        );
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'refactor', result.reason);
+        assert.match(result.title, /Materialize 'code' review reuse before downstream 'refactor'/);
+        assert.match(result.reason, /instead of launching a fresh 'code' reviewer/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "refactor"'));
+
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', { review_type: 'code' });
+
+        const securityResult = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(securityResult.next_gate, 'build-review-context', securityResult.reason);
+        assert.equal(securityResult.review.next_review_type, 'refactor', securityResult.reason);
+        assert.match(securityResult.title, /Materialize 'security' review reuse before downstream 'refactor'/);
+        assert.match(securityResult.reason, /instead of launching a fresh 'security' reviewer/);
+        assert.ok(!securityResult.commands[0].command.includes('--review-type "code"'));
+        assert.ok(securityResult.commands[0].command.includes('--review-type "security"'));
+        assert.ok(!securityResult.commands[0].command.includes('--review-type "refactor"'));
     });
 
     it('rebuilds stale failed downstream review after test-only remediation despite lane-domain match', () => {

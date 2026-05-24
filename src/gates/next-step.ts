@@ -3854,32 +3854,25 @@ function getLatestReviewEventSequence(
     return latestSequence;
 }
 
-function findRestartedStrictSequentialUpstreamNeedingCurrentCycleRecord(params: {
+function findStrictSequentialUpstreamNeedingCurrentCycleReuse(params: {
+    repoRoot: string;
     eventsRoot: string;
     taskId: string;
     targetReviewType: string;
     requiredReviews: Record<string, boolean>;
     policyMode: EffectiveReviewExecutionPolicyMode;
     reviewStates: readonly ReviewArtifactState[];
+    latestCompileSequence?: number | null;
 }): { upstreamState: ReviewArtifactState; upstreamReviewType: string; latestCompileSequence: number } | null {
     if (params.policyMode !== 'strict_sequential') {
         return null;
     }
-    const latestCompileSequence = getLatestTaskSequenceForEventTypes(
+    const latestCompileSequence = params.latestCompileSequence ?? getLatestTaskSequenceForEventTypes(
         params.eventsRoot,
         params.taskId,
         ['COMPILE_GATE_PASSED']
     );
-    const latestCompletionFailureSequence = getLatestTaskSequenceForEventTypes(
-        params.eventsRoot,
-        params.taskId,
-        ['COMPLETION_GATE_FAILED']
-    );
-    if (
-        latestCompileSequence == null
-        || latestCompletionFailureSequence == null
-        || latestCompletionFailureSequence > latestCompileSequence
-    ) {
+    if (latestCompileSequence == null) {
         return null;
     }
     const timelineEvents = readTaskTimelineEventLikes(params.eventsRoot, params.taskId);
@@ -3891,7 +3884,17 @@ function findRestartedStrictSequentialUpstreamNeedingCurrentCycleRecord(params: 
     );
     for (const upstreamReviewType of upstreamReviewTypes) {
         const upstreamState = stateByReviewType.get(upstreamReviewType);
-        if (!upstreamState?.ready || !upstreamState.domainScopeCurrent) {
+        if (
+            !upstreamState?.ready
+            || !upstreamState.domainScopeCurrent
+            || upstreamState.failed
+        ) {
+            continue;
+        }
+        if (
+            upstreamState.reusedExistingReview
+            && timelineHasReviewReuseRecordedAfterCompile(params.eventsRoot, params.taskId, upstreamState)
+        ) {
             continue;
         }
         const upstreamRecordedSequence = getLatestReviewEventSequence(
@@ -3899,7 +3902,22 @@ function findRestartedStrictSequentialUpstreamNeedingCurrentCycleRecord(params: 
             'REVIEW_RECORDED',
             upstreamReviewType
         );
-        if (upstreamRecordedSequence != null && upstreamRecordedSequence > latestCompileSequence) {
+        if (
+            !upstreamState.reusedExistingReview
+            && upstreamRecordedSequence != null
+            && upstreamRecordedSequence > latestCompileSequence
+        ) {
+            continue;
+        }
+        if (!upstreamState.reusedExistingReview && upstreamState.contextCurrent) {
+            continue;
+        }
+        if (!upstreamState.reusedExistingReview && !reviewStateHasSatisfiedEvidence(
+            params.repoRoot,
+            params.eventsRoot,
+            params.taskId,
+            upstreamState
+        )) {
             continue;
         }
         return {
@@ -8532,7 +8550,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ]
             });
         }
-        const restartedCycleUpstreamReuse = findRestartedStrictSequentialUpstreamNeedingCurrentCycleRecord({
+        const strictSequentialUpstreamReuse = findStrictSequentialUpstreamNeedingCurrentCycleReuse({
+            repoRoot,
             eventsRoot,
             taskId,
             targetReviewType: reviewType,
@@ -8540,9 +8559,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             policyMode: reviewPolicy.mode,
             reviewStates
         });
-        if (restartedCycleUpstreamReuse) {
-            const upstreamReviewType = restartedCycleUpstreamReuse.upstreamReviewType;
-            const upstreamState = restartedCycleUpstreamReuse.upstreamState;
+        if (strictSequentialUpstreamReuse) {
+            const upstreamReviewType = strictSequentialUpstreamReuse.upstreamReviewType;
+            const upstreamState = strictSequentialUpstreamReuse.upstreamState;
             const upstreamScopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${upstreamReviewType}-scoped.json`);
             const upstreamScopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${upstreamReviewType}-scoped.diff`);
             const upstreamScopedDiffReadiness = scopedDiffExpectedForReview({
@@ -8584,11 +8603,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     ...resultBase,
                     status: 'BLOCKED',
                     nextGate: 'build-scoped-diff',
-                    title: `Prepare '${upstreamReviewType}' scoped diff metadata before downstream review.`,
+                    title: `Prepare '${upstreamReviewType}' scoped diff metadata before downstream '${reviewType}'.`,
                     reason:
-                        `${upstreamScopedDiffReadiness.reason} After a failed completion cycle, strict_sequential ` +
-                        `review recovery must materialize current-cycle '${upstreamReviewType}' REVIEW_RECORDED reuse ` +
-                        `evidence before preparing downstream '${reviewType}'. ${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
+                        `${upstreamScopedDiffReadiness.reason} Configured review policy '${reviewPolicy.mode}' ` +
+                        `requires lane-domain-current '${upstreamReviewType}' PASS evidence to be rebound before ` +
+                        `continuing to downstream '${reviewType}' after a domain-limited remediation. ` +
+                        `${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
                     commands: [
                         buildCommand(
                             'Build scoped diff',
@@ -8603,12 +8623,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 nextGate: 'build-review-context',
                 title: `Materialize '${upstreamReviewType}' review reuse before downstream '${reviewType}'.`,
                 reason:
-                    `After a failed completion cycle, configured review policy '${reviewPolicy.mode}' requires current-cycle ` +
-                    `'${upstreamReviewType}' REVIEW_RECORDED reuse evidence before '${reviewType}' review-context preparation. ` +
-                    `The existing '${upstreamReviewType}' receipt is lane-domain current but has no REVIEW_RECORDED record after ` +
-                    `latest compile sequence ${restartedCycleUpstreamReuse.latestCompileSequence}; run build-review-context for ` +
-                    `'${upstreamReviewType}' first so reuse materialization happens before downstream rebind. ` +
-                    `${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
+                    `Configured review policy '${reviewPolicy.mode}' requires current-cycle '${upstreamReviewType}' ` +
+                    `binding before downstream '${reviewType}' review-context preparation. The existing ` +
+                    `'${upstreamReviewType}' PASS evidence is lane-domain current after a domain-limited remediation, ` +
+                    `so rebuild '${upstreamReviewType}' review context to materialize reuse instead of launching a fresh ` +
+                    `'${upstreamReviewType}' reviewer. ${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
                 commands: [
                     buildCommand(
                         'Build upstream review context',
