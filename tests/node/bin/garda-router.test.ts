@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -58,6 +59,32 @@ function withBundleName<T>(bundleName: string | undefined, action: () => T): T {
             process.env.GARDA_BUNDLE_NAME = previousBundleName;
         }
     }
+}
+
+function waitForChildExit(child: childProcess.ChildProcess): Promise<void> {
+    if (child.exitCode !== null || child.signalCode !== null) {
+        if (child.exitCode === 0) {
+            return Promise.resolve();
+        }
+        const status = child.signalCode ? `signal ${child.signalCode}` : `code ${child.exitCode}`;
+        return Promise.reject(new Error(`child exited with ${status}`));
+    }
+
+    return new Promise((resolve, reject) => {
+        let stderr = '';
+        child.stderr?.on('data', (chunk) => {
+            stderr += String(chunk);
+        });
+        child.once('error', reject);
+        child.once('exit', (code, signal) => {
+            if (code === 0) {
+                resolve();
+                return;
+            }
+            const status = signal ? `signal ${signal}` : `code ${code}`;
+            reject(new Error(stderr || `child exited with ${status}`));
+        });
+    });
 }
 
 test('global launcher delegates to source checkout in current workspace', () => {
@@ -546,6 +573,97 @@ test('loadCliMainModule fails corrupt deployed dist instead of falling back to .
             /definitely-missing-runtime-module/
         );
     } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadCliMainModule waits for source checkout dist build lock before loading runtime', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-dist-lock-'));
+    const previousTimeout = process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS;
+    const distSourceRoot = path.join(tempRoot, 'dist', 'src');
+    const distLockPath = path.join(tempRoot, 'dist.lock');
+    let child: childProcess.ChildProcess | null = null;
+
+    try {
+        process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = '5000';
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        writeFile(path.join(distSourceRoot, 'index.js'), 'module.exports = {};\n');
+        writeFile(path.join(distSourceRoot, 'cli', 'main.js'), 'module.exports = require("./late-module");\n');
+        fs.mkdirSync(distLockPath, { recursive: true });
+
+        const workerScript = [
+            "const fs = require('node:fs');",
+            "const path = require('node:path');",
+            'const distSourceRoot = process.argv[1];',
+            'const lockPath = process.argv[2];',
+            'setTimeout(() => {',
+            "  fs.mkdirSync(path.join(distSourceRoot, 'cli'), { recursive: true });",
+            "  fs.writeFileSync(path.join(distSourceRoot, 'cli', 'late-module.js'), 'exports.runCliMainWithHandling = async function () {};\\n', 'utf8');",
+            '  fs.rmSync(lockPath, { recursive: true, force: true });',
+            '}, 150);'
+        ].join('\n');
+        child = childProcess.spawn(process.execPath, ['--eval', workerScript, distSourceRoot, distLockPath], {
+            stdio: ['ignore', 'ignore', 'pipe'],
+            windowsHide: true
+        });
+
+        const module = loadCliMainModule(tempRoot);
+        assert.equal(typeof module.runCliMainWithHandling, 'function');
+        await waitForChildExit(child);
+    } finally {
+        if (previousTimeout === undefined) {
+            delete process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = previousTimeout;
+        }
+        if (child && child.exitCode === null) {
+            child.kill();
+        }
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadCliMainModule enforces one runtime lock timeout budget per candidate', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-lock-timeout-'));
+    const previousTimeout = process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS;
+    const distSourceRoot = path.join(tempRoot, 'dist', 'src');
+    const nodeBuildSourceRoot = path.join(tempRoot, '.node-build', 'src');
+    const nodeBuildLockPath = path.join(tempRoot, '.node-build.lock');
+
+    try {
+        process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = '120';
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
+        writeFile(path.join(distSourceRoot, 'index.js'), 'module.exports = {};\n');
+        writeFile(
+            path.join(distSourceRoot, 'cli', 'main.js'),
+            'require("./missing-during-refresh");\n'
+        );
+        writeFile(path.join(nodeBuildSourceRoot, 'index.js'), 'module.exports = {};\n');
+        writeFile(
+            path.join(nodeBuildSourceRoot, 'cli', 'main.js'),
+            'exports.runCliMainWithHandling = async function () {};\n'
+        );
+        fs.mkdirSync(nodeBuildLockPath, { recursive: true });
+
+        const startedAt = Date.now();
+        assert.throws(
+            () => loadCliMainModule(tempRoot),
+            (error: unknown) => {
+                assert.ok(error instanceof Error);
+                assert.match(error.message, /Timed out waiting for Garda Agent Orchestrator runtime build lock to clear/);
+                assert.match(error.message, /\.node-build\.lock/);
+                return true;
+            }
+        );
+        const elapsedMs = Date.now() - startedAt;
+        assert.ok(elapsedMs >= 180, `fallback candidate should receive its own timeout budget, got ${elapsedMs}ms`);
+        assert.ok(elapsedMs < 1_000, `lock timeout should use bounded per-candidate budgets, got ${elapsedMs}ms`);
+    } finally {
+        if (previousTimeout === undefined) {
+            delete process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS = previousTimeout;
+        }
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
