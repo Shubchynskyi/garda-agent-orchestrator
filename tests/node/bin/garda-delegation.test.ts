@@ -313,6 +313,30 @@ test('delegation trust model fails closed for recognized package with unknown ru
     assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
 });
 
+test('delegation trust model fails closed for on-disk spoofed runtime shape', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-spoofed-shape-'));
+    try {
+        const spoofedRoot = path.join(tempRoot, 'spoofed-garda-shape');
+        writePackageRoot(spoofedRoot);
+        const currentScriptPath = path.join(spoofedRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence([], spoofedRoot, currentScriptPath, spoofedRoot);
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'unknown');
+        assert.equal(evidence.current_runtime.package_installed_under_node_modules, false);
+        assert.equal(evidence.current_runtime.recognized_package_name, true);
+        assert.equal(evidence.delegated_runtime, null);
+        assert.equal(evidence.implementation_delegation.decision, 'blocked');
+        assert.equal(evidence.implementation_delegation.trust_level, 'unknown');
+        assert.match(evidence.implementation_delegation.reason, /runtime kind is unknown/);
+        assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+        assert.equal(evidence.mandatory_review_delegation.trust_level, 'unknown');
+        assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('delegation trust model allows installed package to delegate to trusted target-root source checkout', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-source-target-'));
     try {
