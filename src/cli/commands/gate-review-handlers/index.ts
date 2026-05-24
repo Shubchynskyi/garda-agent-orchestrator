@@ -284,6 +284,39 @@ function buildRecordReviewInvocationCommand(options: {
     return commandParts.join(' ');
 }
 
+function resolveReviewerDraftOutputPath(reviewerLaunchArtifactPath: string): string {
+    return path.join(path.dirname(reviewerLaunchArtifactPath), 'review-output.md');
+}
+
+function buildCopyPasteReviewerLaunchPrompt(options: {
+    repoRoot: string;
+    reviewType: string;
+    reviewerPromptPath: string;
+    promptTemplatePath: string;
+    outputTemplatePath: string;
+    evidenceManifestPath: string;
+    reviewOutputPath: string;
+}): string {
+    return [
+        `You are the delegated ${options.reviewType} reviewer for this Garda task.`,
+        `Repository: ${options.repoRoot}`,
+        `First open and read PromptTemplatePath: ${options.promptTemplatePath}`,
+        `Then open and read ReviewerPromptPath: ${options.reviewerPromptPath}`,
+        `Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence: ${options.evidenceManifestPath}`,
+        `Fill OutputTemplatePath exactly, preserving the required sections: ${options.outputTemplatePath}`,
+        'Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.',
+        `Write the final review report to ReviewOutputPath when file writing is available, or return the filled report in your final response: ${options.reviewOutputPath}`,
+        'Do not replace the required verdict token with a summary sentence.'
+    ].join('\n');
+}
+
+function printCopyPasteReviewerLaunchPrompt(prompt: string): void {
+    console.log('CopyPasteReviewerLaunchPrompt:');
+    for (const line of prompt.split('\n')) {
+        console.log(`  ${line}`);
+    }
+}
+
 function buildReviewerLaunchCompletionHint(): string {
     return [
         'Completion hint:',
@@ -337,6 +370,8 @@ function getReviewerLaunchArtifactMismatchReasons(
         promptTemplateSha256?: string | null;
         outputTemplateSha256?: string | null;
         evidenceManifestSha256?: string | null;
+        reviewOutputPath?: string | null;
+        copyPasteReviewerLaunchPrompt?: string | null;
         reviewTreeStateSha256: string | null;
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
@@ -388,6 +423,18 @@ function getReviewerLaunchArtifactMismatchReasons(
         && getStringField(artifact, 'evidence_manifest_sha256', 'evidenceManifestSha256').toLowerCase() !== options.evidenceManifestSha256
     ) {
         mismatches.push('evidence_manifest_sha256 mismatch');
+    }
+    if (
+        options.reviewOutputPath
+        && getStringField(artifact, 'review_output_path', 'reviewOutputPath') !== normalizePath(options.reviewOutputPath)
+    ) {
+        mismatches.push('review_output_path mismatch');
+    }
+    if (
+        options.copyPasteReviewerLaunchPrompt
+        && getStringField(artifact, 'copy_paste_reviewer_launch_prompt', 'copyPasteReviewerLaunchPrompt') !== options.copyPasteReviewerLaunchPrompt
+    ) {
+        mismatches.push('copy_paste_reviewer_launch_prompt mismatch');
     }
     if (
         options.reviewTreeStateSha256
@@ -1721,6 +1768,8 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
     promptTemplateSha256?: string | null;
     outputTemplateSha256?: string | null;
     evidenceManifestSha256?: string | null;
+    reviewOutputPath?: string | null;
+    copyPasteReviewerLaunchPrompt?: string | null;
     reviewTreeStateSha256: string | null;
     launchBindingSha256: string;
     routingEventSequence: number;
@@ -1744,6 +1793,8 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
         promptTemplateSha256: options.promptTemplateSha256,
         outputTemplateSha256: options.outputTemplateSha256,
         evidenceManifestSha256: options.evidenceManifestSha256,
+        reviewOutputPath: options.reviewOutputPath,
+        copyPasteReviewerLaunchPrompt: options.copyPasteReviewerLaunchPrompt,
         reviewTreeStateSha256: options.reviewTreeStateSha256,
         launchBindingSha256: options.launchBindingSha256,
         preparedLaunchEventSha256,
@@ -1836,6 +1887,8 @@ function assertPreparedReviewerLaunchArtifact(options: {
     promptTemplateSha256?: string | null;
     outputTemplateSha256?: string | null;
     evidenceManifestSha256?: string | null;
+    reviewOutputPath?: string | null;
+    copyPasteReviewerLaunchPrompt?: string | null;
     reviewTreeStateSha256?: string | null;
 }): void {
     const artifact = readJsonFile(options.artifactPath, 'Prepared reviewer launch artifact');
@@ -1905,6 +1958,22 @@ function assertPreparedReviewerLaunchArtifact(options: {
         const actualEvidenceManifestSha256 = getStringField(artifact, 'evidence_manifest_sha256', 'evidenceManifestSha256').toLowerCase();
         if (actualEvidenceManifestSha256 !== options.evidenceManifestSha256) {
             violations.push('evidence_manifest_sha256 must match the current review context evidence manifest artifact');
+        }
+    }
+    if (options.reviewOutputPath) {
+        const actualReviewOutputPath = getStringField(artifact, 'review_output_path', 'reviewOutputPath');
+        if (actualReviewOutputPath !== normalizePath(options.reviewOutputPath)) {
+            violations.push('review_output_path must match the prepared reviewer output path');
+        }
+    }
+    if (options.copyPasteReviewerLaunchPrompt) {
+        const actualCopyPastePrompt = getStringField(
+            artifact,
+            'copy_paste_reviewer_launch_prompt',
+            'copyPasteReviewerLaunchPrompt'
+        );
+        if (actualCopyPastePrompt !== options.copyPasteReviewerLaunchPrompt) {
+            violations.push('copy_paste_reviewer_launch_prompt must match the prepared reviewer launch prompt');
         }
     }
     if (options.reviewTreeStateSha256) {
@@ -2760,6 +2829,16 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     if (existingArtifact) {
         const existingEvidenceType = getStringField(existingArtifact, 'evidence_type', 'artifact_type');
         const existingAttestationState = getStringField(existingArtifact, 'attestation_state', 'attestationState');
+        const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath);
+        const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
+            repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+            reviewType,
+            reviewerPromptPath: toReviewerHandoffAbsolutePath(repoRoot, promptPath),
+            promptTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath),
+            outputTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath),
+            evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
+            reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
+        });
         const preparedMismatches = getCurrentPreparedReviewerLaunchMismatches({
             artifactPath: launchArtifactPath,
             artifact: existingArtifact,
@@ -2773,6 +2852,8 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             promptTemplateSha256: handoffBindings.promptTemplateSha256,
             outputTemplateSha256: handoffBindings.outputTemplateSha256,
             evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
+            reviewOutputPath,
+            copyPasteReviewerLaunchPrompt,
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
             launchBindingSha256,
             routingEventSequence: routingEvent.sequence,
@@ -2796,6 +2877,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`PromptTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath)}`);
             console.log(`OutputTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath)}`);
             console.log(`EvidenceManifestPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath)}`);
+            console.log(`ReviewOutputPath: ${toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)}`);
             if (scopedDiffHandoffPaths.metadataPath) {
                 console.log(`ScopedDiffMetadataPath: ${scopedDiffHandoffPaths.metadataPath}`);
             }
@@ -2812,6 +2894,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
+            printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
             console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer, then run complete-reviewer-launch. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
             return;
         }
@@ -2855,6 +2938,16 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewContextPath: contextPath,
         reviewerLaunchArtifactPath: launchArtifactPath
     });
+    const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath);
+    const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
+        repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
+        reviewType,
+        reviewerPromptPath: toReviewerHandoffAbsolutePath(repoRoot, promptPath),
+        promptTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath),
+        outputTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath),
+        evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
+        reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
+    });
     const launchPreparedAtUtc = new Date().toISOString();
     const preparedArtifact = {
         schema_version: 1,
@@ -2876,6 +2969,8 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         output_template_sha256: handoffBindings.outputTemplateSha256,
         evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
         evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
+        review_output_path: normalizePath(reviewOutputPath),
+        copy_paste_reviewer_launch_prompt: copyPasteReviewerLaunchPrompt,
         review_tree_state_sha256: reviewTreeStateSha256 || null,
         review_tree_state: reviewTreeStateSummary,
         launch_binding_sha256: launchBindingSha256,
@@ -2978,6 +3073,8 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         promptTemplateSha256: handoffBindings.promptTemplateSha256,
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
+        reviewOutputPath,
+        copyPasteReviewerLaunchPrompt,
         reviewTreeStateSha256
     });
     const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
@@ -2994,6 +3091,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`PromptTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath)}`);
     console.log(`OutputTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath)}`);
     console.log(`EvidenceManifestPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath)}`);
+    console.log(`ReviewOutputPath: ${toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)}`);
     if (scopedDiffHandoffPaths.metadataPath) {
         console.log(`ScopedDiffMetadataPath: ${scopedDiffHandoffPaths.metadataPath}`);
     }
@@ -3021,6 +3119,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
     console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, prompt_template_sha256, output_template_sha256, evidence_manifest_sha256, review_tree_state_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
+    printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
     console.log(`NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Update after_launch_required_updates, then run RecordInvocationCommand.`);
 }
 

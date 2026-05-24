@@ -3897,6 +3897,7 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-266-prepare-launch';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
         const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
+        const reviewOutputPath = path.join(path.dirname(launchArtifactPath), 'review-output.md');
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -3942,6 +3943,17 @@ describe('cli/commands/gates', () => {
         assert.equal(launchArtifact.prompt_template_path, fixture.promptTemplatePath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.output_template_path, fixture.outputTemplatePath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.evidence_manifest_path, fixture.evidenceManifestPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.review_output_path, reviewOutputPath.replace(/\\/g, '/'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read PromptTemplatePath:'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.promptTemplatePath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Then open and read ReviewerPromptPath:'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.reviewerPromptPath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence:'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.evidenceManifestPath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Fill OutputTemplatePath exactly, preserving the required sections:'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.outputTemplatePath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(reviewOutputPath.replace(/\\/g, '/')));
         assert.equal(launchArtifact.prompt_template_sha256, createHash('sha256').update(fs.readFileSync(fixture.promptTemplatePath)).digest('hex'));
         assert.equal(launchArtifact.output_template_sha256, createHash('sha256').update(fs.readFileSync(fixture.outputTemplatePath)).digest('hex'));
         assert.equal(launchArtifact.evidence_manifest_sha256, createHash('sha256').update(fs.readFileSync(fixture.evidenceManifestPath)).digest('hex'));
@@ -4001,6 +4013,7 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplatePath: ${fixture.outputTemplatePath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`EvidenceManifestPath: ${fixture.evidenceManifestPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewOutputPath: ${reviewOutputPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ScopedDiffMetadataPath: ${path.join(getReviewsRoot(repoRoot), `${taskId}-code-scoped.json`).replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchArtifactPath: ${launchArtifactPath.replace(/\\/g, '/')}`)));
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
@@ -4013,6 +4026,13 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
+        assert.ok(capturedLogs.some((line) => line.includes('CopyPasteReviewerLaunchPrompt:')));
+        assert.ok(capturedLogs.some((line) => line.includes('First open and read PromptTemplatePath:')));
+        assert.ok(capturedLogs.some((line) => line.includes('Then open and read ReviewerPromptPath:')));
+        assert.ok(capturedLogs.some((line) => line.includes('Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence:')));
+        assert.ok(capturedLogs.some((line) => line.includes('Fill OutputTemplatePath exactly, preserving the required sections:')));
+        assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
+        assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
@@ -5210,6 +5230,54 @@ describe('cli/commands/gates', () => {
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch replaces legacy prepared metadata that lacks copy-paste handoff fields', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-legacy-handoff';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
+
+        const runPrepare = async (): Promise<number> => {
+            const previousExitCode = process.exitCode;
+            const previousCwd = process.cwd();
+            process.exitCode = 0;
+            try {
+                process.chdir(repoRoot);
+                await runCliMainWithHandling([
+                    'gate',
+                    'prepare-reviewer-launch',
+                    '--task-id', taskId,
+                    '--review-type', 'code',
+                    '--repo-root', repoRoot,
+                    '--reviewer-execution-mode', 'delegated_subagent',
+                    '--reviewer-identity', fixture.reviewerIdentity
+                ]);
+                return process.exitCode ?? 0;
+            } finally {
+                process.chdir(previousCwd);
+                process.exitCode = previousExitCode;
+            }
+        };
+
+        assert.equal(await runPrepare(), 0);
+        const legacyArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        delete legacyArtifact.review_output_path;
+        delete legacyArtifact.copy_paste_reviewer_launch_prompt;
+        fs.writeFileSync(launchArtifactPath, `${JSON.stringify(legacyArtifact, null, 2)}\n`, 'utf8');
+
+        assert.equal(await runPrepare(), 0);
+        const refreshedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        assert.equal(
+            refreshedArtifact.review_output_path,
+            path.join(path.dirname(launchArtifactPath), 'review-output.md').replace(/\\/g, '/')
+        );
+        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read PromptTemplatePath:'));
+        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
+        assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('review_output_path mismatch'), true);
+        assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('copy_paste_reviewer_launch_prompt mismatch'), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
