@@ -352,6 +352,7 @@ Notes:
 - If Garda is off, `--apply` fails before source acquisition, bundle sync, rollback, verify, or manifest validation. Run `garda on` first. Read-only `check-update` and `--dry-run` checks remain available in off mode.
 - `--apply` runs the full update lifecycle after bundle sync, re-materializes `live/`, applies built-in live-rule contract migrations for existing workspaces, runs verify plus manifest validation, enforces a hard atomic consistency invariant for the deployed bundle, defers `VERSION` until lifecycle success, and creates rollback artifacts for the last applied update.
 - Successful apply runs also invalidate cached bundle runtime modules so long-lived host processes reload the freshly synced bundle on later commands.
+- Human update output stays operator-focused and omits internal workflow-config merge and project-memory handoff text. Structured JSON output and update reports still include those fields for automation and diagnostics.
 
 ### `garda update`
 
@@ -373,6 +374,7 @@ Notes:
 - Successful applies create rollback artifacts under `garda-agent-orchestrator/runtime/update-rollbacks/` and `garda-agent-orchestrator/runtime/bundle-backups/`.
 - Successful applies also invalidate cached bundle runtime modules so long-lived host processes do not keep stale command or validator code resident after the bundle changes.
 - Update reports now reflect actual execution status; steps with no configured runner are reported as skipped rather than pass.
+- Human output omits internal workflow-config merge and project-memory handoff text; use `--json` or the generated update report for those diagnostic details.
 - Use `garda check-update --apply` when you want a compare-first flow with optional apply.
 
 ### `garda update git`
@@ -393,6 +395,7 @@ Notes:
 - Trusted git sources stay in enforced mode; if you bypass git-source trust with `--trust-override --no-prompt`, that override is recorded in CLI output and the update report.
 - With no extra flags, `garda update git` targets the current directory and uses the default GitHub repository URL.
 - Successful applies invalidate cached bundle runtime modules just like npm-based `update`, so long-lived host processes reload the new bundle on later commands.
+- Same-version content-drift syncs keep human output focused on operator-visible status and drift fields; internal workflow-config and project-memory handoff details remain available in JSON/report output.
 
 ### `garda rollback`
 
