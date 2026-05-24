@@ -834,6 +834,89 @@ function writeReviewEvidence(
     });
 }
 
+function markReviewEvidenceAsStrictReuse(
+    repoRoot: string,
+    taskId: string,
+    reviewType: string,
+    reviewContextReuseSha256 = sha256Text(`${taskId}:${reviewType}:strict-reuse`)
+): void {
+    const receiptPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-receipt.json`);
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}.md`);
+    const contextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+    const preflightMetrics = preflight.metrics as Record<string, unknown>;
+    const legacyScopes = ((preflightMetrics.domain_scope_fingerprints as Record<string, unknown>)
+        .legacy || {}) as Record<string, unknown>;
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+    receipt.review_scope_sha256 = legacyScopes.review_scope_sha256;
+    receipt.code_scope_sha256 = legacyScopes.code_scope_sha256;
+    writeJson(receiptPath, receipt);
+
+    const reviewerProvenance = receipt.reviewer_provenance as Record<string, unknown>;
+    const historicalReceiptSha256 = fileSha256(receiptPath);
+    const historicalReceiptSnapshotPath = path.join(
+        reviewsRoot(repoRoot),
+        `${taskId}-${reviewType}-receipt-${historicalReceiptSha256}.json`
+    );
+    fs.copyFileSync(receiptPath, historicalReceiptSnapshotPath);
+    const historicalContextSha256 = fileSha256(contextPath);
+    const reviewArtifactSha256 = fileSha256(artifactPath);
+    const reviewArtifactSnapshotPath = path.join(
+        reviewsRoot(repoRoot),
+        `${taskId}-${reviewType}-artifact-${reviewArtifactSha256}.md`
+    );
+    fs.copyFileSync(artifactPath, reviewArtifactSnapshotPath);
+    appendEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'PASS', {
+        ...receipt,
+        receipt_path: receiptPath,
+        receipt_sha256: historicalReceiptSha256,
+        receipt_snapshot_path: historicalReceiptSnapshotPath,
+        receipt_snapshot_sha256: historicalReceiptSha256,
+        review_artifact_path: artifactPath,
+        review_artifact_sha256: reviewArtifactSha256,
+        review_artifact_snapshot_path: reviewArtifactSnapshotPath,
+        review_artifact_snapshot_sha256: reviewArtifactSha256,
+        review_context_path: contextPath,
+        review_context_sha256: historicalContextSha256,
+        review_context_reuse_sha256: reviewContextReuseSha256,
+        review_tree_state_sha256: receipt.review_tree_state_sha256
+    });
+
+    receipt.reused_existing_review = true;
+    receipt.reused_from_receipt_path = receiptPath;
+    receipt.reused_from_receipt_sha256 = historicalReceiptSha256;
+    receipt.review_context_reuse_sha256 = reviewContextReuseSha256;
+    receipt.reused_from_review_context_sha256 = historicalContextSha256;
+    receipt.reused_from_review_context_reuse_sha256 = reviewContextReuseSha256;
+    receipt.reused_from_review_tree_state_sha256 = reviewerProvenance.review_tree_state_sha256;
+    receipt.reused_from_review_scope_sha256 = receipt.review_scope_sha256;
+    receipt.reused_from_code_scope_sha256 = receipt.code_scope_sha256;
+    writeJson(receiptPath, receipt);
+
+    const currentReceiptSha256 = fileSha256(receiptPath);
+    const currentReceiptSnapshotPath = path.join(
+        reviewsRoot(repoRoot),
+        `${taskId}-${reviewType}-receipt-${currentReceiptSha256}.json`
+    );
+    fs.copyFileSync(receiptPath, currentReceiptSnapshotPath);
+    appendEvent(repoRoot, taskId, 'REVIEW_RECORDED', 'PASS', {
+        ...receipt,
+        receipt_path: receiptPath,
+        receipt_sha256: currentReceiptSha256,
+        receipt_snapshot_path: currentReceiptSnapshotPath,
+        receipt_snapshot_sha256: currentReceiptSha256,
+        review_artifact_path: artifactPath,
+        review_artifact_sha256: reviewArtifactSha256,
+        review_artifact_snapshot_path: reviewArtifactSnapshotPath,
+        review_artifact_snapshot_sha256: reviewArtifactSha256,
+        review_context_path: contextPath,
+        review_context_sha256: historicalContextSha256,
+        review_context_reuse_sha256: reviewContextReuseSha256,
+        review_tree_state_sha256: receipt.review_tree_state_sha256
+    });
+}
+
 function writeStrictIndependentCodeReviewEvidence(repoRoot: string, taskId: string): void {
     const reviewType = 'code';
     const reviewerIdentity = 'agent:code-reviewer';
@@ -6751,6 +6834,61 @@ describe('gates/next-step', () => {
         assert.ok(!securityResult.commands[0].command.includes('--review-type "refactor"'));
     });
 
+    it('re-materializes stale upstream reuse after a later compile before downstream refactor', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const testFile = path.join(repoRoot, 'tests', 'strict-reuse-repeat-remediation.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("strict reuse repeat remediation", () => {});\n', 'utf8');
+        const changedFiles = ['src/app.ts', 'tests/strict-reuse-repeat-remediation.test.ts'];
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+        markReviewEvidenceAsStrictReuse(repoRoot, TASK_ID, 'code');
+        markReviewEvidenceAsStrictReuse(repoRoot, TASK_ID, 'security');
+        markReviewEvidenceAsStrictReuse(repoRoot, TASK_ID, 'refactor');
+
+        fs.writeFileSync(
+            testFile,
+            'test("strict reuse repeat remediation", () => { assert.equal(1, 1); });\n',
+            'utf8'
+        );
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Prepare 'code' review context/);
+        assert.match(result.reason, /review-context artifact is stale for the current preflight/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "security"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "refactor"'));
+    });
+
     it('rebuilds stale failed downstream review after test-only remediation despite lane-domain match', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -6883,7 +7021,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.review.launchable_review_types.includes('security'));
     });
 
-    it('keeps lane-domain-current reused review evidence on the strict reuse validation path', () => {
+    it('re-materializes lane-domain-current reused review evidence after a later compile', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, {
@@ -6988,8 +7126,11 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.ok(!result.commands[0].command.includes('--review-type "code"'));
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.match(result.title, /Prepare 'code' review context/);
+        assert.match(result.reason, /review-context artifact is stale for the current preflight/);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
     it('rebuilds each stale specialist review context against the current preflight hash', () => {

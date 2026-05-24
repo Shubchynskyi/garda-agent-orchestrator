@@ -3066,7 +3066,7 @@ function timelineHasReviewReuseRecordedAfterCompile(eventsRoot: string, taskId: 
         reviewerExecutionMode: state.reviewerProvenance?.reviewer_execution_mode || null,
         reviewerIdentity: state.reviewerIdentity,
         reviewerProvenance: state.reviewerProvenance as unknown as Record<string, unknown> | null,
-        latestCompileTaskSequence: state.domainScopeCurrent ? null : latestCompileSequence
+        latestCompileTaskSequence: latestCompileSequence
     });
     return validation.valid;
 }
