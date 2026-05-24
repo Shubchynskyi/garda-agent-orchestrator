@@ -129,6 +129,7 @@ describe('managed gitignore entries', () => {
         assert.ok(entries.includes('AGENTS.md'));
         assert.ok(entries.includes('GEMINI.md'));
         assert.ok(entries.includes('QWEN.md'));
+        assert.ok(entries.includes('.agentignore'));
         assert.ok(entries.includes('.github/copilot-instructions.md'));
         assert.ok(entries.includes('.agents/workflows/start-task.md'));
     });

@@ -539,6 +539,7 @@ describe('runInstall — core deploy and invariants', () => {
             assert.ok(result.gitignoreEntriesAdded > 0);
             const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
             assert.ok(gitignore.includes('garda-agent-orchestrator/'));
+            assert.ok(gitignore.includes('.agentignore'));
             assert.ok(gitignore.includes('TASK.md'));
             assert.ok(gitignore.includes('AGENTS.md'));
             assert.ok(gitignore.includes('GEMINI.md'));

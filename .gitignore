@@ -36,6 +36,7 @@ docs_local
 /TASK_DONE.md
 
 # garda-agent-orchestrator managed ignores
+.agentignore
 .agents/workflows/start-task.md
 .antigravity/
 .antigravity/rules.md

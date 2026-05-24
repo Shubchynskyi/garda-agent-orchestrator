@@ -616,6 +616,7 @@ describe('runInit', () => {
             const gitignore = fs.readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
             assert.ok(gitignore.includes('# garda-agent-orchestrator managed ignores'));
             assert.ok(gitignore.includes('garda-agent-orchestrator/'));
+            assert.ok(gitignore.includes('.agentignore'));
             assert.ok(gitignore.includes('TASK.md'));
             assert.ok(!gitignore.includes('.review-temp/'));
         } finally {

@@ -210,9 +210,11 @@ test('runSwitchMode on/off transitions preserve active agentignore block and onl
     const agentsPath = path.join(workspaceRoot, 'AGENTS.md');
     const storedManagedPath = path.join(workspaceRoot, 'garda-agent-orchestrator', 'runtime', 'switch', 'off', 'AGENTS.md');
     const agentIgnorePath = path.join(workspaceRoot, '.agentignore');
+    const gitignorePath = path.join(workspaceRoot, '.gitignore');
     const activeBlock = `${MANAGED_START}\n# Garda active-mode agent ignore\ngarda-agent-orchestrator/dist/\n${MANAGED_END}\n`;
     fs.writeFileSync(agentsPath, managedFile('Garda rules'), 'utf8');
     fs.writeFileSync(agentIgnorePath, `custom\n${activeBlock}`, 'utf8');
+    fs.writeFileSync(gitignorePath, '# garda-agent-orchestrator managed ignores\n.agentignore\n', 'utf8');
 
     const offResult = runSwitchMode({ targetRoot: workspaceRoot, mode: 'off' });
     assert.equal(offResult.status, 'UPDATED');
@@ -220,12 +222,14 @@ test('runSwitchMode on/off transitions preserve active agentignore block and onl
         fs.readFileSync(agentIgnorePath, 'utf8'),
         `custom\n${activeBlock}${switchAgentIgnoreBlock()}`
     );
+    assert.equal((fs.readFileSync(gitignorePath, 'utf8').match(/^\.agentignore$/gm) || []).length, 1);
 
     fs.mkdirSync(path.dirname(storedManagedPath), { recursive: true });
     writeSwitchState(workspaceRoot, 'off', { off: { 'AGENTS.md': managedFile('Garda rules') } });
     const onResult = runSwitchMode({ targetRoot: workspaceRoot, mode: 'on' });
     assert.equal(onResult.status, 'UPDATED');
     assert.equal(fs.readFileSync(agentIgnorePath, 'utf8'), `custom\n${activeBlock}`);
+    assert.equal((fs.readFileSync(gitignorePath, 'utf8').match(/^\.agentignore$/gm) || []).length, 1);
 
     fs.rmSync(workspaceRoot, { recursive: true, force: true });
 });

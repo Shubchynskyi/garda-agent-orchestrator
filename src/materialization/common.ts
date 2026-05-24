@@ -138,6 +138,7 @@ export function getManagedGitignoreEntries(
 ): string[] {
     const selected = new Set<string>([
         resolveBundleName() + '/',
+        '.agentignore',
         'TASK.md',
         '.qwen/',
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH
