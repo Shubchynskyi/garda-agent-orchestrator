@@ -3777,7 +3777,7 @@ function reviewStateHasCurrentRecordedEvidence(
     if (getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state)) {
         return false;
     }
-    if (state.domainScopeCurrent && !state.reusedExistingReview) {
+    if (state.domainScopeCurrent && !state.reusedExistingReview && !state.failed) {
         return timelineHasHistoricalDelegatedReviewInvocationAttestation(eventsRoot, taskId, state);
     }
     if (state.reusedExistingReview) {

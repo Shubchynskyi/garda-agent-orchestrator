@@ -6525,6 +6525,54 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "code"'));
     });
 
+    it('rebuilds stale failed downstream review after test-only remediation despite lane-domain match', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const testFile = path.join(repoRoot, 'tests', 'api-remediation.test.ts');
+        fs.mkdirSync(path.dirname(testFile), { recursive: true });
+        fs.writeFileSync(testFile, 'test("api remediation", () => {});\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            refactor: true,
+            api: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['tests/api-remediation.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'api', {
+            verdict: 'fail',
+            body: 'P1: API reviewer finding was fixed by a test-only remediation.\n\n'
+        });
+
+        fs.writeFileSync(testFile, 'test("api remediation", () => { assert.equal(1, 1); });\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            refactor: true,
+            api: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles: ['tests/api-remediation.test.ts'],
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'api');
+        assert.match(result.title, /Refresh 'api' review context/);
+        assert.match(result.reason, /no longer current after the latest compile cycle/);
+        assert.ok(result.commands[0].command.includes('--review-type "api"'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.title.includes('Fix failed'));
+    });
+
     it('routes review-gate stale upstream failures to upstream rebind instead of retrying the review gate', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
