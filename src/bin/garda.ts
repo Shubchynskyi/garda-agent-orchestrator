@@ -67,6 +67,19 @@ export interface DelegationTrustEvidence {
     };
 }
 
+function buildMandatoryReviewDelegation(
+    decision: DelegationDecision,
+    trustLevel: DelegationTrustLevel,
+    reason: string
+): DelegationTrustEvidence['mandatory_review_delegation'] {
+    return {
+        decision,
+        trust_level: trustLevel,
+        reason,
+        requires_provider_launch_attestation: true
+    };
+}
+
 function resolveBundleName(): string {
     const bundleName = process.env.GARDA_BUNDLE_NAME;
     return bundleName === undefined
@@ -351,12 +364,11 @@ export function buildDelegationTrustEvidence(
                 trust_level: 'unknown',
                 reason: 'Current runtime package name is not recognized; it cannot be trusted as a Garda runtime.'
             },
-            mandatory_review_delegation: {
-                decision: 'blocked',
-                trust_level: 'unknown',
-                reason: 'Mandatory reviewer delegation cannot rely on an unrecognized current runtime identity.',
-                requires_provider_launch_attestation: true
-            }
+            mandatory_review_delegation: buildMandatoryReviewDelegation(
+                'blocked',
+                'unknown',
+                'Mandatory reviewer delegation cannot rely on an unrecognized current runtime identity.'
+            )
         };
     }
 
@@ -369,12 +381,11 @@ export function buildDelegationTrustEvidence(
                 trust_level: 'unknown',
                 reason: 'Current runtime kind is unknown; workspace delegation must fail closed.'
             },
-            mandatory_review_delegation: {
-                decision: 'blocked',
-                trust_level: 'unknown',
-                reason: 'Mandatory reviewer delegation cannot rely on an unknown current runtime kind.',
-                requires_provider_launch_attestation: true
-            }
+            mandatory_review_delegation: buildMandatoryReviewDelegation(
+                'blocked',
+                'unknown',
+                'Mandatory reviewer delegation cannot rely on an unknown current runtime kind.'
+            )
         };
     }
 
@@ -387,12 +398,11 @@ export function buildDelegationTrustEvidence(
                 trust_level: 'trusted_self_hosted',
                 reason: 'Current runtime is the self-hosted source checkout; implementation delegation to another workspace runtime is not required.'
             },
-            mandatory_review_delegation: {
-                decision: 'allowed',
-                trust_level: 'trusted_self_hosted',
-                reason: 'Self-hosted source checkout is trusted, but reviewer launch still requires provider-native delegated reviewer attestation.',
-                requires_provider_launch_attestation: true
-            }
+            mandatory_review_delegation: buildMandatoryReviewDelegation(
+                'allowed',
+                'trusted_self_hosted',
+                'Self-hosted source checkout is trusted, but reviewer launch still requires provider-native delegated reviewer attestation.'
+            )
         };
     }
 
@@ -405,12 +415,11 @@ export function buildDelegationTrustEvidence(
                 trust_level: 'trusted_local_workspace',
                 reason: `Delegated ${delegatedRuntime.runtime_kind} runtime was resolved from ${delegatedRuntime.reason}.`
             },
-            mandatory_review_delegation: {
-                decision: 'allowed',
-                trust_level: 'trusted_local_workspace',
-                reason: 'Delegated workspace runtime is recognized; mandatory reviews still require provider-native delegated reviewer attestation.',
-                requires_provider_launch_attestation: true
-            }
+            mandatory_review_delegation: buildMandatoryReviewDelegation(
+                'allowed',
+                'trusted_local_workspace',
+                'Delegated workspace runtime is recognized; mandatory reviews still require provider-native delegated reviewer attestation.'
+            )
         };
     }
 
@@ -424,14 +433,13 @@ export function buildDelegationTrustEvidence(
                 ? 'Installed packaged runtime could not resolve a trusted local source checkout or deployed bundle target for workspace delegation.'
                 : 'Current runtime is not installed under node_modules; launcher delegation is not required.'
         },
-        mandatory_review_delegation: {
-            decision: installedUnderNodeModules ? 'blocked' : 'allowed',
-            trust_level: installedUnderNodeModules ? 'unknown' : 'packaged_runtime',
-            reason: installedUnderNodeModules
+        mandatory_review_delegation: buildMandatoryReviewDelegation(
+            installedUnderNodeModules ? 'blocked' : 'allowed',
+            installedUnderNodeModules ? 'unknown' : 'packaged_runtime',
+            installedUnderNodeModules
                 ? 'Mandatory reviewer delegation cannot rely on an unknown workspace runtime target.'
-                : 'Packaged runtime may continue only with provider-native delegated reviewer attestation.',
-            requires_provider_launch_attestation: true
-        }
+                : 'Packaged runtime may continue only with provider-native delegated reviewer attestation.'
+        )
     };
 }
 
