@@ -32,8 +32,14 @@ delegateToLocalCli(process.argv[2], process.argv.slice(3)).catch((error) => {
     return harnessPath;
 }
 
-function writePackageRoot(root: string, options?: { sourceCheckout?: boolean; deployedBundle?: boolean }): void {
-    writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2));
+function writePackageRoot(
+    root: string,
+    options?: { sourceCheckout?: boolean; deployedBundle?: boolean; packageName?: string }
+): void {
+    writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({ name: options?.packageName ?? 'garda-agent-orchestrator' }, null, 2)
+    );
     writeFile(path.join(root, 'VERSION'), '1.0.0\n');
     writeFile(path.join(root, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
     if (options?.sourceCheckout) {
@@ -426,6 +432,30 @@ test('delegation trust model allows installed package to delegate to trusted dep
     }
 });
 
+test('delegation trust model treats self-hosted deployed bundle as launcher-local packaged runtime', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-self-bundle-'));
+    try {
+        const bundleRoot = path.join(tempRoot, 'garda-agent-orchestrator');
+        writePackageRoot(bundleRoot, { deployedBundle: true });
+        const currentScriptPath = path.join(bundleRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence([], bundleRoot, currentScriptPath, bundleRoot);
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'deployed_bundle');
+        assert.equal(evidence.current_runtime.package_installed_under_node_modules, false);
+        assert.equal(evidence.current_runtime.recognized_package_name, true);
+        assert.equal(evidence.delegated_runtime, null);
+        assert.equal(evidence.implementation_delegation.decision, 'not_required');
+        assert.equal(evidence.implementation_delegation.trust_level, 'packaged_runtime');
+        assert.match(evidence.implementation_delegation.reason, /launcher delegation is not required/);
+        assert.equal(evidence.mandatory_review_delegation.decision, 'allowed');
+        assert.equal(evidence.mandatory_review_delegation.trust_level, 'packaged_runtime');
+        assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('delegation trust model classifies direct deployed bundle roots as bundle targets', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-direct-bundle-'));
     const previousBundleName = process.env.GARDA_BUNDLE_NAME;
@@ -477,6 +507,35 @@ test('delegation trust model classifies direct deployed bundle roots as bundle t
         } else {
             process.env.GARDA_BUNDLE_NAME = previousBundleName;
         }
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model blocks unrecognized packaged runtime identity at wrapper level', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-unrecognized-package-'));
+    try {
+        const installedRoot = path.join(tempRoot, 'consumer', 'node_modules', 'not-garda-agent-orchestrator');
+        writePackageRoot(installedRoot, { packageName: 'not-garda-agent-orchestrator' });
+        const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence(
+            ['status'],
+            path.join(tempRoot, 'consumer'),
+            currentScriptPath,
+            installedRoot
+        );
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'packaged_npm');
+        assert.equal(evidence.current_runtime.package_installed_under_node_modules, true);
+        assert.equal(evidence.current_runtime.recognized_package_name, false);
+        assert.equal(evidence.delegated_runtime, null);
+        assert.equal(evidence.implementation_delegation.decision, 'blocked');
+        assert.equal(evidence.implementation_delegation.trust_level, 'unknown');
+        assert.match(evidence.implementation_delegation.reason, /package name is not recognized/);
+        assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+        assert.equal(evidence.mandatory_review_delegation.trust_level, 'unknown');
+        assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+    } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
