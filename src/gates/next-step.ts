@@ -2156,6 +2156,10 @@ interface StartupCycleReadiness {
     reason: string;
 }
 
+interface StartupCycleReadinessOptions {
+    enforceLateRulePackAfterReviewPhase?: boolean;
+}
+
 interface CoherentCycleReadiness {
     ready: boolean;
     reason: string;
@@ -4853,7 +4857,8 @@ function readStartupCycleReadiness(
     repoRoot: string,
     eventsRoot: string,
     taskId: string,
-    taskModePath: string
+    taskModePath: string,
+    options: StartupCycleReadinessOptions = {}
 ): StartupCycleReadiness {
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const timelineErrors: string[] = [];
@@ -4897,6 +4902,8 @@ function readStartupCycleReadiness(
     );
 
     if (
+        !options.enforceLateRulePackAfterReviewPhase
+        &&
         latestRulePack
         && latestReviewPhaseStarted
         && latestRulePack.sequence > latestReviewPhaseStarted.sequence
@@ -7752,7 +7759,44 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const startupCycleReadiness = readStartupCycleReadiness(repoRoot, eventsRoot, taskId, taskModePath);
+    const docImpactPath = path.join(reviewsRoot, `${taskId}-doc-impact.json`);
+    const preflightWorkspaceReadiness = preflight
+        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: null,
+            failedReviewVerdict: null,
+            docImpactPath
+        })
+        : { ready: false, reason: 'No current preflight exists.' };
+    const preflightCycleReadiness = readPreflightCycleReadiness(
+        eventsRoot,
+        taskId,
+        buildStaleCompletionFailureDocCloseoutAllowance(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            preflightPath,
+            preflightSha256,
+            preflightWorkspaceReadiness,
+            docImpactPath
+        )
+    );
+    const failedCurrentReviewStateForPreflight = reviewLaunchPlan.next_review_type
+        ? reviewStates.find((candidate) => (
+            candidate.reviewType === reviewLaunchPlan.next_review_type && candidate.failed
+        ))
+        : undefined;
+    const effectivePreflightWorkspaceReadiness = preflight && failedCurrentReviewStateForPreflight
+        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
+            failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
+            docImpactPath
+        })
+        : preflightWorkspaceReadiness;
+
+    const startupCycleReadiness = readStartupCycleReadiness(repoRoot, eventsRoot, taskId, taskModePath, {
+        enforceLateRulePackAfterReviewPhase:
+            !preflight || !preflightCycleReadiness.ready || !effectivePreflightWorkspaceReadiness.ready
+    });
     if (!startupCycleReadiness.ready) {
         const command = startupCycleReadiness.nextGate === 'load-rule-pack'
             ? buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskModePath)
@@ -7993,27 +8037,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const docImpactPath = path.join(reviewsRoot, `${taskId}-doc-impact.json`);
-    const preflightWorkspaceReadiness = preflight
-        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
-            failedReviewType: null,
-            failedReviewVerdict: null,
-            docImpactPath
-        })
-        : { ready: false, reason: 'No current preflight exists.' };
-    const preflightCycleReadiness = readPreflightCycleReadiness(
-        eventsRoot,
-        taskId,
-        buildStaleCompletionFailureDocCloseoutAllowance(
-            repoRoot,
-            eventsRoot,
-            taskId,
-            preflightPath,
-            preflightSha256,
-            preflightWorkspaceReadiness,
-            docImpactPath
-        )
-    );
     if (!preflightCycleReadiness.ready) {
         const classifyCommand = buildClassifyChangeCommand({
             repoRoot,
@@ -8076,18 +8099,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const failedCurrentReviewStateForPreflight = reviewLaunchPlan.next_review_type
-        ? reviewStates.find((candidate) => (
-            candidate.reviewType === reviewLaunchPlan.next_review_type && candidate.failed
-        ))
-        : undefined;
-    const effectivePreflightWorkspaceReadiness = failedCurrentReviewStateForPreflight
-        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
-            failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
-            failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
-            docImpactPath
-        })
-        : preflightWorkspaceReadiness;
     if (!effectivePreflightWorkspaceReadiness.ready) {
         const classifyCommand = buildClassifyChangeCommand({
             repoRoot,

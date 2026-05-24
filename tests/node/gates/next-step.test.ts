@@ -4427,6 +4427,46 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
     });
 
+    it('routes late TASK_ENTRY after review phase through startup recovery before stale preflight refresh', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:security-reviewer';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, security: true }, { seedPostPreflight: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'security', reviewerIdentity);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'security'
+        });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const securityFindingFix = true;\n', 'utf8');
+        const lateRulePackPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-late-task-entry-rule-pack.json`);
+        writeJson(lateRulePackPath, buildRulePackArtifact({
+            repoRoot,
+            taskId: TASK_ID,
+            stage: 'TASK_ENTRY',
+            taskModePath: path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`),
+            loadedRuleFiles: [
+                '00-core.md',
+                '15-project-memory.md',
+                '40-commands.md',
+                '80-task-workflow.md',
+                '90-skill-catalog.md'
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'RULE_PACK_LOADED', 'PASS', {
+            stage: 'TASK_ENTRY',
+            artifact_path: normalizeForTimeline(lateRulePackPath)
+        });
+
+        const missingHandshake = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingHandshake.next_gate, 'handshake-diagnostics');
+        assert.ok(!missingHandshake.commands[0].command.includes('gate classify-change'));
+
+        seedHandshake(repoRoot, TASK_ID);
+        const missingShellSmoke = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        assert.equal(missingShellSmoke.next_gate, 'shell-smoke-preflight');
+        assert.ok(!missingShellSmoke.commands[0].command.includes('gate classify-change'));
+    });
+
     it('fails closed for invalid late TASK_ENTRY evidence after review phase', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:code-reviewer';
