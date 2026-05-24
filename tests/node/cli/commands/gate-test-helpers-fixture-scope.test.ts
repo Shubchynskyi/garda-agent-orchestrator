@@ -12,46 +12,36 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
 import {
-    createTempRepo,
-    getReviewsRoot,
-    seedRuleFiles
-} from './gate-test-repo-bootstrap';
-import {
-    writePreflight,
-    writeCompilePassEvidence,
-    seedTaskQueue,
-    seedInitAnswers,
-    prepareReviewDiffFixture
-} from './gate-test-seed-helpers';
+    createGateFixture,
+    prepareGateFixtureReviewDiff,
+    writeGateFixtureCompilePass,
+    writeGateFixturePreflight
+} from '../../gate-fixtures';
 
 describe('gate-test-helpers fixture scope fingerprints', () => {
     it('writeCompilePassEvidence scope_sha256 matches getWorkspaceSnapshot', () => {
-        const repoRoot = createTempRepo();
+        const fixture = createGateFixture({ taskId: 'T-fixture-scope' });
         try {
-            seedRuleFiles(repoRoot);
-            seedTaskQueue(repoRoot, 'T-fixture-scope');
-            seedInitAnswers(repoRoot, 'Codex');
-            const preflightPath = writePreflight(repoRoot, 'T-fixture-scope', {
+            const preflightPath = writeGateFixturePreflight(fixture, {
                 changed_files: ['src/app.ts'],
                 detection_source: 'explicit_changed_files',
                 include_untracked: false
             });
-            prepareReviewDiffFixture(repoRoot, preflightPath);
-            writeCompilePassEvidence(repoRoot, 'T-fixture-scope', preflightPath);
+            prepareGateFixtureReviewDiff(fixture, preflightPath);
+            writeGateFixtureCompilePass(fixture, preflightPath);
 
             const artifactPath = path.join(
-                getReviewsRoot(repoRoot),
+                fixture.reviewsRoot,
                 'T-fixture-scope-compile-gate.json'
             );
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
 
             const snapshot = getWorkspaceSnapshot(
-                repoRoot,
+                fixture.repoRoot,
                 'explicit_changed_files',
                 false,
                 ['src/app.ts']
@@ -63,32 +53,29 @@ describe('gate-test-helpers fixture scope fingerprints', () => {
                 'scope_sha256 in fixture must match getWorkspaceSnapshot()'
             );
         } finally {
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            fixture.cleanup();
         }
     });
 
     it('writeCompilePassEvidence scope_content_sha256 matches getWorkspaceSnapshot', () => {
-        const repoRoot = createTempRepo();
+        const fixture = createGateFixture({ taskId: 'T-fixture-scope-content' });
         try {
-            seedRuleFiles(repoRoot);
-            seedTaskQueue(repoRoot, 'T-fixture-scope-content');
-            seedInitAnswers(repoRoot, 'Codex');
-            const preflightPath = writePreflight(repoRoot, 'T-fixture-scope-content', {
+            const preflightPath = writeGateFixturePreflight(fixture, {
                 changed_files: ['src/app.ts'],
                 detection_source: 'explicit_changed_files',
                 include_untracked: false
             });
-            prepareReviewDiffFixture(repoRoot, preflightPath);
-            writeCompilePassEvidence(repoRoot, 'T-fixture-scope-content', preflightPath);
+            prepareGateFixtureReviewDiff(fixture, preflightPath);
+            writeGateFixtureCompilePass(fixture, preflightPath);
 
             const artifactPath = path.join(
-                getReviewsRoot(repoRoot),
+                fixture.reviewsRoot,
                 'T-fixture-scope-content-compile-gate.json'
             );
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
 
             const snapshot = getWorkspaceSnapshot(
-                repoRoot,
+                fixture.repoRoot,
                 'explicit_changed_files',
                 false,
                 ['src/app.ts']
@@ -104,26 +91,23 @@ describe('gate-test-helpers fixture scope fingerprints', () => {
                 'scope_content_sha256 in fixture must match getWorkspaceSnapshot()'
             );
         } finally {
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            fixture.cleanup();
         }
     });
 
     it('writeCompilePassEvidence artifact contains all required scope fields', () => {
-        const repoRoot = createTempRepo();
+        const fixture = createGateFixture({ taskId: 'T-fixture-scope-fields' });
         try {
-            seedRuleFiles(repoRoot);
-            seedTaskQueue(repoRoot, 'T-fixture-scope-fields');
-            seedInitAnswers(repoRoot, 'Codex');
-            const preflightPath = writePreflight(repoRoot, 'T-fixture-scope-fields', {
+            const preflightPath = writeGateFixturePreflight(fixture, {
                 changed_files: ['src/app.ts'],
                 detection_source: 'explicit_changed_files',
                 include_untracked: false
             });
-            prepareReviewDiffFixture(repoRoot, preflightPath);
-            writeCompilePassEvidence(repoRoot, 'T-fixture-scope-fields', preflightPath);
+            prepareGateFixtureReviewDiff(fixture, preflightPath);
+            writeGateFixtureCompilePass(fixture, preflightPath);
 
             const artifactPath = path.join(
-                getReviewsRoot(repoRoot),
+                fixture.reviewsRoot,
                 'T-fixture-scope-fields-compile-gate.json'
             );
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
@@ -145,7 +129,7 @@ describe('gate-test-helpers fixture scope fingerprints', () => {
                 );
             }
         } finally {
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            fixture.cleanup();
         }
     });
 });
