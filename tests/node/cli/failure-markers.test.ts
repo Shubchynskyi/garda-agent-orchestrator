@@ -119,10 +119,51 @@ test('bootstrap with invalid flag produces GARDA_BOOTSTRAP_FAILED with EXIT_USAG
     assert.ok(stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Expected GARDA_BOOTSTRAP_FAILED in stderr');
 });
 
-test('implicit bootstrap (unrecognised first arg) produces GARDA_BOOTSTRAP_FAILED', () => {
-    const { exitCode, stderr } = runCli(['--no-such-flag']);
-    assert.equal(exitCode, EXIT_USAGE_ERROR);
-    assert.ok(stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Expected GARDA_BOOTSTRAP_FAILED in stderr');
+test('unknown top-level command fails as CLI usage and does not bootstrap', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-unknown-command-'));
+    try {
+        const { exitCode, stderr } = runCli(['nosuch'], tmpDir);
+        assert.equal(exitCode, EXIT_USAGE_ERROR);
+        assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
+        assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
+        assert.ok(stderr.includes('Unsupported command: nosuch'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, 'nosuch')), 'unknown command must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('unknown top-level flag fails as CLI usage and does not bootstrap', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-unknown-flag-command-'));
+    try {
+        const { exitCode, stderr } = runCli(['--no-such-flag'], tmpDir);
+        assert.equal(exitCode, EXIT_USAGE_ERROR);
+        assert.ok(stderr.includes('GARDA_CLI_FAILED'), 'Expected GARDA_CLI_FAILED in stderr');
+        assert.ok(!stderr.includes('GARDA_BOOTSTRAP_FAILED'), 'Should not contain GARDA_BOOTSTRAP_FAILED');
+        assert.ok(stderr.includes('Unsupported command: --no-such-flag'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, '--no-such-flag')), 'unknown flag must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('global help and version remain side-effect free top-level flags', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-global-flags-'));
+    try {
+        const helpResult = runCli(['--help'], tmpDir);
+        assert.equal(helpResult.exitCode, 0);
+        assert.ok(helpResult.stdout.includes('Usage:'));
+        assert.ok(!helpResult.stderr.includes('GARDA_CLI_FAILED'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, '--help')), 'global help must not create a bootstrap destination');
+
+        const versionResult = runCli(['--version'], tmpDir);
+        assert.equal(versionResult.exitCode, 0);
+        assert.match(versionResult.stdout.trim(), /^\d+\.\d+\.\d+/);
+        assert.ok(!versionResult.stderr.includes('GARDA_CLI_FAILED'));
+        assert.ok(!fs.existsSync(path.join(tmpDir, '--version')), 'global version must not create a bootstrap destination');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 test('task-reset alias without task id fails as CLI usage and does not bootstrap', () => {

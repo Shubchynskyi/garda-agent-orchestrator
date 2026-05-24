@@ -202,7 +202,7 @@ export function getCommandName(argv: string[]): string {
     if (candidate === 'gate' || LIFECYCLE_COMMANDS.includes(candidate)) {
         return candidate;
     }
-    return 'bootstrap';
+    return candidate;
 }
 
 export function ensureBundleExists(targetRoot: string, commandName: string): string {

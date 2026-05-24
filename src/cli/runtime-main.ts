@@ -48,6 +48,15 @@ export async function runCliRuntimeMain(
         handleOverview(packageJson, normalizePathValue('.'));
         return;
     }
+    if (effectiveArgv[0] === '--help' || effectiveArgv[0] === '-h') {
+        const { printHelp } = await import('./commands/cli-helpers');
+        printHelp(packageJson);
+        return;
+    }
+    if (effectiveArgv[0] === '--version' || effectiveArgv[0] === '-v') {
+        console.log(packageJson.version);
+        return;
+    }
 
     const taskResetAlias = resolveTaskResetAlias(effectiveArgv);
     const commandName = taskResetAlias ? 'gate' : getCommandName(effectiveArgv);
@@ -55,9 +64,7 @@ export async function runCliRuntimeMain(
 
     const commandArgv = taskResetAlias
         ? ['task-reset', ...taskResetAlias.commandArgv]
-        : commandName === 'bootstrap' && effectiveArgv[0] !== 'bootstrap'
-            ? effectiveArgv
-            : effectiveArgv.slice(1);
+        : effectiveArgv.slice(1);
 
     if (!taskResetAlias) {
         const taskResetNearMissError = buildTaskResetNearMissError(effectiveArgv);

@@ -45,7 +45,7 @@ update git
 gate <name>
 ```
 
-Zero-argument invocation prints the safe overview. Unknown first positional falls through to `bootstrap`.
+Zero-argument invocation prints the safe overview. Unknown top-level commands fail as usage errors and must not invoke `bootstrap` or create a bundle directory named after the unknown token.
 
 `Workspace ready` is blocked by `runtime/agent-init-state.json` until the hard `agent-init` gate passes.
 
