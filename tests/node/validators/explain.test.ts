@@ -80,6 +80,19 @@ test('explainFailure renders ordinary doc paths pending remediation', () => {
     assert.ok(output.includes('not a global ignore list'));
 });
 
+test('explainFailure renders skills prompt pending remediation as optional but mandatory to ask', () => {
+    const result = explainFailure('SKILLS_PROMPT_PENDING');
+    const output = formatExplainResult(result);
+
+    assert.equal(result.found, true);
+    assert.equal(result.failureId, 'SKILLS_PROMPT_PENDING');
+    assert.ok(output.includes('optional specialist-skills yes/no question'));
+    assert.ok(output.includes('Installing extra skills is optional'));
+    assert.ok(output.includes('A no answer is allowed'));
+    assert.ok(output.includes('--skills-prompted yes'));
+    assert.ok(output.includes('false/no means the question is still incomplete'));
+});
+
 test('explainFailure renders executable project memory remediation command shape', () => {
     const result = explainFailure('PROJECT_MEMORY_PENDING');
     const output = formatExplainResult(result);

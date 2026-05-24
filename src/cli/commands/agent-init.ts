@@ -87,7 +87,7 @@ export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>):
         blockers.push('project rules are not marked as updated');
     }
     if (!result.skillsPromptCompleted) {
-        blockers.push('specialist skills question is not marked as completed');
+        blockers.push('specialist skills question is not marked as completed; ask it in the user language, allow a no answer, then rerun with --skills-prompted yes');
     }
     if (result.ordinaryDocPathsNeedsConfirmation) {
         blockers.push('ordinary document paths are not confirmed; rerun agent-init with --ordinary-doc-paths after user confirmation');

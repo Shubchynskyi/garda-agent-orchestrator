@@ -759,6 +759,54 @@ test('runAgentInit keeps workspace not-ready when required checkpoints are marke
     }
 });
 
+test('runAgentInit treats negative skills-prompted values as incomplete prompts, not as user decline', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-skills-pending-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
+
+        for (const skillsPrompted of ['false', 'no']) {
+            const result = runAgentInit({
+                targetRoot: workspaceRoot,
+                activeAgentFiles: 'AGENTS.md',
+                projectRulesUpdated: 'yes',
+                skillsPrompted,
+                ordinaryDocPaths: 'CHANGELOG.md',
+                installRunner: function () {},
+                verifyRunner: function () {
+                    return { passed: true };
+                },
+                manifestRunner: function () {
+                    return { passed: true };
+                }
+            });
+
+            assert.equal(result.readyForTasks, false);
+            assert.equal(result.skillsPromptCompleted, false);
+            assert.match(buildAgentInitNextStep(result), /allow a no answer, then rerun with --skills-prompted yes/);
+
+            const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
+            assert.equal(persistedState.SkillsPromptCompleted, false);
+        }
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('runAgentInit seeds workflow-config full-suite command from project stack while keeping the mode disabled', () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-seed-'));
     const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');

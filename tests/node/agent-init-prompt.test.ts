@@ -114,9 +114,20 @@ test('AGENT_INIT_PROMPT explains ordinary document paths before confirmation', (
 
 test('AGENT_INIT_PROMPT distinguishes optional packs from already available skills', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
+    const skillsCheckpointIndex = content.indexOf('Required optional-specialist-skills checkpoint before finalization');
+    const finalAgentInitIndex = content.indexOf('Finalize agent initialization through the hard code-level gate');
+
+    assert.ok(skillsCheckpointIndex > -1);
+    assert.ok(finalAgentInitIndex > -1);
+    assert.ok(skillsCheckpointIndex < finalAgentInitIndex);
+    assert.match(content, /This checkpoint is mandatory even though installing extra skills is optional/i);
+    assert.match(content, /Do not run `agent-init` before the user has seen the specialist-skills summary and answered the yes\/no question/i);
     assert.match(content, /built-in pack = installable bundle of optional skills/i);
     assert.match(content, /explicitly list baseline skills already available now/i);
     assert.match(content, /recommend only optional packs and optional skills that are not already available/i);
+    assert.match(content, /Do you want to add additional specialist skills now\? \(yes\/no\)/i);
+    assert.match(content, /If the user answers `no`, do not install anything; record that the question was shown by using `--skills-prompted yes`/i);
+    assert.match(content, /`--skills-prompted false` or `--skills-prompted no` means the specialist-skills question was not completed/i);
 });
 
 test('AGENT_INIT_PROMPT keeps the task execution contract navigator-first', () => {

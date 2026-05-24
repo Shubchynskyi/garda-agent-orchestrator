@@ -116,11 +116,12 @@ function getExplainDatabase(): readonly ExplainEntry[] {
     {
         id: 'SKILLS_PROMPT_PENDING',
         title: 'Skills prompt has not been completed',
-        description: 'The built-in specialist skills question was not asked during agent-init.',
+        description: 'The optional specialist-skills yes/no question was not asked during agent-init. Installing extra skills is optional, but showing the question and recording the answer is mandatory.',
         remediation: [
-            "Ask your agent: 'Does this project need any specialist skill packs?'",
+            "Ask your agent to show already configured specialist skills, available built-in packs, optional skills, and a recommendation in the configured assistant language.",
+            "Then answer the mandatory question: 'Do you want to add additional specialist skills now? (yes/no)'. A no answer is allowed.",
             `Use '${PRIMARY_CLI_NAME} skills list' to see available packs.`,
-            `Then run '${PRIMARY_CLI_NAME} agent-init --skills-prompted yes'.`
+            `Then run '${PRIMARY_CLI_NAME} agent-init --skills-prompted yes'. Do not use false/no for a user decline; false/no means the question is still incomplete.`
         ]
     },
     {

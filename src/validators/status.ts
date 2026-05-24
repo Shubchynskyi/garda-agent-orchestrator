@@ -612,7 +612,7 @@ function buildPendingCheckpointLine(snapshot: StatusSnapshot): string | null {
         case 'PROJECT_RULES_PENDING':
             return '  Pending checkpoint: Update project-specific live rules before finalizing agent init';
         case 'SKILLS_PROMPT_PENDING':
-            return '  Pending checkpoint: Ask the built-in specialist skills question before finalizing agent init';
+            return '  Pending checkpoint: Ask the optional specialist-skills yes/no question before finalizing agent init; user decline is allowed';
         case 'ORDINARY_DOC_PATHS_PENDING':
             return '  Pending checkpoint: Confirm ordinary document paths during AGENT_INIT_PROMPT flow';
         case 'PROJECT_MEMORY_PENDING':

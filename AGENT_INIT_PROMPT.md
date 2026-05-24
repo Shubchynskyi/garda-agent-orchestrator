@@ -122,18 +122,10 @@ Initialize or refresh Garda project memory. Inspect the repository through the n
     - If the user edits the proposal, validate every entry as a relative repository path or glob with no absolute paths, no `..` segments, and no repository-wide wildcard such as `**/*`.
     - Persist the confirmed list in `garda-agent-orchestrator/live/config/paths.json` as `ordinary_doc_paths`, and remember the same comma-separated list for the final `agent-init --ordinary-doc-paths` argument.
     - Tell the user they can edit the list later in `garda-agent-orchestrator/live/config/paths.json` under the `ordinary_doc_paths` field.
-8. Finalize agent initialization through the hard code-level gate:
-```text
-node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes --ordinary-doc-paths "<confirmed-ordinary-doc-paths>"
-```
-This command is mandatory. It reruns answer-dependent install materialization, runs `verify`, runs manifest validation, and writes `garda-agent-orchestrator/runtime/agent-init-state.json`.
-If the command fails, fix the reported issue and rerun it until it prints PASS.
-9. Confirm task execution contract is navigator-first and profile/config driven:
-   - canonical user instruction: ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``
-   - active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; inspect, switch, or create profiles through `node garda-agent-orchestrator/bin/garda.js profile ... --target-root "."`
-   - do not present `depth=<1|2|3>` as normal user task-start guidance; depth remains internal gate/profile evidence unless a debug or recovery command explicitly needs it
-   - run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure
-10. Optional post-init specialization:
+8. Required optional-specialist-skills checkpoint before finalization:
+   - This checkpoint is mandatory even though installing extra skills is optional.
+   - Do not run `agent-init` before the user has seen the specialist-skills summary and answered the yes/no question below.
+   - Ask and explain this checkpoint in `<assistant-language>`.
    - before the yes/no question, provide in `<assistant-language>`:
      - one-sentence clarification:
        - built-in pack = installable bundle of optional skills;
@@ -154,6 +146,8 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
      - `Recommendation for this project`:
        - provide a short recommended set of built-in packs based on the discovered stack and repository structure.
    - then ask user: `Do you want to add additional specialist skills now? (yes/no)`
+   - If the user answers `no`, do not install anything; record that the question was shown by using `--skills-prompted yes` in the final `agent-init` command.
+   - `--skills-prompted false` or `--skills-prompted no` means the specialist-skills question was not completed and must keep the workspace blocked.
    - if `yes`, ask:
      - `Which built-in packs should be added now?`
      - `Do you also want any custom project-specific skills created now?`
@@ -166,6 +160,17 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
    - after any built-in or custom skill change, run:
      - `node garda-agent-orchestrator/bin/garda.js skills validate --target-root "."`
      - `node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes --ordinary-doc-paths "<confirmed-ordinary-doc-paths>"`
+9. Finalize agent initialization through the hard code-level gate:
+```text
+node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-answers-path "garda-agent-orchestrator/runtime/init-answers.json" --active-agent-files "<active-agent-files>" --project-rules-updated yes --skills-prompted yes --ordinary-doc-paths "<confirmed-ordinary-doc-paths>"
+```
+This command is mandatory. It reruns answer-dependent install materialization, runs `verify`, runs manifest validation, and writes `garda-agent-orchestrator/runtime/agent-init-state.json`.
+If the command fails, fix the reported issue and rerun it until it prints PASS.
+10. Confirm task execution contract is navigator-first and profile/config driven:
+   - canonical user instruction: ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``
+   - active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; inspect, switch, or create profiles through `node garda-agent-orchestrator/bin/garda.js profile ... --target-root "."`
+   - do not present `depth=<1|2|3>` as normal user task-start guidance; depth remains internal gate/profile evidence unless a debug or recovery command explicitly needs it
+   - run `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure
 
 ## Expected State After Success
 - Selected source-of-truth entrypoint exists and routes to `garda-agent-orchestrator/live/docs/agent-rules/*`.
@@ -208,6 +213,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - Never silently infer or expand `ActiveAgentFiles`.
 - Never run install before writing `garda-agent-orchestrator/runtime/init-answers.json` with all 6 required answers.
 - Do not overwrite `CollectedVia=CLI_INTERACTIVE` or `CLI_NONINTERACTIVE` when you are only reusing CLI-collected answers and normalizing the language field.
+- Never run final `agent-init` before asking the optional-specialist-skills yes/no question in `<assistant-language>`; user decline still counts as prompt completed, but `--skills-prompted false|no` does not.
 - Never declare the workspace ready until `node garda-agent-orchestrator/bin/garda.js agent-init ...` exits PASS.
 - Never declare project-memory complete only because templates were seeded; placeholder-heavy memory requires explicit, actionable warning and project-specific enrichment from real source/docs.
 - Do not modify `garda-agent-orchestrator/AGENT_INIT_PROMPT.md` during project onboarding.
