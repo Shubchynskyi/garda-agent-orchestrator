@@ -283,6 +283,13 @@ export interface NextStepFinalReportSummary {
     commit_question: string;
 }
 
+export interface NextStepInvalidationImpactSummary {
+    stale_artifact_classes: string[];
+    affected_review_lanes: string[];
+    minimal_recovery_chain: string[];
+    reuse_candidates: string[];
+}
+
 export interface NextStepProfileSummary {
     task_selected_profile: string | null;
     profile_selection_source: string | null;
@@ -356,6 +363,7 @@ export interface NextStepResult {
     profile: NextStepProfileSummary | null;
     markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
     warnings: string[];
+    invalidation_impact: NextStepInvalidationImpactSummary | null;
     review_cycle_block: NextStepReviewCycleBlock | null;
     final_report: NextStepFinalReportSummary | null;
 }
@@ -6558,6 +6566,7 @@ function buildResult(params: {
         });
     }
     const missingArtifacts = params.status === 'DONE' ? [] : params.missingArtifacts;
+    const invalidationImpact = buildInvalidationImpactSummary(params);
     return {
         schema_version: 1,
         task_id: params.taskId,
@@ -6578,9 +6587,108 @@ function buildResult(params: {
         profile: params.profile,
         markdown_working_plan: params.markdownWorkingPlan || null,
         warnings: params.warnings || [],
+        invalidation_impact: invalidationImpact,
         review_cycle_block: params.reviewCycleBlock || null,
         final_report: params.finalReport || null
     };
+}
+
+function buildInvalidationImpactSummary(params: {
+    status: NextStepStatus;
+    nextGate: string | null;
+    title: string;
+    reason: string;
+    commands: NextStepCommand[];
+    review: NextStepReviewSummary;
+}): NextStepInvalidationImpactSummary | null {
+    if (params.status === 'DONE' || params.status === 'READY' || !params.nextGate) {
+        return null;
+    }
+    const text = `${params.title} ${params.reason}`;
+    if (!hasInvalidationSignal(text, params.nextGate)) {
+        return null;
+    }
+    const affectedReviewLanes = getAffectedReviewLanes(text, params.review);
+    return {
+        stale_artifact_classes: getStaleArtifactClasses(text, params.nextGate),
+        affected_review_lanes: affectedReviewLanes,
+        minimal_recovery_chain: buildMinimalRecoveryChain(params.nextGate, params.commands, text),
+        reuse_candidates: buildReuseCandidates(text, affectedReviewLanes)
+    };
+}
+
+function hasInvalidationSignal(text: string, nextGate: string): boolean {
+    return /\b(?:stale|mismatch|mismatched|does not match|invalidates?|outdated|scope drift|current preflight|latest compile|newer compile|domain-limited remediation|lane-domain current|rebind|review reuse|materialize reuse)\b/iu.test(text)
+        || ['classify-change', 'bind-rule-pack-to-preflight'].includes(nextGate);
+}
+
+function getStaleArtifactClasses(text: string, nextGate: string): string[] {
+    const classes: string[] = [];
+    const add = (value: string) => {
+        if (!classes.includes(value)) {
+            classes.push(value);
+        }
+    };
+    if (/\bpreflight\b|\bscope drift\b|\bchanged fingerprints?\b/iu.test(text) || nextGate === 'classify-change') add('preflight/scope');
+    if (/\brule[- ]?pack\b|\bPOST_PREFLIGHT\b/iu.test(text) || nextGate === 'bind-rule-pack-to-preflight') add('rule-pack binding');
+    if (/\bcompile\b/iu.test(text) || nextGate === 'compile-gate') add('compile evidence');
+    if (/\bfull-suite\b/iu.test(text) || nextGate === 'full-suite-validation') add('full-suite evidence');
+    if (/\bscoped diff\b/iu.test(text) || nextGate === 'build-scoped-diff') add('scoped diff metadata');
+    if (/\breview[- ]?context\b/iu.test(text) || nextGate === 'build-review-context') add('review context');
+    if (/\brouting\b|\bREVIEWER_DELEGATION_ROUTED\b/iu.test(text) || nextGate === 'record-review-routing') add('reviewer routing');
+    if (/\blaunch\b|\binvocation\b/iu.test(text) || ['prepare-reviewer-launch', 'complete-reviewer-launch', 'record-review-invocation'].includes(nextGate)) add('reviewer launch/invocation');
+    if (/\breceipt\b|\breview artifact\b|\breview output\b|\breviewer_provenance\b/iu.test(text) || nextGate === 'record-review-result') add('review artifact/receipt');
+    if (/\brequired-reviews-check\b|\breview gate\b/iu.test(text) || nextGate === 'required-reviews-check') add('review gate evidence');
+    return classes.length > 0 ? classes : [nextGate];
+}
+
+function getAffectedReviewLanes(text: string, review: NextStepReviewSummary): string[] {
+    const lanes = new Set<string>();
+    for (const reviewType of REVIEW_PREPARATION_ORDER) {
+        const quoted = new RegExp(`['"]${reviewType}['"]`, 'iu');
+        const labelled = new RegExp(`\\b${reviewType}\\b(?=\\s+(?:review|lane|context|routing|receipt|PASS|evidence))`, 'iu');
+        if (quoted.test(text) || labelled.test(text)) {
+            lanes.add(reviewType);
+        }
+    }
+    if (review.next_review_type) {
+        lanes.add(review.next_review_type);
+    }
+    for (const lane of review.blocked_review_lanes) {
+        lanes.add(lane.review_type);
+        for (const blocker of lane.blocked_by) {
+            if (REVIEW_PREPARATION_ORDER.includes(blocker)) {
+                lanes.add(blocker);
+            }
+        }
+    }
+    return REVIEW_PREPARATION_ORDER.filter((reviewType) => lanes.has(reviewType));
+}
+
+function buildMinimalRecoveryChain(nextGate: string, commands: NextStepCommand[], text: string): string[] {
+    const chain = [nextGate];
+    if (nextGate === 'classify-change') {
+        chain.push('rerun navigator for POST_PREFLIGHT, compile, and review refresh decisions');
+    } else if (nextGate === 'build-review-context' && /\breview reuse\b|\bmaterialize reuse\b|\brebind\b|\blane-domain current\b/iu.test(text)) {
+        chain.push('materialize current-cycle review reuse');
+        chain.push('rerun navigator before downstream review/check gates');
+    } else if (nextGate.startsWith('record-review') || nextGate.includes('reviewer')) {
+        chain.push('record current reviewer evidence');
+        chain.push('rerun navigator before review gate');
+    } else if (commands.length > 0) {
+        chain.push('rerun navigator after the printed command');
+    }
+    return chain;
+}
+
+function buildReuseCandidates(text: string, affectedReviewLanes: string[]): string[] {
+    if (!/\breview reuse\b|\bmaterialize reuse\b|\blane-domain current\b|\bdomain-limited remediation\b|\bexisting .*PASS evidence\b/iu.test(text)) {
+        return ['none indicated'];
+    }
+    if (affectedReviewLanes.length === 0) {
+        return ['unchanged upstream PASS evidence, if named by the current gate reason'];
+    }
+    return affectedReviewLanes.map((reviewType) => `${reviewType} (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)`);
 }
 
 function buildSourceRuntimeRemediationResult(params: {
@@ -9505,6 +9613,13 @@ export function formatNextStepText(result: NextStepResult): string {
     }
     if (result.review.trust_note) {
         lines.push(result.review.trust_note);
+    }
+    if (result.invalidation_impact) {
+        lines.push('InvalidationImpact:');
+        lines.push(`  StaleArtifacts: ${result.invalidation_impact.stale_artifact_classes.join(', ') || 'none'}`);
+        lines.push(`  AffectedReviewLanes: ${result.invalidation_impact.affected_review_lanes.join(', ') || 'none'}`);
+        lines.push(`  MinimalRecoveryChain: ${result.invalidation_impact.minimal_recovery_chain.join(' -> ') || 'none'}`);
+        lines.push(`  ReuseCandidates: ${result.invalidation_impact.reuse_candidates.join('; ') || 'none indicated'}`);
     }
     lines.push(result.task_queue_status_contract.visible_summary_line);
     if (result.missing_artifacts.length > 0) {

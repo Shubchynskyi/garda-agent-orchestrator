@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- added a compact `next-step` invalidation impact summary for stale preflight, compile, rule-pack, and review evidence, including affected review lanes, the minimal recovery chain, and explicit review-reuse candidates without weakening freshness checks
 - made `prepare-reviewer-launch` print and persist a copy-pasteable reviewer launch prompt with prompt/template/evidence/output paths, including a writable draft `ReviewOutputPath`, and treat legacy prepared launch artifacts without those fields as stale
 - simplified `garda setup` final human output by removing internal start-banner, mandatory-flow, and project-memory prompt blocks, adding a `garda ui` recommendation, and ending with the clear agent-init next command
 - fixed `garda uninstall` cleanup so Garda-managed `.agentignore` active/off blocks are removed without restoring stale install-time backups over later user edits

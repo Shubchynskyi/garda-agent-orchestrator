@@ -4995,6 +4995,17 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Preflight scope is stale before compile'));
         assert.ok(result.commands[0].command.includes('gate classify-change'));
         assert.ok(result.commands[0].command.includes('--changed-file "src/app.ts"'));
+        assert.deepEqual(result.invalidation_impact?.stale_artifact_classes, ['preflight/scope', 'compile evidence']);
+        assert.deepEqual(result.invalidation_impact?.minimal_recovery_chain, [
+            'classify-change',
+            'rerun navigator for POST_PREFLIGHT, compile, and review refresh decisions'
+        ]);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
+
+        const text = formatNextStepText(result);
+        assert.match(text, /InvalidationImpact:/);
+        assert.match(text, /StaleArtifacts: preflight\/scope, compile evidence/);
+        assert.match(text, /MinimalRecoveryChain: classify-change -> rerun navigator for POST_PREFLIGHT, compile, and review refresh decisions/);
     });
 
     it('refreshes explicit preflight when later rework adds a source file after review evidence exists', () => {
@@ -6832,6 +6843,17 @@ describe('gates/next-step', () => {
         assert.ok(!securityResult.commands[0].command.includes('--review-type "code"'));
         assert.ok(securityResult.commands[0].command.includes('--review-type "security"'));
         assert.ok(!securityResult.commands[0].command.includes('--review-type "refactor"'));
+        assert.deepEqual(securityResult.invalidation_impact?.affected_review_lanes, ['security', 'refactor', 'test']);
+        assert.deepEqual(securityResult.invalidation_impact?.minimal_recovery_chain, [
+            'build-review-context',
+            'materialize current-cycle review reuse',
+            'rerun navigator before downstream review/check gates'
+        ]);
+        assert.deepEqual(securityResult.invalidation_impact?.reuse_candidates, [
+            'security (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'refactor (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
     });
 
     it('re-materializes stale upstream reuse after a later compile before downstream refactor', () => {
@@ -6887,6 +6909,21 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "refactor"'));
+        assert.deepEqual(result.invalidation_impact?.stale_artifact_classes, [
+            'preflight/scope',
+            'compile evidence',
+            'review context',
+            'reviewer routing',
+            'reviewer launch/invocation',
+            'review artifact/receipt'
+        ]);
+        assert.deepEqual(result.invalidation_impact?.affected_review_lanes, ['code', 'security', 'refactor', 'test']);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
+
+        const text = formatNextStepText(result);
+        assert.match(text, /InvalidationImpact:/);
+        assert.match(text, /AffectedReviewLanes: code, security, refactor, test/);
+        assert.match(text, /ReuseCandidates: none indicated/);
     });
 
     it('rebuilds stale failed downstream review after test-only remediation despite lane-domain match', () => {
@@ -6978,6 +7015,25 @@ describe('gates/next-step', () => {
         assert.match(result.title, /Recover stale upstream 'code' review evidence/);
         assert.ok(result.reason.includes('required-reviews-check failed after compile'), result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.deepEqual(result.invalidation_impact?.stale_artifact_classes, [
+            'preflight/scope',
+            'compile evidence',
+            'review context',
+            'reviewer routing',
+            'reviewer launch/invocation',
+            'review artifact/receipt',
+            'review gate evidence'
+        ]);
+        assert.deepEqual(result.invalidation_impact?.affected_review_lanes, ['code', 'test']);
+        assert.deepEqual(result.invalidation_impact?.minimal_recovery_chain, [
+            'build-review-context',
+            'materialize current-cycle review reuse',
+            'rerun navigator before downstream review/check gates'
+        ]);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, [
+            'code (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
