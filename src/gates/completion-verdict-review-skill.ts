@@ -70,6 +70,19 @@ function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown> 
     return normalizeTimelineDetailString(treeState?.tree_state_sha256 ?? treeState?.treeStateSha256);
 }
 
+function hasEarlierRecordedReview(
+    events: TimelineEventEntry[],
+    reviewKey: string,
+    beforeSequence: number
+): boolean {
+    const normalizedReviewKey = reviewKey.toLowerCase();
+    return events.some((entry) => (
+        entry.sequence < beforeSequence
+        && entry.event_type === 'REVIEW_RECORDED'
+        && normalizeTimelineDetailString(entry.details?.review_type ?? entry.details?.reviewType) === normalizedReviewKey
+    ));
+}
+
 /**
  * Validate review-skill evidence for code-changing tasks.
  * When code changed but the review-gate artifact does not carry evidence
@@ -312,7 +325,13 @@ export function validateReviewSkillEvidence(
                 );
                 continue;
             }
-            if (upstreamRecordedEvent.sequence > downstreamPhaseSequence) {
+            if (
+                upstreamRecordedEvent.sequence > downstreamPhaseSequence
+                && !(
+                    upstreamRecordedEvent.details?.reused_existing_review === true
+                    && hasEarlierRecordedReview(events, upstreamKey, downstreamPhaseSequence)
+                )
+            ) {
                 result.violations.push(
                     `Required review '${key}' started before upstream review '${upstreamKey}' completed in '${normalizedTimelinePath}'. ` +
                     `Downstream '${key}' review must wait for current-cycle '${upstreamKey}' evidence.`
