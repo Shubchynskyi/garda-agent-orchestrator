@@ -32,12 +32,21 @@ delegateToLocalCli(process.argv[2], process.argv.slice(3)).catch((error) => {
     return harnessPath;
 }
 
-function writePackageRoot(root: string, options?: { sourceCheckout?: boolean }): void {
+function writePackageRoot(root: string, options?: { sourceCheckout?: boolean; deployedBundle?: boolean }): void {
     writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2));
     writeFile(path.join(root, 'VERSION'), '1.0.0\n');
     writeFile(path.join(root, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
     if (options?.sourceCheckout) {
+        writeFile(path.join(root, 'src', 'bin', 'garda.ts'), 'export {};\n');
+        writeFile(path.join(root, 'scripts', 'node-foundation', 'build-scripts.cjs'), 'module.exports = {};\n');
         writeFile(path.join(root, 'tests', 'node', '.keep'), '');
+    }
+    if (options?.deployedBundle) {
+        writeFile(path.join(root, 'MANIFEST.md'), '- bin/garda.js\n');
+        writeFile(path.join(root, 'live', 'version.json'), '{"version":"1.0.0"}\n');
+        writeFile(path.join(root, 'live', 'docs', 'agent-rules', '00-core.md'), '# Core Rules\n');
+        writeFile(path.join(root, 'live', 'config', 'profiles.json'), '{}\n');
+        writeFile(path.join(root, 'live', 'config', 'review-capabilities.json'), '{}\n');
     }
 }
 
@@ -337,6 +346,27 @@ test('delegation trust model fails closed for on-disk spoofed runtime shape', ()
     }
 });
 
+test('delegation trust model fails closed when launcher path is not owned by the claimed package root', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-launcher-mismatch-'));
+    try {
+        const sourceRoot = path.join(tempRoot, 'source');
+        const unrelatedRoot = path.join(tempRoot, 'unrelated');
+        writePackageRoot(sourceRoot, { sourceCheckout: true });
+        writePackageRoot(unrelatedRoot, { sourceCheckout: true });
+        const mismatchedScriptPath = path.join(unrelatedRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence([], sourceRoot, mismatchedScriptPath, sourceRoot);
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'unknown');
+        assert.equal(evidence.delegated_runtime, null);
+        assert.equal(evidence.implementation_delegation.decision, 'blocked');
+        assert.match(evidence.implementation_delegation.reason, /runtime kind is unknown/);
+        assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('delegation trust model allows installed package to delegate to trusted target-root source checkout', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-source-target-'));
     try {
@@ -374,7 +404,7 @@ test('delegation trust model allows installed package to delegate to trusted dep
         const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
         writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
         writePackageRoot(installedRoot);
-        writePackageRoot(bundleRoot);
+        writePackageRoot(bundleRoot, { deployedBundle: true });
         const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
 
         const evidence = resolveDelegatedLauncherTrustEvidence(
@@ -406,8 +436,8 @@ test('delegation trust model classifies direct deployed bundle roots as bundle t
         const alternateBundleRoot = path.join(workspaceRoot, 'alternate-garda-bundle');
         writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
         writePackageRoot(installedRoot);
-        writePackageRoot(bundleRoot);
-        writePackageRoot(alternateBundleRoot);
+        writePackageRoot(bundleRoot, { deployedBundle: true });
+        writePackageRoot(alternateBundleRoot, { deployedBundle: true });
         const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
 
         const targetEvidence = resolveDelegatedLauncherTrustEvidence(

@@ -17,13 +17,29 @@ function writeFile(filePath: string, content: string): void {
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
-function createGardaPackageRoot(rootPath: string, version = '2.4.0'): void {
+function createGardaPackageRoot(
+    rootPath: string,
+    version = '2.4.0',
+    options?: { sourceCheckout?: boolean; deployedBundle?: boolean }
+): void {
     writeFile(path.join(rootPath, 'package.json'), JSON.stringify({
         name: 'garda-agent-orchestrator',
         version
     }, null, 2));
     writeFile(path.join(rootPath, 'VERSION'), `${version}\n`);
     writeFile(path.join(rootPath, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
+    if (options?.sourceCheckout) {
+        writeFile(path.join(rootPath, 'src', 'bin', 'garda.ts'), 'export {};\n');
+        writeFile(path.join(rootPath, 'scripts', 'node-foundation', 'build-scripts.cjs'), 'module.exports = {};\n');
+        writeFile(path.join(rootPath, 'tests', 'node', 'placeholder.test.ts'), '');
+    }
+    if (options?.deployedBundle) {
+        writeFile(path.join(rootPath, 'MANIFEST.md'), '- bin/garda.js\n');
+        writeFile(path.join(rootPath, 'live', 'version.json'), `{"version":${JSON.stringify(version)}}\n`);
+        writeFile(path.join(rootPath, 'live', 'docs', 'agent-rules', '00-core.md'), '# Core Rules\n');
+        writeFile(path.join(rootPath, 'live', 'config', 'profiles.json'), '{}\n');
+        writeFile(path.join(rootPath, 'live', 'config', 'review-capabilities.json'), '{}\n');
+    }
 }
 
 function withBundleName<T>(bundleName: string | undefined, action: () => T): T {
@@ -49,7 +65,7 @@ test('global launcher delegates to source checkout in current workspace', () => 
     try {
         const sourceRoot = path.join(tempRoot, 'repo');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
-        createGardaPackageRoot(sourceRoot);
+        createGardaPackageRoot(sourceRoot, '2.4.0', { sourceCheckout: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
         const delegatedCli = resolveDelegatedLauncherTarget(
@@ -71,7 +87,8 @@ test('global launcher delegates to deployed bundle when workspace contains manag
         const workspaceRoot = path.join(tempRoot, 'workspace');
         const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
-        createGardaPackageRoot(bundleRoot, '2.4.0');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createGardaPackageRoot(bundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
         const delegatedCli = resolveDelegatedLauncherTarget(
@@ -94,8 +111,9 @@ test('global launcher delegates to preferred deployed bundle when fallback candi
         const preferredBundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
         const fallbackBundleRoot = path.join(workspaceRoot, 'custom-bundle');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
-        createGardaPackageRoot(preferredBundleRoot, '2.4.0');
-        createGardaPackageRoot(fallbackBundleRoot, '2.4.0');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createGardaPackageRoot(preferredBundleRoot, '2.4.0', { deployedBundle: true });
+        createGardaPackageRoot(fallbackBundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
         const delegatedCli = resolveDelegatedLauncherTarget(
@@ -119,7 +137,7 @@ test('global launcher delegates to custom-named deployed bundle without explicit
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
         fs.mkdirSync(workspaceRoot, { recursive: true });
         writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
-        createGardaPackageRoot(bundleRoot, '2.4.0');
+        createGardaPackageRoot(bundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
         const diagnostics: string[] = [];
         const originalConsoleError = console.error;
@@ -155,8 +173,9 @@ test('global launcher fails closed when multiple fallback deployed bundle candid
         const betaBundleRoot = path.join(workspaceRoot, 'beta-bundle');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
         fs.mkdirSync(workspaceRoot, { recursive: true });
-        createGardaPackageRoot(alphaBundleRoot, '2.4.0');
-        createGardaPackageRoot(betaBundleRoot, '2.4.0');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createGardaPackageRoot(alphaBundleRoot, '2.4.0', { deployedBundle: true });
+        createGardaPackageRoot(betaBundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
         assert.throws(
@@ -189,8 +208,9 @@ test('global launcher uses explicit bundle name to resolve fallback ambiguity', 
         const otherBundleRoot = path.join(workspaceRoot, 'other-bundle');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
         fs.mkdirSync(workspaceRoot, { recursive: true });
-        createGardaPackageRoot(customBundleRoot, '2.4.0');
-        createGardaPackageRoot(otherBundleRoot, '2.4.0');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createGardaPackageRoot(customBundleRoot, '2.4.0', { deployedBundle: true });
+        createGardaPackageRoot(otherBundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
         process.env.GARDA_BUNDLE_NAME = 'custom-bundle';
 
@@ -220,7 +240,8 @@ test('global launcher rejects explicit missing bundle name instead of using sing
         const fallbackBundleRoot = path.join(workspaceRoot, 'custom-bundle');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
         fs.mkdirSync(workspaceRoot, { recursive: true });
-        createGardaPackageRoot(fallbackBundleRoot, '2.4.0');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createGardaPackageRoot(fallbackBundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
         process.env.GARDA_BUNDLE_NAME = 'missing-bundle';
 
@@ -256,7 +277,8 @@ test('global launcher rejects bundle-name values that are paths', () => {
         const bundleRoot = path.join(workspaceRoot, 'custom-bundle');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
         fs.mkdirSync(workspaceRoot, { recursive: true });
-        createGardaPackageRoot(bundleRoot, '2.4.0');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createGardaPackageRoot(bundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
         for (const invalidBundleName of ['', ' custom-bundle', 'custom-bundle ', '.', '..', '-custom-bundle', '../custom-bundle', 'nested/custom-bundle', 'nested\\custom-bundle']) {
@@ -342,7 +364,8 @@ test('global launcher respects explicit --target-root when cwd is outside the wo
         const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
         const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
         fs.mkdirSync(callerRoot, { recursive: true });
-        createGardaPackageRoot(bundleRoot, '2.4.0');
+        writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
+        createGardaPackageRoot(bundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
         const delegatedCli = resolveDelegatedLauncherTarget(
@@ -359,10 +382,10 @@ test('global launcher respects explicit --target-root when cwd is outside the wo
 });
 
 test('local source launcher does not delegate to itself', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-local-source-'));
+        const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-local-source-'));
     try {
         const sourceRoot = path.join(tempRoot, 'repo');
-        createGardaPackageRoot(sourceRoot);
+        createGardaPackageRoot(sourceRoot, '2.4.0', { sourceCheckout: true });
 
         const delegatedCli = resolveDelegatedLauncherTarget(
             ['status'],
@@ -382,8 +405,8 @@ test('local deployed bundle launcher does not redirect to source checkout', () =
     try {
         const sourceRoot = path.join(tempRoot, 'repo');
         const bundleRoot = path.join(sourceRoot, 'garda-agent-orchestrator');
-        createGardaPackageRoot(sourceRoot);
-        createGardaPackageRoot(bundleRoot, '2.4.0');
+        createGardaPackageRoot(sourceRoot, '2.4.0', { sourceCheckout: true });
+        createGardaPackageRoot(bundleRoot, '2.4.0', { deployedBundle: true });
 
         const delegatedCli = resolveDelegatedLauncherTarget(
             ['status'],
@@ -405,7 +428,7 @@ test('inferBundleNameFromPackageRoot detects nested deployed bundle name', () =>
         const bundleRoot = path.join(workspaceRoot, 'custom-bundle');
         fs.mkdirSync(workspaceRoot, { recursive: true });
         writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
-        createGardaPackageRoot(bundleRoot, '2.4.0');
+        createGardaPackageRoot(bundleRoot, '2.4.0', { deployedBundle: true });
 
         assert.equal(inferBundleNameFromPackageRoot(bundleRoot), 'custom-bundle');
     } finally {
@@ -414,10 +437,10 @@ test('inferBundleNameFromPackageRoot detects nested deployed bundle name', () =>
 });
 
 test('inferBundleNameFromPackageRoot returns null for source checkout roots', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-infer-source-'));
+        const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-infer-source-'));
     try {
         const sourceRoot = path.join(tempRoot, 'repo');
-        createGardaPackageRoot(sourceRoot, '2.4.0');
+        createGardaPackageRoot(sourceRoot, '2.4.0', { sourceCheckout: true });
 
         assert.equal(inferBundleNameFromPackageRoot(sourceRoot), null);
     } finally {
@@ -445,9 +468,7 @@ test('inferBundleNameFromPackageRoot does not infer bundle name for source check
 test('getRuntimeCandidates prefers dist runtime over .node-build when both exist', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-order-'));
     try {
-        createGardaPackageRoot(tempRoot, '2.4.0');
-        writeFile(path.join(tempRoot, 'tests', 'node', 'placeholder.test.ts'), '');
-        writeFile(path.join(tempRoot, 'scripts', 'node-foundation', 'placeholder.ts'), '');
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
         writeFile(path.join(tempRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
         writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
 
@@ -464,8 +485,7 @@ test('getRuntimeCandidates prefers dist runtime over .node-build when both exist
 test('getRuntimeCandidates falls back to .node-build when dist runtime is absent', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-fallback-'));
     try {
-        createGardaPackageRoot(tempRoot, '2.4.0');
-        writeFile(path.join(tempRoot, 'tests', 'node', 'placeholder.test.ts'), '');
+        createGardaPackageRoot(tempRoot, '2.4.0', { sourceCheckout: true });
         writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
 
         const candidates = getRuntimeCandidates(tempRoot);
@@ -480,7 +500,7 @@ test('getRuntimeCandidates falls back to .node-build when dist runtime is absent
 test('getRuntimeCandidates excludes .node-build for deployed bundle roots', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-deployed-'));
     try {
-        createGardaPackageRoot(tempRoot, '2.4.0');
+        createGardaPackageRoot(tempRoot, '2.4.0', { deployedBundle: true });
         writeFile(path.join(tempRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
         writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
 
@@ -496,7 +516,7 @@ test('getRuntimeCandidates excludes .node-build for deployed bundle roots', () =
 test('getRuntimeCandidates does not use .node-build-only deployed bundle roots', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-deployed-node-build-only-'));
     try {
-        createGardaPackageRoot(tempRoot, '2.4.0');
+        createGardaPackageRoot(tempRoot, '2.4.0', { deployedBundle: true });
         writeFile(path.join(tempRoot, '.node-build', 'src', 'index.js'), 'module.exports = {};\n');
 
         const candidates = getRuntimeCandidates(tempRoot);
@@ -509,7 +529,7 @@ test('getRuntimeCandidates does not use .node-build-only deployed bundle roots',
 test('loadCliMainModule fails corrupt deployed dist instead of falling back to .node-build', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-runtime-corrupt-deployed-dist-'));
     try {
-        createGardaPackageRoot(tempRoot, '2.4.0');
+        createGardaPackageRoot(tempRoot, '2.4.0', { deployedBundle: true });
         writeFile(path.join(tempRoot, 'dist', 'src', 'index.js'), 'module.exports = {};\n');
         writeFile(
             path.join(tempRoot, 'dist', 'src', 'cli', 'main.js'),

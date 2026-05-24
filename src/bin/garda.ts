@@ -16,6 +16,18 @@ const DELEGATION_TIMEOUT_KILL_GRACE_MS = 1000;
 const RECOGNIZED_PACKAGE_NAMES = new Set([
     'garda-agent-orchestrator'
 ]);
+const SOURCE_CHECKOUT_PROVENANCE_PATHS = Object.freeze([
+    path.join('src', 'bin', 'garda.ts'),
+    path.join('tests', 'node'),
+    path.join('scripts', 'node-foundation')
+]);
+const DEPLOYED_BUNDLE_PROVENANCE_PATHS = Object.freeze([
+    'MANIFEST.md',
+    path.join('live', 'version.json'),
+    path.join('live', 'docs', 'agent-rules', '00-core.md'),
+    path.join('live', 'config', 'profiles.json'),
+    path.join('live', 'config', 'review-capabilities.json')
+]);
 
 export type DelegationRuntimeKind = 'source_checkout' | 'deployed_bundle' | 'packaged_npm' | 'unknown';
 export type DelegationTrustLevel = 'trusted_self_hosted' | 'trusted_local_workspace' | 'packaged_runtime' | 'unknown';
@@ -85,6 +97,10 @@ function validateBundleName(bundleName: string, source: string): string {
 function isRecognizedPackageName(value: unknown): boolean {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized !== '' && RECOGNIZED_PACKAGE_NAMES.has(normalized);
+}
+
+function rootHasAllPaths(rootPath: string, relativePaths: readonly string[]): boolean {
+    return relativePaths.every((relativePath) => fs.existsSync(path.join(rootPath, relativePath)));
 }
 
 function resolvePreferredCliPath(candidateRoot: string): string | null {
@@ -212,12 +228,12 @@ function findDeployedBundleRoot(startDir: string): string | null {
     let current = path.resolve(startDir);
 
     while (true) {
-        if (isGardaPackageRoot(current) && !looksLikeSourceCheckout(current)) {
+        if (isGardaPackageRoot(current) && looksLikeDeployedBundleRoot(current)) {
             return current;
         }
 
         const bundleRoot = path.join(current, effectiveName);
-        if (isGardaPackageRoot(bundleRoot)) {
+        if (isGardaPackageRoot(bundleRoot) && looksLikeDeployedBundleRoot(bundleRoot)) {
             return bundleRoot;
         }
         const inferredBundleRoot = findDeployedBundleRootInWorkspace(current, effectiveName, allowFallback);
@@ -250,7 +266,7 @@ function findDeployedBundleRootInWorkspace(workspaceRoot: string, preferredName:
             continue;
         }
         const candidateRoot = path.join(workspaceRoot, entry.name);
-        if (!isGardaPackageRoot(candidateRoot)) {
+        if (!isGardaPackageRoot(candidateRoot) || !looksLikeDeployedBundleRoot(candidateRoot)) {
             continue;
         }
         if (entry.name === preferredName) {
@@ -438,14 +454,36 @@ function resolveCliPathIfExternal(candidateRoot: string | null, currentScriptPat
     return candidateCli;
 }
 
-function resolveCurrentRuntimeKind(packageRoot: string): DelegationRuntimeKind {
+function hasLauncherOwnershipEvidence(packageRoot: string, currentScriptPath: string): boolean {
+    try {
+        const expectedCliPath = resolvePreferredCliPath(path.resolve(packageRoot));
+        if (!expectedCliPath) {
+            return false;
+        }
+        return fs.realpathSync.native(expectedCliPath) === fs.realpathSync.native(currentScriptPath);
+    } catch {
+        return false;
+    }
+}
+
+function looksLikeDeployedBundleRoot(packageRoot: string): boolean {
+    const normalizedPackageRoot = path.resolve(packageRoot);
+    return !isPackageInstalledUnderNodeModules(normalizedPackageRoot)
+        && !looksLikeSourceCheckout(normalizedPackageRoot)
+        && rootHasAllPaths(normalizedPackageRoot, DEPLOYED_BUNDLE_PROVENANCE_PATHS);
+}
+
+function resolveCurrentRuntimeKind(packageRoot: string, currentScriptPath: string): DelegationRuntimeKind {
+    if (!hasLauncherOwnershipEvidence(packageRoot, currentScriptPath)) {
+        return 'unknown';
+    }
     if (isPackageInstalledUnderNodeModules(packageRoot)) {
         return 'packaged_npm';
     }
     if (looksLikeSourceCheckout(packageRoot)) {
         return 'source_checkout';
     }
-    if (inferBundleNameFromPackageRoot(packageRoot)) {
+    if (looksLikeDeployedBundleRoot(packageRoot)) {
         return 'deployed_bundle';
     }
     return 'unknown';
@@ -511,7 +549,7 @@ export function resolveDelegatedLauncherTrustEvidence(
     packageRoot: string
 ): DelegationTrustEvidence {
     const normalizedPackageRoot = path.resolve(packageRoot);
-    const currentRuntimeKind = resolveCurrentRuntimeKind(normalizedPackageRoot);
+    const currentRuntimeKind = resolveCurrentRuntimeKind(normalizedPackageRoot, currentScriptPath);
     const installedUnderNodeModules = isPackageInstalledUnderNodeModules(normalizedPackageRoot);
     const delegatedRuntime = resolveDelegatedRuntimeEvidence(argv, cwd, currentScriptPath, normalizedPackageRoot);
     const currentRuntime: CurrentRuntimeEvidence = {
@@ -643,15 +681,14 @@ function extractBundleNameArg(argv: string[]): string | null {
 
 function looksLikeSourceCheckout(packageRoot: string): boolean {
     return fs.existsSync(path.join(packageRoot, '.git'))
-        || fs.existsSync(path.join(packageRoot, 'tests', 'node'))
-        || fs.existsSync(path.join(packageRoot, 'scripts', 'node-foundation'));
+        || rootHasAllPaths(packageRoot, SOURCE_CHECKOUT_PROVENANCE_PATHS);
 }
 
 export function inferBundleNameFromPackageRoot(packageRoot: string): string | null {
     if (!packageRoot || isPackageInstalledUnderNodeModules(packageRoot)) {
         return null;
     }
-    if (looksLikeSourceCheckout(packageRoot)) {
+    if (!looksLikeDeployedBundleRoot(packageRoot)) {
         return null;
     }
     const parentDir = path.dirname(path.resolve(packageRoot));

@@ -27,6 +27,7 @@ Garda 1.1.x uses Node 24 LTS as the primary runtime line and supports Node 22.13
 - Source-install mode: `npm install` from a source checkout runs `prepare`, which builds the generated launcher and compiled runtime before first use.
 - Test-staged mode: Node foundation tests may stage `.node-build/src/**/*.js`, and `bin/garda.js` can resolve that compiled output when `dist/` is intentionally absent in the fixture.
 - Packaged-install mode: under `node_modules`, `bin/garda.js` first delegates to a local workspace/source `bin/garda.js` when the current project already contains an orchestrator checkout or deployed bundle; otherwise it falls back to its packaged compiled runtime in `dist/src/**/*.js`.
+- Delegation trust binds the active `bin/garda.js` realpath back to its claimed package root and accepts local source/deployed runtimes only when their repo-owned provenance markers are present. Minimal package-shape lookalikes must fail closed as `runtime_kind=unknown`.
 - Raw `src/**/*.ts` files are compile-time inputs only; direct `.ts` execution is not part of the supported runtime contract.
 - Public CLI commands, gate names, and verification markers are the same in both modes.
 
