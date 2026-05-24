@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
@@ -305,6 +306,43 @@ function reservePort(): Promise<net.Server> {
         server.once('error', reject);
         server.listen(0, DEFAULT_UI_HOST, () => resolve(server));
     });
+}
+
+function reserveSpecificPort(port: number): Promise<net.Server | null> {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        const onError = (error: Error & { code?: string }) => {
+            server.removeListener('listening', onListening);
+            if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
+                resolve(null);
+                return;
+            }
+            reject(error);
+        };
+        const onListening = () => {
+            server.removeListener('error', onError);
+            resolve(server);
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(port, DEFAULT_UI_HOST);
+    });
+}
+
+async function reserveConsecutivePortPair(): Promise<{ reserved: net.Server; busyPort: number; nextPort: number }> {
+    for (let port = 41000; port < 41100; port += 1) {
+        const reserved = await reserveSpecificPort(port);
+        if (!reserved) {
+            continue;
+        }
+        const next = await reserveSpecificPort(port + 1);
+        if (next) {
+            await closeNetServer(next);
+            return { reserved, busyPort: port, nextPort: port + 1 };
+        }
+        await closeNetServer(reserved);
+    }
+    throw new Error('Unable to reserve consecutive local UI test ports.');
 }
 
 function closeNetServer(server: net.Server): Promise<void> {
@@ -1399,6 +1437,45 @@ test('local UI server skips browser-unsafe ports in configured local ranges', as
         assert.equal(response.status, 200);
     } finally {
         await server.close();
+    }
+});
+
+test('local UI server falls back to a safe range when port 0 repeatedly binds unsafe ports', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const { reserved, busyPort, nextPort } = await reserveConsecutivePortPair();
+    const originalAddress = http.Server.prototype.address;
+    let unsafeDynamicBinds = 0;
+    http.Server.prototype.address = function patchedAddress(this: http.Server) {
+        const address = originalAddress.call(this);
+        if (unsafeDynamicBinds < 25 && address && typeof address === 'object') {
+            unsafeDynamicBinds += 1;
+            return {
+                ...address,
+                port: 6000
+            };
+        }
+        return address;
+    };
+    try {
+        const server = await startLocalUiServer({
+            repoRoot,
+            port: 0,
+            portStart: busyPort,
+            portEnd: nextPort
+        });
+        try {
+            assert.equal(server.host, DEFAULT_UI_HOST);
+            assert.equal(server.port, nextPort);
+            const response = await fetch(server.url);
+            assert.equal(response.status, 200);
+        } finally {
+            await server.close();
+        }
+        assert.equal(unsafeDynamicBinds, 25);
+    } finally {
+        http.Server.prototype.address = originalAddress;
+        await closeNetServer(reserved);
     }
 });
 

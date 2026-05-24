@@ -586,20 +586,25 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
     }
     const requestedPort = options.port;
     const explicitPort = requestedPort !== null && requestedPort !== undefined;
-    const candidatePorts = !explicitPort
-        ? Array.from({ length: portEnd - portStart + 1 }, (_, index) => portStart + index)
+    const requestedDynamicPort = explicitPort && requestedPort === 0;
+    const rangeCandidatePorts = Array.from({ length: portEnd - portStart + 1 }, (_, index) => portStart + index);
+    const candidatePorts = requestedDynamicPort
+        ? [0, ...rangeCandidatePorts.filter((port) => port !== 0)]
+        : !explicitPort
+        ? rangeCandidatePorts
         : [requestedPort];
     let lastError: Error | null = null;
-    const dynamicRetryCount = explicitPort && requestedPort === 0 ? DYNAMIC_PORT_RETRY_LIMIT : 1;
     for (const port of candidatePorts) {
         validatePort(port, 'port');
+        const candidateIsExplicitPort = explicitPort && (!requestedDynamicPort || port === 0);
         if (port !== 0 && isBrowserUnsafePort(port)) {
             lastError = new Error(`Port ${port} is not browser-safe for localhost UI fetch/navigation.`);
-            if (explicitPort) {
+            if (candidateIsExplicitPort) {
                 throw lastError;
             }
             continue;
         }
+        const dynamicRetryCount = port === 0 ? DYNAMIC_PORT_RETRY_LIMIT : 1;
         for (let retryIndex = 0; retryIndex < dynamicRetryCount; retryIndex += 1) {
             const server = createLocalUiServer(options.repoRoot, {
                 actionsEnabled: options.actionsEnabled === true,
@@ -631,7 +636,7 @@ export async function startLocalUiServer(options: StartLocalUiServerOptions): Pr
             } catch (error: unknown) {
                 lastError = error instanceof Error ? error : new Error(String(error));
                 await closeServer(server).catch(() => undefined);
-                if (explicitPort || !('code' in (lastError as Error & { code?: string })) || (lastError as Error & { code?: string }).code !== 'EADDRINUSE') {
+                if (candidateIsExplicitPort || !('code' in (lastError as Error & { code?: string })) || (lastError as Error & { code?: string }).code !== 'EADDRINUSE') {
                     throw lastError;
                 }
             }
