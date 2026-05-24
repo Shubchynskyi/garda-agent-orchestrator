@@ -466,6 +466,8 @@ test('getCanonicalEntrypoint is case-insensitive', () => {
     assert.equal(getCanonicalEntrypoint('CLAUDE'), 'CLAUDE.md');
     assert.equal(getCanonicalEntrypoint('qwen'), 'QWEN.md');
     assert.equal(getCanonicalEntrypoint('githubcopilot'), '.github/copilot-instructions.md');
+    assert.equal(getCanonicalEntrypoint('GitHub Copilot CLI'), '.github/copilot-instructions.md');
+    assert.equal(getCanonicalEntrypoint('github-copilot-coding-agent'), '.github/copilot-instructions.md');
 });
 
 test('getBundlePath joins target root with default bundle name', () => {

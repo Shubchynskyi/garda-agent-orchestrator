@@ -7,10 +7,10 @@ import {
     PRIMARY_CLI_ENTRYPOINT,
     resolveBundleName,
     resolveBundleNameForTarget,
-    SOURCE_TO_ENTRYPOINT_MAP,
-    SOURCE_OF_TRUTH_VALUES
+    SOURCE_TO_ENTRYPOINT_MAP
 } from '../core/constants';
 import { pathExists, readTextFile } from '../core/filesystem';
+import { normalizeProviderId } from '../core/provider-registry';
 
 function resolveCliRelativePathCandidates(bundleName: string): string[] {
     return CLI_ENTRYPOINT_CANDIDATES.map((entrypoint) => `${bundleName}/${entrypoint}`);
@@ -191,10 +191,7 @@ export interface SourceCheckoutRuntimeStalenessResult {
 }
 
 export function getCanonicalEntrypoint(sourceOfTruth: string): string | null {
-    const key = sourceOfTruth.trim().toUpperCase().replace(/\s+/g, '');
-    const match = SOURCE_OF_TRUTH_VALUES.find(
-        function (value) { return value.toUpperCase().replace(/\s+/g, '') === key; }
-    );
+    const match = normalizeProviderId(sourceOfTruth);
     return match ? SOURCE_TO_ENTRYPOINT_MAP[match as keyof typeof SOURCE_TO_ENTRYPOINT_MAP] : null;
 }
 

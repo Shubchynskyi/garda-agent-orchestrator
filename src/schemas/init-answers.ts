@@ -5,6 +5,7 @@ import {
     SOURCE_OF_TRUTH_VALUES,
     SOURCE_TO_ENTRYPOINT_MAP
 } from '../core/constants';
+import { normalizeProviderId } from '../core/provider-registry';
 import {
     ensurePlainObject,
     normalizeBooleanLike,
@@ -24,7 +25,10 @@ function normalizeActiveAgentFiles(value: unknown): string[] {
     const normalized: string[] = [];
     for (const part of parts) {
         const trimmed = normalizeNonEmptyString(part, 'ActiveAgentFiles');
-        const match = ALL_AGENT_ENTRYPOINT_FILES.find((candidate) => candidate.toLowerCase() === trimmed.toLowerCase());
+        const providerMatch = normalizeProviderId(trimmed);
+        const match = providerMatch
+            ? SOURCE_TO_ENTRYPOINT_MAP[providerMatch as keyof typeof SOURCE_TO_ENTRYPOINT_MAP]
+            : ALL_AGENT_ENTRYPOINT_FILES.find((candidate) => candidate.toLowerCase() === trimmed.toLowerCase());
         if (!match) {
             throw new Error(`ActiveAgentFiles entry '${trimmed}' is not a canonical entrypoint.`);
         }
@@ -35,6 +39,15 @@ function normalizeActiveAgentFiles(value: unknown): string[] {
     }
 
     return normalized;
+}
+
+function normalizeSourceOfTruth(value: unknown): string {
+    const normalized = normalizeNonEmptyString(value, 'SourceOfTruth');
+    const match = normalizeProviderId(normalized);
+    if (!match) {
+        throw new Error(`SourceOfTruth must be one of: ${SOURCE_OF_TRUTH_VALUES.join(', ')}.`);
+    }
+    return match;
 }
 
 interface NormalizedInitAnswers {
@@ -54,7 +67,7 @@ export function validateInitAnswers(input: unknown): NormalizedInitAnswers {
     const normalized: NormalizedInitAnswers = {
         AssistantLanguage: normalizeNonEmptyString(raw.AssistantLanguage, 'AssistantLanguage'),
         AssistantBrevity: normalizeEnum(raw.AssistantBrevity, BREVITY_VALUES, 'AssistantBrevity'),
-        SourceOfTruth: normalizeEnum(raw.SourceOfTruth, SOURCE_OF_TRUTH_VALUES, 'SourceOfTruth'),
+        SourceOfTruth: normalizeSourceOfTruth(raw.SourceOfTruth),
         EnforceNoAutoCommit: normalizeBooleanLike(raw.EnforceNoAutoCommit, 'EnforceNoAutoCommit'),
         ClaudeOrchestratorFullAccess: normalizeBooleanLike(raw.ClaudeOrchestratorFullAccess, 'ClaudeOrchestratorFullAccess'),
         TokenEconomyEnabled: normalizeBooleanLike(raw.TokenEconomyEnabled, 'TokenEconomyEnabled'),
@@ -105,7 +118,6 @@ export function serializeInitAnswers(input: unknown): SerializedInitAnswers {
 }
 
 export function getCanonicalEntrypointForSource(sourceOfTruth: unknown): string {
-    const normalized = normalizeEnum(sourceOfTruth, SOURCE_OF_TRUTH_VALUES, 'SourceOfTruth');
+    const normalized = normalizeSourceOfTruth(sourceOfTruth);
     return SOURCE_TO_ENTRYPOINT_MAP[normalized as keyof typeof SOURCE_TO_ENTRYPOINT_MAP];
 }
-

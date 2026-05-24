@@ -143,6 +143,8 @@ describe('provider-registry: internal consistency', () => {
         assert.strictEqual(normalizeProviderId('github-copilot-cli'), 'GitHubCopilot');
         assert.strictEqual(normalizeProviderId('GitHub Copilot CLI'), 'GitHubCopilot');
         assert.strictEqual(normalizeProviderId('copilot-cli'), 'GitHubCopilot');
+        assert.strictEqual(normalizeProviderId('GitHub Copilot Agent'), 'GitHubCopilot');
+        assert.strictEqual(normalizeProviderId('github-copilot-coding-agent'), 'GitHubCopilot');
         assert.strictEqual(normalizeProviderId('OtherProvider'), null);
     });
 

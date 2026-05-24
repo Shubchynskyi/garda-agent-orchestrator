@@ -31,6 +31,23 @@ test('validateInitAnswers normalizes booleans and canonical entrypoint selection
     assert.equal(getCanonicalEntrypointForSource(normalized.SourceOfTruth), 'QWEN.md');
 });
 
+test('validateInitAnswers normalizes provider aliases before persistence', () => {
+    const normalized = validateInitAnswers({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'GitHub Copilot Agent',
+        EnforceNoAutoCommit: true,
+        ClaudeOrchestratorFullAccess: false,
+        TokenEconomyEnabled: true,
+        CollectedVia: 'CLI_NONINTERACTIVE',
+        ActiveAgentFiles: 'copilot-cli, AGENTS.md'
+    });
+
+    assert.equal(normalized.SourceOfTruth, 'GitHubCopilot');
+    assert.deepEqual(normalized.ActiveAgentFiles, ['.github/copilot-instructions.md', 'AGENTS.md']);
+    assert.equal(getCanonicalEntrypointForSource('github-copilot-coding-agent'), '.github/copilot-instructions.md');
+});
+
 test('serializeInitAnswers returns the persisted string-backed contract shape', () => {
     const serialized = serializeInitAnswers({
         AssistantLanguage: 'English',
