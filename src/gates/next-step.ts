@@ -6,8 +6,10 @@ import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
     computeReviewLaunchPlan,
     getReviewExecutionDependencies,
+    resolveEffectiveReviewExecutionPolicyConfigFromWorkflowConfig,
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode,
+    type ResolvedReviewExecutionPolicyConfig,
     type ReviewLaunchPlan
 } from '../core/review-execution-policy';
 import {
@@ -256,7 +258,7 @@ export interface NextStepProjectMemorySummary {
 export interface NextStepReviewSummary {
     required_reviews: string[];
     review_execution_policy_mode: EffectiveReviewExecutionPolicyMode;
-    review_execution_policy_source: 'preflight' | 'workflow_config_fallback';
+    review_execution_policy_source: ReviewExecutionPolicySource;
     launchable_review_types: string[];
     blocked_review_lanes: NextStepBlockedReviewLane[];
     failed_review_type: string | null;
@@ -2300,19 +2302,30 @@ function preflightRequiresAuditedNoOp(preflight: Record<string, unknown> | null)
         && zeroDiffGuard.completion_requires_audited_no_op === true;
 }
 
-function resolveReviewPolicy(preflight: Record<string, unknown> | null): {
+type ReviewExecutionPolicySource = 'preflight' | 'workflow_config' | 'workflow_config_fallback';
+
+function hasPreflightReviewPolicyMode(preflight: Record<string, unknown> | null): boolean {
+    return !!preflight
+        && isPlainRecord(preflight.review_execution_policy)
+        && Object.prototype.hasOwnProperty.call(preflight.review_execution_policy, 'mode');
+}
+
+function resolveReviewPolicy(
+    preflight: Record<string, unknown> | null,
+    workflowPolicy: ResolvedReviewExecutionPolicyConfig
+): {
     mode: EffectiveReviewExecutionPolicyMode;
-    source: 'preflight' | 'workflow_config_fallback';
+    source: ReviewExecutionPolicySource;
 } {
-    if (preflight && isPlainRecord(preflight.review_execution_policy)) {
+    if (hasPreflightReviewPolicyMode(preflight)) {
         return {
             mode: resolveReviewExecutionPolicyModeFromPreflight(preflight),
             source: 'preflight'
         };
     }
     return {
-        mode: resolveReviewExecutionPolicyModeFromPreflight(null),
-        source: 'workflow_config_fallback'
+        mode: workflowPolicy.mode,
+        source: workflowPolicy.configured ? 'workflow_config' : 'workflow_config_fallback'
     };
 }
 
@@ -5356,6 +5369,15 @@ function readWorkflowConfigRecordForNextStep(repoRoot: string): Record<string, u
     return workflowConfig;
 }
 
+function resolveReviewExecutionPolicyForNextStep(
+    workflowConfig: Record<string, unknown> | null
+): ResolvedReviewExecutionPolicyConfig {
+    return resolveEffectiveReviewExecutionPolicyConfigFromWorkflowConfig(
+        workflowConfig,
+        LEGACY_REVIEW_EXECUTION_POLICY_MODE
+    );
+}
+
 function readScopeBudgetGuardEvaluation(
     repoRoot: string,
     preflight: Record<string, unknown> | null,
@@ -7047,8 +7069,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
+    let workflowReviewPolicy: ResolvedReviewExecutionPolicyConfig = {
+        mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
+        configured: false
+    };
     try {
-        readWorkflowConfigRecordForNextStep(repoRoot);
+        workflowReviewPolicy = resolveReviewExecutionPolicyForNextStep(
+            readWorkflowConfigRecordForNextStep(repoRoot)
+        );
     } catch (error: unknown) {
         const fallbackFullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
         const coreArtifacts = artifactState(repoRoot, [
@@ -7164,7 +7192,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         preflightPath
     });
     const projectMemorySummary = buildProjectMemoryNextStepSummary(projectMemoryEvidence);
-    const reviewPolicy = resolveReviewPolicy(preflight);
+    const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy);
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
     ));

@@ -5131,6 +5131,124 @@ describe('gates/next-step', () => {
         assert.ok(afterCode.commands[0].command.includes('--review-type "test"'));
     });
 
+    it('reports explicit workflow-config review policy before preflight exists', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'strict_sequential' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.review.review_execution_policy_mode, 'strict_sequential');
+        assert.equal(result.review.review_execution_policy_source, 'workflow_config');
+        assert.match(formatNextStepText(result), /ReviewPolicy: strict_sequential \(workflow_config\)/);
+    });
+
+    it('routes malformed workflow-config review policy to validation before policy fallback', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        (workflowConfig as unknown as Record<string, unknown>).review_execution_policy = { mode: 'not-a-policy' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'workflow-config-validation');
+        assert.ok(result.reason.includes('workflow-config.review_execution_policy.mode'));
+        assert.ok(result.commands[0].command.includes('workflow validate'));
+        assert.equal(result.review.review_execution_policy_source, 'workflow_config_fallback');
+    });
+
+    it('routes workflow-config review policy key casing to validation before policy fallback', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.project_memory_maintenance.enabled = false;
+        delete (workflowConfig as unknown as Record<string, unknown>).review_execution_policy;
+        (workflowConfig as unknown as Record<string, unknown>).Review_Execution_Policy = { mode: 'strict_sequential' };
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'workflow-config-validation');
+        assert.ok(result.reason.includes("workflow-config must use the exact key 'review_execution_policy'"));
+        assert.ok(result.commands[0].command.includes('workflow validate'));
+        assert.equal(result.review.review_execution_policy_source, 'workflow_config_fallback');
+    });
+
+    it('falls back to explicit workflow-config review policy when preflight lacks policy metadata', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'strict_sequential' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true, test: true },
+            { seedPostPreflight: false }
+        );
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        delete preflight.review_execution_policy;
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.review_execution_policy_mode, 'strict_sequential');
+        assert.equal(result.review.review_execution_policy_source, 'workflow_config');
+    });
+
+    it('keeps preflight review policy authoritative over conflicting workflow config', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'strict_sequential' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true, test: true },
+            { reviewPolicyMode: 'code_first_optional' }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context');
+        assert.equal(result.review.review_execution_policy_mode, 'code_first_optional');
+        assert.equal(result.review.review_execution_policy_source, 'preflight');
+    });
+
+    it('reports workflow-config fallback only for implicit legacy compatibility', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.project_memory_maintenance.enabled = false;
+        delete (workflowConfig as unknown as Record<string, unknown>).review_execution_policy;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.equal(result.review.review_execution_policy_mode, 'legacy_test_downstream');
+        assert.equal(result.review.review_execution_policy_source, 'workflow_config_fallback');
+    });
+
     it('runs enabled full-suite validation before launching mandatory test review', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
