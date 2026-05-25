@@ -32,6 +32,7 @@
 - made final closeout and `next-step` commit guidance suppress commit commands and confirmation questions when no tracked committable changes remain, while preserving guarded commit prompts for real tracked diffs
 - added launcher delegation trust evidence that distinguishes self-hosted source checkouts, deployed bundles, packaged npm runtimes, and unknown runtimes, with fail-closed handling for unrecognized or ambiguous local runtime identity
 - made `next-step` runtime provider detection keep explicit `GARDA_EXECUTION_PROVIDER` authoritative while recognizing `QWEN_CODE` before Codex fallback markers such as `CODEX_HOME`
+- preserved the canonical offline-mode error for network-sensitive CLI commands before source/bundle parity checks, so stale parity diagnostics no longer mask `--offline` blocking failures
 - ignored generated Garda runtime/control-plane artifacts such as task-event JSONL, review scratch output, runtime caches, and lock/index files during `classify-change` and review routing, while reporting them as workspace hygiene warnings and preserving real source/test/config/doc scope
 - stopped skill telemetry from creating `runtime/task-events` artifacts for invalid or missing bundle roots while preserving non-blocking telemetry behavior for valid roots
 - made `next-step` fail closed when `TASK.md` says `DONE` but current lifecycle evidence is not terminal-clean, routing operators to audited task reset/reopen recovery instead of hiding failed gates or missing final closeout

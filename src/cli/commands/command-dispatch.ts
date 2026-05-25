@@ -229,6 +229,15 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
+    if (!isIntrospection) {
+        assertOfflinePolicy({
+            offlineFlag: globalFlags.offline,
+            offlineEnv: process.env.GARDA_OFFLINE,
+            forceNetwork: globalFlags.forceNetwork,
+            commandName
+        });
+    }
+
     const parityPolicy = resolveCommandParityPolicy(commandName, commandArgv);
     if (parityPolicy.mode !== 'skip') {
         const parityRoot = parityPolicy.root;
@@ -274,15 +283,6 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
 
     if (printCommandHelpIfRequested(commandName, commandArgv)) {
         return;
-    }
-
-    if (!isIntrospection) {
-        assertOfflinePolicy({
-            offlineFlag: globalFlags.offline,
-            offlineEnv: process.env.GARDA_OFFLINE,
-            forceNetwork: globalFlags.forceNetwork,
-            commandName
-        });
     }
 
     switch (commandName) {

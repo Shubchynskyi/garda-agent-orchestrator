@@ -4,7 +4,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as childProcess from 'node:child_process';
-import { EXIT_PRECONDITION_FAILURE } from '../../../src/cli/exit-codes';
+import {
+    EXIT_OFFLINE_BLOCKED,
+    EXIT_PRECONDITION_FAILURE
+} from '../../../src/cli/exit-codes';
 import { dispatchCliCommand } from '../../../src/cli/commands/command-dispatch';
 import {
     BUNDLE_RUNTIME_INVENTORY_PATHS,
@@ -299,6 +302,30 @@ test('mutating target-root lifecycle commands block on target parity drift', () 
         assert.ok(combined.includes(`ParityRoot: ${targetDir}`));
         assert.ok(combined.includes('mutating lifecycle commands must not run'));
         assert.ok(combined.includes('Source Parity Violation: The deployed bundle is stale'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('offline network-sensitive commands fail before target parity drift', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-offline-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-offline-target-'));
+    try {
+        seedStaleSourceCheckoutBundle(targetDir);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, '--offline', 'update', '--target-root', targetDir, '--help-not-real-flag'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, EXIT_OFFLINE_BLOCKED);
+        assert.ok(combined.includes('offline mode is active'));
+        assert.ok(combined.includes('--force-network'));
+        assert.ok(!combined.includes('PARITY_BLOCKED'));
+        assert.ok(!combined.includes('Source Parity Violation: The deployed bundle is stale'));
     } finally {
         fs.rmSync(callerDir, { recursive: true, force: true });
         fs.rmSync(targetDir, { recursive: true, force: true });
