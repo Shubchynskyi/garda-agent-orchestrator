@@ -1,36 +1,24 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { writeFileAtomically } from '../core/filesystem';
-import { redactSensitiveData } from '../core/redaction';
 import { assertValidTaskId, inspectTaskEventFile } from '../gate-runtime/task-events';
-import {
-    buildTaskHistoryLedger,
-    resolveTaskHistoryLedgerPath
-} from '../gate-runtime/task-history-ledger';
 import { withReviewArtifactReadBarrier } from '../gate-runtime/review-artifacts';
 import { inspectCompletionGateFinalizationLock, type CompletionGateFinalizationLockPolicy } from './finalization-lock';
 import { fileSha256, toPosix } from './helpers';
 import {
     buildTokenEconomySummary,
-    formatTimestamp,
     normalizeCycleBindingPath,
     parseTimestamp,
     resolveTaskCycleBindingSnapshot,
-    shouldIncludeFullSuiteTelemetryForCurrentCycle,
     type TaskCycleBindingSnapshot
 } from './task-events-summary';
 import { readOptionalSkillSelectionTimelineEvidence } from '../runtime/optional-skill-selection';
-import { resolveFullSuiteValidationRequirementForOrderedTaskEvents } from '../gate-runtime/lifecycle-event-types';
-import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from './classify-change';
 import {
     isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
     loadFullSuiteValidationConfig
 } from './full-suite-validation';
 import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
-    PROJECT_MEMORY_IMPACT_BLOCKED_EVENT,
-    getProjectMemoryImpactLifecycleEvidence,
-    type ProjectMemoryImpactLifecycleEvidence
+    getProjectMemoryImpactLifecycleEvidence
 } from './project-memory-impact';
 import { evaluateHiddenReviewTimingTrust } from './review-timing-trust';
 import {
@@ -59,7 +47,6 @@ import {
     type ProfileReviewDecisionSummary,
     parseOptionalNumber,
     buildReviewIntegrityAttestation,
-    collectKnownRequiredReviewTypes,
     readDocImpactSummary,
     readReviewTrustSummary,
     readReviewTrustSummaryFromReviewGate,
@@ -69,17 +56,35 @@ import {
     readTaskQueueMetadata,
     resolveEventsRoot,
     resolveReviewsRoot,
-    safeReadJson,
-    updateEvidenceArtifactState
+    safeReadJson
 } from './task-audit-summary-collectors';
-import { buildCommitCommandSuggestion, formatFinalCloseoutMarkdown } from './task-audit-summary-renderers';
-import { cleanupTerminalReviewTempOutputs } from '../cli/commands/gates-artifacts';
-import { runDailyRetentionMaintenance } from '../lifecycle/daily-retention-maintenance';
+import { buildCommitCommandSuggestion } from './task-audit-summary-renderers';
 import {
     buildTaskQueueStatusContract,
     type TaskQueueStatusContract
 } from '../core/task-queue-status-contract';
+import {
+    buildCompletionReviewOrderBlocker,
+    buildLifecycleGateOutcomes,
+    getLifecycleGates,
+    hasCurrentCycleProjectMemoryImpactEvent,
+    readOrderedTaskEvents,
+    resolveFullSuiteValidationRequirementForCurrentCycle,
+    type TaskAuditEvent
+} from './task-audit-summary-lifecycle';
+import {
+    buildAuditedChangedFiles,
+    buildPostDoneWorkspaceDriftBlocker,
+    isLocalControlPlaneCommitPath,
+    resolveTrackedCommittableChangedFiles
+} from './task-audit-summary-drift';
+import {
+    collectEvidenceArtifacts,
+    collectRequiredReviewBlockers
+} from './task-audit-summary-review-evidence';
+import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-project-memory';
 export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
+export { synchronizeFinalCloseoutArtifacts } from './task-audit-summary-closeout-sync';
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no tracked committable changes are present.';
 const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
@@ -213,21 +218,6 @@ export interface PointInTimeSnapshot {
     acquisition_policy?: CompletionGateFinalizationLockPolicy | null;
 }
 
-type TaskAuditEvent = Record<string, unknown>;
-
-interface LifecycleGateSpec {
-    gate: string;
-    pass_event: string;
-    fail_events: string[];
-}
-
-interface OrderedTaskEvents {
-    events: TaskAuditEvent[];
-    count: number;
-    firstEventUtc: string | null;
-    lastEventUtc: string | null;
-}
-
 interface PreflightSummary {
     path: string;
     sha256: string | null;
@@ -251,396 +241,6 @@ const REVIEW_TIMING_AUDIT_TYPES = [
     'infra',
     'dependency'
 ] as const;
-
-const BASE_LIFECYCLE_GATES: ReadonlyArray<LifecycleGateSpec> = [
-    { gate: 'enter-task-mode', pass_event: 'TASK_MODE_ENTERED', fail_events: [] },
-    { gate: 'load-rule-pack', pass_event: 'RULE_PACK_LOADED', fail_events: ['RULE_PACK_LOAD_FAILED'] },
-    { gate: 'handshake-diagnostics', pass_event: 'HANDSHAKE_DIAGNOSTICS_RECORDED', fail_events: [] },
-    { gate: 'shell-smoke-preflight', pass_event: 'SHELL_SMOKE_PREFLIGHT_RECORDED', fail_events: [] },
-    { gate: 'classify-change', pass_event: 'PREFLIGHT_CLASSIFIED', fail_events: ['PREFLIGHT_FAILED'] },
-    { gate: 'compile-gate', pass_event: 'COMPILE_GATE_PASSED', fail_events: ['COMPILE_GATE_FAILED'] },
-    { gate: 'review-phase', pass_event: 'REVIEW_PHASE_STARTED', fail_events: [] },
-    { gate: 'required-reviews-check', pass_event: 'REVIEW_GATE_PASSED', fail_events: ['REVIEW_GATE_FAILED'] },
-    { gate: 'doc-impact-gate', pass_event: 'DOC_IMPACT_ASSESSED', fail_events: ['DOC_IMPACT_ASSESSMENT_FAILED'] },
-    { gate: 'completion-gate', pass_event: 'COMPLETION_GATE_PASSED', fail_events: ['COMPLETION_GATE_FAILED'] }
-];
-
-function getLifecycleGates(fullSuiteValidationEnabled: boolean, projectMemoryImpactRequired: boolean): LifecycleGateSpec[] {
-    const gates = BASE_LIFECYCLE_GATES.map((entry) => ({
-        gate: entry.gate,
-        pass_event: entry.pass_event,
-        fail_events: [...entry.fail_events]
-    }));
-    if (fullSuiteValidationEnabled) {
-        const completionIndex = gates.findIndex((entry) => entry.gate === 'completion-gate');
-        const fullSuiteGate = {
-            gate: 'full-suite-validation',
-            pass_event: 'FULL_SUITE_VALIDATION_PASSED',
-            fail_events: ['FULL_SUITE_VALIDATION_FAILED']
-        };
-        if (completionIndex === -1) {
-            gates.push(fullSuiteGate);
-        } else {
-            gates.splice(completionIndex, 0, fullSuiteGate);
-        }
-    }
-    if (projectMemoryImpactRequired) {
-        const currentCompletionIndex = gates.findIndex((entry) => entry.gate === 'completion-gate');
-        const projectMemoryGate = {
-            gate: 'project-memory-impact',
-            pass_event: PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
-            fail_events: [PROJECT_MEMORY_IMPACT_BLOCKED_EVENT]
-        };
-        if (currentCompletionIndex === -1) {
-            gates.push(projectMemoryGate);
-        } else {
-            gates.splice(currentCompletionIndex, 0, projectMemoryGate);
-        }
-    }
-    return gates;
-}
-
-function readOrderedTaskEvents(taskEventFile: string): OrderedTaskEvents {
-    const events: TaskAuditEvent[] = [];
-
-    if (fs.existsSync(taskEventFile) && fs.statSync(taskEventFile).isFile()) {
-        const rawLines = fs.readFileSync(taskEventFile, 'utf8')
-            .split('\n')
-            .filter((line) => line.trim());
-        for (const line of rawLines) {
-            try {
-                const event = JSON.parse(line);
-                if (event != null) {
-                    events.push(event);
-                }
-            } catch {
-                // Skip malformed event lines so one bad write does not hide the rest of the timeline.
-            }
-        }
-    }
-
-    events.sort((a, b) => {
-        const ta = parseTimestamp(a.timestamp_utc);
-        const tb = parseTimestamp(b.timestamp_utc);
-        return ta.getTime() - tb.getTime();
-    });
-
-    return {
-        events,
-        count: events.length,
-        firstEventUtc: events.length > 0 ? formatTimestamp(events[0].timestamp_utc) : null,
-        lastEventUtc: events.length > 0 ? formatTimestamp(events[events.length - 1].timestamp_utc) : null
-    };
-}
-
-function findLatestEventForTypes(
-    eventTypes: string[],
-    events: TaskAuditEvent[],
-    predicate?: (eventType: string, event: TaskAuditEvent) => boolean
-): { event: TaskAuditEvent; eventType: string } | null {
-    if (events.length === 0 || eventTypes.length === 0) {
-        return null;
-    }
-    const wantedTypes = new Set(eventTypes);
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const event = events[index];
-        const eventType = String(event.event_type || '');
-        if (!wantedTypes.has(eventType)) {
-            continue;
-        }
-        if (predicate && !predicate(eventType, event)) {
-            continue;
-        }
-        return { event, eventType };
-    }
-    return null;
-}
-
-const CURRENT_CYCLE_DOWNSTREAM_GATES = new Set([
-    'review-phase',
-    'required-reviews-check',
-    'doc-impact-gate',
-    'full-suite-validation',
-    'project-memory-impact',
-    'completion-gate'
-]);
-
-function isEventRelevantForLifecycleGate(
-    gateSpec: LifecycleGateSpec,
-    eventType: string,
-    event: TaskAuditEvent,
-    currentCycle: TaskCycleBindingSnapshot | null,
-    repoRoot: string
-): boolean {
-    if (!CURRENT_CYCLE_DOWNSTREAM_GATES.has(gateSpec.gate) || !currentCycle?.compile_gate_timestamp) {
-        return true;
-    }
-
-    if (gateSpec.gate === 'full-suite-validation') {
-        const details = event.details && typeof event.details === 'object'
-            ? event.details as Record<string, unknown>
-            : null;
-        return shouldIncludeFullSuiteTelemetryForCurrentCycle(
-            eventType,
-            event.timestamp_utc,
-            details,
-            currentCycle,
-            repoRoot
-        );
-    }
-
-    const eventTime = parseTimestamp(event.timestamp_utc).getTime();
-    const compileTime = parseTimestamp(currentCycle.compile_gate_timestamp).getTime();
-    if (eventTime > 0 && compileTime > 0 && eventTime < compileTime) {
-        return false;
-    }
-
-    return true;
-}
-
-function readTaskEventSequence(event: TaskAuditEvent): number | null {
-    const integrity = event.integrity && typeof event.integrity === 'object' ? event.integrity as Record<string, unknown> : null;
-    const sequence = typeof integrity?.task_sequence === 'number' ? integrity.task_sequence : Number(integrity?.task_sequence);
-    return Number.isInteger(sequence) ? sequence : null;
-}
-
-function taskEventOccursAfter(candidate: TaskAuditEvent, anchor: TaskAuditEvent, currentCycle: TaskCycleBindingSnapshot | null): boolean {
-    const candidateSequence = readTaskEventSequence(candidate);
-    const anchorSequence = readTaskEventSequence(anchor);
-    if (candidateSequence != null && anchorSequence != null) {
-        return candidateSequence > anchorSequence;
-    }
-    const candidateTime = parseTimestamp(candidate.timestamp_utc).getTime();
-    const anchorTime = parseTimestamp(anchor.timestamp_utc).getTime();
-    const compileTime = currentCycle?.compile_gate_timestamp ? parseTimestamp(currentCycle.compile_gate_timestamp).getTime() : 0;
-    if (candidateTime > 0 && compileTime > 0 && candidateTime < compileTime) {
-        return false;
-    }
-    return candidateTime > 0 && anchorTime > 0 && candidateTime > anchorTime;
-}
-
-function buildCompletionReviewOrderBlocker(
-    requiredReviews: Record<string, boolean>,
-    events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null,
-    repoRoot: string
-): BlockerEntry | null {
-    if (!Object.values(requiredReviews).some((required) => required === true)) {
-        return null;
-    }
-    const reviewGatePass = findLatestEventForTypes(
-        ['REVIEW_GATE_PASSED', 'REVIEW_GATE_PASSED_WITH_OVERRIDE'],
-        events,
-        (eventType, event) => isEventRelevantForLifecycleGate(
-            { gate: 'required-reviews-check', pass_event: 'REVIEW_GATE_PASSED', fail_events: ['REVIEW_GATE_FAILED'] },
-            eventType,
-            event,
-            currentCycle,
-            repoRoot
-        )
-    );
-    if (reviewGatePass) {
-        for (let index = events.length - 1; index >= 0; index -= 1) {
-            const event = events[index];
-            if (!taskEventOccursAfter(event, reviewGatePass.event, currentCycle)) {
-                continue;
-            }
-            const eventType = String(event.event_type || '').trim().toUpperCase();
-            const details = event.details && typeof event.details === 'object' ? event.details as Record<string, unknown> : null;
-            const reviewType = String(details?.review_type || details?.reviewType || '').trim().toLowerCase();
-            if (eventType === 'REVIEW_RECORDED' && requiredReviews[reviewType] === true) {
-                return {
-                    gate: 'required-reviews-check',
-                    reason: 'Required review evidence changed after REVIEW_GATE_PASSED; rerun required-reviews-check and completion-gate.'
-                };
-            }
-        }
-    }
-    const completionPass = findLatestEventForTypes(
-        ['COMPLETION_GATE_PASSED'],
-        events,
-        (eventType, event) => isEventRelevantForLifecycleGate(
-            { gate: 'completion-gate', pass_event: 'COMPLETION_GATE_PASSED', fail_events: ['COMPLETION_GATE_FAILED'] },
-            eventType,
-            event,
-            currentCycle,
-            repoRoot
-        )
-    );
-    if (!completionPass) {
-        return null;
-    }
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const event = events[index];
-        if (!taskEventOccursAfter(event, completionPass.event, currentCycle)) {
-            continue;
-        }
-        const eventType = String(event.event_type || '').trim().toUpperCase();
-        const details = event.details && typeof event.details === 'object' ? event.details as Record<string, unknown> : null;
-        const reviewType = String(details?.review_type || details?.reviewType || '').trim().toLowerCase();
-        const reviewEvidenceChanged =
-            (eventType === 'REVIEW_RECORDED' && requiredReviews[reviewType] === true)
-            || eventType === 'REVIEW_GATE_PASSED'
-            || eventType === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
-            || eventType === 'REVIEW_GATE_FAILED';
-        if (!reviewEvidenceChanged) {
-            continue;
-        }
-        return {
-            gate: 'completion-gate',
-            reason: `Completion gate pass is stale because ${eventType} occurred afterward; rerun review gates and completion-gate.`
-        };
-    }
-    return null;
-}
-
-function resolveFullSuiteValidationRequirementForCurrentCycle(
-    events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null,
-    repoRoot: string,
-    liveFullSuiteValidationEnabled: boolean
-): boolean {
-    if (!currentCycle?.compile_gate_timestamp) {
-        return resolveFullSuiteValidationRequirementForOrderedTaskEvents(
-            events.map((event) => String(event.event_type || '')),
-            liveFullSuiteValidationEnabled
-        ).required;
-    }
-
-    const currentCycleFullSuiteEventTypes = events
-        .filter((event) => shouldIncludeFullSuiteTelemetryForCurrentCycle(
-            String(event.event_type || ''),
-            event.timestamp_utc,
-            event.details && typeof event.details === 'object'
-                ? event.details as Record<string, unknown>
-                : null,
-            currentCycle,
-            repoRoot
-        ))
-        .map((event) => String(event.event_type || '').trim().toUpperCase())
-        .filter((eventType) => eventType.startsWith('FULL_SUITE_VALIDATION_'));
-
-    if (currentCycleFullSuiteEventTypes.length > 0) {
-        return resolveFullSuiteValidationRequirementForOrderedTaskEvents(
-            currentCycleFullSuiteEventTypes,
-            liveFullSuiteValidationEnabled
-        ).required;
-    }
-
-    return liveFullSuiteValidationEnabled;
-}
-
-function hasCurrentCycleProjectMemoryImpactEvent(
-    events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null,
-    repoRoot: string
-): boolean {
-    const gateSpec: LifecycleGateSpec = {
-        gate: 'project-memory-impact',
-        pass_event: PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
-        fail_events: [PROJECT_MEMORY_IMPACT_BLOCKED_EVENT]
-    };
-    return events.some((event) => {
-        const eventType = String(event.event_type || '').trim().toUpperCase();
-        if (eventType !== PROJECT_MEMORY_IMPACT_ASSESSED_EVENT && eventType !== PROJECT_MEMORY_IMPACT_BLOCKED_EVENT) {
-            return false;
-        }
-        return isEventRelevantForLifecycleGate(gateSpec, eventType, event, currentCycle, repoRoot);
-    });
-}
-
-function resolveLifecycleGateStatus(
-    gateSpec: LifecycleGateSpec,
-    events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null,
-    repoRoot: string
-): { gateOutcome: GateOutcome; blocker: BlockerEntry | null } {
-    const passEvents = gateSpec.pass_event === 'REVIEW_GATE_PASSED'
-        ? [gateSpec.pass_event, 'REVIEW_GATE_PASSED_WITH_OVERRIDE']
-        : gateSpec.pass_event === 'FULL_SUITE_VALIDATION_PASSED'
-            ? [gateSpec.pass_event, 'FULL_SUITE_VALIDATION_WARNED']
-            : [gateSpec.pass_event];
-    const lifecyclePredicate = (eventType: string, event: TaskAuditEvent): boolean => (
-        isEventRelevantForLifecycleGate(gateSpec, eventType, event, currentCycle, repoRoot)
-    );
-    const latestPass = findLatestEventForTypes(passEvents, events, lifecyclePredicate);
-    const latestFail = findLatestEventForTypes(gateSpec.fail_events, events, lifecyclePredicate);
-
-    if (latestPass && latestFail) {
-        const passTime = parseTimestamp(latestPass.event.timestamp_utc).getTime();
-        const failTime = parseTimestamp(latestFail.event.timestamp_utc).getTime();
-        if (failTime > passTime) {
-            return {
-                gateOutcome: {
-                    gate: gateSpec.gate,
-                    status: 'FAIL',
-                    event_type: latestFail.eventType,
-                    timestamp_utc: formatTimestamp(latestFail.event.timestamp_utc)
-                },
-                blocker: {
-                    gate: gateSpec.gate,
-                    reason: `Gate emitted ${latestFail.eventType} after earlier pass`
-                }
-            };
-        }
-    }
-
-    if (latestPass) {
-        return {
-            gateOutcome: {
-                gate: gateSpec.gate,
-                status: 'PASS',
-                event_type: latestPass.eventType,
-                timestamp_utc: formatTimestamp(latestPass.event.timestamp_utc)
-            },
-            blocker: null
-        };
-    }
-
-    if (latestFail) {
-        return {
-            gateOutcome: {
-                gate: gateSpec.gate,
-                status: 'FAIL',
-                event_type: latestFail.eventType,
-                timestamp_utc: formatTimestamp(latestFail.event.timestamp_utc)
-            },
-            blocker: {
-                gate: gateSpec.gate,
-                reason: `Gate emitted ${latestFail.eventType}`
-            }
-        };
-    }
-
-    return {
-        gateOutcome: {
-            gate: gateSpec.gate,
-            status: 'MISSING',
-            event_type: gateSpec.pass_event
-        },
-        blocker: null
-    };
-}
-
-function buildLifecycleGateOutcomes(
-    lifecycleGates: LifecycleGateSpec[],
-    events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null,
-    repoRoot: string
-): { gates: GateOutcome[]; blockers: BlockerEntry[] } {
-    const gates: GateOutcome[] = [];
-    const blockers: BlockerEntry[] = [];
-
-    for (const gateSpec of lifecycleGates) {
-        const resolvedGate = resolveLifecycleGateStatus(gateSpec, events, currentCycle, repoRoot);
-        gates.push(resolvedGate.gateOutcome);
-        if (resolvedGate.blocker) {
-            blockers.push(resolvedGate.blocker);
-        }
-    }
-
-    return { gates, blockers };
-}
 
 function readPreflightSummary(reviewsRoot: string, taskId: string): PreflightSummary {
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
@@ -670,253 +270,6 @@ function readPreflightSummary(reviewsRoot: string, taskId: string): PreflightSum
         requiredReviews,
         scopeCategory: typeof preflight?.scope_category === 'string' ? preflight.scope_category : null,
         pathMode: typeof preflight?.mode === 'string' && preflight.mode.trim() ? preflight.mode.trim() : null
-    };
-}
-
-function buildAuditedChangedFiles(
-    repoRoot: string,
-    preflightChangedFiles: string[],
-    docsSummary: FinalCloseoutDocsSummary
-): { changedFiles: string[]; violations: string[] } {
-    const changedFiles: string[] = [];
-    const seen = new Set<string>();
-    const preflightPathSet = new Set(preflightChangedFiles.map((entry) => toPosix(String(entry || '').trim())).filter(Boolean));
-    const classificationConfig = getClassificationConfig(repoRoot);
-    const violations: string[] = [];
-    const appendPath = (value: unknown): void => {
-        const normalized = toPosix(String(value || '').trim());
-        if (!normalized || seen.has(normalized)) {
-            return;
-        }
-        seen.add(normalized);
-        changedFiles.push(normalized);
-    };
-
-    for (const changedFile of preflightChangedFiles) {
-        appendPath(changedFile);
-    }
-    if (docsSummary.decision === 'DOCS_UPDATED') {
-        for (const docsUpdatedPath of docsSummary.docs_updated) {
-            const normalized = toPosix(String(docsUpdatedPath || '').trim());
-            if (!normalized || preflightPathSet.has(normalized)) {
-                appendPath(normalized);
-                continue;
-            }
-            const isAcceptedDocPath = isSafeOrdinaryDocumentationPath(normalized, classificationConfig);
-            if (isAcceptedDocPath) {
-                appendPath(normalized);
-                continue;
-            }
-            if (isInternalCloseoutEvidencePath(normalized)) {
-                appendPath(normalized);
-                continue;
-            }
-            violations.push(
-                `Doc impact docs_updated contains non-documentation path '${normalized}' that is not in preflight changed_files. ` +
-                'Refresh preflight for implementation drift or remove the path from docs_updated.'
-            );
-        }
-    }
-    return { changedFiles, violations };
-}
-
-function isInternalCloseoutEvidencePath(normalizedPath: string): boolean {
-    return normalizedPath === 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md'
-        || normalizedPath.startsWith('garda-agent-orchestrator/live/docs/project-memory/');
-}
-
-function buildPostDoneWorkspaceDriftBlocker(
-    repoRoot: string,
-    auditedChangedFiles: string[],
-    preflightChangedFiles: string[],
-    preflight: Record<string, unknown> | null,
-    finalCloseoutJsonPath: string
-): BlockerEntry | null {
-    let currentChangedFiles: string[];
-    try {
-        currentChangedFiles = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
-            noCache: true,
-            readOnly: true
-        }).changed_files.map((entry) => toPosix(entry)).filter(Boolean);
-    } catch (error) {
-        const gitMetadataPath = path.join(repoRoot, '.git');
-        if (!fs.existsSync(gitMetadataPath)) {
-            return null;
-        }
-        return {
-            gate: 'post-done-drift',
-            reason:
-                'Unable to inspect tracked post-DONE workspace drift for the completed task closeout: ' +
-                `${error instanceof Error ? error.message : String(error)}. ` +
-                'Do not report final closeout as ready until workspace drift can be inspected or the task is explicitly reopened/reset.'
-        };
-    }
-    const auditedSet = new Set(auditedChangedFiles.map((entry) => toPosix(entry)).filter(Boolean));
-    const auditedScopeBlocker = buildPostDoneAuditedScopeDriftBlocker(
-        repoRoot,
-        [...auditedSet].sort(),
-        finalCloseoutJsonPath
-    );
-    if (auditedScopeBlocker) {
-        return auditedScopeBlocker;
-    }
-    if (currentChangedFiles.length === 0) {
-        return null;
-    }
-
-    const unexpectedFiles = [...new Set(currentChangedFiles.filter((entry) => !auditedSet.has(entry)))].sort();
-    if (unexpectedFiles.length === 0) {
-        return buildPostDoneSameScopeDriftBlocker(
-            repoRoot,
-            auditedChangedFiles,
-            preflightChangedFiles,
-            preflight,
-            finalCloseoutJsonPath
-        );
-    }
-
-    return {
-        gate: 'post-done-drift',
-        reason:
-            'Tracked post-DONE workspace drift exists outside the completed task closeout scope: ' +
-            `${unexpectedFiles.join(', ')}. ` +
-            'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
-    };
-}
-
-function buildPostDoneSameScopeDriftBlocker(
-    repoRoot: string,
-    auditedChangedFiles: string[],
-    preflightChangedFiles: string[],
-    preflight: Record<string, unknown> | null,
-    finalCloseoutJsonPath: string
-): BlockerEntry | null {
-    const implementationFiles = [...new Set(preflightChangedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
-    const auditedFiles = [...new Set(auditedChangedFiles.map((entry) => toPosix(entry)).filter(Boolean))].sort();
-    if (implementationFiles.length === 0) {
-        return buildPostDoneAuditedScopeDriftBlocker(repoRoot, auditedFiles, finalCloseoutJsonPath);
-    }
-    if (!preflight || typeof preflight !== 'object') {
-        return null;
-    }
-    const metrics = preflight.metrics && typeof preflight.metrics === 'object'
-        ? preflight.metrics as Record<string, unknown>
-        : null;
-    const expectedScopeContentSha256 = typeof metrics?.scope_content_sha256 === 'string'
-        ? metrics.scope_content_sha256.trim().toLowerCase()
-        : '';
-    const expectedChangedLinesTotal = typeof metrics?.changed_lines_total === 'number'
-        ? metrics.changed_lines_total
-        : Number(metrics?.changed_lines_total);
-    if (!expectedScopeContentSha256 && !Number.isFinite(expectedChangedLinesTotal)) {
-        return null;
-    }
-
-    let currentImplementationSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
-    try {
-        currentImplementationSnapshot = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, implementationFiles, {
-            noCache: true,
-            readOnly: true
-        });
-    } catch (error) {
-        const gitMetadataPath = path.join(repoRoot, '.git');
-        if (!fs.existsSync(gitMetadataPath)) {
-            return null;
-        }
-        return {
-            gate: 'post-done-drift',
-            reason:
-                'Unable to inspect audited post-DONE implementation content for the completed task closeout: ' +
-                `${error instanceof Error ? error.message : String(error)}. ` +
-                'Do not report final closeout as ready until workspace drift can be inspected or the task is explicitly reopened/reset.'
-        };
-    }
-
-    const currentScopeContentSha256 = typeof currentImplementationSnapshot.scope_content_sha256 === 'string'
-        ? currentImplementationSnapshot.scope_content_sha256.trim().toLowerCase()
-        : '';
-    const contentChanged = !!expectedScopeContentSha256
-        && !!currentScopeContentSha256
-        && currentScopeContentSha256 !== expectedScopeContentSha256;
-    const lineCountChanged = Number.isFinite(expectedChangedLinesTotal)
-        && currentImplementationSnapshot.changed_lines_total !== expectedChangedLinesTotal;
-    if (!contentChanged && !lineCountChanged) {
-        return buildPostDoneAuditedScopeDriftBlocker(repoRoot, auditedFiles, finalCloseoutJsonPath);
-    }
-
-    const details = [
-        contentChanged ? 'scope_content_sha256 differs from completed preflight' : '',
-        lineCountChanged ? `changed_lines_total ${currentImplementationSnapshot.changed_lines_total} differs from completed preflight ${expectedChangedLinesTotal}` : ''
-    ].filter(Boolean).join('; ');
-    return {
-        gate: 'post-done-drift',
-        reason:
-            'Tracked post-DONE workspace drift changed audited implementation content: ' +
-            `${implementationFiles.join(', ')} (${details}). ` +
-            'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
-    };
-}
-
-function buildPostDoneAuditedScopeDriftBlocker(
-    repoRoot: string,
-    auditedFiles: string[],
-    finalCloseoutJsonPath: string
-): BlockerEntry | null {
-    if (auditedFiles.length === 0) {
-        return null;
-    }
-    const closeout = safeReadJson(finalCloseoutJsonPath);
-    const implementationSummary = closeout && typeof closeout.implementation_summary === 'object'
-        ? closeout.implementation_summary as Record<string, unknown>
-        : null;
-    const expectedScopeContentSha256 = typeof implementationSummary?.scope_content_sha256 === 'string'
-        ? implementationSummary.scope_content_sha256.trim().toLowerCase()
-        : '';
-    const expectedChangedFilesSha256 = typeof implementationSummary?.changed_files_sha256 === 'string'
-        ? implementationSummary.changed_files_sha256.trim().toLowerCase()
-        : '';
-    if (!expectedScopeContentSha256 && !expectedChangedFilesSha256) {
-        return null;
-    }
-
-    let currentAuditedSnapshot: ReturnType<typeof getWorkspaceSnapshotCached>;
-    try {
-        currentAuditedSnapshot = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, auditedFiles, {
-            noCache: true,
-            readOnly: true
-        });
-    } catch (error) {
-        const gitMetadataPath = path.join(repoRoot, '.git');
-        if (!fs.existsSync(gitMetadataPath)) {
-            return null;
-        }
-        return {
-            gate: 'post-done-drift',
-            reason:
-                'Unable to inspect audited post-DONE closeout content: ' +
-                `${error instanceof Error ? error.message : String(error)}. ` +
-                'Do not report final closeout as ready until workspace drift can be inspected or the task is explicitly reopened/reset.'
-        };
-    }
-
-    const contentChanged = !!expectedScopeContentSha256
-        && currentAuditedSnapshot.scope_content_sha256 !== expectedScopeContentSha256;
-    const fileSetChanged = !!expectedChangedFilesSha256
-        && currentAuditedSnapshot.changed_files_sha256 !== expectedChangedFilesSha256;
-    if (!contentChanged && !fileSetChanged) {
-        return null;
-    }
-
-    const details = [
-        contentChanged ? 'audited scope_content_sha256 differs from materialized final closeout' : '',
-        fileSetChanged ? 'audited changed_files_sha256 differs from materialized final closeout' : ''
-    ].filter(Boolean).join('; ');
-    return {
-        gate: 'post-done-drift',
-        reason:
-            'Tracked post-DONE workspace drift changed audited closeout content: ' +
-            `${auditedFiles.join(', ')} (${details}). ` +
-            'Do not reopen classify, compile, review, full-suite, or completion gates automatically; isolate or explicitly reopen/reset the task before continuing.'
     };
 }
 
@@ -973,34 +326,6 @@ function readProfileReviewDecisions(
     };
 }
 
-function isLocalControlPlaneCommitPath(filePath: string): boolean {
-    const normalized = toPosix(String(filePath || '').trim()).replace(/^\.\//, '');
-    if (!normalized) {
-        return false;
-    }
-    return normalized === 'TASK.md'
-        || normalized.startsWith('garda-agent-orchestrator/runtime/')
-        || normalized === 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
-}
-
-function resolveTrackedCommittableChangedFiles(repoRoot: string): string[] | null {
-    try {
-        const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, [], {
-            noCache: true,
-            readOnly: true
-        });
-        const changedFiles = Array.isArray(currentWorkspaceSnapshot.changed_files)
-            ? currentWorkspaceSnapshot.changed_files
-            : [];
-        return changedFiles
-            .map((changedFile) => toPosix(String(changedFile || '').trim()))
-            .filter((changedFile) => changedFile && !isLocalControlPlaneCommitPath(changedFile))
-            .sort((left, right) => left.localeCompare(right));
-    } catch {
-        return null;
-    }
-}
-
 function readTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files
@@ -1009,179 +334,6 @@ function readTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | nul
         .map((entry) => toPosix(String(entry || '').trim()))
         .filter(Boolean))]
         .sort((left, right) => left.localeCompare(right));
-}
-
-function buildRequiredReviewBlocker(reviewType: string, taskId: string, reviewsRoot: string): BlockerEntry | null {
-    const gate = `${reviewType}-review`;
-    const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
-    const reviewPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
-    const hasReceipt = fs.existsSync(receiptPath);
-    const hasReview = fs.existsSync(reviewPath);
-
-    if (!hasReceipt && !hasReview) {
-        return { gate, reason: `Required ${reviewType} review artifact not found` };
-    }
-    if (!hasReceipt) {
-        return {
-            gate,
-            reason: `Required ${reviewType} review receipt not found (review markdown exists but receipt is missing)`
-        };
-    }
-    if (!hasReview) {
-        return {
-            gate,
-            reason: `Required ${reviewType} review markdown not found (receipt exists but review document is missing)`
-        };
-    }
-
-    const receipt = safeReadJson(receiptPath);
-    if (!receipt) {
-        return {
-            gate,
-            reason: `Required ${reviewType} review receipt is malformed or unreadable`
-        };
-    }
-    if (receipt.task_id !== taskId) {
-        return {
-            gate,
-            reason: `Required ${reviewType} review receipt belongs to a different task: ${receipt.task_id}`
-        };
-    }
-    if (receipt.review_type !== reviewType) {
-        return {
-            gate,
-            reason: `Required ${reviewType} review receipt has mismatched review type: ${receipt.review_type}`
-        };
-    }
-    if (typeof receipt.review_artifact_sha256 === 'string' && receipt.review_artifact_sha256) {
-        const actualHash = fileSha256(reviewPath);
-        if (actualHash && receipt.review_artifact_sha256 !== actualHash) {
-            return {
-                gate,
-                reason: `Required ${reviewType} review artifact was modified after receipt was issued`
-            };
-        }
-    }
-
-    return null;
-}
-
-function shouldValidateRequiredReviewArtifactForCurrentCycle(
-    reviewType: string,
-    events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null
-): boolean {
-    if (!currentCycle?.compile_gate_timestamp) {
-        return true;
-    }
-
-    const compileGateTime = parseTimestamp(currentCycle.compile_gate_timestamp).getTime();
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const event = events[index];
-        const eventTime = parseTimestamp(event.timestamp_utc).getTime();
-        if (eventTime > 0 && compileGateTime > 0 && eventTime < compileGateTime) {
-            continue;
-        }
-
-        const eventType = String(event.event_type || '').trim().toUpperCase();
-        if (
-            eventType === 'REVIEW_GATE_PASSED'
-            || eventType === 'REVIEW_GATE_PASSED_WITH_OVERRIDE'
-            || eventType === 'REVIEW_GATE_FAILED'
-            || eventType === 'COMPLETION_GATE_PASSED'
-            || eventType === 'COMPLETION_GATE_FAILED'
-        ) {
-            return true;
-        }
-
-        if (eventType !== 'REVIEW_RECORDED') {
-            continue;
-        }
-        const details = event.details && typeof event.details === 'object'
-            ? event.details as Record<string, unknown>
-            : null;
-        const recordedReviewType = String(
-            details?.review_type
-            || details?.reviewType
-            || ''
-        ).trim().toLowerCase();
-        if (recordedReviewType === reviewType) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function collectRequiredReviewBlockers(
-    requiredReviews: Record<string, boolean>,
-    taskId: string,
-    reviewsRoot: string,
-    events: TaskAuditEvent[],
-    currentCycle: TaskCycleBindingSnapshot | null
-): BlockerEntry[] {
-    return withReviewArtifactReadBarrier(reviewsRoot, () => (
-        collectKnownRequiredReviewTypes(requiredReviews)
-            .flatMap((reviewType) => {
-                if (!shouldValidateRequiredReviewArtifactForCurrentCycle(reviewType, events, currentCycle)) {
-                    return [];
-                }
-                const blocker = buildRequiredReviewBlocker(reviewType, taskId, reviewsRoot);
-                return blocker ? [blocker] : [];
-            })
-    ));
-}
-
-function collectEvidenceArtifacts(
-    repoRoot: string,
-    reviewsRoot: string,
-    taskId: string,
-    taskEventFile: string,
-    projectMemoryImpact: ProjectMemoryImpactLifecycleEvidence
-): EvidenceArtifact[] {
-    const evidence = withReviewArtifactReadBarrier(reviewsRoot, () => (
-        ARTIFACT_PATTERNS.map(({ kind, suffix }) => {
-            const artifactPath = path.join(reviewsRoot, `${taskId}${suffix}`);
-            const exists = fs.existsSync(artifactPath);
-            return {
-                kind,
-                path: toPosix(artifactPath),
-                exists,
-                sha256: exists ? fileSha256(artifactPath) : null
-            };
-        })
-    ));
-
-    if (projectMemoryImpact.required || projectMemoryImpact.evidence_status !== 'NOT_REQUIRED') {
-        for (const [kind, artifactPath] of [
-            ['project-memory-impact', projectMemoryImpact.artifact_path],
-            ['project-memory-update', projectMemoryImpact.update_artifact_path]
-        ] as const) {
-            const resolvedPath = path.resolve(repoRoot, artifactPath);
-            const exists = fs.existsSync(resolvedPath);
-            evidence.push({
-                kind,
-                path: toPosix(resolvedPath),
-                exists,
-                sha256: exists ? fileSha256(resolvedPath) : null
-            });
-        }
-    }
-
-    evidence.push({
-        kind: 'task-events',
-        path: toPosix(taskEventFile),
-        exists: fs.existsSync(taskEventFile),
-        sha256: fs.existsSync(taskEventFile) ? fileSha256(taskEventFile) : null
-    });
-    evidence.push({
-        kind: 'task-ledger',
-        path: toPosix(resolveTaskHistoryLedgerPath(path.dirname(path.dirname(reviewsRoot)), taskId)),
-        exists: false,
-        sha256: null
-    });
-
-    return evidence;
 }
 
 function asAuditRecord(value: unknown): Record<string, unknown> | null {
@@ -1373,26 +525,6 @@ function buildReviewTimingAuditSummary(
     };
 }
 
-function buildFinalCloseoutProjectMemorySummary(
-    evidence: ProjectMemoryImpactLifecycleEvidence
-): FinalCloseoutProjectMemorySummary {
-    return {
-        enabled: evidence.enabled,
-        required: evidence.required,
-        mode: evidence.mode,
-        evidence_status: evidence.evidence_status,
-        status: evidence.status,
-        update_needed: evidence.update_needed,
-        affected_memory_files: [...evidence.affected_memory_files],
-        updated_memory_files: [...evidence.updated_memory_files],
-        compact_status: evidence.compact_status,
-        compact_refreshed: evidence.compact_refreshed,
-        artifact_path: evidence.artifact_path,
-        update_artifact_path: evidence.update_artifact_path,
-        visible_summary_line: evidence.visible_summary_line
-    };
-}
-
 function readReviewExecutionPolicyModeFromCurrentCycleTimeline(
     events: TaskAuditEvent[],
     currentCycle: TaskCycleBindingSnapshot | null,
@@ -1441,52 +573,6 @@ function readReviewExecutionPolicyModeFromCurrentCycleTimeline(
 
     return null;
 }
-
-// Artifact name patterns relative to reviews root, keyed by kind.
-const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
-    { kind: 'task-mode', suffix: '-task-mode.json' },
-    { kind: 'rule-pack', suffix: '-rule-pack.json' },
-    { kind: 'handshake', suffix: '-handshake.json' },
-    { kind: 'shell-smoke', suffix: '-shell-smoke.json' },
-    { kind: 'preflight', suffix: '-preflight.json' },
-    { kind: 'compile-gate', suffix: '-compile-gate.json' },
-    { kind: 'compile-output', suffix: '-compile-output.log' },
-    { kind: 'review-gate', suffix: '-review-gate.json' },
-    { kind: 'doc-impact', suffix: '-doc-impact.json' },
-    { kind: 'full-suite-validation', suffix: '-full-suite-validation.json' },
-    { kind: 'full-suite-output', suffix: '-full-suite-output.log' },
-    { kind: 'optional-skill-selection', suffix: '-optional-skill-selection.json' },
-    { kind: 'final-closeout-json', suffix: '-final-closeout.json' },
-    { kind: 'final-closeout-markdown', suffix: '-final-closeout.md' },
-    { kind: 'no-op', suffix: '-no-op.json' },
-    { kind: 'code-review', suffix: '-code.md' },
-    { kind: 'code-review-context', suffix: '-code-review-context.json' },
-    { kind: 'code-receipt', suffix: '-code-receipt.json' },
-    { kind: 'db-review', suffix: '-db.md' },
-    { kind: 'db-review-context', suffix: '-db-review-context.json' },
-    { kind: 'db-receipt', suffix: '-db-receipt.json' },
-    { kind: 'security-review', suffix: '-security.md' },
-    { kind: 'security-review-context', suffix: '-security-review-context.json' },
-    { kind: 'security-receipt', suffix: '-security-receipt.json' },
-    { kind: 'refactor-review', suffix: '-refactor.md' },
-    { kind: 'refactor-review-context', suffix: '-refactor-review-context.json' },
-    { kind: 'refactor-receipt', suffix: '-refactor-receipt.json' },
-    { kind: 'test-review', suffix: '-test.md' },
-    { kind: 'test-review-context', suffix: '-test-review-context.json' },
-    { kind: 'test-receipt', suffix: '-test-receipt.json' },
-    { kind: 'api-review', suffix: '-api.md' },
-    { kind: 'api-review-context', suffix: '-api-review-context.json' },
-    { kind: 'api-receipt', suffix: '-api-receipt.json' },
-    { kind: 'performance-review', suffix: '-performance.md' },
-    { kind: 'performance-review-context', suffix: '-performance-review-context.json' },
-    { kind: 'performance-receipt', suffix: '-performance-receipt.json' },
-    { kind: 'infra-review', suffix: '-infra.md' },
-    { kind: 'infra-review-context', suffix: '-infra-review-context.json' },
-    { kind: 'infra-receipt', suffix: '-infra-receipt.json' },
-    { kind: 'dependency-review', suffix: '-dependency.md' },
-    { kind: 'dependency-review-context', suffix: '-dependency-review-context.json' },
-    { kind: 'dependency-receipt', suffix: '-dependency-receipt.json' }
-];
 
 export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAuditSummaryResult {
     const repoRoot = path.resolve(options.repoRoot);
@@ -1984,71 +1070,4 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     };
 }
 
-export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResult): TaskAuditSummaryResult {
-    const jsonPath = summary.final_closeout.artifact_paths.json;
-    const markdownPath = summary.final_closeout.artifact_paths.markdown;
-    const bundleRoot = path.dirname(path.dirname(path.dirname(jsonPath)));
-    const ledgerPath = resolveTaskHistoryLedgerPath(bundleRoot, summary.task_id);
 
-    if (summary.final_closeout.status === 'READY') {
-        const closeout = redactSensitiveData({
-            ...summary.final_closeout,
-            artifact_state: 'MATERIALIZED' as const
-        }) as typeof summary.final_closeout;
-        writeFileAtomically(jsonPath, JSON.stringify(closeout, null, 2) + '\n', { encoding: 'utf8' });
-        writeFileAtomically(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', { encoding: 'utf8' });
-        cleanupTerminalReviewTempOutputs(path.resolve(path.dirname(jsonPath), '..', '..', '..'), summary.task_id);
-        runDailyRetentionMaintenance({
-            targetRoot: path.resolve(path.dirname(jsonPath), '..', '..', '..'),
-            bundleRoot
-        });
-        summary.final_closeout = closeout;
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);
-    } else if (summary.point_in_time_snapshot.status === 'FINALIZATION_IN_FLIGHT') {
-        const jsonExists = fs.existsSync(jsonPath);
-        const markdownExists = fs.existsSync(markdownPath);
-        summary.final_closeout = {
-            ...summary.final_closeout,
-            artifact_state: jsonExists || markdownExists ? 'MATERIALIZED' : 'NOT_READY'
-        };
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, jsonExists);
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, markdownExists);
-    } else if (summary.blockers.some((blocker) => blocker.gate === 'post-done-drift')) {
-        const jsonExists = fs.existsSync(jsonPath);
-        const markdownExists = fs.existsSync(markdownPath);
-        summary.final_closeout = {
-            ...summary.final_closeout,
-            artifact_state: jsonExists || markdownExists ? 'MATERIALIZED' : 'NOT_READY'
-        };
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, jsonExists);
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, markdownExists);
-    } else {
-        let removed = false;
-        for (const artifactPath of [jsonPath, markdownPath]) {
-            if (fs.existsSync(artifactPath)) {
-                fs.rmSync(artifactPath, { force: true });
-                removed = true;
-            }
-        }
-        summary.final_closeout = {
-            ...summary.final_closeout,
-            artifact_state: removed ? 'REMOVED' : 'NOT_READY'
-        };
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, false);
-        updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, false);
-    }
-
-    if (summary.status !== 'INCOMPLETE') {
-        fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
-        const ledger = redactSensitiveData(buildTaskHistoryLedger(summary, path.dirname(bundleRoot))) as ReturnType<typeof buildTaskHistoryLedger>;
-        writeFileAtomically(ledgerPath, JSON.stringify(ledger, null, 2) + '\n', { encoding: 'utf8' });
-        updateEvidenceArtifactState(summary.evidence, 'task-ledger', ledgerPath, true);
-    } else {
-        if (fs.existsSync(ledgerPath)) {
-            fs.rmSync(ledgerPath, { force: true });
-        }
-        updateEvidenceArtifactState(summary.evidence, 'task-ledger', ledgerPath, false);
-    }
-    return summary;
-}
