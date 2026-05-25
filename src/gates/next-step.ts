@@ -199,6 +199,12 @@ import {
     resolveStrictDecompositionSplitRoutingState,
     type TaskQueueEntry
 } from './next-step-task-queue';
+import {
+    buildNextStepCoreArtifactSpecs,
+    fullSuiteArtifactMatchesCurrentCycle,
+    hasAcceptedDocsOnlyFullSuiteSkipArtifact,
+    readNextStepReadinessArtifacts
+} from './next-step-readiness-readers';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -1064,62 +1070,6 @@ function getGateStatus(summary: TaskAuditSummaryResult, gateName: string): GateO
 
 function isGatePassed(summary: TaskAuditSummaryResult, gateName: string): boolean {
     return getGateStatus(summary, gateName) === 'PASS';
-}
-
-function hasAcceptedDocsOnlyFullSuiteSkipArtifact(
-    reviewsRoot: string,
-    taskId: string,
-    expectedCommand: string,
-    preflightPath: string,
-    preflightSha256: string | null,
-    summary: TaskAuditSummaryResult
-): boolean {
-    const artifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
-    const artifact = safeReadJson(artifactPath) as Record<string, unknown> | null;
-    if (!artifact) {
-        return false;
-    }
-    return String(artifact.status || '').trim().toUpperCase() === 'SKIPPED'
-        && artifact.enabled === true
-        && artifact.required === false
-        && String(artifact.skip_reason || '').trim() === 'DOCS_ONLY_SCOPE_NOT_REQUIRED'
-        && String(artifact.command || '').trim() === expectedCommand
-        && fullSuiteArtifactMatchesCurrentCycle(artifact, taskId, preflightPath, preflightSha256, summary);
-}
-
-function fullSuiteArtifactMatchesCurrentCycle(
-    artifact: Record<string, unknown> | null,
-    taskId: string,
-    preflightPath: string,
-    preflightSha256: string | null,
-    summary: TaskAuditSummaryResult
-): boolean {
-    if (!artifact) {
-        return false;
-    }
-    const rawCycleBinding = artifact.cycle_binding;
-    if (!rawCycleBinding || typeof rawCycleBinding !== 'object' || Array.isArray(rawCycleBinding)) {
-        return false;
-    }
-    const cycleBinding = rawCycleBinding as Record<string, unknown>;
-    const expectedPreflightPath = normalizePath(preflightPath);
-    const expectedPreflightSha256 = String(preflightSha256 || '').trim().toLowerCase();
-    if (String(cycleBinding.task_id || '').trim() !== taskId) {
-        return false;
-    }
-    if (normalizePath(cycleBinding.preflight_path || '') !== expectedPreflightPath) {
-        return false;
-    }
-    if (expectedPreflightSha256 && String(cycleBinding.preflight_sha256 || '').trim().toLowerCase() !== expectedPreflightSha256) {
-        return false;
-    }
-    const expectedCompileTimestamp = String(
-        summary.gates.find((gate) => gate.gate === 'compile-gate')?.timestamp_utc || ''
-    ).trim();
-    const artifactCompileTimestamp = cycleBinding.compile_gate_timestamp == null
-        ? ''
-        : String(cycleBinding.compile_gate_timestamp || '').trim();
-    return !!expectedCompileTimestamp && artifactCompileTimestamp === expectedCompileTimestamp;
 }
 
 function getRequiredReviewTypes(requiredReviews: Record<string, boolean>): string[] {
@@ -5973,14 +5923,17 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
     const cliPrefix = buildCliPrefix(repoRoot);
     const taskModePath = resolveActiveTaskModeArtifactPath(repoRoot, eventsRoot, reviewsRoot, taskId);
-    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     const preflightCommandPath = buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`);
+    const readinessArtifacts = readNextStepReadinessArtifacts({
+        reviewsRoot,
+        taskId,
+        taskModePath,
+        preflightCommandPath
+    });
+    const { preflightPath, rulePackPath } = readinessArtifacts.paths;
+    const { preflight, rulePack, taskMode, preflightSha256 } = readinessArtifacts;
     const navigatorCommand = buildNavigatorCommand(cliPrefix, taskId);
     const markdownWorkingPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
-    const rulePackPath = path.join(reviewsRoot, `${taskId}-rule-pack.json`);
-    const preflight = safeReadJson(preflightPath);
-    const rulePack = safeReadJson(rulePackPath);
-    const taskMode = safeReadJson(taskModePath);
     const taskEntries = readTaskQueueEntries(repoRoot);
     const taskEntry = taskEntries.get(taskId) || null;
     const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
@@ -5996,18 +5949,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         );
     } catch (error: unknown) {
         const fallbackFullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
-        const coreArtifacts = artifactState(repoRoot, [
-            { key: 'task-mode', path: taskModePath },
-            { key: 'rule-pack', path: rulePackPath },
-            { key: 'handshake', path: path.join(reviewsRoot, `${taskId}-handshake.json`) },
-            { key: 'shell-smoke', path: path.join(reviewsRoot, `${taskId}-shell-smoke.json`) },
-            { key: 'preflight', path: preflightPath },
-            { key: 'compile-gate', path: path.join(reviewsRoot, `${taskId}-compile-gate.json`) },
-            { key: 'review-gate', path: path.join(reviewsRoot, `${taskId}-review-gate.json`) },
-            { key: 'doc-impact', path: path.join(reviewsRoot, `${taskId}-doc-impact.json`) },
-            { key: 'full-suite-validation', path: path.join(reviewsRoot, `${taskId}-full-suite-validation.json`) },
-            { key: 'completion-gate', path: path.join(reviewsRoot, `${taskId}-completion-gate.json`) }
-        ]);
+        const coreArtifacts = artifactState(repoRoot, buildNextStepCoreArtifactSpecs(readinessArtifacts));
         return buildResult({
             taskId,
             navigatorCommand,
@@ -6056,7 +5998,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         eventsRoot,
         reviewsRoot
     });
-    const preflightSha256 = fileExists(preflightPath) ? fileSha256(preflightPath) : null;
     const fullSuiteConfig = loadFullSuiteValidationConfig(repoRoot);
     const fullSuiteTimeoutForecast = fullSuiteConfig.enabled
         ? buildFullSuiteTimeoutForecast(repoRoot, fullSuiteConfig)
@@ -6081,7 +6022,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             ? true
             : isGatePassed(summary, 'full-suite-validation')
                 && fullSuiteArtifactMatchesCurrentCycle(
-                    safeReadJson(path.join(reviewsRoot, `${taskId}-full-suite-validation.json`)) as Record<string, unknown> | null,
+                    readinessArtifacts.fullSuiteValidation,
                     taskId,
                     preflightPath,
                     preflightSha256,
@@ -6147,21 +6088,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 : null
         )
     };
-    const coreArtifacts = artifactState(repoRoot, [
-        { key: 'task-mode', path: taskModePath },
-        { key: 'rule-pack', path: rulePackPath },
-        { key: 'handshake', path: path.join(reviewsRoot, `${taskId}-handshake.json`) },
-        { key: 'shell-smoke', path: path.join(reviewsRoot, `${taskId}-shell-smoke.json`) },
-        { key: 'preflight', path: preflightPath },
-        { key: 'compile-gate', path: path.join(reviewsRoot, `${taskId}-compile-gate.json`) },
-        { key: 'review-gate', path: path.join(reviewsRoot, `${taskId}-review-gate.json`) },
-        { key: 'doc-impact', path: path.join(reviewsRoot, `${taskId}-doc-impact.json`) },
-        { key: 'full-suite-validation', path: path.join(reviewsRoot, `${taskId}-full-suite-validation.json`) },
-        ...(projectMemoryEvidence.required
-            ? [{ key: 'project-memory-impact', path: projectMemoryEvidence.artifact_path }]
-            : []),
-        { key: 'completion-gate', path: path.join(reviewsRoot, `${taskId}-completion-gate.json`) }
-    ]);
+    const coreArtifacts = artifactState(
+        repoRoot,
+        buildNextStepCoreArtifactSpecs(
+            readinessArtifacts,
+            projectMemoryEvidence.required ? projectMemoryEvidence.artifact_path : null
+        )
+    );
 
     const sourceRuntimeStaleness = detectSourceCheckoutRuntimeStaleness(repoRoot);
     const resultBase = {
@@ -6425,14 +6358,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
-        const hasFinalCloseoutArtifact = fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.json`))
-            || fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.md`));
+        const hasFinalCloseoutArtifact = fs.existsSync(readinessArtifacts.paths.finalCloseoutJsonPath)
+            || fs.existsSync(readinessArtifacts.paths.finalCloseoutMarkdownPath);
         if (hasFinalCloseoutArtifact) {
             const postDoneDrift = readPostDoneWorkspaceDriftDecision(
                 repoRoot,
                 preflight,
-                path.join(reviewsRoot, `${taskId}-doc-impact.json`),
-                path.join(reviewsRoot, `${taskId}-final-closeout.json`)
+                readinessArtifacts.paths.docImpactPath,
+                readinessArtifacts.paths.finalCloseoutJsonPath
             );
             if (postDoneDrift.blocked) {
                 return buildResult({
@@ -6669,7 +6602,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    const docImpactPath = path.join(reviewsRoot, `${taskId}-doc-impact.json`);
+    const docImpactPath = readinessArtifacts.paths.docImpactPath;
     const preflightWorkspaceReadiness = preflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: null,
