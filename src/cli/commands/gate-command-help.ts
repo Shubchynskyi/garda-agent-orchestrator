@@ -189,6 +189,13 @@ function buildPreflightGateHelpEntries(
                 true
             )
         },
+        'record-review-cycle-continuation': {
+            ...createSingleUsageEntry(
+                'Record an operator-approved one-shot review-cycle continuation for the current task without mutating workflow-config.json.',
+                `${cliPrefix} gate record-review-cycle-continuation --task-id "${TASK_ID_PLACEHOLDER}" --decision "allow_one_more_cycle" --baseline-total-non-test-reviews "<current total>" --baseline-failed-non-test-reviews "<current failed>" --max-total-non-test-reviews "<configured total limit>" --max-failed-non-test-reviews "<configured failed limit>" --excluded-review-types "test" --reason "<operator-approved reason>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --repo-root "."`,
+                true
+            )
+        },
         'record-strict-decomposition-decision': {
             ...createGateHelpEntry(
                 'Record the prompt-first decomposition decision for a risky strict task before implementation.',

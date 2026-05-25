@@ -24,6 +24,11 @@ import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 import { buildDomainScopeFingerprints } from '../../../src/gates/domain-scope-fingerprints';
 import { buildStrictDecompositionDecisionArtifact } from '../../../src/gates/strict-decomposition-decision';
+import {
+    REVIEW_CYCLE_CONTINUATION_EVENT,
+    buildReviewCycleContinuationArtifact,
+    resolveReviewCycleContinuationArtifactPath
+} from '../../../src/gates/review-cycle-continuation';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -319,6 +324,41 @@ function appendEvent(
         prev_event_sha256: previousEventSha256,
         event_sha256: eventSha256
     };
+}
+
+function writeReviewCycleContinuation(
+    repoRoot: string,
+    taskId: string,
+    options: {
+        baselineTotalNonTestReviewCount: number;
+        baselineFailedNonTestReviewCount: number;
+        maxTotalNonTestReviews?: number;
+        maxFailedNonTestReviews?: number;
+        excludedReviewTypes?: string[];
+        reason?: string;
+    }
+): void {
+    const artifactPath = path.join(reviewsRoot(repoRoot), `${taskId}-review-cycle-continuation.json`);
+    const artifact = buildReviewCycleContinuationArtifact({
+        taskId,
+        decision: 'allow_one_more_cycle',
+        reason: options.reason || 'Operator approved one more review-cycle continuation for the test.',
+        operatorConfirmedAtUtc: new Date().toISOString(),
+        baselineTotalNonTestReviewCount: options.baselineTotalNonTestReviewCount,
+        baselineFailedNonTestReviewCount: options.baselineFailedNonTestReviewCount,
+        maxTotalNonTestReviews: options.maxTotalNonTestReviews ?? 2,
+        maxFailedNonTestReviews: options.maxFailedNonTestReviews ?? 15,
+        excludedReviewTypes: options.excludedReviewTypes || ['test']
+    });
+    writeJson(artifactPath, artifact);
+    appendEvent(repoRoot, taskId, REVIEW_CYCLE_CONTINUATION_EVENT, 'INFO', {
+        artifact_path: normalizeForTimeline(artifactPath),
+        artifact_sha256: fileSha256(artifactPath),
+        decision: 'allow_one_more_cycle',
+        one_shot: true,
+        baseline_total_non_test_review_count: options.baselineTotalNonTestReviewCount,
+        baseline_failed_non_test_review_count: options.baselineFailedNonTestReviewCount
+    });
 }
 
 function seedStartedTask(repoRoot: string, taskId: string): void {
@@ -1367,6 +1407,149 @@ describe('gates/next-step review cycle guard', () => {
             fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-cycle-auto-split-prompt.md`)),
             false
         );
+    });
+
+    it('offers a task-scoped one-shot continuation instead of recommending permanent workflow-config mutation', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:code-one-shot-offer-${index}`,
+                review_context_sha256: sha256Text(`code-one-shot-offer-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.equal(result.commands[0]?.label, 'Record one-shot review-cycle continuation');
+        assert.match(result.commands[0]?.command || '', /gate record-review-cycle-continuation/);
+        assert.match(result.commands[0]?.command || '', /--decision "allow_one_more_cycle"/);
+        assert.match(result.commands[0]?.command || '', /--baseline-total-non-test-reviews "3"/);
+        assert.ok(text.includes('allow_one_more_cycle: task-scoped one-shot runtime approval'));
+        assert.ok(text.includes('raise_limits: permanent repo-local workflow-config change through workflow set'));
+        assert.ok(text.includes('does not edit workflow-config.json'));
+    });
+
+    it('rejects one-shot continuation artifact paths outside the repo root', () => {
+        const repoRoot = makeTempRepo();
+        const outsidePath = path.join(path.dirname(repoRoot), 'outside-review-cycle-continuation.json');
+
+        assert.throws(
+            () => resolveReviewCycleContinuationArtifactPath(repoRoot, TASK_ID, outsidePath),
+            /Path must stay inside repo root/
+        );
+    });
+
+    it('rejects one-shot continuation artifact paths outside runtime review evidence', () => {
+        const repoRoot = makeTempRepo();
+
+        assert.throws(
+            () => resolveReviewCycleContinuationArtifactPath(
+                repoRoot,
+                TASK_ID,
+                path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json')
+            ),
+            /runtime review evidence directory/
+        );
+    });
+
+    it('rejects one-shot continuation artifact paths that escape the repo through realpath links', () => {
+        const repoRoot = makeTempRepo();
+        const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-review-cycle-continuation-'));
+        const linkDir = path.join(reviewsRoot(repoRoot), 'linked-outside');
+        try {
+            fs.symlinkSync(outsideDir, linkDir, process.platform === 'win32' ? 'junction' : 'dir');
+        } catch (error: unknown) {
+            if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+                return;
+            }
+            throw error;
+        }
+
+        assert.throws(
+            () => resolveReviewCycleContinuationArtifactPath(repoRoot, TASK_ID, path.join(linkDir, 'artifact.json')),
+            /runtime review evidence directory/
+        );
+    });
+
+    it('uses an active one-shot continuation without changing workflow-config.json', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        writeJson(configPath, workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:code-one-shot-active-${index}`,
+                review_context_sha256: sha256Text(`code-one-shot-active-${index}`)
+            });
+        }
+        const beforeConfig = fs.readFileSync(configPath, 'utf8');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(text.includes('Review cycle one-shot continuation active'));
+        assert.ok(text.includes('does not mutate workflow-config.json'));
+        assert.equal(fs.readFileSync(configPath, 'utf8'), beforeConfig);
+    });
+
+    it('blocks attempted reuse after the one-shot continuation count is consumed', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:code-one-shot-reuse-baseline-${index}`,
+                review_context_sha256: sha256Text(`code-one-shot-reuse-baseline-${index}`)
+            });
+        }
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2
+        });
+        for (let index = 0; index < 1; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:code-one-shot-reuse-extra-${index}`,
+                review_context_sha256: sha256Text(`code-one-shot-reuse-extra-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.ok(text.includes('Review cycle one-shot continuation expired'));
+        assert.ok(text.includes('already used'));
+        assert.equal(result.commands[0]?.label, 'Record one-shot review-cycle continuation');
     });
 
     it('latches split-required and materializes auto-split prompt when review cycle auto split is enabled', () => {

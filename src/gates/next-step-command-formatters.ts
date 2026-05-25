@@ -118,6 +118,12 @@ export function formatNextStepText(result: NextStepResult): string {
         }
         lines.push(`TestReviewExcluded: ${block.excluded_review_types.includes('test')}`);
         lines.push(`OperatorChoices: ${block.choices.join(', ')}`);
+        if (block.operator_choice_guidance.length > 0) {
+            lines.push('OperatorChoiceGuidance:');
+            for (const guidance of block.operator_choice_guidance) {
+                lines.push(`  - ${guidance}`);
+            }
+        }
         if (block.auto_split_prompt) {
             lines.push(
                 `AutoSplitPromptArtifact: path=${formatNextStepInlineValue(block.auto_split_prompt.artifact_path)}; ` +
@@ -224,7 +230,9 @@ export function formatNextStepText(result: NextStepResult): string {
     if (result.status !== 'DONE' && result.review_cycle_block?.auto_split_prompt) {
         lines.push('AfterCommand: follow AutoSplitPromptArtifact instructions; do not run parent compile, review, or full-suite gates before split handling.');
     } else if (result.status !== 'DONE' && result.review_cycle_block) {
-        lines.push('AfterCommand: inspect diagnostics only if needed, then wait for operator choice; do not run compile, review, or full-suite gates.');
+        lines.push(result.commands.length > 0
+            ? `AfterCommand: after the operator-approved command above completes, rerun ${result.navigator_command}; do not run compile, review, or full-suite gates before the approval evidence exists.`
+            : 'AfterCommand: inspect diagnostics only if needed, then wait for operator choice; do not run compile, review, or full-suite gates.');
     } else if (result.status !== 'DONE') {
         lines.push(`AfterCommand: rerun ${result.navigator_command} after the command above completes.`);
     }

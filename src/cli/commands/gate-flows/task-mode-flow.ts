@@ -80,6 +80,12 @@ import {
     resolveStrictDecompositionDecisionArtifactPath
 } from '../../../gates/strict-decomposition-decision';
 import {
+    REVIEW_CYCLE_CONTINUATION_EVENT,
+    buildReviewCycleContinuationArtifact,
+    normalizeReviewCycleContinuationDecision,
+    resolveReviewCycleContinuationArtifactPath
+} from '../../../gates/review-cycle-continuation';
+import {
     getCurrentWorkflowConfigFileHashes,
     getWorkflowConfigControlPlanePaths,
     getWorkflowConfigPreTaskBaselineState
@@ -189,6 +195,23 @@ export interface RecordStrictDecompositionDecisionCommandOptions {
     emitMetrics?: unknown;
 }
 
+export interface RecordReviewCycleContinuationCommandOptions {
+    repoRoot?: string;
+    taskId?: unknown;
+    decision?: unknown;
+    reason?: unknown;
+    baselineTotalNonTestReviewCount?: unknown;
+    baselineFailedNonTestReviewCount?: unknown;
+    maxTotalNonTestReviews?: unknown;
+    maxFailedNonTestReviews?: unknown;
+    excludedReviewTypes?: unknown;
+    operatorConfirmed?: unknown;
+    operatorConfirmedAtUtc?: unknown;
+    artifactPath?: string;
+    metricsPath?: string;
+    emitMetrics?: unknown;
+}
+
 export interface HandshakeDiagnosticsCommandOptions {
     repoRoot?: string;
     taskId?: unknown;
@@ -231,6 +254,14 @@ export interface CommandTimeoutDiagnosticsCommandOptions {
 
 function quotePowerShellCliValue(value: string): string {
     return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function parseNonNegativeIntegerOption(value: unknown, label: string): number {
+    const text = String(value ?? '').trim();
+    if (!/^\d+$/u.test(text)) {
+        throw new Error(`${label} must be a non-negative integer.`);
+    }
+    return Number.parseInt(text, 10);
 }
 
 function normalizePlannedChangedFiles(repoRoot: string, rawValues: unknown): string[] {
@@ -1256,6 +1287,118 @@ export function runRecordStrictDecompositionDecisionCommand(
             `ExpectedReviews: ${artifact.expected_review_types_declared_none ? 'none' : artifact.expected_review_types.join(',')}`,
             `ProposedChildren: ${artifact.proposed_children.map((child) => child.task_id).join(',') || 'none'}`,
             `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`
+        ],
+        exitCode: 0
+    };
+}
+
+export function runRecordReviewCycleContinuationCommand(
+    options: RecordReviewCycleContinuationCommandOptions
+): { outputLines: string[]; exitCode: number } {
+    const repoRoot = path.resolve(String(options.repoRoot || '.'));
+    const orchestratorRoot = resolveOrchestratorRoot(repoRoot);
+    const taskId = assertValidTaskId(String(options.taskId || '').trim());
+    const decision = normalizeReviewCycleContinuationDecision(options.decision);
+    const reason = String(options.reason || '').trim();
+    if (!reason) {
+        throw new Error('Reason is required.');
+    }
+    const rawConfirmation = String(options.operatorConfirmed || '').trim();
+    const confirmed = rawConfirmation ? parseOperatorConfirmationYes(rawConfirmation) : false;
+    const operatorConfirmedAtUtc = String(options.operatorConfirmedAtUtc || '').trim();
+    validateFreshOperatorConfirmation({
+        actionLabel: 'record-review-cycle-continuation',
+        confirmed,
+        confirmedAtUtc: operatorConfirmedAtUtc,
+        requireConfirmedAtUtc: true,
+        instruction:
+            'Ask the operator to approve exactly one additional review-cycle continuation, then rerun with ' +
+            '--operator-confirmed yes and --operator-confirmed-at-utc "<ISO-8601 timestamp>". This gate writes runtime evidence only and does not edit workflow-config.json.'
+    });
+
+    const baselineTotal = parseNonNegativeIntegerOption(
+        options.baselineTotalNonTestReviewCount,
+        '--baseline-total-non-test-reviews'
+    );
+    const baselineFailed = parseNonNegativeIntegerOption(
+        options.baselineFailedNonTestReviewCount,
+        '--baseline-failed-non-test-reviews'
+    );
+    const maxTotal = parseNonNegativeIntegerOption(
+        options.maxTotalNonTestReviews,
+        '--max-total-non-test-reviews'
+    );
+    const maxFailed = parseNonNegativeIntegerOption(
+        options.maxFailedNonTestReviews,
+        '--max-failed-non-test-reviews'
+    );
+    const excludedReviewTypes = expandValueList(options.excludedReviewTypes || [], { splitDelimiters: true })
+        .map((entry) => String(entry || '').trim().toLowerCase())
+        .filter(Boolean);
+
+    const artifactPath = resolveReviewCycleContinuationArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
+    const artifact = buildReviewCycleContinuationArtifact({
+        taskId,
+        decision,
+        reason,
+        operatorConfirmedAtUtc,
+        baselineTotalNonTestReviewCount: baselineTotal,
+        baselineFailedNonTestReviewCount: baselineFailed,
+        maxTotalNonTestReviews: maxTotal,
+        maxFailedNonTestReviews: maxFailed,
+        excludedReviewTypes
+    });
+    writeJsonArtifact(artifactPath, artifact);
+    const artifactSha256 = gateHelpers.fileSha256(artifactPath);
+
+    const metricsPath = options.metricsPath
+        ? requireResolvedPath(resolvePathForWrite(options.metricsPath, repoRoot), 'MetricsPath')
+        : resolveDefaultMetricsPath(repoRoot);
+    appendMetricsIfEnabled(repoRoot, metricsPath, {
+        timestamp_utc: artifact.recorded_at_utc,
+        event_type: 'review_cycle_continuation_approved',
+        task_id: taskId,
+        artifact_path: gateHelpers.normalizePath(artifactPath),
+        artifact_sha256: artifactSha256,
+        decision,
+        one_shot: true,
+        baseline_total_non_test_review_count: baselineTotal,
+        baseline_failed_non_test_review_count: baselineFailed,
+        max_total_non_test_reviews: maxTotal,
+        max_failed_non_test_reviews: maxFailed,
+        excluded_review_types: excludedReviewTypes
+    }, parseBooleanOption(options.emitMetrics, true));
+
+    appendTaskEvent(
+        orchestratorRoot,
+        taskId,
+        REVIEW_CYCLE_CONTINUATION_EVENT,
+        'INFO',
+        'One-shot review-cycle continuation approved.',
+        {
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            artifact_sha256: artifactSha256,
+            decision,
+            one_shot: true,
+            baseline_total_non_test_review_count: baselineTotal,
+            baseline_failed_non_test_review_count: baselineFailed,
+            max_total_non_test_reviews: maxTotal,
+            max_failed_non_test_reviews: maxFailed,
+            excluded_review_types: excludedReviewTypes,
+            operator_confirmed_at_utc: operatorConfirmedAtUtc
+        }
+    );
+
+    return {
+        outputLines: [
+            'REVIEW_CYCLE_CONTINUATION_RECORDED',
+            `TaskId: ${taskId}`,
+            `Decision: ${decision}`,
+            'OneShot: true',
+            `BaselineTotalNonTestReviews: ${baselineTotal}`,
+            `BaselineFailedNonTestReviews: ${baselineFailed}`,
+            `ArtifactPath: ${gateHelpers.normalizePath(artifactPath)}`,
+            'WorkflowConfigMutated: false'
         ],
         exitCode: 0
     };

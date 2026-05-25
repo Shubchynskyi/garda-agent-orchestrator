@@ -30,6 +30,7 @@ import {
     handleRestartCoherentCycle,
     handleRestartReviewCycle,
     handleRecordNoOp,
+    handleRecordReviewCycleContinuation,
     handleRecordStrictDecompositionDecision,
     handleHandshakeDiagnostics,
     handleShellSmokePreflight,
@@ -94,6 +95,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleBindRulePackToPreflight(gateArgv);
         case 'record-no-op':
             return handleRecordNoOp(gateArgv);
+        case 'record-review-cycle-continuation':
+            return handleRecordReviewCycleContinuation(gateArgv);
         case 'record-strict-decomposition-decision':
             return handleRecordStrictDecompositionDecision(gateArgv);
         case 'handshake-diagnostics':

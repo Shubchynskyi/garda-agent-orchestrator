@@ -17,6 +17,7 @@ export {
     runBindRulePackToPreflightCommand,
     runLoadRulePackCommand,
     runRecordNoOpCommand,
+    runRecordReviewCycleContinuationCommand,
     runRecordStrictDecompositionDecisionCommand,
     runHandshakeDiagnosticsCommand,
     runShellSmokePreflightCommand,

@@ -148,6 +148,9 @@ import {
     normalizeReviewCycleGuardConfig,
     type ReviewCycleGuardEvaluation
 } from '../core/review-cycle-guard';
+import {
+    assessReviewCycleContinuationEvidence
+} from './review-cycle-continuation';
 import { resolveTaskProfileSelection } from '../policy/task-profile-selection';
 import { validateWorkflowConfig } from '../schemas/config-artifacts';
 import {
@@ -370,6 +373,7 @@ export interface NextStepReviewCycleBlock {
     excluded_review_types: string[];
     latest_failed_review: NextStepReviewCycleLatestFailedReview | null;
     choices: string[];
+    operator_choice_guidance: string[];
     auto_split_prompt: NextStepReviewCycleAutoSplitPrompt | null;
 }
 
@@ -4370,7 +4374,35 @@ const REVIEW_CYCLE_OPERATOR_CHOICES = Object.freeze([
     'create_follow_up_tasks'
 ]);
 
+const REVIEW_CYCLE_OPERATOR_CHOICE_GUIDANCE = Object.freeze([
+    'allow_one_more_cycle: task-scoped one-shot runtime approval; writes runtime evidence only and does not edit workflow-config.json',
+    'raise_limits: permanent repo-local workflow-config change through workflow set; requires separate operator approval and changes future runs',
+    'split_task/create_follow_up_tasks: decompose work into child or follow-up tasks instead of increasing limits',
+    'mark_blocked: stop the current task attempt and preserve the blocker'
+]);
+
 const REVIEW_CYCLE_AUTO_SPLIT_TEMPLATE_PATH = 'template/docs/prompts/review-cycle-auto-split.md';
+
+function buildReviewCycleContinuationCommand(
+    cliPrefix: string,
+    taskId: string,
+    evaluation: ReviewCycleGuardEvaluation
+): string {
+    return [
+        `${cliPrefix} gate record-review-cycle-continuation`,
+        `--task-id "${taskId}"`,
+        '--decision "allow_one_more_cycle"',
+        `--baseline-total-non-test-reviews "${evaluation.total_non_test_review_count}"`,
+        `--baseline-failed-non-test-reviews "${evaluation.failed_non_test_review_count}"`,
+        `--max-total-non-test-reviews "${evaluation.max_total_non_test_reviews}"`,
+        `--max-failed-non-test-reviews "${evaluation.max_failed_non_test_reviews}"`,
+        `--excluded-review-types ${quoteCommandValue(evaluation.excluded_review_types.join(','))}`,
+        `--reason ${quoteCommandValue('Operator approved exactly one additional review-cycle continuation without changing workflow-config.json.')}`,
+        '--operator-confirmed yes',
+        `--operator-confirmed-at-utc ${quoteCommandValue('<ISO-8601 timestamp>')}`,
+        '--repo-root "."'
+    ].join(' ');
+}
 
 function formatLatestFailedReviewForTemplate(latestFailedReview: NextStepReviewCycleLatestFailedReview | null): string {
     if (!latestFailedReview) {
@@ -4514,6 +4546,7 @@ function buildReviewCycleOperatorBlock(
         excluded_review_types: evaluation.excluded_review_types,
         latest_failed_review: latestFailedReview,
         choices: [...REVIEW_CYCLE_OPERATOR_CHOICES],
+        operator_choice_guidance: [...REVIEW_CYCLE_OPERATOR_CHOICE_GUIDANCE],
         auto_split_prompt: autoSplitPrompt
     };
 }
@@ -6939,82 +6972,103 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
     if (reviewCycleGuardEvaluation?.should_block) {
-        const reviewCycleBlock = buildReviewCycleOperatorBlock(
+        const continuationEvidence = assessReviewCycleContinuationEvidence({
             repoRoot,
             reviewsRoot,
+            eventsRoot,
             taskId,
-            reviewCycleGuardEvaluation,
-            latestFailedReviewCycleAttempt
-        );
-        const autoSplitEnabled = reviewCycleBlock.auto_split_enabled;
-        let splitRequiredLatch: SplitRequiredLatchResult | null = null;
-        if (autoSplitEnabled) {
-            splitRequiredLatch = materializeSplitRequiredLatch({
+            evaluation: reviewCycleGuardEvaluation
+        });
+        if (continuationEvidence.status === 'ACTIVE') {
+            resultBase.warnings.push(
+                `Review cycle one-shot continuation active: ${continuationEvidence.reason}. ` +
+                `Artifact: ${formatNextStepInlineValue(toRepoDisplayPath(repoRoot, continuationEvidence.artifact_path))}. ` +
+                'This approval is task-scoped runtime evidence only and does not mutate workflow-config.json; raise_limits remains a permanent repo-local workflow-config change through workflow set.'
+            );
+        } else {
+            if (continuationEvidence.status !== 'MISSING') {
+                resultBase.warnings.push(
+                    `Review cycle one-shot continuation ${continuationEvidence.status.toLowerCase()}: ${continuationEvidence.reason}. ` +
+                    `Artifact: ${formatNextStepInlineValue(toRepoDisplayPath(repoRoot, continuationEvidence.artifact_path))}.`
+                );
+            }
+            const reviewCycleBlock = buildReviewCycleOperatorBlock(
                 repoRoot,
-                eventsRoot,
                 reviewsRoot,
                 taskId,
-                guardKind: 'review_cycle',
-                guardReason: reviewCycleBlock.reason,
-                rawGuardSummary: reviewCycleGuardEvaluation.summary_line,
-                preflightPath,
-                guardDetails: {
-                    action: reviewCycleGuardEvaluation.action,
-                    total_non_test_review_count: reviewCycleGuardEvaluation.total_non_test_review_count,
-                    failed_non_test_review_count: reviewCycleGuardEvaluation.failed_non_test_review_count,
-                    excluded_review_types: reviewCycleGuardEvaluation.excluded_review_types,
-                    violations: reviewCycleGuardEvaluation.violations.map((violation) => ({
-                        metric: violation.metric,
-                        actual: violation.actual,
-                        limit: violation.limit
-                    })),
-                    auto_split_prompt: reviewCycleBlock.auto_split_prompt
-                }
-            });
-            if (!isSuccessfulSplitRequiredStatusSync(splitRequiredLatch.status_sync)) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'split-required-latch',
-                    title: 'Split-required latch could not update TASK.md.',
-                    reason:
-                        `${reviewCycleBlock.reason}. The split-required latch artifact was materialized at ` +
-                        `${formatNextStepInlineValue(toRepoDisplayPath(repoRoot, splitRequiredLatch.artifact_path))}, ` +
-                        `but TASK.md status sync failed with outcome ${formatNextStepInlineValue(splitRequiredLatch.status_sync.outcome)}. ` +
-                        `${splitRequiredLatch.status_sync.error_message ? `${splitRequiredLatch.status_sync.error_message} ` : ''}` +
-                        'Do not continue parent compile, review, full-suite, completion, or final closeout gates until the latch is repaired.',
-                    commands: [],
-                    reviewCycleBlock,
-                    finalReport: null
+                reviewCycleGuardEvaluation,
+                latestFailedReviewCycleAttempt
+            );
+            const autoSplitEnabled = reviewCycleBlock.auto_split_enabled;
+            let splitRequiredLatch: SplitRequiredLatchResult | null = null;
+            if (autoSplitEnabled) {
+                splitRequiredLatch = materializeSplitRequiredLatch({
+                    repoRoot,
+                    eventsRoot,
+                    reviewsRoot,
+                    taskId,
+                    guardKind: 'review_cycle',
+                    guardReason: reviewCycleBlock.reason,
+                    rawGuardSummary: reviewCycleGuardEvaluation.summary_line,
+                    preflightPath,
+                    guardDetails: {
+                        action: reviewCycleGuardEvaluation.action,
+                        total_non_test_review_count: reviewCycleGuardEvaluation.total_non_test_review_count,
+                        failed_non_test_review_count: reviewCycleGuardEvaluation.failed_non_test_review_count,
+                        excluded_review_types: reviewCycleGuardEvaluation.excluded_review_types,
+                        violations: reviewCycleGuardEvaluation.violations.map((violation) => ({
+                            metric: violation.metric,
+                            actual: violation.actual,
+                            limit: violation.limit
+                        })),
+                        auto_split_prompt: reviewCycleBlock.auto_split_prompt
+                    }
                 });
+                if (!isSuccessfulSplitRequiredStatusSync(splitRequiredLatch.status_sync)) {
+                    return buildResult({
+                        ...resultBase,
+                        status: 'BLOCKED',
+                        nextGate: 'split-required-latch',
+                        title: 'Split-required latch could not update TASK.md.',
+                        reason:
+                            `${reviewCycleBlock.reason}. The split-required latch artifact was materialized at ` +
+                            `${formatNextStepInlineValue(toRepoDisplayPath(repoRoot, splitRequiredLatch.artifact_path))}, ` +
+                            `but TASK.md status sync failed with outcome ${formatNextStepInlineValue(splitRequiredLatch.status_sync.outcome)}. ` +
+                            `${splitRequiredLatch.status_sync.error_message ? `${splitRequiredLatch.status_sync.error_message} ` : ''}` +
+                            'Do not continue parent compile, review, full-suite, completion, or final closeout gates until the latch is repaired.',
+                        commands: [],
+                        reviewCycleBlock,
+                        finalReport: null
+                    });
+                }
             }
+            return buildResult({
+                ...resultBase,
+                status: autoSplitEnabled ? 'SPLIT_REQUIRED' : 'BLOCKED',
+                nextGate: autoSplitEnabled ? 'split-required-latch' : 'review-cycle-attempt-guard',
+                title: autoSplitEnabled ? 'Split-required latch is active.' : 'Review cycle limit exceeded.',
+                reason:
+                    `${reviewCycleBlock.reason}. ` +
+                    `Counts: total_non_test_reviews=${reviewCycleGuardEvaluation.total_non_test_review_count}, ` +
+                    `failed_non_test_reviews=${reviewCycleGuardEvaluation.failed_non_test_review_count}, ` +
+                    `excluded_review_types=${formatNextStepInlineList(reviewCycleGuardEvaluation.excluded_review_types)}. ` +
+                    (autoSplitEnabled
+                        ? `The gate moved this parent task to SPLIT_REQUIRED and materialized latch evidence at ${formatNextStepInlineValue(toRepoDisplayPath(repoRoot, splitRequiredLatch?.artifact_path || ''))}. Follow the auto-split prompt artifact and create linked child tasks before continuing child work.`
+                        : 'The configured workflow guard blocks additional compile, review, or full-suite continuation until operator decision. allow_one_more_cycle records task-scoped one-shot runtime evidence only; raise_limits is a permanent repo-local workflow-config change through workflow set.'),
+                commands: autoSplitEnabled
+                    ? []
+                    : [
+                        buildCommand(
+                            'Record one-shot review-cycle continuation',
+                            buildReviewCycleContinuationCommand(cliPrefix, taskId, reviewCycleGuardEvaluation)
+                        )
+                    ],
+                reviewCycleBlock,
+                missingArtifacts: autoSplitEnabled ? [] : resultBase.missingArtifacts,
+                presentArtifacts: coreArtifacts.present,
+                finalReport: null
+            });
         }
-        return buildResult({
-            ...resultBase,
-            status: autoSplitEnabled ? 'SPLIT_REQUIRED' : 'BLOCKED',
-            nextGate: autoSplitEnabled ? 'split-required-latch' : 'review-cycle-attempt-guard',
-            title: autoSplitEnabled ? 'Split-required latch is active.' : 'Review cycle limit exceeded.',
-            reason:
-                `${reviewCycleBlock.reason}. ` +
-                `Counts: total_non_test_reviews=${reviewCycleGuardEvaluation.total_non_test_review_count}, ` +
-                `failed_non_test_reviews=${reviewCycleGuardEvaluation.failed_non_test_review_count}, ` +
-                `excluded_review_types=${formatNextStepInlineList(reviewCycleGuardEvaluation.excluded_review_types)}. ` +
-                (autoSplitEnabled
-                    ? `The gate moved this parent task to SPLIT_REQUIRED and materialized latch evidence at ${formatNextStepInlineValue(toRepoDisplayPath(repoRoot, splitRequiredLatch?.artifact_path || ''))}. Follow the auto-split prompt artifact and create linked child tasks before continuing child work.`
-                    : 'The configured workflow guard blocks additional compile, review, or full-suite continuation until operator decision; wait for the operator before continuing.'),
-            commands: autoSplitEnabled
-                ? []
-                : [
-                    buildCommand(
-                        'Inspect review cycle guard',
-                        `${cliPrefix} workflow explain --target-root "."`
-                    )
-                ],
-            reviewCycleBlock,
-            missingArtifacts: autoSplitEnabled ? [] : resultBase.missingArtifacts,
-            presentArtifacts: coreArtifacts.present,
-            finalReport: null
-        });
     }
     if (
         reviewCycleGuardEvaluation?.active

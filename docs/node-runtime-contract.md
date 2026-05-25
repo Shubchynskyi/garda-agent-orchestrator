@@ -157,6 +157,7 @@ Shipped gates:
 - `compile-gate`
 - `required-reviews-check`
 - `record-no-op`
+- `record-review-cycle-continuation`
 - `doc-impact-gate`
 - `completion-gate`
 - `build-scoped-diff`
@@ -173,6 +174,7 @@ Lifecycle auto-emission:
 - `compile-gate` auto-emits `IMPLEMENTATION_STARTED` and then `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED`
 - `build-review-context` auto-emits `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` for the selected review skill
 - `record-no-op` writes `runtime/reviews/<task-id>-no-op.json` for audited `already done` / `no changes required` / `audit only` outcomes
+- `record-review-cycle-continuation` writes `runtime/reviews/<task-id>-review-cycle-continuation.json` for a task-scoped one-shot `allow_one_more_cycle` approval and does not mutate `workflow-config.json`
 - `required-reviews-check`, `doc-impact-gate`, and `completion-gate` append their pass/fail markers to the task timeline
 - `status` and `doctor` report task-timeline completeness, not just timeline presence
 

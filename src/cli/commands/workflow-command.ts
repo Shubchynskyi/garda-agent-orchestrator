@@ -1136,7 +1136,7 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
             'The fresh default review-cycle limits are 15 failed non-test reviews and 30 total non-test reviews; the guard triggers only when a count is greater than its configured limit.',
             'Review cycle attempts are deduplicated only when review type, reviewer identity, and review context hash all match; otherwise each timeline event is counted separately.',
             'Review cycle guard excluded_review_types are not counted; the default excludes test reviews because reaching test review means code-facing review lanes have already been handled.',
-            'When review_cycle_guard.action is BLOCK_FOR_OPERATOR_DECISION, next-step blocks compile, review, and full-suite continuation until the operator changes config, splits work, or otherwise decides the recovery path.',
+            'When review_cycle_guard.action is BLOCK_FOR_OPERATOR_DECISION, next-step blocks compile, review, and full-suite continuation until the operator chooses a recovery path; allow_one_more_cycle is a task-scoped runtime approval, while raise_limits is a permanent repo-local workflow-config change through workflow set.',
             'When review_cycle_guard.auto_split_enabled is false, next-step tells the agent to wait for operator direction after a blocking review-cycle violation.',
             'When review_cycle_guard.auto_split_enabled is true, next-step emits a dedicated auto-split prompt artifact for the agent instead of waiting for operator input.',
             'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.',
