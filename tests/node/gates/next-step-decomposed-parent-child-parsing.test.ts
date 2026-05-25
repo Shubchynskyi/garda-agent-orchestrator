@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import { formatNextStepText, resolveNextStep } from '../../../src/gates/next-step';
+import { extractExplicitLinkedChildTaskIds } from '../../../src/gates/next-step-task-queue';
 import {
     recordFullSuiteValidationDuration,
     type FullSuiteValidationConfig
@@ -1325,6 +1326,24 @@ describe('gates/next-step decomposed parent child parsing', () => {
         assert.ok(result.reason.includes('Explicit child task link(s) could not be found'));
         assert.ok(result.reason.includes('T-702'));
         assert.ok(taskMd.includes('| T-700 | 🟪 DECOMPOSED |'));
+    });
+
+    it('stops explicit child parsing before then-continue note text', () => {
+        const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(
+            'Split into child tasks T-711, then continue with T-712 as unrelated operator guidance.',
+            ['T-711', 'T-712']
+        );
+
+        assert.deepEqual(linkedChildTaskIds, ['T-711']);
+    });
+
+    it('ignores task IDs in unrelated note segments after explicit child links', () => {
+        const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(
+            'Split into child tasks `T-721`. Security review artifact `T-722` and source note T-723 are unrelated.',
+            ['T-721', 'T-722', 'T-723']
+        );
+
+        assert.deepEqual(linkedChildTaskIds, ['T-721']);
     });
 
     it('routes decomposed parent tasks to nonnumeric child task IDs', () => {
