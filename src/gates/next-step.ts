@@ -223,6 +223,17 @@ import {
     toRepoDisplayPath
 } from './next-step-command-formatters';
 export { formatNextStepText } from './next-step-command-formatters';
+import {
+    buildCompleteReviewerLaunchCommand,
+    buildPrepareReviewerLaunchCommand,
+    buildRecordReviewResultCommand,
+    buildRecordReviewerInvocationCommand,
+    buildRestartReviewCycleCommand,
+    buildReviewPhaseCommand,
+    buildReviewRoutingCommand,
+    buildScopedDiffCommand,
+    buildTaskModePathCommandParts
+} from './next-step-review-command-builders';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -5623,33 +5634,6 @@ function buildPostPreflightRulePackBindCommand(
     ].join(' ');
 }
 
-function buildTaskModePathCommandParts(
-    repoRoot: string,
-    taskId: string,
-    taskModePath: string | null
-): string[] {
-    const trimmedTaskModePath = String(taskModePath || '').trim();
-    if (!trimmedTaskModePath) {
-        return [];
-    }
-    const resolvedTaskModePath = resolvePathInsideRepo(trimmedTaskModePath, repoRoot, { allowMissing: true });
-    if (!resolvedTaskModePath) {
-        return [];
-    }
-    const defaultTaskModePath = resolvePathInsideRepo(
-        buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-task-mode.json`),
-        repoRoot,
-        { allowMissing: true }
-    );
-    if (
-        defaultTaskModePath
-        && normalizePath(resolvedTaskModePath).toLowerCase() === normalizePath(defaultTaskModePath).toLowerCase()
-    ) {
-        return [];
-    }
-    return [`--task-mode-path "${toRepoDisplayPath(repoRoot, resolvedTaskModePath)}"`];
-}
-
 function buildCompileGateCommand(
     repoRoot: string,
     cliPrefix: string,
@@ -5680,23 +5664,6 @@ function buildReviewContextCommand(
         `--review-type "${reviewType}"`,
         `--depth "${reviewDepth}"`,
         `--preflight-path "${preflightCommandPath}"`,
-        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
-        '--repo-root "."'
-    ].join(' ');
-}
-
-function buildReviewPhaseCommand(
-    repoRoot: string,
-    cliPrefix: string,
-    taskId: string,
-    gateName: string,
-    parts: string[],
-    taskModePath: string | null
-): string {
-    return [
-        `${cliPrefix} gate ${gateName}`,
-        `--task-id "${taskId}"`,
-        ...parts,
         ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
         '--repo-root "."'
     ].join(' ');
@@ -7331,7 +7298,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     commands: [
                         buildCommand(
                             'Build scoped diff',
-                            `${cliPrefix} gate build-scoped-diff --review-type "${upstreamReviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, upstreamScopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, upstreamScopedDiffMetadataPath)}" --repo-root "."`
+                            buildScopedDiffCommand({
+                                cliPrefix,
+                                reviewType: upstreamReviewType,
+                                preflightCommandPath,
+                                outputPath: toRepoDisplayPath(repoRoot, upstreamScopedDiffOutputPath),
+                                metadataPath: toRepoDisplayPath(repoRoot, upstreamScopedDiffMetadataPath)
+                            })
                         )
                     ]
                 });
@@ -7370,14 +7343,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Restart review cycle for reviewer launch retry',
-                        [
-                            `${cliPrefix} gate restart-review-cycle`,
-                            `--task-id "${taskId}"`,
-                            `--task-intent ${quoteCommandValue(taskIntent)}`,
-                            `--impact-analysis ${quoteCommandValue('<replace with main-agent remediation impact analysis>')}`,
-                            ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
-                            '--repo-root "."'
-                        ].join(' ')
+                        buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, taskIntent, taskModePath)
                     )
                 ]
             });
@@ -7434,7 +7400,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     commands: [
                         buildCommand(
                             'Build scoped diff',
-                            `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                            buildScopedDiffCommand({
+                                cliPrefix,
+                                reviewType,
+                                preflightCommandPath,
+                                outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                                metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                            })
                         )
                     ]
                 });
@@ -7482,7 +7454,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     commands: [
                         buildCommand(
                             'Build scoped diff',
-                            `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                            buildScopedDiffCommand({
+                                cliPrefix,
+                                reviewType,
+                                preflightCommandPath,
+                                outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                                metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                            })
                         )
                     ]
                 });
@@ -7532,11 +7510,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record fresh delegated review routing',
-                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-routing', [
-                            `--review-type "${reviewType}"`,
-                            '--reviewer-execution-mode "delegated_subagent"',
-                            `--reviewer-identity "${reviewerIdentity}"`
-                        ], taskModePath)
+                        buildReviewRoutingCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, taskModePath)
                     )
                 ]
             });
@@ -7584,14 +7558,17 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     title: `Prepare '${reviewType}' delegated reviewer launch metadata.`,
                     reason: `Required review '${reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. This prepares hashes and prompt paths only; it is not completed invocation evidence. ${reviewerReadinessChain} ${launchPreparationChain}`,
                     commands: [
-                    buildCommand(
-                        'Prepare delegated reviewer launch metadata',
-                            buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'prepare-reviewer-launch', [
-                                `--review-type "${reviewType}"`,
-                                '--reviewer-execution-mode "delegated_subagent"',
-                                `--reviewer-identity "${reviewerIdentity}"`,
-                                `--reviewer-launch-artifact-path "${launchArtifactPath}"`
-                            ], taskModePath)
+                        buildCommand(
+                            'Prepare delegated reviewer launch metadata',
+                            buildPrepareReviewerLaunchCommand(
+                                repoRoot,
+                                cliPrefix,
+                                taskId,
+                                reviewType,
+                                reviewerIdentity,
+                                launchArtifactPath,
+                                taskModePath
+                            )
                         )
                     ]
                 });
@@ -7619,8 +7596,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Complete delegated reviewer launch metadata',
-                            `${cliPrefix} gate complete-reviewer-launch --task-id "${taskId}" --review-type "${reviewType}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "${reviewerIdentity}" --reviewer-launch-artifact-path "${launchArtifactPath}" --provider-invocation-id "<actual-invocation-id>" --attestation-source "<provider-source>" --fork-context false --repo-root "."`
-                        )
+                        buildCompleteReviewerLaunchCommand({
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity,
+                            launchArtifactPath
+                        })
+                    )
                     ]
                 });
             }
@@ -7646,12 +7629,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated reviewer launch attestation',
-                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-invocation', [
-                            `--review-type "${reviewType}"`,
-                            '--reviewer-execution-mode "delegated_subagent"',
-                            `--reviewer-identity "${reviewerIdentity}"`,
-                            `--reviewer-launch-artifact-path "${launchArtifactPath}"`
-                        ], taskModePath)
+                        buildRecordReviewerInvocationCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity,
+                            launchArtifactPath,
+                            taskModePath
+                        )
                     )
                 ]
             });
@@ -7685,13 +7671,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',
-                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
-                            `--review-type "${reviewType}"`,
-                            `--preflight-path "${preflightCommandPath}"`,
-                            '--review-output-stdin',
-                            '--reviewer-execution-mode "delegated_subagent"',
-                            `--reviewer-identity "${reviewerIdentity}"`
-                        ], taskModePath)
+                        buildRecordReviewResultCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity,
+                            preflightCommandPath,
+                            taskModePath
+                        )
                     )
                 ]
             });
@@ -7717,13 +7705,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Record delegated review output, then close reviewer',
-                        buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
-                            `--review-type "${reviewType}"`,
-                            `--preflight-path "${preflightCommandPath}"`,
-                            '--review-output-stdin',
-                            '--reviewer-execution-mode "delegated_subagent"',
-                            `--reviewer-identity "${reviewerIdentity}"`
-                        ], taskModePath)
+                        buildRecordReviewResultCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            reviewType,
+                            reviewerIdentity,
+                            preflightCommandPath,
+                            taskModePath
+                        )
                     )
                 ]
             });
@@ -7791,7 +7781,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Build scoped diff',
-                        `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                        buildScopedDiffCommand({
+                            cliPrefix,
+                            reviewType,
+                            preflightCommandPath,
+                            outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                            metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                        })
                     )
                 ]
             });
@@ -7879,7 +7875,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 commands: [
                     buildCommand(
                         'Build scoped diff',
-                        `${cliPrefix} gate build-scoped-diff --review-type "${reviewType}" --preflight-path "${preflightCommandPath}" --output-path "${toRepoDisplayPath(repoRoot, scopedDiffOutputPath)}" --metadata-path "${toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)}" --repo-root "."`
+                        buildScopedDiffCommand({
+                            cliPrefix,
+                            reviewType,
+                            preflightCommandPath,
+                            outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                            metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                        })
                     )
                 ]
             });
