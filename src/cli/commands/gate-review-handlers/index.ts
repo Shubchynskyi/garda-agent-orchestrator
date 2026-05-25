@@ -64,9 +64,7 @@ import {
     resolveReviewerPromptArtifactBinding
 } from '../../../gates/review-prompt-artifact';
 import {
-    resolveLegacyReviewTempRoot,
-    resolveDefaultReviewScratchPath,
-    resolveReviewScratchRoot
+    resolveDefaultReviewScratchPath
 } from '../../../gates/review-scratch-paths';
 import { resolveReviewContextRoutingIdentity } from '../../../gates/review-context-routing';
 import { assertReviewLifecycleGuard } from '../../../gates/review-lifecycle-guard';
@@ -92,6 +90,12 @@ import {
     type ParsedOptionsRecord,
     removeArtifactIfExists
 } from '../shared-command-utils';
+import {
+    readDependencyTimelineEvents
+} from './review-dependency-timeline';
+import {
+    resolveReviewOutputInput
+} from './review-output-input';
 
 interface ResolvedCanonicalReviewPaths {
     preflightPath: string;
@@ -104,14 +108,6 @@ interface ParsedReviewerIdentity {
     reviewerExecutionMode: 'delegated_subagent';
     reviewerIdentity: string;
     reviewerFallbackReason: string | null;
-}
-
-interface ResolvedReviewOutputInput {
-    reviewContent: string;
-    reviewOutputPath: string;
-    reviewOutputMode: 'path' | 'stdin';
-    reviewOutputSourcePath: string | null;
-    reviewOutputSourceMtimeUtc: string | null;
 }
 
 interface ReviewerLaunchArtifactValidationResult {
@@ -585,10 +581,6 @@ function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequiredMessage
     };
 }
 
-function getCanonicalReviewOutputArtifactPath(reviewsRoot: string, taskId: string, reviewType: string): string {
-    return path.join(reviewsRoot, `${taskId}-${reviewType}-review-output.md`);
-}
-
 export { handleRequiredReviewsCheck, handleDocImpactGate } from './simple-handlers';
 
 export let readReviewOutputFromStdin = async (): Promise<string> => {
@@ -602,100 +594,6 @@ export let readReviewOutputFromStdin = async (): Promise<string> => {
     }
     return content;
 };
-
-async function resolveReviewOutputInput(
-    options: ParsedOptionsRecord,
-    repoRoot: string,
-    reviewsRoot: string,
-    taskId: string,
-    reviewType: string
-): Promise<ResolvedReviewOutputInput> {
-    const useReviewOutputStdin = options.reviewOutputStdin === true;
-    const rawReviewOutputPath = String(options.reviewOutputPath || '').trim();
-    const hasReviewOutputPath = rawReviewOutputPath.length > 0;
-    if (useReviewOutputStdin === hasReviewOutputPath) {
-        throw new Error(
-            "Review output requires exactly one input source. Provide either '--review-output-path' or '--review-output-stdin'."
-        );
-    }
-
-    const reviewOutputArtifactPath = getCanonicalReviewOutputArtifactPath(reviewsRoot, taskId, reviewType);
-    let reviewContent = '';
-    let reviewOutputSourcePath: string | null = null;
-    let reviewOutputSourceMtimeUtc: string | null = null;
-    if (useReviewOutputStdin) {
-        reviewContent = await readReviewOutputFromStdin();
-    } else {
-        const resolvedReviewOutputPath = gateHelpers.resolvePathInsideRepo(rawReviewOutputPath, repoRoot, { allowMissing: true });
-        if (!resolvedReviewOutputPath) {
-            throw new Error('ReviewOutputPath is required.');
-        }
-        const reviewOutputStat = fs.existsSync(resolvedReviewOutputPath)
-            ? fs.statSync(resolvedReviewOutputPath)
-            : null;
-        if (!reviewOutputStat?.isFile()) {
-            throw new Error(`Review output not found: ${normalizePath(resolvedReviewOutputPath)}.`);
-        }
-        if (!gateHelpers.isPathRealpathInsideRoot(resolvedReviewOutputPath, repoRoot)) {
-            throw new Error(
-                `ReviewOutputPath must resolve inside repo root without symlink or junction escape: ` +
-                `${normalizePath(resolvedReviewOutputPath)}.`
-            );
-        }
-        const lexicalReviewOutputPath = path.resolve(resolvedReviewOutputPath);
-        const realReviewOutputPath = fs.realpathSync(resolvedReviewOutputPath);
-        if (
-            gateHelpers.normalizePath(lexicalReviewOutputPath).toLowerCase()
-            !== gateHelpers.normalizePath(realReviewOutputPath).toLowerCase()
-        ) {
-            throw new Error(
-                `ReviewOutputPath must not traverse symlinks or junctions: ` +
-                `${normalizePath(resolvedReviewOutputPath)}.`
-            );
-        }
-        const relativeReviewTempPath = path.relative(resolveReviewScratchRoot(repoRoot), resolvedReviewOutputPath);
-        const isInsideReviewTemp = relativeReviewTempPath.length > 0
-            && !relativeReviewTempPath.startsWith('..')
-            && !path.isAbsolute(relativeReviewTempPath);
-        if (isInsideReviewTemp
-            && !isTaskOwnedReviewTempPath(repoRoot, taskId, resolvedReviewOutputPath)) {
-            throw new Error(
-                `ReviewOutputPath inside reviewer scratch storage must encode the current task id '${taskId}' ` +
-                `so cleanup can attribute it safely. Use ` +
-                `'garda-agent-orchestrator/runtime/tmp/reviews/${taskId}/${reviewType}/review-output.md'.`
-            );
-        }
-        const relativeLegacyReviewTempPath = path.relative(resolveLegacyReviewTempRoot(repoRoot), resolvedReviewOutputPath);
-        const isInsideLegacyReviewTemp = relativeLegacyReviewTempPath.length > 0
-            && !relativeLegacyReviewTempPath.startsWith('..')
-            && !path.isAbsolute(relativeLegacyReviewTempPath);
-        if (isInsideLegacyReviewTemp) {
-            throw new Error(
-                `ReviewOutputPath must not use legacy '.review-temp'. Use ` +
-                `'garda-agent-orchestrator/runtime/tmp/reviews/${taskId}/${reviewType}/review-output.md'.`
-            );
-        }
-        reviewOutputSourcePath = resolvedReviewOutputPath;
-        reviewOutputSourceMtimeUtc = reviewOutputStat.mtime.toISOString();
-        reviewContent = fs.readFileSync(resolvedReviewOutputPath, 'utf8');
-    }
-
-    // Persist raw reviewer input before verdict extraction so direct ingest cannot bypass the audited file path.
-    writeReviewArtifactText(reviewOutputArtifactPath, reviewContent);
-    if (!reviewContent.trim()) {
-        throw new Error(`Review output is empty: ${normalizePath(reviewOutputArtifactPath)}.`);
-    }
-
-    return {
-        reviewContent,
-        reviewOutputPath: reviewOutputArtifactPath,
-        reviewOutputMode: useReviewOutputStdin ? 'stdin' : 'path',
-        reviewOutputSourcePath: reviewOutputSourcePath && normalizePath(reviewOutputSourcePath) !== normalizePath(reviewOutputArtifactPath)
-            ? reviewOutputSourcePath
-            : null,
-        reviewOutputSourceMtimeUtc
-    };
-}
 
 function getReviewHeading(reviewType: string): string {
     const normalized = String(reviewType || '').trim().toLowerCase();
@@ -2218,55 +2116,6 @@ function validateReviewerLaunchArtifact(options: {
     };
 }
 
-function readDependencyTimelineEvents(timelinePath: string): ReviewDependencyTimelineEvent[] {
-    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
-        return [];
-    }
-    return fs.readFileSync(timelinePath, 'utf8')
-        .split('\n')
-        .filter((line) => line.trim().length > 0)
-        .flatMap((line, sequence) => {
-            try {
-                const parsed = JSON.parse(line) as Record<string, unknown>;
-                const details = parsed.details && typeof parsed.details === 'object' && !Array.isArray(parsed.details)
-                    ? parsed.details as Record<string, unknown>
-                    : null;
-                const rawIntegrity = parsed.integrity && typeof parsed.integrity === 'object' && !Array.isArray(parsed.integrity)
-                    ? parsed.integrity as Record<string, unknown>
-                    : null;
-                const taskSequence = typeof rawIntegrity?.task_sequence === 'number'
-                    ? rawIntegrity.task_sequence
-                    : Number(rawIntegrity?.task_sequence);
-                const eventSha256 = String(rawIntegrity?.event_sha256 || '').trim().toLowerCase();
-                const prevEventSha256Raw = rawIntegrity?.prev_event_sha256;
-                const prevEventSha256 = prevEventSha256Raw == null
-                    ? null
-                    : String(prevEventSha256Raw).trim().toLowerCase() || null;
-                return [{
-                    event_type: String(parsed.event_type || '').trim().toUpperCase(),
-                    sequence,
-                    details,
-                    integrity: rawIntegrity
-                        && Number.isInteger(taskSequence)
-                        && taskSequence > 0
-                        && /^[0-9a-f]{64}$/.test(eventSha256)
-                        && (prevEventSha256 == null || /^[0-9a-f]{64}$/.test(prevEventSha256))
-                        ? {
-                            schema_version: typeof rawIntegrity.schema_version === 'number'
-                                ? rawIntegrity.schema_version
-                                : Number(rawIntegrity.schema_version) || 1,
-                            task_sequence: taskSequence,
-                            prev_event_sha256: prevEventSha256,
-                            event_sha256: eventSha256
-                        }
-                        : null
-                }];
-            } catch {
-                return [];
-            }
-        });
-}
-
 async function recordReviewReceiptFromArtifacts(options: {
     repoRoot: string;
     taskId: string;
@@ -2462,21 +2311,43 @@ async function recordReviewReceiptFromArtifacts(options: {
     const receiptPayloadSha256 = createHash('sha256')
         .update(`${JSON.stringify(receipt, null, 2)}\n`)
         .digest('hex');
+    return writeReviewReceiptSnapshotsAndTelemetry({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        artifactPath: options.artifactPath,
+        contextPath: options.contextPath,
+        receipt: receipt as unknown as Record<string, unknown>,
+        receiptPayloadSha256,
+        artifactSha256
+    });
+}
+
+async function writeReviewReceiptSnapshotsAndTelemetry(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    artifactPath: string;
+    contextPath: string;
+    receipt: Record<string, unknown>;
+    receiptPayloadSha256: string;
+    artifactSha256: string | null;
+}): Promise<string> {
     const receiptPath = options.artifactPath.replace(/\.md$/, '-receipt.json');
-    const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${receiptPayloadSha256}.json`);
-    const artifactSnapshotPath = options.artifactPath.replace(/\.md$/, `-artifact-${artifactSha256}.md`);
+    const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${options.receiptPayloadSha256}.json`);
+    const artifactSnapshotPath = options.artifactPath.replace(/\.md$/, `-artifact-${options.artifactSha256}.md`);
 
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
     await writeReviewArtifactsWithRollback([
         {
             artifactPath: receiptPath,
             contentType: 'json',
-            payload: receipt
+            payload: options.receipt
         },
         {
             artifactPath: receiptSnapshotPath,
             contentType: 'json',
-            payload: receipt
+            payload: options.receipt
         },
         {
             artifactPath: artifactSnapshotPath,
@@ -2485,14 +2356,14 @@ async function recordReviewReceiptFromArtifacts(options: {
         }
     ], async () => {
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
-            ...receipt,
+            ...options.receipt,
             receipt_path: normalizePath(receiptPath),
-            receipt_sha256: receiptPayloadSha256,
+            receipt_sha256: options.receiptPayloadSha256,
             receipt_snapshot_path: normalizePath(receiptSnapshotPath),
-            receipt_snapshot_sha256: receiptPayloadSha256,
+            receipt_snapshot_sha256: options.receiptPayloadSha256,
             review_artifact_path: normalizePath(options.artifactPath),
             review_artifact_snapshot_path: normalizePath(artifactSnapshotPath),
-            review_artifact_snapshot_sha256: artifactSha256,
+            review_artifact_snapshot_sha256: options.artifactSha256,
             review_context_path: normalizePath(options.contextPath)
         });
         if (!recordedEvent || taskEventAppendHasBlockingFailure(recordedEvent, false)) {
@@ -3514,7 +3385,14 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         options.preflightPath,
         options.reviewContextPath
     );
-    const reviewOutput = await resolveReviewOutputInput(options, repoRoot, path.dirname(preflightPath), taskId, reviewType);
+    const reviewOutput = await resolveReviewOutputInput(
+        options,
+        repoRoot,
+        path.dirname(preflightPath),
+        taskId,
+        reviewType,
+        readReviewOutputFromStdin
+    );
     const rawReviewOutputSha256 = fileSha256(reviewOutput.reviewOutputPath);
     let reviewContent = reviewOutput.reviewContent;
     let reviewMaterializationFidelity = 'exact';
