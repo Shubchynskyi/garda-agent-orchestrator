@@ -1287,6 +1287,33 @@ describe('gates/next-step decomposed parent routing', () => {
         assert.ok(text.includes('NextGate: child-task'));
     });
 
+    it('preserves explicit parent-derived child range order instead of jumping to the endpoint', () => {
+        const repoRoot = makeTempRepo();
+        const childRows = Array.from({ length: 20 }, (_, index) => {
+            const childNumber = index + 1;
+            const status = childNumber < 13 ? '🟩 DONE' : '🟦 TODO';
+            return `| T-625-${childNumber} | ${status} | P1 | workflow | Child ${childNumber} | gpt-5.4 | 2026-05-25 | strict | ${childNumber < 13 ? 'Complete.' : 'Pending.'} |`;
+        });
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-625 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-25 | strict | Split into child tasks `T-625-1` through `T-625-20`; execute child tasks in this explicit order. |',
+            ...childRows,
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-625', repoRoot });
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.equal(result.commands.length, 1);
+        assert.ok(result.commands[0].command.includes('next-step "T-625-13"'));
+        assert.equal(result.commands[0].command.includes('next-step "T-625-20"'), false);
+        assert.ok(result.reason.includes('T-625 -> T-625-13'));
+    });
+
     it('ignores parent and continuation mentions when routing nested decomposed parents', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [

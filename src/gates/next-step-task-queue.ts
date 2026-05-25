@@ -41,6 +41,13 @@ interface ChildTaskIdMention {
     index: number;
 }
 
+interface NumericTaskIdRangeEndpoint {
+    taskId: string;
+    prefix: string;
+    rawNumber: string;
+    value: number;
+}
+
 export interface StrictDecompositionSplitRoutingState {
     ready: boolean;
     linkedChildTaskIds: string[];
@@ -126,31 +133,59 @@ function isExplicitChildListMentionPosition(text: string, index: number): boolea
     return /^[\s,:()[\]\-–—]*(?:(?:and|or|through|to)[\s,:()[\]\-–—]*)*$/iu.test(listPrefix);
 }
 
+function parseNumericTaskIdRangeEndpoint(taskId: string): NumericTaskIdRangeEndpoint | null {
+    if (!TASK_QUEUE_TASK_ID_PATTERN.test(taskId)) {
+        return null;
+    }
+    const match = /^(.*?)(\d+)$/u.exec(taskId);
+    if (!match) {
+        return null;
+    }
+    const prefix = match[1];
+    const rawNumber = match[2];
+    const value = Number(rawNumber);
+    if (!prefix || !Number.isInteger(value)) {
+        return null;
+    }
+    return {
+        taskId,
+        prefix,
+        rawNumber,
+        value
+    };
+}
+
 function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<string>): ChildTaskIdMention[] {
     const text = String(notes || '');
     const taskMentions: ChildTaskIdMention[] = [];
-    const rangePattern = /\b([Tt]-)(\d+)\b[\s`*_]*(?:through|to|-|–|—)[\s`*_]*\b([Tt]-)(\d+)\b/gu;
+    const rangePattern =
+        /(^|[^A-Za-z0-9._-])([A-Za-z0-9._-]*\d)(?=$|[^A-Za-z0-9._-])[\s`*_]*(?:through|to|-|–|—)[\s`*_]*([A-Za-z0-9._-]*\d)(?=$|[^A-Za-z0-9._-])/gu;
     let rangeMatch: RegExpExecArray | null;
     while ((rangeMatch = rangePattern.exec(text)) !== null) {
-        const startPrefix = rangeMatch[1];
-        const startRaw = rangeMatch[2];
-        const endPrefix = rangeMatch[3];
-        const endRaw = rangeMatch[4];
-        if (startPrefix !== endPrefix) {
+        const leadingBoundary = rangeMatch[1] || '';
+        const startEndpoint = parseNumericTaskIdRangeEndpoint(rangeMatch[2] || '');
+        const endEndpoint = parseNumericTaskIdRangeEndpoint(rangeMatch[3] || '');
+        if (!startEndpoint || !endEndpoint || startEndpoint.prefix !== endEndpoint.prefix) {
             continue;
         }
-        const start = Number(startRaw);
-        const end = Number(endRaw);
+        const start = startEndpoint.value;
+        const end = endEndpoint.value;
         if (!Number.isInteger(start) || !Number.isInteger(end) || Math.abs(end - start) > 100) {
             continue;
         }
         const step = start <= end ? 1 : -1;
-        const width = startRaw.length === endRaw.length ? startRaw.length : 0;
+        const width = startEndpoint.rawNumber.length === endEndpoint.rawNumber.length
+            ? startEndpoint.rawNumber.length
+            : 0;
         let offset = 0;
         for (let value = start; step > 0 ? value <= end : value >= end; value += step) {
             const valueText = width > 0 ? String(Math.abs(value)).padStart(width, '0') : String(Math.abs(value));
             const signedValueText = value < 0 ? `-${valueText}` : valueText;
-            appendTaskMentionIfMissing(taskMentions, `${startPrefix}${signedValueText}`, rangeMatch.index + offset);
+            appendTaskMentionIfMissing(
+                taskMentions,
+                `${startEndpoint.prefix}${signedValueText}`,
+                rangeMatch.index + leadingBoundary.length + offset
+            );
             offset += 1;
         }
     }
