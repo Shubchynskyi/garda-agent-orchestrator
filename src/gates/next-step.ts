@@ -4,13 +4,11 @@ import { createHash } from 'node:crypto';
 
 import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
-    computeReviewLaunchPlan,
     getReviewExecutionDependencies,
     resolveEffectiveReviewExecutionPolicyConfigFromWorkflowConfig,
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode,
-    type ResolvedReviewExecutionPolicyConfig,
-    type ReviewLaunchPlan
+    type ResolvedReviewExecutionPolicyConfig
 } from '../core/review-execution-policy';
 import {
     appendMandatoryTaskEvent,
@@ -205,6 +203,15 @@ import {
     hasAcceptedDocsOnlyFullSuiteSkipArtifact,
     readNextStepReadinessArtifacts
 } from './next-step-readiness-readers';
+import {
+    applyFullSuiteReadinessToReviewLaunchPlan,
+    buildNextStepReviewLaunchPlan,
+    describeBlockedReviewDependencies,
+    getDownstreamReviewTypesFor,
+    shouldRunFullSuiteAfterCompileBeforeReviews,
+    shouldRunFullSuiteBeforeTestReview,
+    toNextStepBlockedReviewLanes
+} from './next-step-review-launch-planner';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -2419,102 +2426,6 @@ function readReviewTrust(
     return buildReviewTrustSummary(entries, scopeCategory, requiredReviewTypes.length);
 }
 
-function getReviewLaunchPlan(
-    repoRoot: string,
-    requiredReviewTypes: string[],
-    policyMode: EffectiveReviewExecutionPolicyMode,
-    requiredReviews: Record<string, boolean>,
-    reviewStates: ReviewArtifactState[],
-    eventsRoot: string,
-    taskId: string
-): ReviewLaunchPlan {
-    const passedReviews = new Set(
-        reviewStates
-            .filter((state) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state))
-            .map((state) => state.reviewType)
-    );
-    const launchPlan = computeReviewLaunchPlan({
-        requiredReviewTypes,
-        requiredReviews,
-        policyMode,
-        reviewStates: reviewStates.map((state) => ({
-            review_type: state.reviewType,
-            satisfied: passedReviews.has(state.reviewType),
-            failed_current: state.failed
-                && reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state)
-        }))
-    });
-    return launchPlan;
-}
-
-function applyFullSuiteReadinessToReviewLaunchPlan(
-    launchPlan: ReviewLaunchPlan,
-    fullSuiteEnabled: boolean,
-    fullSuitePlacement: FullSuiteValidationPlacement,
-    fullSuiteNotRequiredForDocsOnly: boolean,
-    fullSuiteGateStatus: GateOutcome['status'] | null
-): ReviewLaunchPlan {
-    if (
-        !fullSuiteEnabled
-        || fullSuitePlacement !== 'before_test_review'
-        || fullSuiteNotRequiredForDocsOnly
-        || fullSuiteGateStatus === 'PASS'
-        || launchPlan.failed_review_type
-        || !launchPlan.launchable_review_types.includes('test')
-    ) {
-        return launchPlan;
-    }
-
-    const launchableReviewTypes = launchPlan.launchable_review_types.filter((reviewType) => reviewType !== 'test');
-    const blockedReviewLanes = [
-        ...launchPlan.blocked_review_lanes.filter((lane) => lane.review_type !== 'test'),
-        { review_type: 'test', blocked_by: ['full-suite-validation'] }
-    ];
-    const [nextLaunchableReviewType] = launchableReviewTypes;
-
-    return {
-        ...launchPlan,
-        launchable_review_types: launchableReviewTypes,
-        blocked_review_lanes: blockedReviewLanes,
-        next_review_type: nextLaunchableReviewType || 'test',
-        blocked_review_dependencies: nextLaunchableReviewType
-            ? []
-            : ['full-suite-validation']
-    };
-}
-
-function shouldRunFullSuiteAfterCompileBeforeReviews(
-    enabled: boolean,
-    placement: FullSuiteValidationPlacement,
-    fullSuiteNotRequiredForCurrentScope: boolean
-): boolean {
-    return enabled
-        && placement === 'after_compile_before_reviews'
-        && !fullSuiteNotRequiredForCurrentScope;
-}
-
-function shouldRunFullSuiteBeforeTestReview(
-    enabled: boolean,
-    placement: FullSuiteValidationPlacement,
-    fullSuiteNotRequiredForCurrentScope: boolean
-): boolean {
-    return enabled
-        && placement === 'before_test_review'
-        && !fullSuiteNotRequiredForCurrentScope;
-}
-
-function toNextStepBlockedReviewLanes(launchPlan: ReviewLaunchPlan): NextStepBlockedReviewLane[] {
-    return launchPlan.blocked_review_lanes.map((lane) => ({
-        review_type: lane.review_type,
-        blocked_by: lane.blocked_by,
-        reason: lane.blocked_by.includes('full-suite-validation')
-            ? 'Waiting for current full-suite validation evidence before launching test review.'
-            : lane.blocked_by.length > 0
-            ? `Waiting for current-cycle ${lane.blocked_by.join(', ')} review artifacts and receipts to pass.`
-            : 'Waiting for review launch dependencies to clear.'
-    }));
-}
-
 function reviewStateHasSatisfiedEvidence(
     repoRoot: string,
     eventsRoot: string,
@@ -2589,37 +2500,6 @@ function reviewStateHasCurrentRecordedEvidence(
         return timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state);
     }
     return timelineHasDelegatedReviewInvocationAttestation(repoRoot, eventsRoot, taskId, state);
-}
-
-function getDownstreamReviewTypesFor(
-    failedReviewType: string,
-    requiredReviewTypes: string[],
-    requiredReviews: Record<string, boolean>,
-    policyMode: EffectiveReviewExecutionPolicyMode
-): string[] {
-    return requiredReviewTypes.filter((reviewType) => (
-        reviewType !== failedReviewType
-        && getReviewExecutionDependencies(reviewType, requiredReviews, policyMode).includes(failedReviewType)
-    ));
-}
-
-function describeBlockedReviewDependencies(
-    dependencies: readonly string[],
-    reviewStates: readonly ReviewArtifactState[]
-): string {
-    const stateByType = new Map(reviewStates.map((state) => [state.reviewType, state]));
-    return dependencies
-        .map((dependency) => {
-            const dependencyState = stateByType.get(dependency);
-            if (dependencyState?.failed) {
-                return `${dependency} failed with '${dependencyState.verdictToken || dependencyState.failToken || 'FAILED'}'`;
-            }
-            if (dependencyState?.artifactExists && !dependencyState.ready) {
-                return `${dependency} is not PASS-ready (${dependencyState.violations.join('; ')})`;
-            }
-            return `${dependency} has no current PASS artifact and receipt`;
-        })
-        .join('; ');
 }
 
 function getTimelineEventTaskSequence(event: ReviewReuseTelemetryEventLike): number | null {
@@ -6056,15 +5936,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     ));
     const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
     const reviewLaunchPlan = applyFullSuiteReadinessToReviewLaunchPlan(
-        getReviewLaunchPlan(
-            repoRoot,
+        buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
-            reviewPolicy.mode,
-            summary.required_reviews,
+            policyMode: reviewPolicy.mode,
+            requiredReviews: summary.required_reviews,
             reviewStates,
-            eventsRoot,
-            taskId
-        ),
+            isSatisfied: (state) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState),
+            isCurrentFailed: (state) => reviewStateHasCurrentRecordedEvidence(repoRoot, eventsRoot, taskId, state as ReviewArtifactState)
+        }),
         fullSuiteConfig.enabled,
         fullSuiteConfig.placement,
         fullSuiteNotRequiredForCurrentScope,
