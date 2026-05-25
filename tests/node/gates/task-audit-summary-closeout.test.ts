@@ -446,6 +446,37 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_report_contract.required_order[2], 'git commit -m "<type>(<scope>): <summary>"');
         });
 
+        it('initializes git fixtures without inheriting global commit signing or hooks', () => {
+            const hooksDir = path.join(tmpDir, 'global-hooks');
+            fs.mkdirSync(hooksDir, { recursive: true });
+            fs.writeFileSync(path.join(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 42\n', { encoding: 'utf8', mode: 0o755 });
+            const globalConfigPath = path.join(tmpDir, 'global-gitconfig');
+            fs.writeFileSync(globalConfigPath, [
+                '[commit]',
+                '    gpgsign = true',
+                '[core]',
+                `    hooksPath = ${hooksDir.replace(/\\/g, '/')}`,
+                ''
+            ].join('\n'), 'utf8');
+
+            const previousGlobalConfigPath = process.env.GIT_CONFIG_GLOBAL;
+            process.env.GIT_CONFIG_GLOBAL = globalConfigPath;
+            try {
+                initGitRepo(tmpDir);
+            } finally {
+                if (previousGlobalConfigPath === undefined) {
+                    delete process.env.GIT_CONFIG_GLOBAL;
+                } else {
+                    process.env.GIT_CONFIG_GLOBAL = previousGlobalConfigPath;
+                }
+            }
+
+            const latestSubject = execFileSync('git', ['log', '--format=%s', '-1'], { cwd: tmpDir, encoding: 'utf8' }).trim();
+            const status = execFileSync('git', ['status', '--short'], { cwd: tmpDir, encoding: 'utf8' }).trim();
+            assert.equal(latestSubject, 'baseline');
+            assert.equal(status, '');
+        });
+
         it('keeps commit guidance when tracked worktree changes are still committable', () => {
             const sourceFile = path.join(tmpDir, 'src', 'gates', 'task-audit-summary.ts');
             fs.mkdirSync(path.dirname(sourceFile), { recursive: true });

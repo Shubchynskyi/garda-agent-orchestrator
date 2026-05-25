@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -33,6 +33,7 @@ import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-me
 
 export {
     spawn,
+    spawnSync,
     execFileSync,
     fs,
     path,
@@ -70,13 +71,55 @@ export function makeTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'task-audit-test-'));
 }
 
+const GIT_FIXTURE_CONFIG_ARGS = [
+    '-c',
+    'init.defaultBranch=main',
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'tag.gpgsign=false',
+    '-c',
+    'core.hooksPath='
+];
+
+function formatGitFixtureOutput(value: string | null | undefined): string {
+    const output = String(value || '').trim();
+    return output || '<empty>';
+}
+
+function runGitFixtureCommand(repoRoot: string, args: string[]): void {
+    const result = spawnSync('git', [...GIT_FIXTURE_CONFIG_ARGS, ...args], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: {
+            ...process.env,
+            GIT_EDITOR: 'true',
+            GIT_TERMINAL_PROMPT: '0'
+        },
+        windowsHide: true
+    });
+
+    if (result.status === 0) {
+        return;
+    }
+
+    const status = result.status == null ? 'unknown' : String(result.status);
+    throw new Error([
+        `Git fixture command failed: git ${args.join(' ')}`,
+        `cwd: ${repoRoot}`,
+        `exit: ${status}`,
+        `stdout: ${formatGitFixtureOutput(result.stdout)}`,
+        `stderr: ${formatGitFixtureOutput(result.stderr)}`
+    ].join('\n'));
+}
+
 export function initGitRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n', 'utf8');
-    execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.email', 'garda-test@example.invalid'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.name', 'Garda Test'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', ['add', '.'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repoRoot, stdio: 'ignore' });
+    runGitFixtureCommand(repoRoot, ['init']);
+    runGitFixtureCommand(repoRoot, ['config', 'user.email', 'garda-test@example.invalid']);
+    runGitFixtureCommand(repoRoot, ['config', 'user.name', 'Garda Test']);
+    runGitFixtureCommand(repoRoot, ['add', '.']);
+    runGitFixtureCommand(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
 }
 
 export function writeEvent(eventsDir: string, taskId: string, event: Record<string, unknown>): void {
