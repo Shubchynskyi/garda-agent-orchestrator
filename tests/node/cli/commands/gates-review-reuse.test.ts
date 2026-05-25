@@ -2265,6 +2265,144 @@ describe('cli/commands/gates – review-reuse suites', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('reuses prior review evidence across review-cycle limit-only workflow config changes', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-workflow-limits-review-reuse';
+        const workflowConfigPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'workflow-config.json'
+        );
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        initializeGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewedFeature = true;\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reuse reviews after one-shot limit configuration drift'
+        });
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const requiredReviews = {
+            code: true,
+            db: false,
+            security: true,
+            refactor: true,
+            api: false,
+            test: true,
+            performance: false,
+            infra: false,
+            dependency: false
+        };
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 },
+            required_reviews: requiredReviews
+        }, `${taskId}-prior-preflight.json`);
+        const reviewTypes = [
+            ['code', 'REVIEW PASSED', 'agent:code-reviewer'],
+            ['security', 'SECURITY REVIEW PASSED', 'agent:security-reviewer'],
+            ['refactor', 'REFACTOR REVIEW PASSED', 'agent:refactor-reviewer'],
+            ['test', 'TEST REVIEW PASSED', 'agent:test-reviewer']
+        ] as const;
+        for (const [reviewType, verdict, reviewerIdentity] of reviewTypes) {
+            seedReusableReviewEvidence(
+                repoRoot,
+                taskId,
+                reviewType,
+                verdict,
+                priorPreflightPath,
+                path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`),
+                reviewerIdentity
+            );
+        }
+
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, any>;
+        workflowConfig.review_cycle_guard.max_failed_non_test_reviews += 1;
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews += 1;
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2) + '\n', 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['src/app.ts', workflowConfigRelativePath],
+            metrics: { changed_lines_total: 5 },
+            triggers: { changed_workflow_config_files: [workflowConfigRelativePath] },
+            required_reviews: requiredReviews
+        });
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+
+        for (const [reviewType] of reviewTypes) {
+            const build = await runBuildReviewContextCommand({
+                repoRoot,
+                reviewType,
+                depth: 2,
+                preflightPath,
+                outputPath: path.join(reviewsRoot, `${taskId}-${reviewType}-review-context.json`)
+            });
+            assert.equal(build.reusedReviewEvidence, true, `${reviewType} review should be reused`);
+            assert.ok(build.outputLines.includes('ReviewReuseDecision: accepted'));
+        }
+
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint('security', preflight, repoRoot);
+        const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+        assert.deepEqual(codeScopeFingerprint.review_reuse_neutral_config_files, [workflowConfigRelativePath]);
+        assert.deepEqual(reviewScopeFingerprint.review_reuse_neutral_config_files, [workflowConfigRelativePath]);
+        assert.equal(codeScopeFingerprint.non_test_changed_files.includes(workflowConfigRelativePath), false);
+        assert.equal(reviewScopeFingerprint.review_relevant_changed_files.includes(workflowConfigRelativePath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps review-cycle policy workflow config changes in review reuse fingerprints', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-workflow-policy-no-reuse';
+        const workflowConfigPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'live',
+            'config',
+            'workflow-config.json'
+        );
+        const workflowConfigRelativePath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        initializeGitRepo(repoRoot);
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 3 }
+        }, `${taskId}-prior-preflight.json`);
+        const priorPreflight = JSON.parse(fs.readFileSync(priorPreflightPath, 'utf8')) as Record<string, unknown>;
+        const priorCodeScopeSha256 = computeReviewReuseCodeScopeFingerprint(
+            'code',
+            priorPreflight,
+            repoRoot
+        ).code_scope_sha256;
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, any>;
+        workflowConfig.review_cycle_guard.excluded_review_types = ['security'];
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2) + '\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            scope_category: 'mixed',
+            changed_files: ['src/app.ts', workflowConfigRelativePath],
+            metrics: { changed_lines_total: 5 },
+            triggers: { changed_workflow_config_files: [workflowConfigRelativePath] }
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+        const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+        assert.deepEqual(codeScopeFingerprint.review_reuse_neutral_config_files, []);
+        assert.deepEqual(reviewScopeFingerprint.review_reuse_neutral_config_files, []);
+        assert.equal(codeScopeFingerprint.non_test_changed_files.includes(workflowConfigRelativePath), true);
+        assert.equal(reviewScopeFingerprint.review_relevant_changed_files.includes(workflowConfigRelativePath), true);
+        assert.notEqual(codeScopeFingerprint.code_scope_sha256, priorCodeScopeSha256);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('reuses prior code-review evidence when non-runtime performance support is delegated to performance review', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-code-reuse-performance-support';

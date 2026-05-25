@@ -1,4 +1,6 @@
 import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import { matchAnyRegex } from '../gate-runtime/text-utils';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from './classify-change';
@@ -13,6 +15,7 @@ export interface CodeReviewScopeFingerprint {
     non_test_changed_files: string[];
     docs_only_changed_files: string[];
     performance_support_changed_files: string[];
+    review_reuse_neutral_config_files: string[];
     missing_non_test_files: string[];
     code_scope_sha256: string | null;
     test_only: boolean;
@@ -23,6 +26,7 @@ export interface ReviewRelevantScopeFingerprint {
     all_changed_files: string[];
     review_relevant_changed_files: string[];
     docs_only_changed_files: string[];
+    review_reuse_neutral_config_files: string[];
     missing_review_relevant_files: string[];
     review_scope_sha256: string | null;
     docs_only: boolean;
@@ -190,6 +194,135 @@ function usesStagedContent(preflight: Record<string, unknown>): boolean {
     return detectionSource === 'git_staged_only' || detectionSource === 'git_staged_plus_untracked';
 }
 
+const REVIEW_REUSE_NEUTRAL_WORKFLOW_CONFIG_PATHS = new Set([
+    'garda-agent-orchestrator/live/config/workflow-config.json',
+    'live/config/workflow-config.json'
+]);
+
+const REVIEW_REUSE_NEUTRAL_WORKFLOW_CONFIG_FIELDS = new Set([
+    'review_cycle_guard.max_failed_non_test_reviews',
+    'review_cycle_guard.max_total_non_test_reviews'
+]);
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map((entry) => canonicalJsonValue(entry));
+    }
+    if (isPlainJsonObject(value)) {
+        return Object.keys(value)
+            .sort()
+            .reduce<Record<string, unknown>>((accumulator, key) => {
+                accumulator[key] = canonicalJsonValue(value[key]);
+                return accumulator;
+            }, {});
+    }
+    return value;
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+    return JSON.stringify(canonicalJsonValue(left)) === JSON.stringify(canonicalJsonValue(right));
+}
+
+function collectJsonDiffPaths(left: unknown, right: unknown, parentPath = ''): string[] {
+    if (jsonValuesEqual(left, right)) {
+        return [];
+    }
+    if (!isPlainJsonObject(left) || !isPlainJsonObject(right)) {
+        return [parentPath || '<root>'];
+    }
+    const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+    const diffPaths: string[] = [];
+    for (const key of [...keys].sort()) {
+        const childPath = parentPath ? `${parentPath}.${key}` : key;
+        diffPaths.push(...collectJsonDiffPaths(left[key], right[key], childPath));
+    }
+    return diffPaths;
+}
+
+function readGitObjectText(repoRoot: string, objectName: string): string | null {
+    try {
+        const result = childProcess.spawnSync('git', ['show', objectName], {
+            cwd: repoRoot,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true,
+            timeout: 30_000
+        });
+        if (result.status !== 0) {
+            return null;
+        }
+        return String(result.stdout || '');
+    } catch {
+        return null;
+    }
+}
+
+function readCurrentWorkflowConfigText(
+    repoRoot: string,
+    preflight: Record<string, unknown>,
+    relativePath: string
+): string | null {
+    if (usesStagedContent(preflight)) {
+        const stagedText = readGitObjectText(repoRoot, `:${relativePath}`);
+        if (stagedText !== null) {
+            return stagedText;
+        }
+        if (getDetectionSource(preflight) === 'git_staged_only') {
+            return null;
+        }
+    }
+
+    const absolutePath = path.resolve(repoRoot, ...relativePath.split('/'));
+    try {
+        if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+            return null;
+        }
+        return fs.readFileSync(absolutePath, 'utf8');
+    } catch {
+        return null;
+    }
+}
+
+export function isReviewReuseNeutralWorkflowConfigChange(
+    preflight: Record<string, unknown>,
+    repoRoot: string,
+    filePath: string
+): boolean {
+    const relativePath = normalizePath(filePath);
+    if (!REVIEW_REUSE_NEUTRAL_WORKFLOW_CONFIG_PATHS.has(relativePath)) {
+        return false;
+    }
+
+    const baselineText = readGitObjectText(repoRoot, `HEAD:${relativePath}`);
+    const currentText = readCurrentWorkflowConfigText(repoRoot, preflight, relativePath);
+    if (baselineText === null || currentText === null) {
+        return false;
+    }
+
+    try {
+        const baseline = JSON.parse(baselineText) as unknown;
+        const current = JSON.parse(currentText) as unknown;
+        const diffPaths = collectJsonDiffPaths(baseline, current);
+        return diffPaths.every((diffPath) => REVIEW_REUSE_NEUTRAL_WORKFLOW_CONFIG_FIELDS.has(diffPath));
+    } catch {
+        return false;
+    }
+}
+
+function collectReviewReuseNeutralConfigFiles(
+    preflight: Record<string, unknown>,
+    repoRoot: string,
+    allChangedFiles: readonly string[]
+): string[] {
+    return allChangedFiles
+        .filter((filePath) => isReviewReuseNeutralWorkflowConfigChange(preflight, repoRoot, filePath))
+        .sort();
+}
+
 function getStagedBlobFingerprint(repoRoot: string, relativePath: string): string | null {
     try {
         const result = childProcess.spawnSync('git', ['ls-files', '-s', '--', `:(literal)${relativePath}`], {
@@ -295,13 +428,16 @@ function computeCodeReviewScopeFingerprintInternal(
     const performanceSupportChangedFiles = allChangedFiles.filter((filePath) => (
         isNonRuntimePerformanceSupportPath(filePath, classificationConfig)
     ));
+    const reviewReuseNeutralConfigFiles = collectReviewReuseNeutralConfigFiles(preflight, repoRoot, allChangedFiles);
     const performanceSupportSet = new Set(
         options.excludeNonRuntimePerformanceSupportFiles ? performanceSupportChangedFiles : []
     );
+    const reviewReuseNeutralConfigSet = new Set(reviewReuseNeutralConfigFiles);
     const nonTestChangedFiles = allChangedFiles.filter((filePath) => (
         !testChangedFiles.includes(filePath)
         && !docsOnlyChangedFiles.includes(filePath)
         && !performanceSupportSet.has(filePath)
+        && !reviewReuseNeutralConfigSet.has(filePath)
     ));
     const sortedNonTestFiles = [...nonTestChangedFiles].sort();
     const missingNonTestFiles: string[] = [];
@@ -318,6 +454,7 @@ function computeCodeReviewScopeFingerprintInternal(
         non_test_changed_files: sortedNonTestFiles,
         docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
         performance_support_changed_files: [...performanceSupportChangedFiles].sort(),
+        review_reuse_neutral_config_files: reviewReuseNeutralConfigFiles,
         missing_non_test_files: missingNonTestFiles,
         code_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         test_only: sortedNonTestFiles.length === 0 && testChangedFiles.length === allChangedFiles.length,
@@ -355,7 +492,12 @@ export function computeReviewRelevantScopeFingerprint(
         isSafeOrdinaryDocumentationPath(filePath, classificationConfig)
     ));
     const docsOnlySet = new Set(docsOnlyChangedFiles);
-    const reviewRelevantFiles = allChangedFiles.filter((filePath) => !docsOnlySet.has(filePath));
+    const reviewReuseNeutralConfigFiles = collectReviewReuseNeutralConfigFiles(preflight, repoRoot, allChangedFiles);
+    const reviewReuseNeutralConfigSet = new Set(reviewReuseNeutralConfigFiles);
+    const reviewRelevantFiles = allChangedFiles.filter((filePath) => (
+        !docsOnlySet.has(filePath)
+        && !reviewReuseNeutralConfigSet.has(filePath)
+    ));
     const sortedReviewRelevantFiles = [...reviewRelevantFiles].sort();
     const missingReviewRelevantFiles: string[] = [];
     const fingerprintEntries = sortedReviewRelevantFiles.map((relativePath) => {
@@ -370,6 +512,7 @@ export function computeReviewRelevantScopeFingerprint(
         all_changed_files: allChangedFiles,
         review_relevant_changed_files: sortedReviewRelevantFiles,
         docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
+        review_reuse_neutral_config_files: reviewReuseNeutralConfigFiles,
         missing_review_relevant_files: missingReviewRelevantFiles,
         review_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         docs_only: sortedReviewRelevantFiles.length === 0 && docsOnlyChangedFiles.length === allChangedFiles.length
