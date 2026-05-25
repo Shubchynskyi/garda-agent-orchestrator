@@ -6,8 +6,12 @@ import {
 import {
     buildExactTaskIdReferencePattern,
     isCanonicalTaskId,
-    isTaskIdReferenceBoundary
+    isTaskIdReferenceBoundary,
+    TASK_ID_ALLOWED_PATTERN
 } from '../core/task-ids';
+import {
+    parseTaskMdTableRow
+} from '../core/task-md-table';
 
 export interface TaskQueueEntry {
     taskId: string;
@@ -51,7 +55,37 @@ export interface StrictDecompositionSplitRoutingState {
 const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks)\b/i;
 const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
     /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:/igu;
+const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
 export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
+
+export function parseTaskQueueEntriesFromContent(content: string): Map<string, TaskQueueEntry> {
+    const entries = new Map<string, TaskQueueEntry>();
+    for (const line of content.split('\n')) {
+        if (!line.trim().startsWith('|')) {
+            continue;
+        }
+        const cells = parseTaskMdTableRow(line);
+        const rawTaskId = cells[0]?.trimmed || '';
+        if (
+            cells.length < 9
+            || cells.every((cell) => /^:?-{3,}:?$/u.test(cell.trimmed))
+            || rawTaskId.toUpperCase() === 'ID'
+            || !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)
+        ) {
+            continue;
+        }
+        const taskId = rawTaskId;
+        entries.set(taskId, {
+            taskId,
+            status: cells[1]?.trimmed || null,
+            area: cells[3]?.trimmed || null,
+            title: cells[4]?.trimmed || null,
+            profile: cells[7]?.trimmed || null,
+            notes: cells[8]?.trimmed || null
+        });
+    }
+    return entries;
+}
 
 function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
     if (!entry) {
