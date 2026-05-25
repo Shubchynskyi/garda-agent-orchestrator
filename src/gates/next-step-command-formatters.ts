@@ -1,0 +1,242 @@
+import * as path from 'node:path';
+
+import {
+    normalizePath,
+    resolvePathInsideRepo
+} from './helpers';
+import {
+    resolveBundleNameForTarget
+} from '../core/constants';
+import type {
+    NextStepCommand,
+    NextStepProjectMemorySummary,
+    NextStepResult
+} from './next-step';
+
+export function buildCommand(label: string, command: string): NextStepCommand {
+    return { label, command };
+}
+
+export function buildNavigatorCommand(cliPrefix: string, taskId: string): string {
+    return `${cliPrefix} next-step "${taskId}" --repo-root "."`;
+}
+
+export function buildProjectMemoryImpactCommand(
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    projectMemory: NextStepProjectMemorySummary
+): string {
+    const parts = [
+        `${cliPrefix} gate project-memory-impact`,
+        `--task-id "${taskId}"`,
+        `--mode ${quoteCommandValue(projectMemory.mode)}`,
+        `--preflight-path "${preflightCommandPath}"`
+    ];
+    if (projectMemory.evidence_status === 'BLOCKED' && projectMemory.affected_memory_files.length > 0) {
+        parts.push('--confirm-updated');
+        for (const file of projectMemory.affected_memory_files) {
+            parts.push(`--updated-memory-file ${quoteCommandValue(file)}`);
+        }
+    }
+    parts.push('--repo-root "."');
+    return parts.join(' ');
+}
+
+export function quoteCommandValue(value: string): string {
+    const text = String(value);
+    if (/["$`]/.test(text)) {
+        if (process.platform === 'win32') {
+            return `'${text.replace(/'/g, "''")}'`;
+        }
+        return `'${text.replace(/'/g, "'\\''")}'`;
+    }
+    return `"${text.replace(/\\/g, '\\\\')}"`;
+}
+
+export function buildBundleRelativePath(repoRoot: string, relativePath: string): string {
+    return normalizePath(path.join(resolveBundleNameForTarget(repoRoot), relativePath));
+}
+
+export function toRepoDisplayPath(repoRoot: string, filePath: string): string {
+    const resolved = resolvePathInsideRepo(filePath, repoRoot, { allowMissing: true });
+    if (!resolved) {
+        return normalizePath(filePath);
+    }
+    return normalizePath(path.relative(repoRoot, resolved));
+}
+
+export function formatNextStepText(result: NextStepResult): string {
+    const lines = [
+        'GARDA_NEXT_STEP',
+        `Task: ${result.task_id}`,
+        `Navigator: ${result.navigator_command}`,
+        'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.',
+        `Status: ${result.status}`,
+        `NextGate: ${result.next_gate || 'none'}`,
+        `Title: ${result.title}`,
+        `Reason: ${result.reason}`
+    ];
+    if (result.warnings.length > 0) {
+        lines.push('Warnings:');
+        for (const warning of result.warnings) {
+            lines.push(`  - ${warning}`);
+        }
+    }
+    if (result.review_cycle_block) {
+        const block = result.review_cycle_block;
+        lines.push(`OperatorDecisionRequired: ${block.operator_decision_required}`);
+        lines.push(`ReviewCycleBlock: reason=${formatNextStepInlineValue(block.reason)}; auto_split_enabled=${block.auto_split_enabled}; wait_for_operator=${block.wait_for_operator}`);
+        lines.push(
+            `ReviewCycleCounts: total_non_test_reviews=${block.total_non_test_review_count}; ` +
+            `failed_non_test_reviews=${block.failed_non_test_review_count}; ` +
+            `excluded_review_types=${formatNextStepInlineList(block.excluded_review_types)}`
+        );
+        lines.push(
+            `ReviewCycleLimits: max_total_non_test_reviews=${block.max_total_non_test_reviews}; ` +
+            `max_failed_non_test_reviews=${block.max_failed_non_test_reviews}`
+        );
+        const countEntries = Object.entries(block.counts_by_review_type);
+        lines.push('ReviewCycleCountsByType:');
+        if (countEntries.length === 0) {
+            lines.push('  none');
+        } else {
+            for (const [reviewType, counts] of countEntries) {
+                lines.push(`  ${formatNextStepInlineValue(reviewType)}: total=${counts.total}; passed=${counts.passed}; failed=${counts.failed}; pending=${counts.pending}`);
+            }
+        }
+        if (block.latest_failed_review) {
+            const latest = block.latest_failed_review;
+            const summary = latest.summary ? `; summary=${formatNextStepInlineValue(latest.summary)}` : '';
+            const artifactPath = latest.review_artifact_path ? `; artifact=${formatNextStepInlineValue(latest.review_artifact_path)}` : '';
+            lines.push(
+                `LatestFailedReview: review_type=${formatNextStepInlineValue(latest.review_type)}; event=${formatNextStepInlineValue(latest.event_type)}; ` +
+                `outcome=${formatNextStepInlineValue(latest.outcome || 'unknown')}; sequence=${latest.sequence}${artifactPath}${summary}`
+            );
+        } else {
+            lines.push('LatestFailedReview: none');
+        }
+        lines.push(`TestReviewExcluded: ${block.excluded_review_types.includes('test')}`);
+        lines.push(`OperatorChoices: ${block.choices.join(', ')}`);
+        if (block.auto_split_prompt) {
+            lines.push(
+                `AutoSplitPromptArtifact: path=${formatNextStepInlineValue(block.auto_split_prompt.artifact_path)}; ` +
+                `sha256=${block.auto_split_prompt.artifact_sha256}; next_action=${block.auto_split_prompt.next_action}`
+            );
+            lines.push(`AutoSplitInstructions: ${block.auto_split_prompt.instructions.join(', ')}`);
+            lines.push(`AutoSplitConstraints: ${block.auto_split_prompt.constraints.join(', ')}`);
+        }
+    }
+    if (result.profile) {
+        lines.push(`TaskProfile: ${result.profile.task_selected_profile || 'default'} (${result.profile.profile_selection_source || 'unknown'})`);
+        if (result.profile.runtime_active_profile) {
+            lines.push(`RuntimeActiveProfile: ${result.profile.runtime_active_profile} (${result.profile.runtime_active_profile_source || 'unknown'})`);
+        }
+        if (result.profile.effective_profile) {
+            lines.push(`EffectiveProfile: ${result.profile.effective_profile} (${result.profile.effective_profile_source || 'unknown'})`);
+        }
+        if (result.profile.total_forecast_tokens != null) {
+            const tokenParts = [`total~${result.profile.total_forecast_tokens}`];
+            if (result.profile.effective_forecast_tokens != null) {
+                tokenParts.push(`effective~${result.profile.effective_forecast_tokens}`);
+            }
+            if (result.profile.token_economy_active_for_depth != null) {
+                tokenParts.push(`token_economy_active=${result.profile.token_economy_active_for_depth}`);
+            }
+            lines.push(`TokenBudget: ${tokenParts.join('; ')}`);
+        }
+    }
+    if (result.markdown_working_plan) {
+        lines.push(`MarkdownWorkingPlanPath: ${result.markdown_working_plan.working_plan_path}`);
+        lines.push(`MarkdownWorkingPlanSha256: ${result.markdown_working_plan.working_plan_sha256}`);
+    }
+    lines.push(`FullSuite: enabled=${result.full_suite_validation.enabled}; placement=${result.full_suite_validation.placement}; command="${result.full_suite_validation.command}"; config=${result.full_suite_validation.config_path}`);
+    if (result.full_suite_validation.timeout_forecast_note) {
+        lines.push(`FullSuiteTimeout: ${result.full_suite_validation.timeout_forecast_note}`);
+    }
+    if (result.project_memory) {
+        lines.push(result.project_memory.visible_summary_line);
+    }
+    lines.push(`ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
+    if (result.review.required_reviews.length > 0) {
+        lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);
+    } else {
+        lines.push('RequiredReviews: none');
+    }
+    if (result.review.launchable_review_types.length > 0) {
+        lines.push(`ReviewLaunchableBatch: ${result.review.launchable_review_types.join(', ')}`);
+    }
+    if (result.review.blocked_review_lanes.length > 0) {
+        const blockedLanes = result.review.blocked_review_lanes
+            .map((lane) => `${lane.review_type} blocked by ${lane.blocked_by.join(', ') || 'unknown'}`)
+            .join('; ');
+        lines.push(`BlockedReviewLanes: ${blockedLanes}`);
+    }
+    if (result.review.failed_review_type) {
+        lines.push(`ReviewFailedCurrent: ${result.review.failed_review_type}`);
+    }
+    if (result.review.ordinary_doc_review_skips.length > 0 && result.review.required_reviews.length === 0) {
+        const skipped = result.review.ordinary_doc_review_skips
+            .map((entry) => `${entry.path} (matched ${entry.pattern})`)
+            .join('; ');
+        lines.push(`OrdinaryDocReviewSkips: ${skipped}`);
+    }
+    if (result.review.next_review_type) {
+        lines.push(`NextReview: ${result.review.next_review_type}`);
+    }
+    if (result.review.blocked_review_dependencies.length > 0) {
+        lines.push(`ReviewBlockedBy: ${result.review.blocked_review_dependencies.join(', ')}`);
+        lines.push(`BlockedReviewerLaunches: do not prepare or launch '${result.review.next_review_type}' until current-cycle ${result.review.blocked_review_dependencies.join(', ')} review artifacts and receipts pass.`);
+    }
+    if (result.review.trust_note) {
+        lines.push(result.review.trust_note);
+    }
+    if (result.invalidation_impact) {
+        lines.push('InvalidationImpact:');
+        lines.push(`  StaleArtifacts: ${result.invalidation_impact.stale_artifact_classes.join(', ') || 'none'}`);
+        lines.push(`  AffectedReviewLanes: ${result.invalidation_impact.affected_review_lanes.join(', ') || 'none'}`);
+        lines.push(`  MinimalRecoveryChain: ${result.invalidation_impact.minimal_recovery_chain.join(' -> ') || 'none'}`);
+        lines.push(`  ReuseCandidates: ${result.invalidation_impact.reuse_candidates.join('; ') || 'none indicated'}`);
+    }
+    lines.push(result.task_queue_status_contract.visible_summary_line);
+    if (result.missing_artifacts.length > 0) {
+        lines.push(`MissingArtifacts: ${result.missing_artifacts.map((artifact) => artifact.key).join(', ')}`);
+    }
+    if (result.final_report) {
+        lines.push(`CloseoutArtifact: ${result.final_report.closeout_json_path}`);
+        lines.push(`CloseoutMarkdown: ${result.final_report.closeout_markdown_path}`);
+        lines.push('FinalReportOrder:');
+        for (const [index, entry] of result.final_report.required_order.entries()) {
+            lines.push(`  ${index + 1}. ${entry}`);
+        }
+    }
+    if (result.commands.length > 0 || result.final_report) {
+        lines.push('');
+        lines.push('Commands:');
+        if (result.commands.length === 0) {
+            lines.push('  none');
+        } else {
+            for (const command of result.commands) {
+                lines.push(`  ${command.label}: ${command.command}`);
+            }
+        }
+    }
+    if (result.status !== 'DONE' && result.review_cycle_block?.auto_split_prompt) {
+        lines.push('AfterCommand: follow AutoSplitPromptArtifact instructions; do not run parent compile, review, or full-suite gates before split handling.');
+    } else if (result.status !== 'DONE' && result.review_cycle_block) {
+        lines.push('AfterCommand: inspect diagnostics only if needed, then wait for operator choice; do not run compile, review, or full-suite gates.');
+    } else if (result.status !== 'DONE') {
+        lines.push(`AfterCommand: rerun ${result.navigator_command} after the command above completes.`);
+    }
+    return `${lines.join('\n')}\n`;
+}
+
+export function formatNextStepInlineValue(value: string): string {
+    return JSON.stringify(value);
+}
+
+export function formatNextStepInlineList(values: string[]): string {
+    return values.length > 0
+        ? values.map((value) => formatNextStepInlineValue(value)).join(',')
+        : 'none';
+}
