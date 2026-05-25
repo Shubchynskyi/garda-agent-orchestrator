@@ -18,6 +18,7 @@ export {
     runLoadRulePackCommand,
     runRecordNoOpCommand,
     runRecordReviewCycleContinuationCommand,
+    runRecordReviewCycleSplitDecisionCommand,
     runRecordStrictDecompositionDecisionCommand,
     runHandshakeDiagnosticsCommand,
     runShellSmokePreflightCommand,

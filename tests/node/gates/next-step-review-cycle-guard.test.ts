@@ -29,6 +29,9 @@ import {
     buildReviewCycleContinuationArtifact,
     resolveReviewCycleContinuationArtifactPath
 } from '../../../src/gates/review-cycle-continuation';
+import {
+    runRecordReviewCycleSplitDecisionCommand
+} from '../../../src/cli/commands/gates';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -1437,6 +1440,143 @@ describe('gates/next-step review cycle guard', () => {
         assert.ok(text.includes('allow_one_more_cycle: task-scoped one-shot runtime approval'));
         assert.ok(text.includes('raise_limits: permanent repo-local workflow-config change through workflow set'));
         assert.ok(text.includes('does not edit workflow-config.json'));
+    });
+
+    it('offers an explicit manual split gate when review-cycle blocks with auto split disabled', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        workflowConfig.review_cycle_guard.auto_split_enabled = false;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:manual-split-offer-${index}`,
+                review_context_sha256: sha256Text(`manual-split-offer-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-cycle-attempt-guard');
+        assert.equal(result.commands[1]?.label, 'Record review-cycle split decision');
+        assert.match(result.commands[1]?.command || '', /gate record-review-cycle-split-decision/);
+        assert.match(result.commands[1]?.command || '', /--decision "split_task"/);
+        assert.ok(result.commands[1]?.command.includes(path.relative(repoRoot, preflightPath).replace(/\\/g, '/')));
+        assert.ok(text.includes('Record review-cycle split decision'));
+        assert.ok(text.includes('split_task/create_follow_up_tasks: decompose work into child or follow-up tasks'));
+    });
+
+    it('records a manual review-cycle split latch and keeps stale parent preflight suppressed', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        workflowConfig.review_cycle_guard.auto_split_enabled = false;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:manual-split-latch-${index}`,
+                review_context_sha256: sha256Text(`manual-split-latch-${index}`)
+            });
+        }
+
+        const commandResult = runRecordReviewCycleSplitDecisionCommand({
+            taskId: TASK_ID,
+            decision: 'split_task',
+            reason: 'Operator chose to split the task after review-cycle exhaustion.',
+            preflightPath,
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2,
+            maxFailedNonTestReviews: 15,
+            excludedReviewTypes: ['test'],
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            repoRoot
+        });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 2;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+
+        assert.equal(commandResult.exitCode, 0);
+        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes(`TASK.md marks "${TASK_ID}" as SPLIT_REQUIRED`));
+        assert.ok(result.reason.includes('cannot continue through classify, compile, review, full-suite, completion, or final closeout gates'));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | SPLIT_REQUIRED |`));
+        assert.ok(events.includes('"event_type":"REVIEW_CYCLE_SPLIT_DECISION_RECORDED"'));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_LATCHED"'));
+        assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-cycle-split-decision.json`)), true);
+        assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), true);
+    });
+
+    it('transitions a manually split review-cycle parent to decomposed when linked child rows already exist', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        workflowConfig.review_cycle_guard.auto_split_enabled = false;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | IN_PROGRESS | P1 | workflow/review-cycle | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks \`${TASK_ID}-1\` and \`${TASK_ID}-2\`; do not continue the parent. |`,
+            `| ${TASK_ID}-1 | DONE | P1 | workflow/review-cycle | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |`,
+            `| ${TASK_ID}-2 | TODO | P1 | workflow/review-cycle | Child two | gpt-5.4 | 2026-05-05 | strict | Next. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:manual-split-decomposed-${index}`,
+                review_context_sha256: sha256Text(`manual-split-decomposed-${index}`)
+            });
+        }
+
+        const commandResult = runRecordReviewCycleSplitDecisionCommand({
+            taskId: TASK_ID,
+            decision: 'create_follow_up_tasks',
+            reason: 'Operator chose to split into child tasks after review-cycle exhaustion.',
+            preflightPath,
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2,
+            maxFailedNonTestReviews: 15,
+            excludedReviewTypes: ['test'],
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            repoRoot
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
+
+        assert.equal(commandResult.exitCode, 0);
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0]?.command.includes(`next-step "${TASK_ID}-2"`));
+        assert.ok(taskMd.includes(`| ${TASK_ID} | DECOMPOSED |`));
+        assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_CLEARED"'));
     });
 
     it('rejects one-shot continuation artifact paths outside the repo root', () => {

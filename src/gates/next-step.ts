@@ -4404,6 +4404,30 @@ function buildReviewCycleContinuationCommand(
     ].join(' ');
 }
 
+function buildReviewCycleSplitDecisionCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    evaluation: ReviewCycleGuardEvaluation,
+    preflightPath: string
+): string {
+    return [
+        `${cliPrefix} gate record-review-cycle-split-decision`,
+        `--task-id "${taskId}"`,
+        '--decision "split_task"',
+        `--preflight-path ${quoteCommandValue(toRepoDisplayPath(repoRoot, preflightPath))}`,
+        `--baseline-total-non-test-reviews "${evaluation.total_non_test_review_count}"`,
+        `--baseline-failed-non-test-reviews "${evaluation.failed_non_test_review_count}"`,
+        `--max-total-non-test-reviews "${evaluation.max_total_non_test_reviews}"`,
+        `--max-failed-non-test-reviews "${evaluation.max_failed_non_test_reviews}"`,
+        `--excluded-review-types ${quoteCommandValue(evaluation.excluded_review_types.join(','))}`,
+        `--reason ${quoteCommandValue('Operator chose to split the task after the review-cycle guard blocked continuation.')}`,
+        '--operator-confirmed yes',
+        `--operator-confirmed-at-utc ${quoteCommandValue('<ISO-8601 timestamp>')}`,
+        '--repo-root "."'
+    ].join(' ');
+}
+
 function formatLatestFailedReviewForTemplate(latestFailedReview: NextStepReviewCycleLatestFailedReview | null): string {
     if (!latestFailedReview) {
         return 'none';
@@ -7061,6 +7085,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         buildCommand(
                             'Record one-shot review-cycle continuation',
                             buildReviewCycleContinuationCommand(cliPrefix, taskId, reviewCycleGuardEvaluation)
+                        ),
+                        buildCommand(
+                            'Record review-cycle split decision',
+                            buildReviewCycleSplitDecisionCommand(repoRoot, cliPrefix, taskId, reviewCycleGuardEvaluation, preflightPath)
                         )
                     ],
                 reviewCycleBlock,

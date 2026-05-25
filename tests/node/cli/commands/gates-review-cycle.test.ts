@@ -8,6 +8,7 @@ import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
 import { readTimelineEventsSummary, runBuildReviewContextCommand } from '../../../../src/cli/commands/gate-build-handlers';
 import {
     runCompileGateCommand,
+    runRecordReviewCycleSplitDecisionCommand,
     runRestartCoherentCycleCommand,
     runRestartReviewCycleCommand as runRestartReviewCycleCommandRaw,
     runRequiredReviewsCheckCommand
@@ -303,6 +304,61 @@ function writeSimpleCompileCommandsFile(
 }
 
 describe('cli/commands/gates – review-cycle suites', () => {
+    it('records a review-cycle split decision without mutating workflow config', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-review-cycle-split-decision';
+        seedTaskQueue(repoRoot, taskId, 'IN_PROGRESS', 'strict');
+        seedInitAnswers(repoRoot);
+        const configPath = writeWorkflowConfig(repoRoot);
+        const beforeConfig = fs.readFileSync(configPath, 'utf8');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            metrics: { changed_lines_total: 3, changed_files_count: 1 },
+            changed_files: ['src/app.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            }
+        });
+
+        const result = runRecordReviewCycleSplitDecisionCommand({
+            repoRoot,
+            taskId,
+            decision: 'split_task',
+            reason: 'Operator chose to split after review-cycle exhaustion.',
+            preflightPath,
+            baselineTotalNonTestReviewCount: 31,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 30,
+            maxFailedNonTestReviews: 15,
+            excludedReviewTypes: ['test'],
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const latchPath = path.join(getReviewsRoot(repoRoot), `${taskId}-split-required.json`);
+        const decisionPath = path.join(getReviewsRoot(repoRoot), `${taskId}-review-cycle-split-decision.json`);
+
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.outputLines[0], 'REVIEW_CYCLE_SPLIT_DECISION_RECORDED');
+        assert.ok(result.outputLines.includes('WorkflowConfigMutated: false'));
+        assert.ok(taskMd.includes(`| ${taskId} | SPLIT_REQUIRED |`));
+        assert.equal(fs.readFileSync(configPath, 'utf8'), beforeConfig);
+        assert.equal(fs.existsSync(latchPath), true);
+        assert.equal(fs.existsSync(decisionPath), true);
+        assert.equal(events.some((event) => event.event_type === 'REVIEW_CYCLE_SPLIT_DECISION_RECORDED'), true);
+        assert.equal(events.some((event) => event.event_type === 'SPLIT_REQUIRED_LATCHED'), true);
+    });
+
     it('restarts the latest coherent cycle on a dirty tree while reusing the previous explicit preflight scope', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-restart-coherent-cycle';

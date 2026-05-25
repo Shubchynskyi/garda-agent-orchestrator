@@ -196,6 +196,13 @@ function buildPreflightGateHelpEntries(
                 true
             )
         },
+        'record-review-cycle-split-decision': {
+            ...createSingleUsageEntry(
+                'Record an operator-approved review-cycle split decision, move the parent to SPLIT_REQUIRED, and write latch evidence without mutating workflow-config.json.',
+                `${cliPrefix} gate record-review-cycle-split-decision --task-id "${TASK_ID_PLACEHOLDER}" --decision "split_task" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --baseline-total-non-test-reviews "<current total>" --baseline-failed-non-test-reviews "<current failed>" --max-total-non-test-reviews "<configured total limit>" --max-failed-non-test-reviews "<configured failed limit>" --excluded-review-types "test" --reason "<operator-approved reason>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --repo-root "."`,
+                true
+            )
+        },
         'record-strict-decomposition-decision': {
             ...createGateHelpEntry(
                 'Record the prompt-first decomposition decision for a risky strict task before implementation.',

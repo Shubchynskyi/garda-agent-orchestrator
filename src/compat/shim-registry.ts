@@ -7,6 +7,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'bind-rule-pack-to-preflight',
     'record-no-op',
     'record-review-cycle-continuation',
+    'record-review-cycle-split-decision',
     'record-strict-decomposition-decision',
     'compile-gate',
     'full-suite-validation',

@@ -15,6 +15,7 @@ import {
     runLogTaskEventCommand,
     runRecordNoOpCommand,
     runRecordReviewCycleContinuationCommand,
+    runRecordReviewCycleSplitDecisionCommand,
     runRecordStrictDecompositionDecisionCommand,
     runRestartCoherentCycleCommand,
     runRestartReviewCycleCommand,
@@ -233,6 +234,33 @@ export async function handleRecordReviewCycleContinuation(gateArgv: string[]): P
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runRecordReviewCycleContinuationCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleRecordReviewCycleSplitDecision(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--decision': { key: 'decision', type: 'string' },
+        '--reason': { key: 'reason', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--baseline-total-non-test-reviews': { key: 'baselineTotalNonTestReviewCount', type: 'string' },
+        '--baseline-failed-non-test-reviews': { key: 'baselineFailedNonTestReviewCount', type: 'string' },
+        '--max-total-non-test-reviews': { key: 'maxTotalNonTestReviews', type: 'string' },
+        '--max-failed-non-test-reviews': { key: 'maxFailedNonTestReviews', type: 'string' },
+        '--excluded-review-type': { key: 'excludedReviewTypes', type: 'string[]' },
+        '--excluded-review-types': { key: 'excludedReviewTypes', type: 'string[]' },
+        '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
+        '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--metrics-path': { key: 'metricsPath', type: 'string' },
+        '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runRecordReviewCycleSplitDecisionCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;
