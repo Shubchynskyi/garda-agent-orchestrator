@@ -242,6 +242,47 @@ export function resolveNextUnfinishedChildRoute(
     return null;
 }
 
+function mergeNestedDecomposedCompletionState(params: {
+    childTaskId: string;
+    nestedState: DecomposedParentCompletionState;
+    completedDecomposedTaskIds: string[];
+    missingChildTaskIds: string[];
+    allowComplete: boolean;
+}): DecomposedParentCompletionState | null {
+    if (params.nestedState.unfinishedRoute) {
+        return {
+            hasLinkedChildren: true,
+            complete: false,
+            unfinishedRoute: {
+                ...params.nestedState.unfinishedRoute,
+                chain: [params.childTaskId, ...params.nestedState.unfinishedRoute.chain]
+            },
+            completedDecomposedTaskIds: params.completedDecomposedTaskIds,
+            missingChildTaskIds: params.missingChildTaskIds
+        };
+    }
+    if (params.nestedState.missingChildTaskIds.length > 0) {
+        return {
+            hasLinkedChildren: true,
+            complete: false,
+            unfinishedRoute: null,
+            completedDecomposedTaskIds: params.completedDecomposedTaskIds,
+            missingChildTaskIds: [...params.missingChildTaskIds, ...params.nestedState.missingChildTaskIds]
+        };
+    }
+    if (params.allowComplete && params.nestedState.complete) {
+        params.completedDecomposedTaskIds.push(...params.nestedState.completedDecomposedTaskIds, params.childTaskId);
+        return null;
+    }
+    return {
+        hasLinkedChildren: true,
+        complete: false,
+        unfinishedRoute: null,
+        completedDecomposedTaskIds: params.completedDecomposedTaskIds,
+        missingChildTaskIds: params.missingChildTaskIds
+    };
+}
+
 export function resolveDecomposedParentCompletionState(
     taskEntries: Map<string, TaskQueueEntry>,
     parentTaskId: string,
@@ -292,38 +333,17 @@ export function resolveDecomposedParentCompletionState(
                 visited,
                 childTaskIdExtractor
             );
-            if (nestedState.unfinishedRoute) {
-                return {
-                    hasLinkedChildren: true,
-                    complete: false,
-                    unfinishedRoute: {
-                        ...nestedState.unfinishedRoute,
-                        chain: [childTaskId, ...nestedState.unfinishedRoute.chain]
-                    },
-                    completedDecomposedTaskIds,
-                    missingChildTaskIds
-                };
-            }
-            if (nestedState.missingChildTaskIds.length > 0) {
-                return {
-                    hasLinkedChildren: true,
-                    complete: false,
-                    unfinishedRoute: null,
-                    completedDecomposedTaskIds,
-                    missingChildTaskIds: [...missingChildTaskIds, ...nestedState.missingChildTaskIds]
-                };
-            }
-            if (nestedState.complete) {
-                completedDecomposedTaskIds.push(...nestedState.completedDecomposedTaskIds, childTaskId);
+            const mergedState = mergeNestedDecomposedCompletionState({
+                childTaskId,
+                nestedState,
+                completedDecomposedTaskIds,
+                missingChildTaskIds,
+                allowComplete: true
+            });
+            if (!mergedState) {
                 continue;
             }
-            return {
-                hasLinkedChildren: true,
-                complete: false,
-                unfinishedRoute: null,
-                completedDecomposedTaskIds,
-                missingChildTaskIds
-            };
+            return mergedState;
         }
         if (isTaskQueueDoneStatus(childEntry.status)) {
             continue;
@@ -335,38 +355,17 @@ export function resolveDecomposedParentCompletionState(
                 visited,
                 childTaskIdExtractor
             );
-            if (nestedState.unfinishedRoute) {
-                return {
-                    hasLinkedChildren: true,
-                    complete: false,
-                    unfinishedRoute: {
-                        ...nestedState.unfinishedRoute,
-                        chain: [childTaskId, ...nestedState.unfinishedRoute.chain]
-                    },
-                    completedDecomposedTaskIds,
-                    missingChildTaskIds
-                };
-            }
-            if (nestedState.missingChildTaskIds.length > 0) {
-                return {
-                    hasLinkedChildren: true,
-                    complete: false,
-                    unfinishedRoute: null,
-                    completedDecomposedTaskIds,
-                    missingChildTaskIds: [...missingChildTaskIds, ...nestedState.missingChildTaskIds]
-                };
-            }
-            if (nestedState.complete) {
-                completedDecomposedTaskIds.push(...nestedState.completedDecomposedTaskIds, childTaskId);
+            const mergedState = mergeNestedDecomposedCompletionState({
+                childTaskId,
+                nestedState,
+                completedDecomposedTaskIds,
+                missingChildTaskIds,
+                allowComplete: true
+            });
+            if (!mergedState) {
                 continue;
             }
-            return {
-                hasLinkedChildren: true,
-                complete: false,
-                unfinishedRoute: null,
-                completedDecomposedTaskIds,
-                missingChildTaskIds
-            };
+            return mergedState;
         }
         if (isLegacySplitParentTask(childEntry)) {
             const nestedState = resolveDecomposedParentCompletionState(
@@ -375,28 +374,14 @@ export function resolveDecomposedParentCompletionState(
                 visited,
                 childTaskIdExtractor
             );
-            if (nestedState.unfinishedRoute) {
-                return {
-                    hasLinkedChildren: true,
-                    complete: false,
-                    unfinishedRoute: {
-                        ...nestedState.unfinishedRoute,
-                        chain: [childTaskId, ...nestedState.unfinishedRoute.chain]
-                    },
-                    completedDecomposedTaskIds,
-                    missingChildTaskIds
-                };
-            }
-            if (nestedState.missingChildTaskIds.length > 0) {
-                return {
-                    hasLinkedChildren: true,
-                    complete: false,
-                    unfinishedRoute: null,
-                    completedDecomposedTaskIds,
-                    missingChildTaskIds: [...missingChildTaskIds, ...nestedState.missingChildTaskIds]
-                };
-            }
-            return {
+            const mergedState = mergeNestedDecomposedCompletionState({
+                childTaskId,
+                nestedState,
+                completedDecomposedTaskIds,
+                missingChildTaskIds,
+                allowComplete: false
+            });
+            return mergedState || {
                 hasLinkedChildren: true,
                 complete: false,
                 unfinishedRoute: null,
