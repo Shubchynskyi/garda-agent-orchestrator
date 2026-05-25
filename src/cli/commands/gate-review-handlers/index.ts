@@ -96,6 +96,12 @@ import {
 import {
     resolveReviewOutputInput
 } from './review-output-input';
+import {
+    materializeReviewContent
+} from './review-artifact-materialization';
+import {
+    assertReviewReceiptRoutingMatchesContext
+} from './review-receipt-validation';
 
 interface ResolvedCanonicalReviewPaths {
     preflightPath: string;
@@ -2183,41 +2189,14 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerExecutionMode: options.reviewerExecutionMode,
         reviewerFallbackReason: options.reviewerFallbackReason
     });
-    const currentExecutionMode = normalizeCompatibilityReviewerExecutionMode(currentRouting?.actual_execution_mode);
-    const currentReviewerSessionId = currentRouting?.reviewer_session_id != null
-        ? String(currentRouting.reviewer_session_id).trim()
-        : '';
-    if (currentExecutionMode !== options.reviewerExecutionMode) {
-        throw new Error(
-            `Review receipt execution mode (${options.reviewerExecutionMode}) must match pre-recorded ` +
-            `reviewer_routing.actual_execution_mode (${currentExecutionMode || 'missing'}) in ${normalizePath(options.contextPath)}. ` +
-            "Record review routing before writing the receipt."
-        );
-    }
-    if (!currentReviewerSessionId) {
-        throw new Error(
-            `Review receipts require pre-recorded reviewer_routing.reviewer_session_id in ${normalizePath(options.contextPath)}. ` +
-            "Record review routing before writing the receipt."
-        );
-    }
-    if (currentReviewerSessionId !== options.reviewerIdentity) {
-        throw new Error(
-            `Review receipt reviewer identity (${options.reviewerIdentity}) must match pre-recorded ` +
-            `reviewer_routing.reviewer_session_id (${currentReviewerSessionId}).`
-        );
-    }
-    const currentFallbackReason = currentRouting?.fallback_reason != null
-        ? String(currentRouting.fallback_reason).trim()
-        : '';
-    if (
-        options.reviewerExecutionMode === 'delegated_subagent' &&
-        currentFallbackReason !== (options.reviewerFallbackReason || '')
-    ) {
-        throw new Error(
-            `Review receipt fallback reason (${options.reviewerFallbackReason || 'missing'}) must match pre-recorded ` +
-            `reviewer_routing.fallback_reason (${currentFallbackReason || 'missing'}).`
-        );
-    }
+    assertReviewReceiptRoutingMatchesContext({
+        reviewType: options.reviewType,
+        contextPath: options.contextPath,
+        currentRouting,
+        reviewerExecutionMode: options.reviewerExecutionMode,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewerFallbackReason: options.reviewerFallbackReason
+    });
 
     const timelinePath = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'task-events', `${options.taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
@@ -3462,70 +3441,21 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
         });
     }
 
-    const requirePassValidationNotes = reviewContextRequiresPassValidationNotes(contextPath, repoRoot);
-    const materializationAnalysis = analyzeEarlyReviewMaterialization({
+    const materializedReview = materializeReviewContent({
         artifactPath,
+        reviewType,
         reviewContent,
         verdictToken,
         expectedPassVerdict,
-        requirePassValidationNotes
+        requirePassValidationNotes: reviewContextRequiresPassValidationNotes(contextPath, repoRoot),
+        analyze: analyzeEarlyReviewMaterialization,
+        normalizeHeadings: normalizeCanonicalReviewSectionHeadings,
+        buildLosslessPassReviewNormalization,
+        isLosslessPassNormalizationEligibleViolation,
+        buildPassReviewTemplateHintMessage
     });
-    const normalizedHeadings = normalizeCanonicalReviewSectionHeadings(reviewContent);
-    if (normalizedHeadings.changed) {
-        const normalizedHeadingAnalysis = analyzeEarlyReviewMaterialization({
-            artifactPath,
-            reviewContent: normalizedHeadings.content,
-            verdictToken,
-            expectedPassVerdict,
-            requirePassValidationNotes
-        });
-        if (normalizedHeadingAnalysis.violations.length <= materializationAnalysis.violations.length) {
-            reviewContent = normalizedHeadings.content;
-            reviewMaterializationFidelity = 'normalized_lossless';
-            materializationAnalysis.violations = normalizedHeadingAnalysis.violations;
-            materializationAnalysis.findingsEvidence = normalizedHeadingAnalysis.findingsEvidence;
-        }
-    }
-    if (verdictToken === expectedPassVerdict) {
-        const normalizedPassReviewContent = buildLosslessPassReviewNormalization({
-            reviewType,
-            reviewContent,
-            expectedPassVerdict,
-            findingsEvidence: materializationAnalysis.findingsEvidence
-        });
-        if (normalizedPassReviewContent) {
-            const normalizedAnalysis = analyzeEarlyReviewMaterialization({
-                artifactPath,
-                reviewContent: normalizedPassReviewContent,
-                verdictToken,
-                expectedPassVerdict,
-                requirePassValidationNotes
-            });
-            const preservedBlockingViolations = materializationAnalysis.violations.filter(
-                (violation) => !isLosslessPassNormalizationEligibleViolation(violation)
-            );
-            if (normalizedAnalysis.violations.length === 0) {
-                reviewContent = normalizedPassReviewContent;
-                reviewMaterializationFidelity = 'normalized_lossless';
-                materializationAnalysis.violations = preservedBlockingViolations;
-                materializationAnalysis.findingsEvidence = normalizedAnalysis.findingsEvidence;
-            }
-        }
-    }
-    if (materializationAnalysis.violations.length > 0) {
-        const passTemplateHint = buildPassReviewTemplateHintMessage({
-            reviewType,
-            verdictToken,
-            expectedPassVerdict,
-            reviewContent,
-            findingsEvidence: materializationAnalysis.findingsEvidence
-        });
-        throw new Error(
-            `Review output is not eligible for '${reviewType}' materialization:\n` +
-            materializationAnalysis.violations.map((violation) => `- ${violation}`).join('\n') +
-            (passTemplateHint ? `\n\n${passTemplateHint}` : '')
-        );
-    }
+    reviewContent = materializedReview.reviewContent;
+    reviewMaterializationFidelity = materializedReview.reviewMaterializationFidelity;
     if (reviewType !== 'test') {
         assertRequiredUpstreamReviewDependencies({
             taskId,
