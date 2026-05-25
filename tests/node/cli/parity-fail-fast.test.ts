@@ -55,6 +55,24 @@ function seedMatchingSourceCheckoutBundle(root: string): void {
     }
 }
 
+function seedStaleSourceCheckoutBundle(root: string): void {
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'bin'), { recursive: true });
+
+    fs.writeFileSync(path.join(root, 'package.json'), '{}', 'utf8');
+    fs.writeFileSync(path.join(root, 'src', 'index.ts'), '', 'utf8');
+    fs.writeFileSync(path.join(root, 'VERSION'), '1.0.0', 'utf8');
+    fs.writeFileSync(path.join(root, 'garda-agent-orchestrator', 'VERSION'), '1.0.0', 'utf8');
+
+    const rootLauncher = path.join(root, 'bin', 'garda.js');
+    const bundleLauncher = path.join(root, 'garda-agent-orchestrator', 'bin', 'garda.js');
+    fs.writeFileSync(rootLauncher, 'new', 'utf8');
+    fs.writeFileSync(bundleLauncher, 'old', 'utf8');
+    const oldTime = new Date(Date.now() - 10000);
+    fs.utimesSync(bundleLauncher, oldTime, oldTime);
+}
+
 test('gate command warns and continues when source checkout runtime is stale', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'runtime-warning-dispatch-'));
     const previousExitCode = process.exitCode;
@@ -232,6 +250,123 @@ test('CLI blocks task execution commands when bundle is stale', () => {
 
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('read-only target-root commands warn on target parity drift without blocking', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-status-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-status-target-'));
+    try {
+        seedStaleSourceCheckoutBundle(targetDir);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'status', '--target-root', targetDir, '--json'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, 0, 'status should remain read-only and continue after a parity warning');
+        assert.ok(combined.includes('PARITY_WARNING'));
+        assert.ok(combined.includes('AllowedCommand: status'));
+        assert.ok(combined.includes('ParityPolicy: warn'));
+        assert.ok(combined.includes(`ParityRoot: ${targetDir}`));
+        assert.ok(combined.includes('Source Parity Warning: The deployed bundle is stale'));
+        assert.ok(!combined.includes('PARITY_BLOCKED'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('mutating target-root lifecycle commands block on target parity drift', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-update-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-update-target-'));
+    try {
+        seedStaleSourceCheckoutBundle(targetDir);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'update', '--target-root', targetDir, '--dry-run'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, EXIT_PRECONDITION_FAILURE);
+        assert.ok(combined.includes('PARITY_BLOCKED'));
+        assert.ok(combined.includes('BlockedCommand: update'));
+        assert.ok(combined.includes('ParityPolicy: block'));
+        assert.ok(combined.includes(`ParityRoot: ${targetDir}`));
+        assert.ok(combined.includes('mutating lifecycle commands must not run'));
+        assert.ok(combined.includes('Source Parity Violation: The deployed bundle is stale'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('read-only check-update help warns on target parity drift and stays discoverable', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-check-update-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-check-update-target-'));
+    try {
+        seedStaleSourceCheckoutBundle(targetDir);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'check-update', '--target-root', targetDir, '--help'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, 0);
+        assert.ok(combined.includes('PARITY_WARNING'));
+        assert.ok(combined.includes('AllowedCommand: check-update'));
+        assert.ok(combined.includes('ParityPolicy: warn'));
+        assert.ok(combined.includes('check-update is read-only without --apply'));
+        assert.ok(combined.includes('Usage:'));
+        assert.ok(combined.includes('check-update'));
+        assert.ok(!combined.includes('PARITY_BLOCKED'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('repair dry-run subcommands warn while confirmed repair mutations block on parity drift', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-repair-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-repair-target-'));
+    try {
+        seedStaleSourceCheckoutBundle(targetDir);
+
+        const dryRunResult = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'repair', 'rebuild-indexes', '--target-root', targetDir, '--json'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const dryRunCombined = (dryRunResult.stdout || '') + (dryRunResult.stderr || '');
+        assert.equal(dryRunResult.status, 0, 'repair rebuild-indexes should remain dry-run without --confirm');
+        assert.ok(dryRunCombined.includes('PARITY_WARNING'));
+        assert.ok(dryRunCombined.includes('AllowedCommand: repair'));
+        assert.ok(dryRunCombined.includes('ParityPolicy: warn'));
+        assert.ok(dryRunCombined.includes('repair mutation subcommands are dry-run by default'));
+        assert.ok(!dryRunCombined.includes('PARITY_BLOCKED'));
+
+        const confirmedResult = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'repair', 'rebuild-indexes', '--target-root', targetDir, '--confirm'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const confirmedCombined = (confirmedResult.stdout || '') + (confirmedResult.stderr || '');
+        assert.equal(confirmedResult.status, EXIT_PRECONDITION_FAILURE);
+        assert.ok(confirmedCombined.includes('PARITY_BLOCKED'));
+        assert.ok(confirmedCombined.includes('BlockedCommand: repair'));
+        assert.ok(confirmedCombined.includes('ParityPolicy: block'));
+        assert.ok(confirmedCombined.includes('confirmed repair mutation paths must not run'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
     }
 });
 

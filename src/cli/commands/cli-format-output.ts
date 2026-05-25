@@ -858,10 +858,22 @@ export function buildParityBlockedCommandText(options: {
     helpText: string;
     violations: readonly string[];
     remediation: string | null | undefined;
+    parityRoot?: string;
+    policyMode?: string;
+    policyReason?: string;
 }): string {
     const lines: string[] = [];
     lines.push(red('PARITY_BLOCKED'));
     lines.push(red(`BlockedCommand: ${options.commandName}`));
+    if (options.policyMode) {
+        lines.push(red(`ParityPolicy: ${options.policyMode}`));
+    }
+    if (options.parityRoot) {
+        lines.push(red(`ParityRoot: ${options.parityRoot}`));
+    }
+    if (options.policyReason) {
+        lines.push(red(`PolicyReason: ${options.policyReason}`));
+    }
     lines.push(red('Source Parity Violation: The deployed bundle is stale compared to the source checkout.'));
     if (options.violations.length > 0) {
         lines.push('');
@@ -877,6 +889,36 @@ export function buildParityBlockedCommandText(options: {
     }
     lines.push('');
     lines.push(options.helpText);
+    return lines.join('\n');
+}
+
+export function buildParityWarningCommandText(options: {
+    commandName: string;
+    violations: readonly string[];
+    remediation: string | null | undefined;
+    parityRoot: string;
+    policyMode: string;
+    policyReason: string;
+}): string {
+    const lines: string[] = [];
+    lines.push(yellow('PARITY_WARNING'));
+    lines.push(yellow(`AllowedCommand: ${options.commandName}`));
+    lines.push(yellow(`ParityPolicy: ${options.policyMode}`));
+    lines.push(yellow(`ParityRoot: ${options.parityRoot}`));
+    lines.push(yellow(`PolicyReason: ${options.policyReason}`));
+    lines.push(yellow('Source Parity Warning: The deployed bundle is stale compared to the source checkout, but this command is allowed by policy.'));
+    if (options.violations.length > 0) {
+        lines.push('');
+        lines.push(bold('Detected drift'));
+        for (const violation of options.violations) {
+            lines.push(`  ${yellow(violation)}`);
+        }
+    }
+    if (options.remediation) {
+        lines.push('');
+        lines.push(bold('Fix'));
+        lines.push(`  ${green(options.remediation)}`);
+    }
     return lines.join('\n');
 }
 

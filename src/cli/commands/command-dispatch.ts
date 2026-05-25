@@ -7,7 +7,9 @@ import { assertOfflinePolicy } from '../../policy/offline-mode';
 import { EXIT_VALIDATION_FAILURE } from '../exit-codes';
 import {
     buildCommandHelpText,
+    buildHelpText,
     buildParityBlockedCommandText,
+    buildParityWarningCommandText,
     isKnownCommandHelpName
 } from './cli-format-output';
 import { buildGateCommandOverviewText, buildGateHelpText } from './gate-command-help';
@@ -24,6 +26,14 @@ export interface DispatchCliCommandOptions {
         offline: boolean;
         forceNetwork: boolean;
     };
+}
+
+type ParityPolicyMode = 'block' | 'warn' | 'skip';
+
+interface CommandParityPolicy {
+    mode: ParityPolicyMode;
+    root: string;
+    reason: string;
 }
 
 function readPathFlag(commandArgv: string[], flag: string): string | null {
@@ -49,19 +59,87 @@ function resolveTargetOrBundleParityRoot(commandArgv: string[]): string {
     return explicitTargetRoot ? path.resolve(explicitTargetRoot) : explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
 }
 
-function resolveParityRoot(commandName: string, commandArgv: string[]): string {
+function hasFlag(commandArgv: string[], flag: string): boolean {
+    return commandArgv.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
+}
+
+function resolveRepoParityRoot(commandArgv: string[]): string {
+    const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
+    return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
+}
+
+function resolveNavigatorParityRoot(commandArgv: string[]): string {
+    const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
+    return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
+}
+
+function isUpdateGitCheckOnly(commandArgv: string[]): boolean {
+    return String(commandArgv[0] || '').trim().toLowerCase() === 'git' && hasFlag(commandArgv, '--check-only');
+}
+
+function isRepairInspect(commandArgv: string[]): boolean {
+    const firstArg = String(commandArgv[0] || '').trim().toLowerCase();
+    return !firstArg || firstArg.startsWith('-') || firstArg === 'help' || firstArg === 'inspect';
+}
+
+function isGcDryRun(commandArgv: string[]): boolean {
+    return !hasFlag(commandArgv, '--confirm') || hasFlag(commandArgv, '--dry-run');
+}
+
+function buildParityPolicy(mode: ParityPolicyMode, root: string, reason: string): CommandParityPolicy {
+    return { mode, root, reason };
+}
+
+function resolveCommandParityPolicy(commandName: string, commandArgv: string[]): CommandParityPolicy {
     if (commandName === 'gate') {
-        const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
-        return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
+        return buildParityPolicy('block', resolveRepoParityRoot(commandArgv), 'gate commands mutate lifecycle evidence and must use a fresh deployed bundle.');
     }
     if (commandName === 'next-step') {
-        const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
-        return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
+        return buildParityPolicy('block', resolveNavigatorParityRoot(commandArgv), 'next-step is the lifecycle navigator and must not route from stale source or bundle code.');
     }
-    if (!['workflow', 'review-capabilities', 'agent-init', 'skills', 'templates', 'profile', 'repair', 'html', 'ui', 'on', 'off'].includes(commandName)) {
-        return '.';
+    if (['setup', 'bootstrap', 'install', 'init', 'reinit', 'update', 'rollback', 'uninstall'].includes(commandName)) {
+        if (commandName === 'update' && isUpdateGitCheckOnly(commandArgv)) {
+            return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'update git --check-only is read-only, so stale source parity is surfaced without blocking.');
+        }
+        return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'mutating lifecycle commands must not run against a stale source checkout or deployed bundle.');
     }
-    return resolveTargetOrBundleParityRoot(commandArgv);
+    if (commandName === 'check-update') {
+        const mode: ParityPolicyMode = hasFlag(commandArgv, '--apply') ? 'block' : 'warn';
+        const reason = mode === 'block'
+            ? 'check-update --apply mutates the workspace and must not run with stale source parity.'
+            : 'check-update is read-only without --apply, so stale source parity is surfaced without blocking.';
+        return buildParityPolicy(mode, resolveTargetOrBundleParityRoot(commandArgv), reason);
+    }
+    if (commandName === 'cleanup') {
+        const mode: ParityPolicyMode = hasFlag(commandArgv, '--dry-run') ? 'warn' : 'block';
+        const reason = mode === 'block'
+            ? 'cleanup removes runtime artifacts unless --dry-run is passed and must not run with stale source parity.'
+            : 'cleanup --dry-run is read-only, so stale source parity is surfaced without blocking.';
+        return buildParityPolicy(mode, resolveTargetOrBundleParityRoot(commandArgv), reason);
+    }
+    if (commandName === 'gc' || commandName === 'clean') {
+        const mode: ParityPolicyMode = isGcDryRun(commandArgv) ? 'warn' : 'block';
+        const reason = mode === 'block'
+            ? `${commandName} --confirm removes runtime artifacts and must not run with stale source parity.`
+            : `${commandName} is dry-run by default, so stale source parity is surfaced without blocking.`;
+        return buildParityPolicy(mode, resolveTargetOrBundleParityRoot(commandArgv), reason);
+    }
+    if (commandName === 'repair') {
+        if (isRepairInspect(commandArgv)) {
+            return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'repair inspect is read-only, so stale source parity is surfaced without blocking.');
+        }
+        if (!hasFlag(commandArgv, '--confirm')) {
+            return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'repair mutation subcommands are dry-run by default, so stale source parity is surfaced without blocking unless --confirm is passed.');
+        }
+        return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'confirmed repair mutation paths must not run with stale source parity.');
+    }
+    if (['agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'html', 'ui', 'on', 'off'].includes(commandName)) {
+        return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'workspace configuration and workspace-selection commands require source/bundle parity before execution.');
+    }
+    if (['status', 'doctor', 'debug', 'stats', 'task', 'preprompt', 'verify', 'diff-managed'].includes(commandName)) {
+        return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'read-only workspace inspection commands surface stale source parity without blocking.');
+    }
+    return buildParityPolicy('skip', '.', 'command has no workspace source/bundle parity policy.');
 }
 
 function isHelpFlag(argument: string): boolean {
@@ -117,6 +195,26 @@ function printCommandHelpIfRequested(commandName: string, commandArgv: string[])
     return false;
 }
 
+function buildParityHelpText(commandName: string, commandArgv: string[], packageJson: PackageJsonLike, parityRoot: string): string {
+    if (commandName === 'gate' || commandName === 'next-step') {
+        const gateName = commandName === 'next-step'
+            ? 'next-step'
+            : String(commandArgv[0] || '').trim();
+        if (!gateName || gateName.startsWith('-')) {
+            return buildGateCommandOverviewText(parityRoot);
+        }
+        try {
+            return buildGateHelpText(gateName, parityRoot);
+        } catch {
+            return buildGateCommandOverviewText(parityRoot);
+        }
+    }
+    if (isKnownCommandHelpName(commandName)) {
+        return buildCommandHelpText(commandName);
+    }
+    return buildHelpText(packageJson);
+}
+
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
     const { commandName, commandArgv, packageJson, packageRoot, globalFlags } = options;
     const isIntrospection = commandArgv.some((arg) => arg === '--help' || arg === '-h' || arg === '--version' || arg === '-v');
@@ -131,31 +229,32 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
         return;
     }
 
-    if (['gate', 'next-step', 'agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'repair', 'ui', 'on', 'off'].includes(commandName)) {
-        const parityRoot = resolveParityRoot(commandName, commandArgv);
+    const parityPolicy = resolveCommandParityPolicy(commandName, commandArgv);
+    if (parityPolicy.mode !== 'skip') {
+        const parityRoot = parityPolicy.root;
         const parityResult = detectSourceBundleParity(parityRoot);
         if (parityResult.isStale && !(isHelpOnly && isMissingDeployedBundleOnlyParityBlock(parityResult.violations))) {
-            const helpText = commandName === 'gate' || commandName === 'next-step'
-                ? (() => {
-                    const gateName = commandName === 'next-step'
-                        ? 'next-step'
-                        : String(commandArgv[0] || '').trim();
-                    if (!gateName || gateName.startsWith('-')) {
-                        return buildGateCommandOverviewText(parityRoot);
-                    }
-                    try {
-                        return buildGateHelpText(gateName, parityRoot);
-                    } catch {
-                        return buildGateCommandOverviewText(parityRoot);
-                    }
-                })()
-                : buildCommandHelpText(commandName as 'agent-init' | 'skills' | 'review-capabilities' | 'templates' | 'profile' | 'workflow');
-            throw new Error(
-                buildParityBlockedCommandText({
+            if (parityPolicy.mode === 'block') {
+                throw new Error(
+                    buildParityBlockedCommandText({
+                        commandName,
+                        helpText: buildParityHelpText(commandName, commandArgv, packageJson, parityRoot),
+                        violations: parityResult.violations,
+                        remediation: parityResult.remediation || `Run "npm run build" then "npx ${PRIMARY_PACKAGE_NAME} setup".`,
+                        parityRoot,
+                        policyMode: parityPolicy.mode,
+                        policyReason: parityPolicy.reason
+                    })
+                );
+            }
+            console.error(
+                buildParityWarningCommandText({
                     commandName,
-                    helpText,
                     violations: parityResult.violations,
-                    remediation: parityResult.remediation || `Run "npm run build" then "npx ${PRIMARY_PACKAGE_NAME} setup".`
+                    remediation: parityResult.remediation || `Run "npm run build" then "npx ${PRIMARY_PACKAGE_NAME} setup".`,
+                    parityRoot,
+                    policyMode: parityPolicy.mode,
+                    policyReason: parityPolicy.reason
                 })
             );
         }
