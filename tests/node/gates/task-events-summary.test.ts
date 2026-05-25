@@ -42,6 +42,78 @@ describe('gates/task-events-summary', () => {
         });
     });
 
+    describe('public task-events summary module boundary', () => {
+        it('keeps noisy-command auditing and compact latest-cycle summaries available from the public barrel', () => {
+            const noisyAudit = auditCommandCompactness('git status');
+            assert.equal(noisyAudit.warning_count, 1);
+            assert.deepEqual(noisyAudit.matched_categories, ['git']);
+
+            const summary = {
+                event_contract: {
+                    schema_version: 2,
+                    legacy_schema_versions: [1],
+                    current_schema_event_count: 1,
+                    legacy_schema_event_count: 0,
+                    unknown_schema_version_count: 0
+                },
+                task_id: 'T-297',
+                source_path: '/events/T-297.jsonl',
+                events_count: 2,
+                parse_errors: 0,
+                integrity: {
+                    status: 'PASS',
+                    integrity_event_count: 2,
+                    legacy_event_count: 0,
+                    violations: []
+                },
+                command_policy_warnings: [],
+                command_policy_warning_count: 0,
+                first_event_utc: '2024-01-15T10:00:00.000Z',
+                last_event_utc: '2024-01-15T10:01:00.000Z',
+                token_economy: null,
+                timeline: [
+                    {
+                        index: 1,
+                        timestamp_utc: '2024-01-15T10:00:00.000Z',
+                        schema_version: 2,
+                        event_source: 'task-events',
+                        event_type: 'TASK_MODE_ENTERED',
+                        outcome: 'PASS',
+                        actor: 'gate',
+                        message: 'Task mode entered.',
+                        lifecycle_phase: 'startup',
+                        health_state: 'neutral',
+                        terminal_outcome: 'none',
+                        normalized_from_legacy: false,
+                        unknown_schema_version: false,
+                        details: null
+                    },
+                    {
+                        index: 2,
+                        timestamp_utc: '2024-01-15T10:01:00.000Z',
+                        schema_version: 2,
+                        event_source: 'task-events',
+                        event_type: 'COMPILE_GATE_FAILED',
+                        outcome: 'FAIL',
+                        actor: 'gate',
+                        message: 'Compile failed.',
+                        lifecycle_phase: 'validation',
+                        health_state: 'failed',
+                        terminal_outcome: 'none',
+                        normalized_from_legacy: false,
+                        unknown_schema_version: false,
+                        details: null
+                    }
+                ]
+            } as unknown as TaskEventsSummaryResult;
+
+            const compact = buildCompactLatestCycleTaskEventsSummary(summary);
+            assert.equal(compact.latest_cycle.status, 'BLOCKED');
+            assert.equal(compact.latest_cycle.blocking_reason?.gate, 'compile-gate');
+            assert.equal(formatTaskEventsSummaryText(summary).includes('COMPILE_GATE_FAILED'), true);
+        });
+    });
+
     describe('parseTimestamp', () => {
         it('parses ISO 8601 timestamp', () => {
             const date = parseTimestamp('2024-01-15T10:30:00Z');
