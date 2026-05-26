@@ -282,6 +282,10 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
             'dist/src/index.js must exist in the installed package'
         );
         assert.ok(
+            fs.existsSync(path.join(installedPackageRoot, 'src', 'bin', 'garda.ts')),
+            'src/bin/garda.ts must remain present as the shipped source-of-truth package surface'
+        );
+        assert.ok(
             !fs.existsSync(path.join(installedPackageRoot, '.node-build')),
             'installed package must not include .node-build'
         );

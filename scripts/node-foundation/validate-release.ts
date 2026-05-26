@@ -11,6 +11,16 @@ const SECURITY_RELEASE_DOC_ITEMS = Object.freeze([
     'docs/threat-model.md',
     'docs/sbom.md'
 ]);
+const SOURCEFUL_PACKAGE_SURFACE_ITEMS = Object.freeze([
+    'bin',
+    'dist',
+    'src',
+    'template',
+    'package.json',
+    'MANIFEST.md',
+    'docs/operator-consistency-runbook.md',
+    'VERSION'
+]);
 export const RELEASE_VALIDATION_COMMANDS = Object.freeze([
     'version-parity',
     'clean-worktree',
@@ -543,13 +553,14 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         checks,
         violations,
         'packaging',
-        'prepack and package files preserve clean-package and runtime-surface contracts',
+        'prepack and package files preserve clean-package and sourceful runtime-surface contracts',
         prepack.includes('npm run validate:clean-worktree') &&
             prepack.includes('npm run build:publish-runtime') &&
             prepack.includes('node scripts/package-legacy-entrypoint-compat.cjs create') &&
-            ['bin', 'dist', 'template', 'package.json', 'MANIFEST.md', 'docs/operator-consistency-runbook.md', 'VERSION']
+            SOURCEFUL_PACKAGE_SURFACE_ITEMS
                 .concat(SECURITY_RELEASE_DOC_ITEMS)
-                .every((entry) => packageFiles.includes(entry)),
+                .every((entry) => packageFiles.includes(entry)) &&
+            !packageFiles.includes('.node-build'),
         [prepack || 'missing prepack', `files=${packageFiles.join(', ') || 'missing'}`]
     );
 

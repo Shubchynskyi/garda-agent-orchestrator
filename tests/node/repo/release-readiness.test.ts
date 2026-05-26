@@ -60,6 +60,7 @@ function buildPackageJson(): string {
         files: [
             'bin',
             'dist',
+            'src',
             'template',
             'package.json',
             'MANIFEST.md',
@@ -323,6 +324,40 @@ test('release readiness fails when SECURITY.md is missing from package.json file
         const result = validateReleaseReadiness(repoRoot);
         assert.equal(result.passed, false);
         assert.ok(result.violations.some(v => v.includes('security:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when sourceful package surface omits src', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+        pkg.files = pkg.files.filter((f: string) => f !== 'src');
+        writeFile(path.join(repoRoot, 'package.json'), JSON.stringify(pkg, null, 2));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.ok(result.violations.some(v => v.includes('sourceful runtime-surface contracts')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when package files include node test build output', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+        pkg.files.push('.node-build');
+        writeFile(path.join(repoRoot, 'package.json'), JSON.stringify(pkg, null, 2));
+
+        const result = validateReleaseReadiness(repoRoot);
+
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.includes('sourceful runtime-surface contracts')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
