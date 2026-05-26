@@ -501,7 +501,7 @@ describe('gates/full-suite-validation', () => {
     });
 
     describe('full-suite duration timeout forecast', () => {
-        it('records only the last five matching durations and recommends average plus 20 percent or at least 30 seconds', () => {
+        it('records only the last five matching durations and recommends high-watermark plus 20 percent or at least 30 seconds', () => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-'));
             const repoRoot = path.join(tempDir, 'repo');
             fs.mkdirSync(repoRoot, { recursive: true });
@@ -526,10 +526,36 @@ describe('gates/full-suite-validation', () => {
             const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
             assert.equal(forecast.sample_count, 5);
             assert.equal(forecast.average_duration_seconds, 40);
-            assert.equal(forecast.recommended_timeout_seconds, 70);
+            assert.equal(forecast.high_watermark_duration_seconds, 60);
+            assert.equal(forecast.recommended_timeout_seconds, 90);
             assert.equal(forecast.safety_margin_seconds, 30);
             assert.equal(forecast.recommendation_source, 'history');
-            assert.match(formatFullSuiteTimeoutForecast(forecast), /Recommended full-suite command timeout: 70s/);
+            assert.match(formatFullSuiteTimeoutForecast(forecast), /Recommended full-suite command timeout: 90s/);
+            assert.match(formatFullSuiteTimeoutForecast(forecast), /max 60s/);
+        });
+
+        it('uses the slowest matching duration instead of hiding outliers behind the average', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-outlier-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig();
+
+            for (const [index, durationMs] of [100_000, 100_000, 100_000, 100_000, 500_000].entries()) {
+                recordFullSuiteValidationDuration(repoRoot, config, {
+                    timestamp_utc: `2099-01-01T00:00:0${index}.000Z`,
+                    task_id: `T-OUTLIER-${index}`,
+                    status: 'PASSED',
+                    duration_ms: durationMs,
+                    timed_out: false,
+                    exit_code: 0
+                });
+            }
+
+            const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.average_duration_seconds, 180);
+            assert.equal(forecast.high_watermark_duration_seconds, 500);
+            assert.equal(forecast.recommended_timeout_seconds, 600);
+            assert.equal(forecast.safety_margin_seconds, 100);
         });
 
         it('redacts secrets from recorded duration history command fields', () => {
@@ -573,6 +599,7 @@ describe('gates/full-suite-validation', () => {
             });
             let forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
             assert.equal(forecast.sample_count, 0);
+            assert.equal(forecast.high_watermark_duration_seconds, null);
             assert.equal(forecast.recommended_timeout_seconds, 300);
             assert.equal(forecast.recommendation_source, 'config_timeout');
 

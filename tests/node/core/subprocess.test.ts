@@ -15,6 +15,26 @@ import {
     spawnSyncWithTimeout
 } from '../../../src/core/subprocess';
 
+function isProcessAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 5000): Promise<boolean> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        if (!isProcessAlive(pid)) {
+            return true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return !isProcessAlive(pid);
+}
+
 function createNodeBatchFixture(scriptSource = 'console.log("shelltest")'): { scriptPath: string; cleanup: () => void } {
     const batchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-batch-'));
     const jsPath = path.join(batchRoot, 'payload.js');
@@ -247,24 +267,32 @@ describe('spawnSyncWithTimeout', () => {
 
 describe('spawnStreamed – kill-path cleanup', () => {
     it('terminates a process tree on timeout', async () => {
-        // Parent spawns a child; both sleep forever.
-        // On Windows killChild() uses taskkill /T /F for tree-kill.
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-spawn-tree-timeout-'));
+        const childPidPath = path.join(tempDir, 'child.pid');
         const script = [
             "import * as cp from 'child_process';",
-            'cp.spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {stdio:"ignore"});',
+            "import * as fs from 'fs';",
+            `const child = cp.spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], {stdio:"ignore"});`,
+            `fs.writeFileSync(${JSON.stringify(childPidPath)}, String(child.pid));`,
             'setTimeout(()=>{},60000);'
         ].join('\n');
 
-        const t0 = Date.now();
-        const result = await spawnStreamed(process.execPath, ['-e', script], {
-            timeoutMs: 1000
-        });
-        const elapsed = Date.now() - t0;
+        try {
+            const t0 = Date.now();
+            const result = await spawnStreamed(process.execPath, ['-e', script], {
+                timeoutMs: 1000
+            });
+            const elapsed = Date.now() - t0;
 
-        assert.equal(result.timedOut, true);
-        assert.notEqual(result.exitCode, 0);
-        // Must resolve near the timeout, not hang waiting for the child tree
-        assert.ok(elapsed < 15000, `Expected resolution near timeout, took ${elapsed}ms`);
+            assert.equal(result.timedOut, true);
+            assert.notEqual(result.exitCode, 0);
+            assert.ok(elapsed < 15000, `Expected resolution near timeout, took ${elapsed}ms`);
+            const childPid = Number(fs.readFileSync(childPidPath, 'utf8'));
+            assert.ok(Number.isInteger(childPid) && childPid > 0);
+            assert.equal(await waitForProcessExit(childPid), true, `Expected child process ${childPid} to be terminated`);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('kills process that traps SIGTERM (exercises taskkill /F on Windows)', async () => {

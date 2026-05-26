@@ -1409,9 +1409,10 @@ describe('gates/next-step', () => {
         const text = formatNextStepText(result);
 
         assert.equal(result.next_gate, 'full-suite-validation');
-        assert.match(result.reason, /Recommended full-suite command timeout: 180s/);
+        assert.match(result.reason, /Recommended full-suite command timeout: 240s/);
         assert.match(result.reason, /last 2 run\(s\) avg 150s/);
-        assert.ok(text.includes('FullSuiteTimeout: Recommended full-suite command timeout: 180s'));
+        assert.match(result.reason, /max 200s/);
+        assert.ok(text.includes('FullSuiteTimeout: Recommended full-suite command timeout: 240s'));
     });
 
     it('keeps parallel non-test reviews launchable while test review waits for full-suite validation', () => {

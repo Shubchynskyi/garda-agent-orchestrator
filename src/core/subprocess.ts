@@ -44,6 +44,8 @@ export interface CapturedOutput {
     originalBytes: number;
 }
 
+const PROCESS_TERMINATION_SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
 function sliceChunkToFit(chunk: string, maxBytes: number): string {
     if (maxBytes <= 0 || chunk.length === 0) {
         return '';
@@ -298,10 +300,12 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
             windowsHide: boolean;
             stdio: StdioOptions;
             env?: NodeJS.ProcessEnv;
+            detached?: boolean;
         } = {
             cwd,
             windowsHide: true,
-            stdio: inheritStdio ? 'inherit' : ['ignore', 'pipe', 'pipe']
+            stdio: inheritStdio ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+            detached: process.platform !== 'win32'
         };
         if (opts.env) {
             spawnOpts.env = { ...process.env, ...opts.env };
@@ -317,9 +321,16 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
             if (signal) {
                 signal.removeEventListener('abort', onAbort);
             }
+            process.removeListener('exit', onParentExit);
+            for (const terminationSignal of PROCESS_TERMINATION_SIGNALS) {
+                process.removeListener(terminationSignal, onParentTermination);
+            }
         }
 
-        function killChild(): void {
+        function killChild(force = false): void {
+            if (!child.pid) {
+                return;
+            }
             try {
                 if (process.platform === 'win32') {
                     try {
@@ -332,10 +343,19 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
                         child.kill('SIGKILL');
                     }
                 } else {
-                    child.kill('SIGTERM');
-                    setTimeout(function () {
-                        try { child.kill('SIGKILL'); } catch (_e) { /* already exited */ }
-                    }, 3000);
+                    try {
+                        process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');
+                    } catch (_e) {
+                        child.kill(force ? 'SIGKILL' : 'SIGTERM');
+                    }
+                    if (!force) {
+                        const forceKillHandle = setTimeout(function () {
+                            try { process.kill(-child.pid!, 'SIGKILL'); } catch (_e) {
+                                try { child.kill('SIGKILL'); } catch (_inner) { /* already exited */ }
+                            }
+                        }, 3000);
+                        forceKillHandle.unref?.();
+                    }
                 }
             } catch (_e) {
                 // Child already exited
@@ -355,8 +375,25 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
             killChild();
         }
 
+        function onParentExit(): void {
+            if (!settled) {
+                killChild(true);
+            }
+        }
+
+        function onParentTermination(): void {
+            if (!settled) {
+                killChild(true);
+            }
+            process.exit(1);
+        }
+
         if (signal) {
             signal.addEventListener('abort', onAbort, { once: true });
+        }
+        process.once('exit', onParentExit);
+        for (const terminationSignal of PROCESS_TERMINATION_SIGNALS) {
+            process.once(terminationSignal, onParentTermination);
         }
 
         if (timeoutMs > 0) {
@@ -503,9 +540,16 @@ export function spawnShellCommand(
             if (signal) {
                 signal.removeEventListener('abort', onAbort);
             }
+            process.removeListener('exit', onParentExit);
+            for (const terminationSignal of PROCESS_TERMINATION_SIGNALS) {
+                process.removeListener(terminationSignal, onParentTermination);
+            }
         }
 
-        function killChild(): void {
+        function killChild(_force = false): void {
+            if (!child.pid) {
+                return;
+            }
             try {
                 try {
                     childProcess.execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
@@ -534,8 +578,25 @@ export function spawnShellCommand(
             killChild();
         }
 
+        function onParentExit(): void {
+            if (!settled) {
+                killChild(true);
+            }
+        }
+
+        function onParentTermination(): void {
+            if (!settled) {
+                killChild(true);
+            }
+            process.exit(1);
+        }
+
         if (signal) {
             signal.addEventListener('abort', onAbort, { once: true });
+        }
+        process.once('exit', onParentExit);
+        for (const terminationSignal of PROCESS_TERMINATION_SIGNALS) {
+            process.once(terminationSignal, onParentTermination);
         }
 
         if (timeoutMs > 0) {

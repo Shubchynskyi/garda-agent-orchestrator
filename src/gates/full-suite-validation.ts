@@ -63,6 +63,7 @@ export interface FullSuiteTimeoutForecast {
     history_path: string;
     sample_count: number;
     average_duration_seconds: number | null;
+    high_watermark_duration_seconds: number | null;
     recommended_timeout_seconds: number;
     safety_margin_seconds: number | null;
     recommendation_source: 'history' | 'config_timeout';
@@ -283,6 +284,7 @@ export function buildFullSuiteTimeoutForecast(
             history_path: normalizePath(historyPath),
             sample_count: 0,
             average_duration_seconds: null,
+            high_watermark_duration_seconds: null,
             recommended_timeout_seconds: configuredTimeoutSeconds,
             safety_margin_seconds: null,
             recommendation_source: 'config_timeout',
@@ -292,16 +294,20 @@ export function buildFullSuiteTimeoutForecast(
     }
 
     const averageDurationSeconds = samples.reduce((total, entry) => total + entry.duration_ms / 1000, 0) / samples.length;
+    const highWatermarkDurationSeconds = Math.max(...samples.map((entry) => entry.duration_ms / 1000));
     const recommendedTimeoutSeconds = Math.ceil(Math.max(
         averageDurationSeconds * (1 + FULL_SUITE_TIMEOUT_MARGIN_RATIO),
-        averageDurationSeconds + FULL_SUITE_TIMEOUT_MIN_MARGIN_SECONDS
+        averageDurationSeconds + FULL_SUITE_TIMEOUT_MIN_MARGIN_SECONDS,
+        highWatermarkDurationSeconds * (1 + FULL_SUITE_TIMEOUT_MARGIN_RATIO),
+        highWatermarkDurationSeconds + FULL_SUITE_TIMEOUT_MIN_MARGIN_SECONDS
     ));
     return {
         history_path: normalizePath(historyPath),
         sample_count: samples.length,
         average_duration_seconds: Math.round(averageDurationSeconds * 10) / 10,
+        high_watermark_duration_seconds: Math.round(highWatermarkDurationSeconds * 10) / 10,
         recommended_timeout_seconds: recommendedTimeoutSeconds,
-        safety_margin_seconds: Math.round((recommendedTimeoutSeconds - averageDurationSeconds) * 10) / 10,
+        safety_margin_seconds: Math.round((recommendedTimeoutSeconds - highWatermarkDurationSeconds) * 10) / 10,
         recommendation_source: 'history',
         configured_timeout_seconds: configuredTimeoutSeconds,
         warning
@@ -312,7 +318,8 @@ export function formatFullSuiteTimeoutForecast(forecast: FullSuiteTimeoutForecas
     if (forecast.recommendation_source === 'history' && forecast.average_duration_seconds !== null) {
         return `Recommended full-suite command timeout: ${forecast.recommended_timeout_seconds}s `
             + `(last ${forecast.sample_count} run(s) avg ${forecast.average_duration_seconds}s; `
-            + `safety margin +${forecast.safety_margin_seconds}s = 20% but at least 30s).`;
+            + `max ${forecast.high_watermark_duration_seconds}s; `
+            + `safety margin over max +${forecast.safety_margin_seconds}s = 20% but at least 30s).`;
     }
     const suffix = forecast.warning ? ` ${forecast.warning}` : '';
     return `Recommended full-suite command timeout: ${forecast.recommended_timeout_seconds}s `
