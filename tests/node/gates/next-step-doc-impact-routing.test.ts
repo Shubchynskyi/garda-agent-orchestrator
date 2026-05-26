@@ -1311,6 +1311,11 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
         assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
         assert.ok(result.reason.includes('Completion requires an explicit docs decision.'));
+        assert.ok(result.reason.includes('Compatible doc-impact choices:'));
+        assert.ok(result.reason.includes('no user-facing docs -> --decision "NO_DOC_UPDATES"'));
+        assert.ok(result.reason.includes('docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false'));
+        assert.ok(result.reason.includes('changelog touched -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true'));
+        assert.ok(result.reason.includes('behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
     });
 
     it('routes to doc-impact without refreshing preflight when task closeout is added after reviews', () => {

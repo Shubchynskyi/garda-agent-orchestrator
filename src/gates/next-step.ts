@@ -4926,6 +4926,16 @@ function buildDocImpactCommand(
     return parts.join(' ');
 }
 
+function buildDocImpactCompatibilityHint(): string {
+    return [
+        'Compatible doc-impact choices:',
+        'no user-facing docs -> --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false;',
+        'docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false plus --docs-updated for each user-facing doc;',
+        'changelog touched -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true plus --docs-updated "CHANGELOG.md";',
+        'behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true plus docs/changelog evidence.'
+    ].join(' ');
+}
+
 function getLatestTimelineSequence(eventsRoot: string, taskId: string, eventType: string): number | null {
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
     const errors: string[] = [];
@@ -8186,7 +8196,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             status: 'BLOCKED',
             nextGate: 'doc-impact-gate',
             title: 'Record documentation impact.',
-            reason: 'Completion requires an explicit docs decision.',
+            reason: `Completion requires an explicit docs decision. ${buildDocImpactCompatibilityHint()}`,
             commands: [
                 buildCommand(
                     'Run doc impact gate',
