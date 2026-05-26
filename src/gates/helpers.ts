@@ -53,3 +53,4 @@ export type {
     ProtectedControlPlaneManifest,
     ProtectedControlPlaneManifestEvidence
 } from './protected-control-plane';
+export type { ProtectedHashScanOptions } from './protected-hash-cache';

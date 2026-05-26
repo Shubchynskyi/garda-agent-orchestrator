@@ -15,7 +15,7 @@ import {
     getGitHubSkillBridgeProfileDefinitions,
     getProviderOrchestratorProfileDefinitions
 } from '../materialization/common';
-import { scanProtectedPathHashesIncremental } from './protected-hash-cache';
+import { scanProtectedPathHashesIncremental, type ProtectedHashScanOptions } from './protected-hash-cache';
 import { normalizePath, joinOrchestratorPath } from './path-utils';
 
 export interface ProtectedControlPlaneManifest {
@@ -146,8 +146,12 @@ export function isWorkflowConfigControlPlanePath(relativePath: string): boolean 
  * cache (mtime + size) to skip unchanged files while preserving identical
  * drift-detection semantics.
  */
-export function scanProtectedPathHashes(repoRoot: string, protectedRoots: string[], readOnly: boolean = false): Record<string, string> {
-    return scanProtectedPathHashesIncremental(repoRoot, protectedRoots, readOnly);
+export function scanProtectedPathHashes(
+    repoRoot: string,
+    protectedRoots: string[],
+    readOnlyOrOptions: boolean | ProtectedHashScanOptions = false
+): Record<string, string> {
+    return scanProtectedPathHashesIncremental(repoRoot, protectedRoots, readOnlyOrOptions);
 }
 
 /**
@@ -194,7 +198,7 @@ export function writeProtectedControlPlaneManifest(repoRoot: string): string {
 export function evaluateProtectedControlPlaneManifest(
     repoRoot: string,
     currentSnapshot?: Record<string, string> | null,
-    readOnly: boolean = false
+    readOnlyOrOptions: boolean | ProtectedHashScanOptions = false
 ): ProtectedControlPlaneManifestEvidence {
     const manifestPath = resolveProtectedControlPlaneManifestPath(repoRoot);
     const normalizedManifestPath = normalizePath(manifestPath);
@@ -235,7 +239,7 @@ export function evaluateProtectedControlPlaneManifest(
         };
     }
 
-    const snapshot = currentSnapshot || scanProtectedPathHashes(repoRoot, getProtectedControlPlaneRoots(repoRoot), readOnly);
+    const snapshot = currentSnapshot || scanProtectedPathHashes(repoRoot, getProtectedControlPlaneRoots(repoRoot), readOnlyOrOptions);
     const snapshotDigest = computeProtectedSnapshotDigest(snapshot);
     const manifestSnapshot = manifestObject.protected_snapshot || {};
     const manifestDigest = typeof manifestObject.protected_snapshot_sha256 === 'string'

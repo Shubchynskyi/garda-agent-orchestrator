@@ -589,5 +589,87 @@ describe('gates/protected-hash-cache', () => {
             const cacheMtimeAfter = fs.statSync(cachePath).mtimeMs;
             assert.equal(cacheMtimeAfter, cacheMtimeBefore, 'Cache file should not be rewritten in readOnly mode');
         });
+
+        it('noCache=true bypasses matching cached metadata', () => {
+            const srcDir = path.join(tempDir, 'src', 'gates');
+            fs.mkdirSync(srcDir, { recursive: true });
+            const filePath = path.join(srcDir, 'strict.ts');
+            fs.writeFileSync(filePath, 'strict content', 'utf8');
+            const stat = fs.lstatSync(filePath);
+            const cachePath = resolveProtectedHashCachePath(tempDir);
+            fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+            writeProtectedHashCache(cachePath, {
+                cache_version: 1,
+                entries: {
+                    'src/gates/strict.ts': {
+                        size: stat.size,
+                        mtime_ms: stat.mtimeMs,
+                        sha256: 'cached-but-not-trusted',
+                        path_type: 'file'
+                    }
+                }
+            });
+
+            const cachedResult = scanProtectedPathHashesIncremental(tempDir, ['src/gates/']);
+            assert.equal(cachedResult['src/gates/strict.ts'], 'cached-but-not-trusted');
+
+            const strictResult = scanProtectedPathHashesIncremental(tempDir, ['src/gates/'], { noCache: true });
+            assert.equal(strictResult['src/gates/strict.ts'], sha256(Buffer.from('strict content', 'utf8')));
+        });
+
+        it('hashes protected file symlinks without following outside-repo targets', (t) => {
+            const srcDir = path.join(tempDir, 'src', 'gates');
+            const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'protected-hash-cache-outside-'));
+            try {
+                fs.mkdirSync(srcDir, { recursive: true });
+                const outsidePath = path.join(outsideDir, 'secret.ts');
+                fs.writeFileSync(outsidePath, 'outside secret', 'utf8');
+                const linkPath = path.join(srcDir, 'outside-link.ts');
+                try {
+                    fs.symlinkSync(outsidePath, linkPath, 'file');
+                } catch (error) {
+                    t.skip(`file symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                    return;
+                }
+
+                const result = scanProtectedPathHashesIncremental(tempDir, ['src/gates/'], { noCache: true });
+
+                assert.ok(result['src/gates/outside-link.ts']);
+                assert.notEqual(result['src/gates/outside-link.ts'], sha256(Buffer.from('outside secret', 'utf8')));
+                const cache = readProtectedHashCache(resolveProtectedHashCachePath(tempDir));
+                assert.equal(cache?.entries['src/gates/outside-link.ts'].path_type, 'symlink');
+                assert.equal(cache?.entries['src/gates/outside-link.ts'].target_status, 'outside_repo');
+            } finally {
+                fs.rmSync(outsideDir, { recursive: true, force: true });
+            }
+        });
+
+        it('binds protected file symlinks to in-repo target content', (t) => {
+            const srcDir = path.join(tempDir, 'src', 'gates');
+            fs.mkdirSync(srcDir, { recursive: true });
+            const targetPath = path.join(srcDir, 'target.ts');
+            const linkPath = path.join(srcDir, 'link.ts');
+            fs.writeFileSync(targetPath, 'target v1', 'utf8');
+            try {
+                fs.symlinkSync(targetPath, linkPath, 'file');
+            } catch (error) {
+                t.skip(`file symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+
+            const first = scanProtectedPathHashesIncremental(tempDir, ['src/gates/'], { noCache: true });
+            fs.writeFileSync(targetPath, 'target v2', 'utf8');
+            const futureTime = new Date(Date.now() + 60000);
+            fs.utimesSync(targetPath, futureTime, futureTime);
+            const second = scanProtectedPathHashesIncremental(tempDir, ['src/gates/'], { noCache: true });
+
+            assert.ok(first['src/gates/link.ts']);
+            assert.ok(second['src/gates/link.ts']);
+            assert.notEqual(first['src/gates/link.ts'], second['src/gates/link.ts']);
+            const cache = readProtectedHashCache(resolveProtectedHashCachePath(tempDir));
+            assert.equal(cache?.entries['src/gates/link.ts'].path_type, 'symlink');
+            assert.equal(cache?.entries['src/gates/link.ts'].target_status, 'file');
+            assert.equal(cache?.entries['src/gates/link.ts'].target_path, 'src/gates/target.ts');
+        });
     });
 });

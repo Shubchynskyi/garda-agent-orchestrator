@@ -2,9 +2,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
 import { normalizePath, joinOrchestratorPath } from './path-utils';
-import { fileSha256 } from './hashing-metrics';
+import { fileSha256, stringSha256 } from './hashing-metrics';
 
 const CACHE_VERSION = 1;
+
+export interface ProtectedHashScanOptions {
+    /** Read existing cache but do not persist updates. */
+    readOnly?: boolean;
+    /** Bypass cache hits and hash from the current filesystem state. */
+    noCache?: boolean;
+}
 
 /**
  * Per-file metadata entry used to decide whether a cached SHA-256 is still current.
@@ -14,6 +21,12 @@ export interface ProtectedHashCacheEntry {
     size: number;
     mtime_ms: number;
     sha256: string;
+    path_type?: 'file' | 'symlink';
+    link_target?: string;
+    target_status?: 'file' | 'directory' | 'special' | 'broken' | 'outside_repo';
+    target_path?: string | null;
+    target_size?: number | null;
+    target_mtime_ms?: number | null;
 }
 
 /**
@@ -73,17 +86,101 @@ export function writeProtectedHashCache(cachePath: string, cache: ProtectedHashC
  */
 export function getCachedHashIfCurrent(
     entry: ProtectedHashCacheEntry,
-    fullPath: string
+    fullPath: string,
+    options: ProtectedHashScanOptions = {}
 ): string | null {
+    if (options.noCache) return null;
     try {
-        const stat = fs.statSync(fullPath);
-        if (!stat.isFile()) return null;
+        const stat = fs.lstatSync(fullPath);
         if (stat.size !== entry.size) return null;
         if (stat.mtimeMs !== entry.mtime_ms) return null;
+        if (stat.isSymbolicLink()) {
+            if (entry.path_type !== 'symlink') return null;
+            if (normalizePath(fs.readlinkSync(fullPath)) !== normalizePath(entry.link_target || '')) return null;
+            if (entry.target_status === 'file') {
+                const targetStat = fs.statSync(fullPath);
+                if (!targetStat.isFile()) return null;
+                if (targetStat.size !== entry.target_size) return null;
+                if (targetStat.mtimeMs !== entry.target_mtime_ms) return null;
+            }
+            return entry.sha256;
+        }
+        if (!stat.isFile()) return null;
+        if (entry.path_type && entry.path_type !== 'file') return null;
         return entry.sha256;
     } catch {
         return null;
     }
+}
+
+function buildSymlinkHashPayload(fullPath: string, repoRoot: string | undefined): {
+    hash: string;
+    entry: Omit<ProtectedHashCacheEntry, 'sha256'>;
+} {
+    const stat = fs.lstatSync(fullPath);
+    const linkTarget = fs.readlinkSync(fullPath);
+    const entry: Omit<ProtectedHashCacheEntry, 'sha256'> = {
+        size: stat.size,
+        mtime_ms: stat.mtimeMs,
+        path_type: 'symlink',
+        link_target: normalizePath(linkTarget),
+        target_status: 'broken',
+        target_path: null,
+        target_size: null,
+        target_mtime_ms: null
+    };
+    const payload: Record<string, unknown> = {
+        path_type: 'symlink',
+        link_target: normalizePath(linkTarget),
+        target_status: entry.target_status,
+        target_path: null,
+        target_sha256: null
+    };
+
+    try {
+        const resolvedTargetPath = path.resolve(path.dirname(fullPath), linkTarget);
+        const targetRealPath = fs.realpathSync(resolvedTargetPath);
+        const repoRealPath = repoRoot ? fs.realpathSync(repoRoot) : null;
+        const targetInsideRepo = repoRealPath
+            ? normalizePath(path.relative(repoRealPath, targetRealPath)).split('/')[0] !== '..'
+                && !path.isAbsolute(path.relative(repoRealPath, targetRealPath))
+            : false;
+        if (!targetInsideRepo) {
+            entry.target_status = 'outside_repo';
+            payload.target_status = entry.target_status;
+            return {
+                hash: stringSha256(JSON.stringify(payload)) || '<error>',
+                entry
+            };
+        }
+
+        const targetStat = fs.statSync(resolvedTargetPath);
+        const targetPath = normalizePath(path.relative(repoRealPath || repoRoot || process.cwd(), targetRealPath));
+        entry.target_path = targetPath || null;
+        payload.target_path = entry.target_path;
+        if (targetStat.isFile()) {
+            const targetHash = fileSha256(targetRealPath);
+            entry.target_status = 'file';
+            entry.target_size = targetStat.size;
+            entry.target_mtime_ms = targetStat.mtimeMs;
+            payload.target_status = entry.target_status;
+            payload.target_sha256 = targetHash || '<error>';
+        } else if (targetStat.isDirectory()) {
+            entry.target_status = 'directory';
+            payload.target_status = entry.target_status;
+        } else {
+            entry.target_status = 'special';
+            payload.target_status = entry.target_status;
+        }
+    } catch {
+        entry.target_status = 'broken';
+        payload.target_status = entry.target_status;
+    }
+
+    return {
+        hash: stringSha256(JSON.stringify(payload)) || '<error>',
+        entry
+    };
 }
 
 /**
@@ -98,16 +195,25 @@ export function getCachedHashIfCurrent(
 export function hashFileWithCache(
     fullPath: string,
     relPath: string,
-    cache: ProtectedHashCache
+    cache: ProtectedHashCache,
+    options: ProtectedHashScanOptions & { repoRoot?: string } = {}
 ): string {
     const existing = cache.entries[relPath];
     if (existing) {
-        const cached = getCachedHashIfCurrent(existing, fullPath);
+        const cached = getCachedHashIfCurrent(existing, fullPath, options);
         if (cached) return cached;
     }
 
     try {
-        const stat = fs.statSync(fullPath);
+        const stat = fs.lstatSync(fullPath);
+        if (stat.isSymbolicLink()) {
+            const symlinkPayload = buildSymlinkHashPayload(fullPath, options.repoRoot);
+            cache.entries[relPath] = {
+                ...symlinkPayload.entry,
+                sha256: symlinkPayload.hash
+            };
+            return symlinkPayload.hash;
+        }
         if (!stat.isFile()) return '<error>';
         const hash = fileSha256(fullPath);
         if (!hash) return '<error>';
@@ -115,12 +221,20 @@ export function hashFileWithCache(
         cache.entries[relPath] = {
             size: stat.size,
             mtime_ms: stat.mtimeMs,
-            sha256: hash
+            sha256: hash,
+            path_type: 'file'
         };
         return hash;
     } catch {
         return '<error>';
     }
+}
+
+function coerceScanOptions(readOnlyOrOptions: boolean | ProtectedHashScanOptions | undefined): ProtectedHashScanOptions {
+    if (typeof readOnlyOrOptions === 'boolean') {
+        return { readOnly: readOnlyOrOptions };
+    }
+    return readOnlyOrOptions || {};
 }
 
 /**
@@ -146,8 +260,9 @@ export function hashFileWithCache(
 export function scanProtectedPathHashesIncremental(
     repoRoot: string,
     protectedRoots: string[],
-    readOnly: boolean = false
+    readOnlyOrOptions: boolean | ProtectedHashScanOptions = false
 ): Record<string, string> {
+    const options = coerceScanOptions(readOnlyOrOptions);
     const cachePath = resolveProtectedHashCachePath(repoRoot);
     const cache = readProtectedHashCache(cachePath) || { cache_version: CACHE_VERSION, entries: {} };
     const results: Record<string, string> = {};
@@ -165,8 +280,8 @@ export function scanProtectedPathHashesIncremental(
 
             if (entry.isDirectory()) {
                 scan(fullPath);
-            } else if (entry.isFile()) {
-                results[relPath] = hashFileWithCache(fullPath, relPath, cache);
+            } else if (entry.isFile() || entry.isSymbolicLink()) {
+                results[relPath] = hashFileWithCache(fullPath, relPath, cache, { ...options, repoRoot });
             }
         }
     };
@@ -178,12 +293,12 @@ export function scanProtectedPathHashesIncremental(
         if (!fs.existsSync(fullRoot)) continue;
 
         try {
-            const stat = fs.statSync(fullRoot);
+            const stat = fs.lstatSync(fullRoot);
             if (stat.isDirectory()) {
                 scan(fullRoot);
-            } else if (stat.isFile()) {
+            } else if (stat.isFile() || stat.isSymbolicLink()) {
                 const relPath = normalizePath(path.relative(repoRoot, fullRoot));
-                results[relPath] = hashFileWithCache(fullRoot, relPath, cache);
+                results[relPath] = hashFileWithCache(fullRoot, relPath, cache, { ...options, repoRoot });
             }
         } catch {
             // Non-stattable root — skip gracefully
@@ -200,7 +315,7 @@ export function scanProtectedPathHashesIncremental(
 
     // Persist updated cache when allowed; failure is non-fatal.
     // readOnly=true prevents writes so read-only commands (status, doctor) honour their contract.
-    if (!readOnly) {
+    if (!options.readOnly) {
         try {
             writeProtectedHashCache(cachePath, cache);
         } catch {

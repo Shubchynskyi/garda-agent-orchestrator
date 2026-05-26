@@ -73,6 +73,13 @@ protected-manifest failure and only then restart in the correct mode.
 The runtime hashes all files under these directory roots.  Any change
 detected between preflight and completion snapshots triggers enforcement.
 
+Protected scans use an incremental hash cache as a performance feature only;
+the cache is not a security boundary. Strict scan callers can bypass cache
+hits and rehash the current filesystem state. Symlinks under protected roots
+are handled explicitly: Garda hashes the link object, resolves target content
+only when the target remains inside the repository root, and never reads
+outside-repo symlink targets while building protected snapshots.
+
 ### Deployed workspace
 
 | Protected root | Contents |
