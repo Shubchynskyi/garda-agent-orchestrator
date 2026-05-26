@@ -2842,6 +2842,18 @@ function readCompileReadiness(
     }
     const evidencePreflightHash = String(evidence.preflight_hash_sha256 || '').trim().toLowerCase();
     if (!expectedPreflightHash || evidencePreflightHash !== expectedPreflightHash) {
+        const preflightEvidence = safeReadJson(preflightPath);
+        const docsOnlyExtensionReadiness = isPlainRecord(preflightEvidence)
+            ? buildCompileEvidenceDocsOnlyExtensionReadiness(repoRoot, reviewsRoot, taskId, preflightEvidence)
+            : null;
+        if (docsOnlyExtensionReadiness) {
+            return {
+                ready: true,
+                reason:
+                    'Compile gate evidence is current for the implementation/test/config scope after a refreshed docs-only extension preflight. ' +
+                    docsOnlyExtensionReadiness.reason
+            };
+        }
         return {
             ready: false,
             reason: 'Compile gate evidence preflight hash does not match the current preflight; rerun compile-gate.'
@@ -2911,6 +2923,75 @@ function readCompileReadiness(
         ready: true,
         reason: 'Compile gate evidence is current.'
     };
+}
+
+function buildCompileEvidenceDocsOnlyExtensionReadiness(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    currentPreflight: Record<string, unknown>
+): PreflightWorkspaceReadiness | null {
+    const compileEvidence = safeReadJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`));
+    if (!isPlainRecord(compileEvidence)) {
+        return null;
+    }
+    const evidenceStatus = String(compileEvidence.status || '').trim().toUpperCase();
+    const evidenceOutcome = String(compileEvidence.outcome || '').trim().toUpperCase();
+    if (evidenceStatus !== 'PASSED' || evidenceOutcome !== 'PASS') {
+        return null;
+    }
+    const compileChangedFiles = Array.isArray(compileEvidence.scope_changed_files)
+        ? [...new Set(compileEvidence.scope_changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+    const currentChangedFiles = Array.isArray(currentPreflight.changed_files)
+        ? [...new Set(currentPreflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+    if (compileChangedFiles.length === 0 || currentChangedFiles.length === 0) {
+        return null;
+    }
+    const compileFileSet = new Set(compileChangedFiles);
+    const addedFiles = currentChangedFiles.filter((entry) => !compileFileSet.has(entry));
+    const removedFiles = compileChangedFiles.filter((entry) => !currentChangedFiles.includes(entry));
+    if (addedFiles.length === 0 || removedFiles.length > 0) {
+        return null;
+    }
+
+    const detectionSource = String(
+        compileEvidence.scope_detection_source || currentPreflight.detection_source || 'git_auto'
+    ).trim() || 'git_auto';
+    const includeUntracked = compileEvidence.scope_include_untracked == null
+        ? true
+        : !!compileEvidence.scope_include_untracked;
+    const changedLinesTotal = Number(compileEvidence.scope_changed_lines_total);
+    if (!Number.isFinite(changedLinesTotal) || changedLinesTotal < 0) {
+        return null;
+    }
+    const changedFilesSha256 = String(compileEvidence.scope_changed_files_sha256 || '').trim().toLowerCase()
+        || stringSha256(compileChangedFiles.join('\n'));
+    const scopeContentSha256 = String(compileEvidence.scope_content_sha256 || '').trim().toLowerCase();
+    const compiledDomainScopeFingerprints = normalizeDomainScopeFingerprints(
+        isPlainRecord(compileEvidence.domain_scope_fingerprints)
+            ? compileEvidence.domain_scope_fingerprints
+            : null
+    ) || buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource,
+        includeUntracked,
+        changedFiles: compileChangedFiles
+    });
+
+    return buildDocsOnlyDeltaReadiness(
+        repoRoot,
+        currentChangedFiles,
+        compileChangedFiles,
+        changedLinesTotal,
+        includeUntracked,
+        detectionSource,
+        changedFilesSha256,
+        scopeContentSha256,
+        [],
+        compiledDomainScopeFingerprints
+    );
 }
 
 function stringSha256(value: string): string {
@@ -3907,6 +3988,34 @@ function readCoherentCycleReadiness(
             reason: 'Latest preflight has current-cycle handshake and shell-smoke evidence.',
             command: null
         };
+    }
+
+    const preflightPayload = safeReadJson(preflightPath);
+    const latestBoundaryType = String(latestBoundary?.event_type || '').trim();
+    if (
+        isPlainRecord(preflightPayload)
+        && [
+            'REVIEW_GATE_PASSED',
+            'REVIEW_GATE_PASSED_WITH_OVERRIDE',
+            'COMPLETION_GATE_FAILED'
+        ].includes(latestBoundaryType)
+    ) {
+        const docsOnlyExtensionReadiness = buildCompileEvidenceDocsOnlyExtensionReadiness(
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            preflightPayload
+        );
+        if (docsOnlyExtensionReadiness) {
+            return {
+                ready: true,
+                reason:
+                    `Latest preflight was refreshed after ${latestBoundaryType}, but the refreshed scope only adds ordinary docs/closeout files ` +
+                    'while implementation/test/config domains remain bound to the latest compile evidence. ' +
+                    docsOnlyExtensionReadiness.reason,
+                command: null
+            };
+        }
     }
 
     const compileEvidence = safeReadJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`));

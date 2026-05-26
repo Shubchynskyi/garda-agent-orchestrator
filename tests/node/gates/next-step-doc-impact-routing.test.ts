@@ -1468,6 +1468,31 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Completion requires an explicit docs decision.'));
     });
 
+    it('keeps refreshed changelog-only extension preflight in doc-impact lane after review gate passed', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Documented reviewed behavior.\n', 'utf8');
+
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate', result.reason);
+        assert.ok(!result.commands[0].command.includes('gate restart-coherent-cycle'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+    });
+
     it('keeps ordinary docs-only closeout in doc-impact lane after failed completion', () => {
         const repoRoot = makeTempRepo();
         fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
