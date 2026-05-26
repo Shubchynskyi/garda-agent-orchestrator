@@ -36,6 +36,8 @@ interface CommandParityPolicy {
     reason: string;
 }
 
+const LOCAL_BUNDLE_REFRESH_COMMANDS = new Set(['setup', 'bootstrap', 'install', 'init', 'reinit']);
+
 function readPathFlag(commandArgv: string[], flag: string): string | null {
     for (let index = 0; index < commandArgv.length; index++) {
         const arg = commandArgv[index];
@@ -77,6 +79,19 @@ function isUpdateGitCheckOnly(commandArgv: string[]): boolean {
     return String(commandArgv[0] || '').trim().toLowerCase() === 'git' && hasFlag(commandArgv, '--check-only');
 }
 
+function hasRemoteSourceOverride(commandArgv: string[]): boolean {
+    return hasFlag(commandArgv, '--repo-url') || hasFlag(commandArgv, '--branch');
+}
+
+function isTrustedLocalBundleRefreshCommand(commandName: string, commandArgv: string[]): boolean {
+    return LOCAL_BUNDLE_REFRESH_COMMANDS.has(commandName) && !hasRemoteSourceOverride(commandArgv);
+}
+
+function buildLocalBundleRefreshParityReason(commandName: string): string {
+    return `${commandName} refreshes the deployed bundle from the current trusted source checkout, ` +
+        'so stale source parity is surfaced without blocking the documented repair path.';
+}
+
 function isRepairInspect(commandArgv: string[]): boolean {
     const firstArg = String(commandArgv[0] || '').trim().toLowerCase();
     return !firstArg || firstArg.startsWith('-') || firstArg === 'help' || firstArg === 'inspect';
@@ -98,6 +113,13 @@ function resolveCommandParityPolicy(commandName: string, commandArgv: string[]):
         return buildParityPolicy('block', resolveNavigatorParityRoot(commandArgv), 'next-step is the lifecycle navigator and must not route from stale source or bundle code.');
     }
     if (['setup', 'bootstrap', 'install', 'init', 'reinit', 'update', 'rollback', 'uninstall'].includes(commandName)) {
+        if (isTrustedLocalBundleRefreshCommand(commandName, commandArgv)) {
+            return buildParityPolicy(
+                'warn',
+                resolveTargetOrBundleParityRoot(commandArgv),
+                buildLocalBundleRefreshParityReason(commandName)
+            );
+        }
         if (commandName === 'update' && isUpdateGitCheckOnly(commandArgv)) {
             return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'update git --check-only is read-only, so stale source parity is surfaced without blocking.');
         }

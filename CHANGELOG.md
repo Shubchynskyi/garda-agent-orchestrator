@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- allowed trusted local setup/bootstrap/install/init/reinit refresh commands to continue with a parity warning when the deployed bundle is stale, preserving parity blocks for remote-source setup, update, rollback, uninstall, gate, and next-step paths
 - hardened launcher delegation target validation with recognized package metadata and realpath containment checks so packaged runtimes fail closed on spoofed or escaping local workspace targets
 - added a compact `next-step` invalidation impact summary for stale preflight, compile, rule-pack, and review evidence, including affected review lanes, the minimal recovery chain, and explicit review-reuse candidates without weakening freshness checks
 - made `prepare-reviewer-launch` print and persist a copy-pasteable reviewer launch prompt with prompt/template/evidence/output paths, including a writable draft `ReviewOutputPath`, and treat legacy prepared launch artifacts without those fields as stale

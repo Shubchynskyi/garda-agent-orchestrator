@@ -308,6 +308,59 @@ test('mutating target-root lifecycle commands block on target parity drift', () 
     }
 });
 
+test('local bundle refresh commands warn on parity drift so setup recovery remains reachable', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-setup-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-setup-target-'));
+    try {
+        seedStaleSourceCheckoutBundle(targetDir);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'setup', '--target-root', targetDir, '--help'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, 0);
+        assert.ok(combined.includes('PARITY_WARNING'));
+        assert.ok(combined.includes('AllowedCommand: setup'));
+        assert.ok(combined.includes('ParityPolicy: warn'));
+        assert.ok(combined.includes(`ParityRoot: ${targetDir}`));
+        assert.ok(combined.includes('setup refreshes the deployed bundle from the current trusted source checkout'));
+        assert.ok(combined.includes('Usage:'));
+        assert.ok(!combined.includes('PARITY_BLOCKED'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
+test('remote-source setup remains blocked on target parity drift', () => {
+    const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-setup-remote-caller-'));
+    const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-setup-remote-target-'));
+    try {
+        seedStaleSourceCheckoutBundle(targetDir);
+
+        const result = childProcess.spawnSync(
+            process.execPath,
+            [CLI_PATH, 'setup', '--target-root', targetDir, '--branch', 'dev', '--help'],
+            { cwd: callerDir, windowsHide: true, encoding: 'utf8', timeout: 5000 }
+        );
+
+        const combined = (result.stdout || '') + (result.stderr || '');
+        assert.equal(result.status, EXIT_PRECONDITION_FAILURE);
+        assert.ok(combined.includes('PARITY_BLOCKED'));
+        assert.ok(combined.includes('BlockedCommand: setup'));
+        assert.ok(combined.includes('ParityPolicy: block'));
+        assert.ok(combined.includes(`ParityRoot: ${targetDir}`));
+        assert.ok(combined.includes('mutating lifecycle commands must not run'));
+        assert.ok(combined.includes('Source Parity Violation: The deployed bundle is stale'));
+    } finally {
+        fs.rmSync(callerDir, { recursive: true, force: true });
+        fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+});
+
 test('offline network-sensitive commands fail before target parity drift', () => {
     const callerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-offline-caller-'));
     const targetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-offline-target-'));
