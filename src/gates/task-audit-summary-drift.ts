@@ -264,12 +264,13 @@ export function isLocalControlPlaneCommitPath(filePath: string): boolean {
     }
     return normalized === 'TASK.md'
         || normalized.startsWith('garda-agent-orchestrator/runtime/')
+        || normalized.startsWith('garda-agent-orchestrator/live/')
         || normalized === 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
 }
 
-export function resolveTrackedCommittableChangedFiles(repoRoot: string): string[] | null {
+export function resolveCommittableChangedFiles(repoRoot: string): string[] | null {
     try {
-        const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', false, [], {
+        const currentWorkspaceSnapshot = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], {
             noCache: true,
             readOnly: true
         });
@@ -284,5 +285,3 @@ export function resolveTrackedCommittableChangedFiles(repoRoot: string): string[
         return null;
     }
 }
-
-

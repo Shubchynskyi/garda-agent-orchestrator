@@ -1771,11 +1771,11 @@ describe('gates/next-step', () => {
         assert.deepEqual(result.final_report?.required_order, [
             'review integrity attestation',
             'implementation summary (include path mode, review verdicts, docs updated)',
-            'No commit required: no tracked committable changes are present.'
+            'No commit required: no committable changes are present.'
         ]);
-        assert.equal(result.final_report?.commit_command_suggestion, 'No commit required: no tracked committable changes are present.');
+        assert.equal(result.final_report?.commit_command_suggestion, 'No commit required: no committable changes are present.');
         assert.equal(result.final_report?.commit_question, 'No commit confirmation required.');
-        assert.ok(text.includes('3. No commit required: no tracked committable changes are present.'));
+        assert.ok(text.includes('3. No commit required: no committable changes are present.'));
         assert.ok(!text.includes('git commit -m "'));
         assert.ok(!text.includes('Do you want me to commit now? (yes/no)'));
     });

@@ -76,7 +76,7 @@ import {
     buildAuditedChangedFiles,
     buildPostDoneWorkspaceDriftBlocker,
     isLocalControlPlaneCommitPath,
-    resolveTrackedCommittableChangedFiles
+    resolveCommittableChangedFiles
 } from './task-audit-summary-drift';
 import {
     collectEvidenceArtifacts,
@@ -86,7 +86,7 @@ import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-pro
 export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
 export { synchronizeFinalCloseoutArtifacts } from './task-audit-summary-closeout-sync';
 
-const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no tracked committable changes are present.';
+const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
 const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
 
 export interface TaskAuditSummaryOptions {
@@ -880,11 +880,18 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     }
 
     const commitGuardEnabled = workspaceStatusSnapshot.enforceNoAutoCommit === true;
-    const commitCommand = buildCommitCommandSuggestion(changedFiles, taskMetadata, commitGuardEnabled);
-    const trackedCommittableChangedFiles = resolveTrackedCommittableChangedFiles(repoRoot);
-    const commitRequired = trackedCommittableChangedFiles == null
+    const committableChangedFiles = resolveCommittableChangedFiles(repoRoot);
+    const commitCandidateChangedFiles = committableChangedFiles == null
+        ? changedFiles.filter((changedFile) => !isLocalControlPlaneCommitPath(changedFile))
+        : committableChangedFiles;
+    const commitCommand = buildCommitCommandSuggestion(
+        commitCandidateChangedFiles.length > 0 ? commitCandidateChangedFiles : changedFiles,
+        taskMetadata,
+        commitGuardEnabled
+    );
+    const commitRequired = committableChangedFiles == null
         ? changedFiles.some((changedFile) => !isLocalControlPlaneCommitPath(changedFile))
-        : trackedCommittableChangedFiles.length > 0;
+        : committableChangedFiles.length > 0;
     const commitCommandTemplate = commitRequired
         ? commitCommand.template
         : 'No commit command required.';
@@ -1069,5 +1076,4 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         final_closeout: finalCloseout
     };
 }
-
 

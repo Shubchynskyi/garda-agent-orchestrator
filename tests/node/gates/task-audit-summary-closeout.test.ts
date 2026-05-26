@@ -518,6 +518,39 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_report_contract.required_order[3], 'Do you want me to commit now? (yes/no)');
         });
 
+        it('keeps commit guidance when untracked source files are still committable', () => {
+            initGitRepo(tmpDir);
+            const untrackedTestFile = path.join(tmpDir, 'tests', 'node', 'gates', 'new-task.test.ts');
+            fs.mkdirSync(path.dirname(untrackedTestFile), { recursive: true });
+            fs.writeFileSync(untrackedTestFile, 'test("new task", () => {});\n', 'utf8');
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['tests/node/gates/new-task.test.ts'],
+                metrics: { changed_lines_total: 1 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.match(result.final_report_contract.commit_command_suggestion, /^git commit -m "/);
+            assert.equal(result.final_report_contract.commit_question, 'Do you want me to commit now? (yes/no)');
+            assert.equal(result.final_report_contract.required_order.length, 4);
+            assert.equal(result.final_report_contract.required_order[3], 'Do you want me to commit now? (yes/no)');
+        });
+
         it('suppresses commit suggestions when the tracked worktree is already clean', () => {
             const sourceFile = path.join(tmpDir, 'src', 'gates', 'task-audit-summary.ts');
             fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
@@ -547,16 +580,16 @@ describe('gates/task-audit-summary', () => {
             const renderedMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
 
             assert.equal(result.final_report_contract.commit_command_template, 'No commit command required.');
-            assert.equal(result.final_report_contract.commit_command_suggestion, 'No commit required: no tracked committable changes are present.');
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'No commit required: no committable changes are present.');
             assert.equal(result.final_report_contract.commit_question, 'No commit confirmation required.');
             assert.deepEqual(result.final_report_contract.required_order, [
                 'review integrity attestation',
                 'implementation summary',
-                'No commit required: no tracked committable changes are present.'
+                'No commit required: no committable changes are present.'
             ]);
             assert.ok(!renderedMarkdown.includes('git commit -m "'));
             assert.ok(renderedMarkdown.includes('Commit guidance:'));
-            assert.ok(renderedMarkdown.includes('No commit required: no tracked committable changes are present.'));
+            assert.ok(renderedMarkdown.includes('No commit required: no committable changes are present.'));
         });
 
         it('suppresses commit suggestions when only ignored runtime control-plane files changed', () => {
@@ -584,7 +617,7 @@ describe('gates/task-audit-summary', () => {
                 reviewsRoot: reviewsDir
             });
 
-            assert.equal(result.final_report_contract.commit_command_suggestion, 'No commit required: no tracked committable changes are present.');
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'No commit required: no committable changes are present.');
             assert.equal(result.final_report_contract.required_order.length, 3);
             assert.ok(!result.final_report_contract.required_order.join('\n').includes('git commit -m "'));
             assert.ok(!result.final_report_contract.required_order.join('\n').includes('Do you want me to commit now?'));
@@ -1811,7 +1844,7 @@ describe('gates/task-audit-summary', () => {
             );
             assert.equal(
                 result.final_report_contract.commit_command_suggestion,
-                'No commit required: no tracked committable changes are present.'
+                'No commit required: no committable changes are present.'
             );
             assert.ok(result.final_report_contract.required_order.includes(result.final_report_contract.commit_command_suggestion));
             assert.ok(!result.final_report_contract.required_order.join('\n').includes('git commit -m "'));
