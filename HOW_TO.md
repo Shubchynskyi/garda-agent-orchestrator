@@ -24,7 +24,7 @@ npx -y garda-agent-orchestrator setup
 
 Preferred and required runtime surface is the Node CLI.
 
-If you install from a source checkout instead of npm registry artifacts, `npm install` runs `prepare` and builds the generated `bin/garda.js` launcher plus compiled runtime before first use.
+If you work from a source checkout instead of npm registry artifacts, run `npm install` for dependencies and then `npm run build` explicitly before first use. The package intentionally does not rely on consumer install lifecycle scripts such as `prepare`.
 
 This path:
 - deploys `./garda-agent-orchestrator/`;
@@ -189,7 +189,7 @@ garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.
 
 For day-to-day validation, prefer `garda doctor`, `garda verify`, and `garda gate validate-manifest`.
 Use `garda doctor explain <FAILURE_ID>` when a doctor/gate failure code is known and you want remediation steps, `garda status why-blocked` when a task is stalled and you need the missing-gate or missing-timeline explanation, and `garda doctor --cleanup-stale-locks --dry-run` when task-event locks may be blocking gate writes.
-Only `runtime/task-events/*.lock` belongs to this lock subsystem; `runtime/reviews/` is not cleaned by the lock-health workflow.
+The lock-health workflow covers stale task-event locks under `runtime/task-events/*.lock` and stale review-artifact locks under `runtime/reviews/*.lock`.
 
 See **[docs/cli-reference.md](docs/cli-reference.md)** for the full low-level script reference.
 
@@ -277,7 +277,7 @@ Custom project-specific skills still live under `garda-agent-orchestrator/live/s
 
 | Component | Requirement |
 |---|---|
-| Public CLI and gate commands | Node.js 24 LTS |
+| Public CLI and gate commands | Node.js 24 LTS primary; Node.js 22.13+ compatibility |
 | Task orchestration workspace | Local Git repository with the `git` CLI available; GitHub/GitLab/other remotes are optional and do not affect local gate logic |
 
 If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `tsconfig.json`; it extends `tsconfig.node-foundation.json` and is the editor-facing project file.
@@ -289,7 +289,7 @@ If you work on this repository itself in IntelliJ IDEA/WebStorm, open the root `
 | `garda: command not found` | Global install missing or `PATH` not refreshed | Run `npm install -g garda-agent-orchestrator` and open a new terminal |
 | `npx` fetches a stale version | npm cache holds an older package | Run `npx --yes --package garda-agent-orchestrator@latest garda setup` or clear cache with `npm cache clean --force` |
 | `EACCES` / permission denied on global install | No write access to the global `node_modules` prefix | Use `sudo npm install -g …` (Linux/macOS) or fix the npm prefix directory permissions |
-| `garda setup` exits with "Node.js >= 24 required" | Active Node version is below 24 LTS | Install Node 24 via `nvm install 24` / `nvm use 24` or download from nodejs.org |
+| Runtime diagnostics warn about an unsupported Node.js version | Active Node version is outside `^22.13.0 || >=24.0.0` | Use Node.js 24 LTS for the primary runtime path, or Node.js 22.13+ for the compatibility line |
 | `garda verify` fails after update | `live/` materialization is out of sync with new templates | Run `garda init --target-root "."` to re-materialize, then `garda verify` again |
 | `validate-manifest` reports duplicate keys | MANIFEST.md has repeated file entries | Remove the duplicate lines in `MANIFEST.md` and rerun `garda gate validate-manifest` |
 | Agent skips init answers and re-asks all 6 questions | `runtime/init-answers.json` missing or unreadable | Verify the file exists and the path passed to the agent matches; rerun `garda setup` if lost |

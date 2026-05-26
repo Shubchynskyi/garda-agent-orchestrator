@@ -100,8 +100,14 @@ Kept inside bundle:
 - HOW_TO.md
 - LICENSE
 - SECURITY.md
+- docs/architecture.md
+- docs/cli-reference.md
+- docs/configuration.md
+- docs/node-platform-foundation.md
+- docs/operator-consistency-runbook.md
 - docs/sbom.md
 - docs/threat-model.md
+- docs/work-example.md
 - AGENT_INIT_PROMPT.md
 - MANIFEST.md
 - VERSION

@@ -65,9 +65,17 @@ function buildPackageJson(): string {
             'package.json',
             'MANIFEST.md',
             'SECURITY.md',
+            'README.md',
+            'HOW_TO.md',
+            'CHANGELOG.md',
+            'docs/architecture.md',
+            'docs/cli-reference.md',
+            'docs/configuration.md',
+            'docs/node-platform-foundation.md',
             'docs/operator-consistency-runbook.md',
             'docs/sbom.md',
             'docs/threat-model.md',
+            'docs/work-example.md',
             'VERSION'
         ]
     }, null, 2);
@@ -110,11 +118,26 @@ function createReadinessFixture(openTaskId?: string): string {
         [
             '- package.json',
             '- SECURITY.md',
+            '- README.md',
+            '- HOW_TO.md',
+            '- CHANGELOG.md',
+            '- docs/architecture.md',
+            '- docs/cli-reference.md',
+            '- docs/configuration.md',
+            '- docs/node-platform-foundation.md',
+            '- docs/operator-consistency-runbook.md',
+            '- docs/work-example.md',
             '- docs/threat-model.md',
             '- docs/sbom.md'
         ].join('\n')
     );
     writeFile(path.join(repoRoot, 'VERSION'), '1.1.0\n');
+    writeFile(path.join(repoRoot, 'README.md'), '# Readme\n');
+    writeFile(path.join(repoRoot, 'HOW_TO.md'), '# How To\n');
+    writeFile(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n');
+    writeFile(path.join(repoRoot, 'docs', 'architecture.md'), '# Architecture\n');
+    writeFile(path.join(repoRoot, 'docs', 'configuration.md'), '# Configuration\n');
+    writeFile(path.join(repoRoot, 'docs', 'work-example.md'), '# Work Example\n');
     writeFile(path.join(repoRoot, 'docs', 'threat-model.md'), '# Threat Model\n');
     writeFile(path.join(repoRoot, 'docs', 'sbom.md'), '# SBOM\n');
     writeFile(path.join(repoRoot, 'docs', 'operator-consistency-runbook.md'), '# Runbook\n');
@@ -341,7 +364,25 @@ test('release readiness fails when sourceful package surface omits src', () => {
 
         assert.equal(result.passed, false);
         assert.match(output, /RELEASE_READINESS_FAILED/);
-        assert.ok(result.violations.some(v => v.includes('sourceful runtime-surface contracts')));
+        assert.ok(result.violations.some(v => v.includes('sourceful runtime, and linked public-doc contracts')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when package files omit a README-linked public doc', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+        pkg.files = pkg.files.filter((f: string) => f !== 'docs/cli-reference.md');
+        writeFile(path.join(repoRoot, 'package.json'), JSON.stringify(pkg, null, 2));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.ok(result.violations.some(v => v.includes('linked public-doc contracts')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -357,7 +398,7 @@ test('release readiness fails when package files include node test build output'
         const result = validateReleaseReadiness(repoRoot);
 
         assert.equal(result.passed, false);
-        assert.ok(result.violations.some(v => v.includes('sourceful runtime-surface contracts')));
+        assert.ok(result.violations.some(v => v.includes('sourceful runtime, and linked public-doc contracts')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

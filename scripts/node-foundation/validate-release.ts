@@ -11,6 +11,17 @@ const SECURITY_RELEASE_DOC_ITEMS = Object.freeze([
     'docs/threat-model.md',
     'docs/sbom.md'
 ]);
+const PUBLIC_PACKAGE_DOC_ITEMS = Object.freeze([
+    'README.md',
+    'HOW_TO.md',
+    'CHANGELOG.md',
+    'docs/architecture.md',
+    'docs/cli-reference.md',
+    'docs/configuration.md',
+    'docs/node-platform-foundation.md',
+    'docs/operator-consistency-runbook.md',
+    'docs/work-example.md'
+]);
 const SOURCEFUL_PACKAGE_SURFACE_ITEMS = Object.freeze([
     'bin',
     'dist',
@@ -45,10 +56,15 @@ export const EMBEDDED_BUNDLE_PARITY_ITEMS = Object.freeze([
     'LICENSE',
     'NOTICE',
     'SECURITY.md',
+    'docs/architecture.md',
+    'docs/cli-reference.md',
+    'docs/configuration.md',
+    'docs/node-platform-foundation.md',
     'docs/threat-model.md',
     'docs/sbom.md',
     'TRADEMARKS.md',
     'docs/operator-consistency-runbook.md',
+    'docs/work-example.md',
     'VERSION'
 ]);
 
@@ -553,13 +569,16 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         checks,
         violations,
         'packaging',
-        'prepack and package files preserve clean-package and sourceful runtime-surface contracts',
+        'prepack and package files preserve clean-package, sourceful runtime, and linked public-doc contracts',
         prepack.includes('npm run validate:clean-worktree') &&
             prepack.includes('npm run build:publish-runtime') &&
             prepack.includes('node scripts/package-legacy-entrypoint-compat.cjs create') &&
             SOURCEFUL_PACKAGE_SURFACE_ITEMS
                 .concat(SECURITY_RELEASE_DOC_ITEMS)
+                .concat(PUBLIC_PACKAGE_DOC_ITEMS)
                 .every((entry) => packageFiles.includes(entry)) &&
+            PUBLIC_PACKAGE_DOC_ITEMS.every((entry) => fileExists(normalizedRoot, entry)) &&
+            manifestListsEvery(manifestText, PUBLIC_PACKAGE_DOC_ITEMS) &&
             !packageFiles.includes('.node-build'),
         [prepack || 'missing prepack', `files=${packageFiles.join(', ') || 'missing'}`]
     );

@@ -9,7 +9,7 @@ The runtime is Node-only.
 - Published command names: `garda`, `gao`, `garda-agent-orchestrator`
 - Source invocation: `node bin/garda.js <command>`
 - Runtime baseline: `Node.js ^22.13.0 || >=24.0.0` (Node 24 LTS primary, Node 22.13+ compatibility)
-- Source installs from a git/source checkout run `npm prepare`, which builds the generated `bin/garda.js` launcher and compiled runtime before execution.
+- Source checkouts do not rely on consumer install lifecycle scripts. Run `npm install` for dependencies and `npm run build` explicitly before using `node bin/garda.js` from source.
 
 Runtime compatibility matrix:
 

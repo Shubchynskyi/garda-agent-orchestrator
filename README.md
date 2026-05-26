@@ -77,11 +77,11 @@ If you want persistent commands, install globally.
 
 | Feature | Description |
 |---|---|
-| **8 Supported Providers** | Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, Antigravity — single canonical rule set |
+| **Many Provider Surfaces** | Claude, Codex, Copilot, Gemini, Qwen, GitHub Copilot, Windsurf, Junie, and Antigravity — one canonical workflow with provider-specific entrypoints and bridges |
 | **Mandatory Quality Gates** | Preflight → Compile → Review → Doc-Impact → Completion |
 | **Token Economy** | Reviewer-context compaction, scoped diffs, gate output filtering — saves 60–100% on green builds |
 | **Task Lifecycle** | `TODO → IN_PROGRESS → IN_REVIEW → DONE` with hash-chain integrity |
-| **9 Review Types** | code, db, security, refactor, api, test, performance, infra, dependency |
+| **Specialist Review Lanes** | code, db, security, refactor, api, test, performance, infra, and dependency reviews when the task scope requires them |
 | **Node Runtime** | Public CLI and gate flows run through the Node/TypeScript router with no shell runtime dependency |
 | **Compact Command Hints** | Agent rules teach efficient CLI flags for everyday commands |
 
@@ -186,7 +186,7 @@ Garda was not started from scratch in this repository. Earlier versions were dev
 ## Recent Changes
 
 - Completed the final TS-only source transition: `src/bin/garda.ts` now owns the public CLI launcher and `bin/garda.js` is build-generated only.
-- Source installs now self-build through `npm prepare`, so the generated launcher and compiled runtime are materialized before execution.
+- Source checkouts keep consumer install lifecycle scripts disabled; run `npm run build` explicitly before using the generated launcher and compiled runtime from source.
 - Packaging tests now build in isolated fixture repositories, removing cross-test races on shared `dist/` state.
 - Stabilized the Node gate router for scoped diff, review-context, task-event summary, and completion flows.
 - Added root `tsconfig.json` for standard editor/IDE TypeScript discovery and included it in the published package surface.
@@ -210,7 +210,7 @@ Garda was not started from scratch in this repository. Earlier versions were dev
 - `garda` without arguments is now non-destructive and only prints overview/help.
 - The public CLI owns the validated runtime surface for lifecycle commands and gate routes.
 - Update trust is allowlist-first by default. Any bypass for local paths or non-standard update sources must be explicit via `--trust-override --no-prompt`, and ordinary CLI flows ignore the legacy `GARDA_UPDATE_TRUST_OVERRIDE` environment variable.
-- Task-event lock diagnostics live only under `garda-agent-orchestrator/runtime/task-events/*.lock`. Use `garda doctor --cleanup-stale-locks --dry-run` before removing stale lock directories, and do not treat `runtime/reviews/` as part of the lock subsystem.
+- Lock diagnostics cover task-event locks under `garda-agent-orchestrator/runtime/task-events/*.lock` and review-artifact locks under `garda-agent-orchestrator/runtime/reviews/*.lock`. Use `garda doctor --cleanup-stale-locks --dry-run` before removing stale lock directories.
 - `bin/garda.js` is a generated launcher compiled from `src/bin/garda.ts`; repository builds run from `dist/src/**/*.js`, tests can stage `.node-build/src/**/*.js`, and packaged installs invoke the same compiled contract from `node_modules`.
 - Root `tsconfig.json` is the editor-facing entrypoint and simply extends `tsconfig.node-foundation.json`.
 - Installer is non-destructive for existing project files outside managed blocks.

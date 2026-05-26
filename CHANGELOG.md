@@ -1,116 +1,53 @@
 # Changelog
 
-## Unreleased
-- made successful `completion-gate` output print an explicit `AfterCommand` back to `next-step`, telling agents to materialize `task-audit-summary` before the mandatory final report or commit-permission flow
-- clarified and enforced the sourceful package/bundle policy: releases must ship both compiled `dist` runtime and canonical `src` TypeScript surface while excluding `.node-build`
-- allowed trusted local setup/bootstrap/install/init/reinit refresh commands to continue with a parity warning when the deployed bundle is stale, preserving parity blocks for remote-source setup, update, rollback, uninstall, gate, and next-step paths
-- hardened launcher delegation target validation with recognized package metadata and realpath containment checks so packaged runtimes fail closed on spoofed or escaping local workspace targets
-- added a compact `next-step` invalidation impact summary for stale preflight, compile, rule-pack, and review evidence, including affected review lanes, the minimal recovery chain, and explicit review-reuse candidates without weakening freshness checks
-- made `prepare-reviewer-launch` print and persist a copy-pasteable reviewer launch prompt with prompt/template/evidence/output paths, including a writable draft `ReviewOutputPath`, and treat legacy prepared launch artifacts without those fields as stale
-- simplified `garda setup` final human output by removing internal start-banner, mandatory-flow, and project-memory prompt blocks, adding a `garda ui` recommendation, and ending with the clear agent-init next command
-- fixed `garda uninstall` cleanup so Garda-managed `.agentignore` active/off blocks are removed without restoring stale install-time backups over later user edits
-- fixed applied update output so `garda update git` reports the final applied version, prints the matching version-bound update notes, and formats long workflow/project-memory update details into readable human sections while preserving JSON output
-- bounded daily runtime-retention candidate discovery before heavy task preview classification and constrained storage-policy and forensic-compression mutations to selected task ids, preserving unselected task artifacts
-- expanded runtime cleanup coverage across generated runtime zones and metrics retention, including `runtime/tmp`, reviewer scratch, test scratch, cache/report/update-temp directories, `--max-metrics-lines`, and success-log omission for clean compile/full-suite output
-- expanded the official runtime contract to Node 24 LTS primary plus Node 22.13+ compatibility, with aligned engines, warning-only doctor diagnostics outside the tested matrix, CI matrices, docs, release validation checks, and Node 22 typings
-- aligned the documented `garda doctor --compact` success marker with the actual formatter contract (`Doctor: PASSED | verify=PASSED | manifest=PASSED`)
-- made `garda doctor` failure output print a concise blocker summary and next action before the long detailed evidence dump, while preserving JSON output and full human diagnostics
-- made `complete-reviewer-launch` own `launched_at_utc` inside the gate, reject caller-supplied `--launched-at-utc` as spoof-like freshness input, and remove that flag from generated reviewer-launch guidance
-- made `next-step` treat `REVIEW_GATE_PASSED` as terminal for stale downstream review rebind prompts, while routing pre-gate rebinds through required scoped-diff refresh before rebuilding review context
-- routed compile-gate failures caused by `Preflight scope drift detected` back to `classify-change` refresh instead of retrying the stale compile gate
-- added a guarded `garda ui --actions` settings editor for allow-listed safe workflow knobs, using preview/confirmation, the audited `workflow set` command path, and local UI action logging instead of direct config JSON writes
-- added opt-in `garda ui --actions` for allow-listed local UI actions with preview, confirmation for mutating commands, and runtime audit logging
-- expanded `garda ui` into a richer read-only dashboard with overview counters, task search/filter controls, workflow and instructions tabs, and clearer lazy task details
-- added `garda ui` as a no-dependency read-only localhost server that prints a browser URL and loads per-task details lazily on demand
-- made `garda html` return promptly on large runtime histories by rendering the full task list with lazy/skipped deep task details by default, while adding `--max-detailed-tasks N` for explicit heavier snapshots
-- added short `on`/`off` aliases for guarded `garda workflow set` boolean options while preserving canonical `--*-enabled` flags, audited confirmation requirements, and conflict diagnostics
-- wrote reviewer output-template and evidence-manifest artifacts from `build-review-context`, with prompt handoff pointing reviewers at exact headings/verdict tokens and treating task/plan/diff/source values as untrusted evidence
-- included task intent, TASK.md row data, approved plan criteria, verification expectations, and explicit out-of-scope notes in reviewer context as untrusted evidence, with stale/missing/ambiguous task criteria surfaced instead of silently trusted
-- kept protected control-plane documentation-only scopes from forcing code review solely because the docs path is protected, while preserving protected drift checks and review requirements for runtime/config/code scopes
-- made true docs-only lifecycle routing suppress non-applicable strict review lanes and skip the configured full-suite command while preserving security review for security-sensitive documentation wording and keeping mixed docs plus code/test/config scopes on the full validation path
-- made enabled full-suite validation record a fast `SKIPPED`/`DOCS_ONLY_SCOPE_NOT_REQUIRED` artifact for docs-only scopes instead of running the configured repository test command
-- made PASS review normalization infer strict follow-up obligations only from explicit structured `Deferred Findings` with `Justification:`, while preserving raw output and rejecting malformed PASS artifacts instead of turning residual-risk prose, command logs, or positive summaries into F tasks
-- documented strict decomposition split routing so `split-required` parents transition only through linked parent-derived strict child rows that match the decision artifact, without treating decomposition as a strictness waiver
-
 ## 1.1.0
-- made final closeout and `next-step` commit guidance suppress commit commands and confirmation questions when no tracked committable changes remain, while preserving guarded commit prompts for real tracked diffs
-- added launcher delegation trust evidence that distinguishes self-hosted source checkouts, deployed bundles, packaged npm runtimes, and unknown runtimes, with fail-closed handling for unrecognized or ambiguous local runtime identity
-- made `next-step` runtime provider detection keep explicit `GARDA_EXECUTION_PROVIDER` authoritative while recognizing `QWEN_CODE` before Codex fallback markers such as `CODEX_HOME`
-- preserved the canonical offline-mode error for network-sensitive CLI commands before source/bundle parity checks, so stale parity diagnostics no longer mask `--offline` blocking failures
-- ignored generated Garda runtime/control-plane artifacts such as task-event JSONL, review scratch output, runtime caches, and lock/index files during `classify-change` and review routing, while reporting them as workspace hygiene warnings and preserving real source/test/config/doc scope
-- stopped skill telemetry from creating `runtime/task-events` artifacts for invalid or missing bundle roots while preserving non-blocking telemetry behavior for valid roots
-- made `next-step` fail closed when `TASK.md` says `DONE` but current lifecycle evidence is not terminal-clean, routing operators to audited task reset/reopen recovery instead of hiding failed gates or missing final closeout
-- reformatted the human `garda setup` agent-initialization handoff into scannable colored sections while preserving copy-paste-safe commands, prompts, machine-readable report content, and the existing `Give your agent:` anchor
-- stopped disabled full-suite validation from being presented as mandatory test-review evidence, while preserving required and stale-evidence checks when full-suite validation is enabled
-- allowed help-only CLI requests to print help from a source checkout when the deployed bundle directory is missing, while keeping stale bundle version and launcher parity failures blocked
-- made `SPLIT_REQUIRED` a permanent gate-owned latch for the task attempt, so later TASK.md status edits, scope-budget config changes, or smaller diffs cannot make the parent executable again unless gate-owned child/decomposed/DONE evidence or an explicit operator reset/discard clears the path
-- made confirmed `garda gate task-reset` mutations disabled by default behind audited `workflow set --task-reset-enabled true`, while preserving dry-run inspection and documenting the new workflow config surface
-- stopped `full-suite-validation` from leaking gate-owned `GARDA_BUNDLE_NAME` into repository test subprocesses so bundle auto-discovery tests match direct `npm test`, while real full-suite failures still fail the gate
-- routed `next-step` back to failed-review remediation after a current required review records FAIL, preventing `code_first_optional` from launching other review lanes until the failed review has fresh PASS evidence
-- added remediation-aware review reuse so classified narrow failed-review fixes can preserve unaffected review evidence only after receipt, provenance, tree-state, and scope-fingerprint validation, while protected control-plane and fail-closed categories relaunch required review lanes
-- added current-cycle review dependency diagnostics with explicit blocker taxonomy for missing upstream PASS evidence, missing receipts, missing review context, stale freshness, and independent no-edge reviews
-- added release-time embedded bundle parity validation for root source, dist, templates, package files, and runtime-referenced docs
-- added review attempt pass/fail/reuse/missing counts to task-specific stats while keeping aggregate stats stable
-- colorized human task audit summary output while keeping JSON and output-path artifacts uncolored
-- colorized human task timeline output for `garda task "<task-id>" events` and `gate task-events-summary` while keeping JSON and output-path artifacts uncolored
-- added a read-only `garda task "<task-id>" stats|events` inspection namespace with command help and CLI reference coverage
-- added review attempt pass/fail/reuse/missing counts to task audit and final closeout reporting
-- made `garda stats "T-001"` a positional alias for task-specific stats and colorized human stats output while keeping JSON output uncolored
-- added command-specific CLI help discovery for user-facing commands, including `garda help <command>`, `<command> help`, `--help`, `-h`, and gate-specific help aliases
-- wrote update sync backup metadata and the `.update-in-progress` sentinel before destructive bundle sync, preserving phased recovery evidence through failed apply/rollback paths
-- blocked `update` and `check-update --apply` before mutation when task-event or review-artifact runtime locks exist, including stale locks that need explicit cleanup
-- replaced launcher delegation `spawnSync` with async `spawn`, signal forwarding, optional `GARDA_LAUNCHER_DELEGATION_TIMEOUT_MS`, and regression coverage for exit, output, timeout, and signal behavior
-- made launcher deployed-bundle discovery fail closed on ambiguous fallback candidates, reject path-like or malformed `--bundle-name` values, and prevent explicit bundle-name misses from falling back to a different deployed bundle
-- suppressed intent-only code/refactor reviews for zero-diff baseline-only task closeouts while preserving protected control-plane and domain-surface review triggers
-- made project-memory readiness explicit in `status`, `doctor explain PROJECT_MEMORY_PENDING`, and `preprompt`, including the canonical init/refresh prompt while `ProjectMemoryInitialized` or `ProjectMemoryValidated` is false
-- blocked release/package handoff on dirty tracked or untracked worktrees by adding `validate:clean-worktree` to `validate:release` and `prepack`
-- defaulted project-memory maintenance to update mode for fresh and missing-key materializations, preserved explicit existing choices, and surfaced a first-run memory refresh handoff in setup/update output
-- restricted decomposed parent routing to explicit child task links so parent and continuation mentions cannot skip unfinished leaf tasks
-- reused accepted non-test review evidence after test-only deltas when current-cycle code reuse proves the production scope is unchanged, while keeping test review mandatory and rejecting sensitive test-path deltas
-- pinned npm update applies to exact registry-resolved package versions with recorded integrity/provenance, surfaced resolved package fields in update/check-update output, and limited update temp cleanup to old Garda-owned `runtime/update-temp/npm-*` roots
-- preserved existing workspace style guidance during init/update by scaffolding the new code-style contract as reviewable templates, adding init-report adoption notices, and keeping user-owned `project-memory` content out of generated summaries
-- made strict-profile review selection treat configured test-only changes as test review only, including non-Node test roots and tests under runtime roots, while preserving security/protected-scope fail-closed behavior
-- added configurable `ordinary_doc_paths` so agent-init can confirm ordinary planning/changelog paths that skip code/test review while still appearing in preflight and doc-impact evidence
-- kept ordinary docs/`CHANGELOG.md` follow-up changes in doc-impact scope after reviews instead of forcing fresh code/test review cycles, while protected control-plane docs still fail closed
-- added `garda gate complete-reviewer-launch` so real delegated reviewer launches can fill post-launch metadata without hand-editing reviewer launch artifacts
-- preserved PASS review reuse across same-scope preflight refreshes by hashing only review-relevant scoped-diff metadata and printing explicit review reuse accept/reject diagnostics from `build-review-context`
-- stopped the performance review path trigger from matching ordinary `Profile` policy filenames while preserving benchmark, profiling, and performance-path triggers
-- made fast-profile code review forcing skip true docs-only scopes unless protected control-plane files changed or `classify-change --force-code-review` is passed explicitly
-- made strict-profile domain reviews evidence-aware so DB/API/performance/infra/dependency reviews are not forced without matching domain surface evidence, while budget forecasts and profile diagnostics show the filtered review set and explicit all-domain overrides report `profile_forced`
-- included task scope, changed files, diff stat, staged/explicit-scope untracked bounded diff content, and markdown-safe diff fences in reviewer prompt artifacts so mandatory reviewers can inspect the implementation instead of receiving only rule text
-- split `garda gate task-reset` into explicit reset-for-rerun and terminal-discard modes so operators must choose `--reopen`/`--to-status TODO` or `--discard`/`--to-status DONE`, and reset reports now record previous and target status
-- added `garda gate task-reset` operator command to clear all runtime artifacts for a given task and mark it DONE, with dry-run preview, explicit `--confirm` safety guardrail, idempotent ALREADY_RESET detection, and a surviving `reset-report.json` audit breadcrumb
-- made task-selected profiles a real orchestrator policy sourceacross `enter-task-mode`, `classify-change`, and `next-step`, exposing task-vs-runtime profile selection, effective depth, review policy, and token-budget impact while preserving scope-triggered review floors instead of inflating every capability-backed review
-- made `next-step` commands safer to copy by avoiding stale source-checkout runtimes, exposing top-level help under parity drift, refusing to fabricate runtime provider identity from SourceOfTruth, shell-quoting generated values safely, and keeping restarted task cycles out of terminal DONE state
-- made mandatory review launch guidance, rule packs, orchestration skills, provider bridges, and review contexts explicitly require fresh clean-context reviewer sessions and reviewer cleanup after receipt persistence
-- bound protected control-plane preflight scopes to `--orchestrator-work` before preflight artifact writes, and taught `next-step` to generate concrete initial `classify-change` commands from task-mode planned scope
-- normalized explicit provider aliases such as `github-copilot-cli` to canonical provider ids during task start and preflight routing, and made task-bound `classify-change` auto-write the canonical preflight artifact when `--output-path` is omitted
-- made `next-step` the default task-loop navigator with exact copy-paste recovery commands for stale preflight/rule-pack/review-context cycles and explicit delegated review routing before review result ingestion
-- split task-event append results into canonical commit status and derived-index warnings so mandatory lifecycle writes no longer fail after the per-task JSONL event is already committed
-- fixed `gate human-commit --repo-root` so the gate consumes the documented repo-root option instead of forwarding it to `git commit`
-- added `gate next-step` as a deterministic lifecycle navigator that reports the next mandatory command, effective full-suite configuration, review policy, missing artifacts, and review trust state for agent task runs
-- blocked mandatory review preparation only when runtime identity is unresolved or still relies on canonical SourceOfTruth fallback, while keeping delegated reviewer-subagent execution valid regardless of which explicit orchestrator entry surface was used
-- removed same-agent fallback from the mandatory review workflow so required reviews must come from delegated sub-agents, and deprecated fallback artifacts now degrade to unavailable trust diagnostics instead of satisfying active review summaries
-- fixed localized agent reports so confirmed `agent-init` language now overrides stale setup answers, and report labels now follow the configured assistant language instead of silently falling back to English
-- synced integrity-priority wording into tracked template rule sources and added contract regressions so setup or update cannot silently rematerialize stale policy text
-- kept review trust summaries visible on completion and audit compatibility paths even when consuming legacy or partial review artifacts, degrading the line to explicit unavailable status instead of dropping it outright
-- preserved delegated reviewer provenance when current-cycle code-review reuse binds to historical delegated receipts, and tightened reuse guards so invalid delegated or fallback identity combinations cannot be silently rebound into fresh-cycle evidence
-- improved `load-rule-pack --stage POST_PREFLIGHT` failure UX by printing a ready-to-rerun remediation command with `--repo-root`, `--task-id`, `--preflight-path`, and all `--loaded-rule-file` flags
-- added a version-bound update-message registry so successful updates can print unseen release notes and curated operator notes immediately
-- fixed long-lived local update and rollback flows to invalidate bundle runtime module cache comprehensively so later commands reload fresh bundle code instead of mixing stale transitive modules
-- added `garda preprompt task --json` as a read-only bootstrap surface for current task context, canonical next commands, and bounded lifecycle diagnostics
-- added repo-local `optional-skill-selection-policy.json` plus preflight-time optional skill selection artifacts, task-mode planned-scope reuse, and compact final closeout selection summaries
-- tightened optional-skill selection with conservative strong-match activation, selected skill path reporting in `preprompt task --json`, non-zero `preprompt` start-time blocking for `required|strict`, explicit repo-local opt-in, and compile/review gate enforcement for those policy modes
-- added `garda review-capabilities` with `show`/`list`, `enable`, and `disable` subcommands so supported optional review toggles can be inspected or changed without hand-editing `live/config/review-capabilities.json`
-- added repo-local `review_execution_policy` workflow config plus `garda workflow show|set` support so review launch ordering and downstream invalidation can be inspected or changed without manual JSON edits; fresh materialization now seeds the recommended `code_first_optional` default while legacy repos that still omit the setting remain on the compatibility path until they opt into an explicit mode
-- improved orchestration lifecycle reliability with stricter gate sequencing, safer rerun and recovery flows, and completion checks based on the latest coherent cycle
-- strengthened the review pipeline with earlier artifact validation, automated review materialization and ingestion, dependency-ordered reviews, and code-review reuse for test-only reruns
-- tightened dirty-worktree and protected control-plane guardrails with earlier drift detection, baseline-aware ordinary-task handling, and safer orchestrator-work handoff
-- hardened runtime concurrency and lock recovery across cleanup, review indexes, aggregate task logs, timeline summaries, Windows lock release, foreign-host stale locks, and build-root stale locks
-- improved validation and execution correctness with preserved targeted test filters, stricter producer-consumer artifact sequencing, safer Windows shell-backed gate execution, and same-version self-hosted update refresh for live rule-contract changes
-- refined operator UX with clearer onboarding and task-start guidance, profile-aware recommendations, automatic `TASK.md` status sync, and conventional commit suggestions in final reports
-- reduced noisy self-hosted protected-manifest `DRIFT` diagnostics by downgrading source-checkout status/doctor drift to informational and adding explicit preflight assessment for task-context-allowed manifest drift
-- made `.review-temp` a deterministic reviewer staging area by recognizing task-owned nested staging paths, cleaning successful review source artifacts reliably, and sweeping aged orphaned temp files without deleting artifacts that still belong to active tasks
+
+### Release And Runtime
+- Garda now targets Node.js 24 LTS as the primary runtime and supports Node.js 22.13+ as a compatibility runtime line.
+- Release validation now checks the sourceful distribution contract: published packages include the compiled runtime, canonical TypeScript source, templates, package metadata, and the public documentation surface needed by README/HOW_TO links.
+- Package and bundle parity checks were tightened so releases can detect stale source, dist, template, package, and runtime-referenced documentation content before handoff.
+
+### Install, Update, And Package Safety
+- Setup, bootstrap, install, init, and reinit can recover from stale local bundle parity when they are run from the trusted source checkout, while remote-source setup and mutating lifecycle commands still fail closed.
+- Update flows now record clearer trust and provenance evidence for npm, git, local path, and trust-override sources, and successful update output focuses on the applied version and operator-facing notes.
+- `garda update`, `check-update --apply`, and `update git` stop before mutation when Garda is switched off, directing operators to run `garda on` first.
+- `garda uninstall` now removes Garda-managed `.agentignore` active/off blocks without restoring stale install-time backups over later user edits.
+- The package avoids consumer install lifecycle scripts; source checkout users run `npm run build` explicitly before using the generated launcher and compiled runtime.
+
+### Task Workflow And Closeout
+- `next-step` is the main task-loop navigator and now prints the next mandatory command, review policy, full-suite state, missing artifacts, review trust, and compact invalidation diagnostics.
+- Stale preflight, compile, rule-pack, review-context, review-gate, and full-suite evidence now routes through narrower recovery chains instead of retrying stale gates.
+- Successful `completion-gate` output now explicitly routes agents back to `next-step` and the `task-audit-summary` closeout before final report or commit-permission flow.
+- Final closeout and commit guidance now suppress commit commands when no tracked committable changes remain.
+- Task reset, split-required, decomposed parent routing, and one-shot review-cycle continuation are now gate-owned runtime evidence instead of ad hoc `TASK.md` or workflow-config edits.
+
+### Reviews And Validation
+- Mandatory reviews require delegated fresh-context reviewer evidence with explicit routing, launch, invocation, receipt, and cleanup telemetry.
+- Reviewer handoffs now include prompt/template/evidence/output paths plus exact verdict-token guidance, reducing malformed review outputs.
+- Review reuse is stricter and more useful: PASS reviews can be reused only when receipt, provenance, tree state, scope fingerprints, and current-cycle bindings prove they are still valid.
+- Strict-profile reviews are more evidence-aware, so DB/API/performance/infra/dependency lanes are not forced without matching domain surface evidence.
+- Full-suite validation, docs-only scopes, ordinary docs, and test-only deltas now have clearer routing so unnecessary expensive review/test cycles are avoided without weakening freshness checks.
+
+### UI, Reports, And Operator UX
+- Added and expanded `garda ui` as a local dashboard for task inspection, workflow/settings visibility, instructions, lazy task details, and guarded safe actions.
+- `garda html` now handles large runtime histories more quickly by rendering lazy or bounded task details by default.
+- Human output for setup, update, doctor, task events, stats, audit summary, and closeout is more readable, with colorized human surfaces where useful and clean JSON output preserved for automation.
+- Setup output now avoids internal agent-only blocks and ends with a clearer agent-init handoff, plus a recommendation to use `garda ui` for command discovery.
+
+### Cleanup And Runtime Retention
+- Runtime cleanup now covers more generated zones, including temp, cache, report, update-temp, reviewer scratch, test scratch, metrics, and runtime tmp directories.
+- Clean successful compile and full-suite runs omit heavy raw logs while retaining compact hash/count evidence; warnings, failures, and non-clean runs still keep detailed output.
+- Retention and GC flows preserve active tasks and problem-task forensic evidence while allowing healthy DONE task artifacts to be compacted after ledger evidence exists.
+
+### Docs And Project Memory
+- Project-memory readiness and impact evidence are now visible in setup/update, status, doctor, preprompt, task audit, and final closeout.
+- Agent-init now explains ordinary document path exceptions and optional skill handling more clearly, including when extra project-specific skills should be suggested or installed.
+- Documentation was aligned with the current Node runtime support, provider wording, lock-cleanup behavior, package files surface, and source-checkout build contract.
+
+### Internal Hardening
+- Protected control-plane checks, launcher delegation trust, offline-mode ordering, task-event integrity, update cache invalidation, and runtime lock recovery were hardened.
+- Command dispatch, help discovery, workflow settings, profile selection, and optional-skill activation now fail closed in more ambiguous states.
+- CI, release readiness, pack smoke, embedded bundle parity, and clean-worktree validation were expanded to better match the release path.
 
 ## 1.0.0
 - first public Garda release
