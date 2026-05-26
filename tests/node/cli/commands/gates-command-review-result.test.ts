@@ -2812,7 +2812,14 @@ describe('gates command review result', () => {
         assert.equal(fs.existsSync(receiptPath), false);
         const errorText = capturedErrors.join('\n');
         // Must name the correct test-review pass token and not just 'code'.
-        assert.ok(errorText.includes('TEST REVIEW PASSED') || errorText.includes('REVIEW PASSED'), 'error should name the test-review PASS token');
+        assert.ok(errorText.includes('TEST REVIEW PASSED'), 'error should name the test-review PASS token');
+        assert.ok(errorText.includes("Exact accepted PASS verdict token for 'test': TEST REVIEW PASSED"));
+        assert.ok(errorText.includes('# Test Review'));
+        assert.ok(errorText.includes('## Validation Notes'));
+        assert.ok(errorText.includes('## Findings by Severity'));
+        assert.ok(errorText.includes('## Deferred Findings'));
+        assert.ok(errorText.includes('## Residual Risks'));
+        assert.ok(errorText.includes('## Verdict'));
         assert.ok(errorText.includes('--review-output-path'), 'error should reference --review-output-path');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -3089,6 +3096,14 @@ describe('gates command review result', () => {
 
         assert.notEqual(result.exitCode, 0);
         assert.ok(result.errors.some((line) => line.includes('empty or non-substantive PASS validation notes')), result.errors.join('\n'));
+        const errorText = result.errors.join('\n');
+        assert.ok(errorText.includes("Exact accepted PASS verdict token for 'code': REVIEW PASSED"));
+        assert.ok(errorText.includes('# Code Review'));
+        assert.ok(errorText.includes('## Validation Notes'));
+        assert.ok(errorText.includes('## Findings by Severity'));
+        assert.ok(errorText.includes('## Deferred Findings'));
+        assert.ok(errorText.includes('## Residual Risks'));
+        assert.ok(errorText.includes('## Verdict'));
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
         assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
         fs.rmSync(repoRoot, { recursive: true, force: true });

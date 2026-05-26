@@ -629,6 +629,7 @@ function getReviewHeading(reviewType: string): string {
 function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerdict: string): string {
     return [
         'Minimal compliant PASS review template for a no-findings review (structure only; substantive analysis is still required):',
+        `Exact accepted PASS verdict token for '${reviewType}': ${expectedPassVerdict}`,
         `# ${getReviewHeading(reviewType)}`,
         '',
         '## Validation Notes',
@@ -636,10 +637,13 @@ function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerd
         '',
         '## Findings by Severity',
         'none',
+        '',
         '## Deferred Findings',
         'none',
+        '',
         '## Residual Risks',
         'none',
+        '',
         '## Verdict',
         expectedPassVerdict,
         "Use '## Deferred Findings' only for real accepted actionable follow-ups with 'Justification:'. Validation-boundary notes and command logs are prose only; keep the findings, deferred, and residual sections set to 'none'."
@@ -3390,7 +3394,8 @@ export async function handleRecordReviewResult(gateArgv: string[]): Promise<void
             formatAcceptedReviewVerdictTokens(verdictTokenSet) +
             ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. ` +
             `Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. ` +
-            `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.`
+            `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.\n\n` +
+            buildMinimalPassReviewTemplateHint(reviewType, passExample)
         );
     }
     const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
