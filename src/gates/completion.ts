@@ -816,6 +816,7 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         status,
         outcome,
         task_id: resolvedTaskId,
+        repo_root: normalizePath(repoRoot),
         preflight_path: normalizePath(preflightPath),
         reviews_root: normalizePath(reviewsRoot),
         task_mode_path: taskModeEvidence.evidence_path,

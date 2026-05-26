@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- made successful `completion-gate` output print an explicit `AfterCommand` back to `next-step`, telling agents to materialize `task-audit-summary` before the mandatory final report or commit-permission flow
 - clarified and enforced the sourceful package/bundle policy: releases must ship both compiled `dist` runtime and canonical `src` TypeScript surface while excluding `.node-build`
 - allowed trusted local setup/bootstrap/install/init/reinit refresh commands to continue with a parity warning when the deployed bundle is stale, preserving parity blocks for remote-source setup, update, rollback, uninstall, gate, and next-step paths
 - hardened launcher delegation target validation with recognized package metadata and realpath containment checks so packaged runtimes fail closed on spoofed or escaping local workspace targets

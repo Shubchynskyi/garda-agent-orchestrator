@@ -66,6 +66,14 @@ export function buildReviewCycleRestartCommand(
     return parts.join(' ');
 }
 
+export function buildCompletionGateSuccessAfterCommand(repoRoot: string, taskId: string): string {
+    const cliPrefix = isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleName());
+    return `AfterCommand: rerun ${cliPrefix} next-step "${taskId}" --repo-root "."; `
+        + 'follow the task-audit-summary command it prints before delivering the mandatory final report or asking for commit permission.';
+}
+
 export function formatCompletionGateResult(result: Record<string, unknown>): string {
     const lines: string[] = [
         result.outcome === 'PASS' ? 'COMPLETION_GATE_PASSED' : 'COMPLETION_GATE_FAILED',
@@ -124,6 +132,15 @@ export function formatCompletionGateResult(result: Record<string, unknown>): str
         lines.push(`PlanGuided: ${!!plan.plan_guided}`);
         if (plan.plan_guided && plan.plan_path) {
             lines.push(`PlanPath: ${plan.plan_path}`);
+        }
+    }
+    if (result.outcome === 'PASS') {
+        const taskId = typeof result.task_id === 'string' ? result.task_id.trim() : '';
+        const repoRoot = typeof result.repo_root === 'string' && result.repo_root.trim()
+            ? result.repo_root
+            : process.cwd();
+        if (taskId) {
+            lines.push(buildCompletionGateSuccessAfterCommand(repoRoot, taskId));
         }
     }
 
