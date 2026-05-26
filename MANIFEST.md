@@ -105,6 +105,7 @@ Kept inside bundle:
 - docs/configuration.md
 - docs/node-platform-foundation.md
 - docs/operator-consistency-runbook.md
+- docs/release-readiness.md
 - docs/sbom.md
 - docs/threat-model.md
 - docs/work-example.md

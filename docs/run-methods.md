@@ -118,7 +118,7 @@ npm run validate:release
 node .\bin\garda.js gate validate-manifest --manifest-path MANIFEST.md
 ```
 
-`npm run release:preflight` is the final release-readiness command. It first runs `npm run validate:release-readiness`, which checks static alignment for package scripts and files, CI update-smoke wiring, runtime-state docs, security/audit package surface, manifest-listed docs, and Release 1.1.0 blocker-task contracts, then runs the full `npm run validate:release` proof.
+`npm run release:preflight` is the final release-readiness command. It first runs `npm run validate:release-readiness`, which checks static alignment for package scripts and files, CI update-smoke wiring, runtime-state docs, security/audit package surface, manifest-listed docs, and the tracked `docs/release-readiness.md` release checklist, then runs the full `npm run validate:release` proof.
 
 `npm run validate:release` is the explicit release contract:
 

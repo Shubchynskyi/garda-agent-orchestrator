@@ -20,8 +20,10 @@ const PUBLIC_PACKAGE_DOC_ITEMS = Object.freeze([
     'docs/configuration.md',
     'docs/node-platform-foundation.md',
     'docs/operator-consistency-runbook.md',
+    'docs/release-readiness.md',
     'docs/work-example.md'
 ]);
+const RELEASE_READINESS_CHECKLIST_PATH = 'docs/release-readiness.md';
 const SOURCEFUL_PACKAGE_SURFACE_ITEMS = Object.freeze([
     'bin',
     'dist',
@@ -128,8 +130,8 @@ export interface ReleaseReadinessResult {
     passed: boolean;
     violations: string[];
     checks: ReleaseReadinessCheck[];
-    blockerTaskIds: string[];
-    openBlockerTaskIds: string[];
+    releaseChecklistItems: string[];
+    openReleaseChecklistItems: string[];
     releaseNotesInput: string[];
 }
 
@@ -234,6 +236,11 @@ function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns
 
 function isGitIgnored(repoRoot: string, relativePath: string): boolean {
     const result = runGit(repoRoot, ['check-ignore', '-q', '--', relativePath]);
+    return result.status === 0;
+}
+
+function isGitTracked(repoRoot: string, relativePath: string): boolean {
+    const result = runGit(repoRoot, ['ls-files', '--error-unmatch', '--', relativePath]);
     return result.status === 0;
 }
 
@@ -348,75 +355,78 @@ function pushCheck(
     }
 }
 
-function extractRelease110TaskIds(taskMarkdown: string): string[] {
-    const taskIds: string[] = [];
-    let inRelease110Section = false;
+function extractReleaseChecklistItems(checklistMarkdown: string, version: string): {
+    releaseChecklistItems: string[];
+    openReleaseChecklistItems: string[];
+} {
+    const releaseChecklistItems: string[] = [];
+    const openReleaseChecklistItems: string[] = [];
+    let inVersionSection = false;
+    const sectionPattern = new RegExp(`^##\\s+${escapeRegExp(version)}(?:\\s|$)`, 'u');
 
-    for (const line of taskMarkdown.split(/\r?\n/u)) {
-        if (/^###\s+Релиз 1\.1\.0\b/u.test(line)) {
-            inRelease110Section = true;
+    for (const line of checklistMarkdown.split(/\r?\n/u)) {
+        if (sectionPattern.test(line)) {
+            inVersionSection = true;
             continue;
         }
-        if (inRelease110Section && /^###\s+Релиз\s+/u.test(line)) {
+        if (inVersionSection && /^##\s+/u.test(line)) {
             break;
         }
-        if (!inRelease110Section) {
+        if (!inVersionSection) {
             continue;
         }
 
-        const match = line.match(/^-\s+`(T-\d+)`/u);
+        const match = line.match(/^-\s+\[(x|X| )\]\s+(.+?)\s*$/u);
         if (!match) {
             continue;
         }
-        const taskId = match[1];
-        if (taskId === 'T-244') {
-            break;
-        }
-        taskIds.push(taskId);
-    }
-
-    return taskIds;
-}
-
-function parseTaskStatuses(taskMarkdown: string): Map<string, string> {
-    const statuses = new Map<string, string>();
-    for (const line of taskMarkdown.split(/\r?\n/u)) {
-        const match = line.match(/^\|\s*(T-\d+)\s*\|\s*([^|]+?)\s*\|/u);
-        if (match) {
-            statuses.set(match[1], match[2].trim());
+        const item = match[2];
+        releaseChecklistItems.push(item);
+        if (match[1] === ' ') {
+            openReleaseChecklistItems.push(item);
         }
     }
-    return statuses;
+
+    return { releaseChecklistItems, openReleaseChecklistItems };
 }
 
-function validateReleaseBlockers(repoRoot: string): {
-    blockerTaskIds: string[];
-    openBlockerTaskIds: string[];
+function validateReleaseChecklist(repoRoot: string, version: string | null): {
+    releaseChecklistItems: string[];
+    openReleaseChecklistItems: string[];
     details: string[];
 } {
-    const taskPath = path.join(repoRoot, 'TASK.md');
-    const taskMarkdown = readTextFileIfExists(taskPath);
-    if (taskMarkdown === null) {
+    const checklistPath = path.join(repoRoot, ...RELEASE_READINESS_CHECKLIST_PATH.split('/'));
+    const checklistMarkdown = readTextFileIfExists(checklistPath);
+    if (checklistMarkdown === null) {
         return {
-            blockerTaskIds: [],
-            openBlockerTaskIds: [],
-            details: [`Missing TASK.md: ${taskPath}`]
+            releaseChecklistItems: [],
+            openReleaseChecklistItems: [],
+            details: [`Missing tracked release checklist: ${RELEASE_READINESS_CHECKLIST_PATH}`]
+        };
+    }
+    if (!isGitTracked(repoRoot, RELEASE_READINESS_CHECKLIST_PATH)) {
+        return {
+            releaseChecklistItems: [],
+            openReleaseChecklistItems: [],
+            details: [`Untracked release checklist: ${RELEASE_READINESS_CHECKLIST_PATH}`]
         };
     }
 
-    const blockerTaskIds = extractRelease110TaskIds(taskMarkdown);
-    const statuses = parseTaskStatuses(taskMarkdown);
-    const openBlockerTaskIds = blockerTaskIds.filter((taskId) => !(statuses.get(taskId) || '').includes('DONE'));
+    const targetVersion = version || 'unknown';
+    const { releaseChecklistItems, openReleaseChecklistItems } = extractReleaseChecklistItems(
+        checklistMarkdown,
+        targetVersion
+    );
     const details = [
-        `Release 1.1.0 blockers before T-244: ${blockerTaskIds.length}`,
-        `Open blockers: ${openBlockerTaskIds.length === 0 ? 'none' : openBlockerTaskIds.join(', ')}`
+        `Release ${targetVersion} checklist items: ${releaseChecklistItems.length}`,
+        `Open checklist items: ${openReleaseChecklistItems.length === 0 ? 'none' : openReleaseChecklistItems.join('; ')}`
     ];
 
-    if (blockerTaskIds.length === 0) {
-        details.push('No blocker task ids were found in the Release 1.1.0 section.');
+    if (releaseChecklistItems.length === 0) {
+        details.push(`No checklist items were found in the Release ${targetVersion} section.`);
     }
 
-    return { blockerTaskIds, openBlockerTaskIds, details };
+    return { releaseChecklistItems, openReleaseChecklistItems, details };
 }
 
 function fileExists(repoRoot: string, relativePath: string): boolean {
@@ -471,7 +481,81 @@ function stringArraysEqual(left: readonly string[], right: readonly string[]): b
 }
 
 function workflowJobHasRunStep(block: string | null, command: string): boolean {
-    return block !== null && block.includes(`run: ${command}`);
+    if (block === null) {
+        return false;
+    }
+    const runScripts = extractWorkflowRunScripts(block);
+    return runScripts.some((script) => scriptHasExecutableCommand(script, command));
+}
+
+function scriptHasExecutableCommand(script: string, command: string): boolean {
+    let hereDocTerminator: string | null = null;
+
+    for (const line of script.split(/\r?\n/u)) {
+        const trimmedLine = line.trim();
+        if (hereDocTerminator !== null) {
+            if (trimmedLine === hereDocTerminator) {
+                hereDocTerminator = null;
+            }
+            continue;
+        }
+        if (!trimmedLine || trimmedLine.startsWith('#')) {
+            continue;
+        }
+        if (trimmedLine === command || trimmedLine.startsWith(`${command} `)) {
+            return true;
+        }
+        hereDocTerminator = extractHereDocTerminator(trimmedLine);
+    }
+
+    return false;
+}
+
+function extractHereDocTerminator(line: string): string | null {
+    const match = /(?:^|\s)<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_.-]*))/u.exec(line);
+    return match ? match[1] || match[2] || match[3] : null;
+}
+
+function extractWorkflowRunScripts(block: string): string[] {
+    const scripts: string[] = [];
+    const lines = block.split(/\r?\n/u);
+
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const inlineRun = /^(\s*)-\s+run:\s*(.+?)\s*$/u.exec(line)
+            || /^(\s*)run:\s*(.+?)\s*$/u.exec(line);
+        if (!inlineRun) {
+            continue;
+        }
+
+        const runIndent = inlineRun[1].length;
+        const runValue = inlineRun[2].trim();
+        if (!/^[|>][+-]?$/u.test(runValue)) {
+            scripts.push(stripYamlQuotes(runValue));
+            continue;
+        }
+
+        const scriptLines: string[] = [];
+        for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+            const nextLine = lines[nextIndex];
+            if (nextLine.trim() && nextLine.match(/^\s*/u)![0].length <= runIndent) {
+                break;
+            }
+            scriptLines.push(nextLine.trim());
+            index = nextIndex;
+        }
+        scripts.push(scriptLines.join('\n'));
+    }
+
+    return scripts;
+}
+
+function stripYamlQuotes(value: string): string {
+    return value.replace(/^['"]|['"]$/gu, '');
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean; details: string[] } {
@@ -610,21 +694,22 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         ['docs/cli-reference.md, docs/run-methods.md, docs/node-platform-foundation.md']
     );
 
-    const blockers = validateReleaseBlockers(normalizedRoot);
+    const releaseChecklist = validateReleaseChecklist(normalizedRoot, version);
     pushCheck(
         checks,
         violations,
         'release-blockers',
-        'all required Release 1.1.0 blocker tasks before T-244 are closed',
-        blockers.blockerTaskIds.length > 0 && blockers.openBlockerTaskIds.length === 0,
-        blockers.details
+        'tracked Release 1.1.0 readiness checklist is complete',
+        releaseChecklist.releaseChecklistItems.length > 0 &&
+            releaseChecklist.openReleaseChecklistItems.length === 0,
+        releaseChecklist.details
     );
 
     const releaseNotesInput = [
         `Version: ${version || 'unknown'}`,
         'Validation command: npm run release:preflight',
         'Package proof: validate:release covers clean worktree, version parity, build, embedded bundle parity, quality, pack smoke, and final clean worktree.',
-        'Readiness alignment: validate:release-readiness checks package, CI runtime matrix, runtime-state docs, security-document surface, and Release 1.1.0 blocker wiring before the full proof path.',
+        'Readiness alignment: validate:release-readiness checks package, CI runtime matrix, runtime-state docs, security-document surface, and the tracked Release 1.1.0 checklist before the full proof path.',
         'Update/runtime alignment: CI workflow is configured for setup, update git, doctor, and uninstall smoke across Linux, Windows, and macOS.',
         'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.'
     ];
@@ -635,8 +720,8 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         passed: violations.length === 0,
         violations,
         checks,
-        blockerTaskIds: blockers.blockerTaskIds,
-        openBlockerTaskIds: blockers.openBlockerTaskIds,
+        releaseChecklistItems: releaseChecklist.releaseChecklistItems,
+        openReleaseChecklistItems: releaseChecklist.openReleaseChecklistItems,
         releaseNotesInput
     };
 }
@@ -951,8 +1036,8 @@ export function formatReleaseReadinessResult(result: ReleaseReadinessResult): st
     lines.push(result.passed ? 'RELEASE_READINESS_OK' : 'RELEASE_READINESS_FAILED');
     lines.push(`RepoRoot: ${result.repoRoot}`);
     lines.push(`Version: ${result.version || 'unknown'}`);
-    lines.push(`BlockerTasks: ${result.blockerTaskIds.length}`);
-    lines.push(`OpenBlockers: ${result.openBlockerTaskIds.length === 0 ? 'none' : result.openBlockerTaskIds.join(', ')}`);
+    lines.push(`ReleaseChecklistItems: ${result.releaseChecklistItems.length}`);
+    lines.push(`OpenReleaseChecklistItems: ${result.openReleaseChecklistItems.length === 0 ? 'none' : result.openReleaseChecklistItems.join('; ')}`);
     lines.push('Checklist:');
     for (const check of result.checks) {
         lines.push(`  [${check.passed ? 'x' : ' '}] ${check.area}: ${check.label}`);

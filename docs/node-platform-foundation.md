@@ -85,7 +85,7 @@ Runs the final operator-facing release readiness gate before the expensive relea
 1. `npm run validate:release-readiness`
 2. `npm run validate:release`
 
-`npm run validate:release-readiness` is a short checklist gate. It verifies static alignment for package scripts, shipped package files, production audit wiring, CI release validation, lifecycle update smoke wiring, runtime-state documentation, manifest validation guidance, security document package/manifest surface, and the Release 1.1.0 blocker list before the release is cut. It intentionally does not replace `npm run validate:release`; the latter remains the build/test/pack/install proof.
+`npm run validate:release-readiness` is a short checklist gate. It verifies static alignment for package scripts, shipped package files, production audit wiring, CI release validation, lifecycle update smoke wiring, runtime-state documentation, manifest validation guidance, security document package/manifest surface, and the tracked `docs/release-readiness.md` checklist before the release is cut. It intentionally does not replace `npm run validate:release`; the latter remains the build/test/pack/install proof.
 
 ### GitHub Actions CI
 

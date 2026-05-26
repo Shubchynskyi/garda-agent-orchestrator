@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -40,6 +41,20 @@ function writeFile(filePath: string, content: string): void {
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
+function runGit(repoRoot: string, args: string[]): void {
+    const result = childProcess.spawnSync('git', args, {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        windowsHide: true
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+}
+
+function initializeGitIndex(repoRoot: string): void {
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['add', '.']);
+}
+
 function buildPackageJson(): string {
     return JSON.stringify({
         name: 'garda-agent-orchestrator',
@@ -73,6 +88,7 @@ function buildPackageJson(): string {
             'docs/configuration.md',
             'docs/node-platform-foundation.md',
             'docs/operator-consistency-runbook.md',
+            'docs/release-readiness.md',
             'docs/sbom.md',
             'docs/threat-model.md',
             'docs/work-example.md',
@@ -81,37 +97,29 @@ function buildPackageJson(): string {
     }, null, 2);
 }
 
-function buildTaskMarkdown(openTaskId?: string): string {
-    const queueRows = RELEASE_BLOCKERS.map((taskId) => {
-        const status = taskId === openTaskId ? '🟦 TODO' : '🟩 DONE';
-        return `| ${taskId} | ${status} | P0 | test/${taskId.toLowerCase()} | ${taskId} title | gpt-5.4 | 2026-05-09 | strict | fixture |`;
+function buildReleaseChecklist(openItem?: string): string {
+    const checklistItems = RELEASE_BLOCKERS.map((taskId) => {
+        const status = taskId === openItem ? ' ' : 'x';
+        return `- [${status}] ${taskId} fixture release blocker`;
     }).join('\n');
-    const releaseBullets = RELEASE_BLOCKERS
-        .map((taskId) => `- \`${taskId}\` — fixture blocker — профиль: \`strict\`.`)
-        .join('\n');
-
     return [
-        '## Active Queue',
-        '| ID | Status | Priority | Slug | Title | Model | Created | Profile | Notes |',
-        '|---|---|---|---|---|---|---|---|---|',
-        queueRows,
-        '| T-244 | 🟦 TODO | P0 | release/110-final-readiness-gate | Final readiness | gpt-5.4 | 2026-05-09 | strict | fixture |',
+        '# Release Readiness',
         '',
-        '### Релиз 1.1.0 — текущий hardening и ускорение дальнейшей работы',
+        'This tracked checklist is the release-cut source of truth for readiness.',
         '',
-        'Порядок соответствует верхней `Active Queue`; эти задачи идут перед финальным `T-244`:',
-        releaseBullets,
-        '- `T-244` — добавить финальный gate готовности `1.1.0` — профиль: `strict`.',
+        '## 1.1.0',
         '',
-        '### Релиз 1.2.0 — безопасность, runtime и release hardening'
+        checklistItems,
+        '',
+        '## 1.2.0'
     ].join('\n');
 }
 
-function createReadinessFixture(openTaskId?: string): string {
+function createReadinessFixture(openChecklistItem?: string): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-release-readiness-'));
 
     writeFile(path.join(repoRoot, 'package.json'), buildPackageJson());
-    writeFile(path.join(repoRoot, 'TASK.md'), buildTaskMarkdown(openTaskId));
+    writeFile(path.join(repoRoot, 'TASK.md'), '# Local task queue is not release truth.\n');
     writeFile(path.join(repoRoot, 'SECURITY.md'), '# Security\n');
     writeFile(
         path.join(repoRoot, 'MANIFEST.md'),
@@ -126,6 +134,7 @@ function createReadinessFixture(openTaskId?: string): string {
             '- docs/configuration.md',
             '- docs/node-platform-foundation.md',
             '- docs/operator-consistency-runbook.md',
+            '- docs/release-readiness.md',
             '- docs/work-example.md',
             '- docs/threat-model.md',
             '- docs/sbom.md'
@@ -140,6 +149,7 @@ function createReadinessFixture(openTaskId?: string): string {
     writeFile(path.join(repoRoot, 'docs', 'work-example.md'), '# Work Example\n');
     writeFile(path.join(repoRoot, 'docs', 'threat-model.md'), '# Threat Model\n');
     writeFile(path.join(repoRoot, 'docs', 'sbom.md'), '# SBOM\n');
+    writeFile(path.join(repoRoot, 'docs', 'release-readiness.md'), buildReleaseChecklist(openChecklistItem));
     writeFile(path.join(repoRoot, 'docs', 'operator-consistency-runbook.md'), '# Runbook\n');
     writeFile(
         path.join(repoRoot, 'docs', 'cli-reference.md'),
@@ -196,17 +206,19 @@ function createReadinessFixture(openTaskId?: string): string {
         ].join('\n')
     );
 
+    initializeGitIndex(repoRoot);
+
     return repoRoot;
 }
 
-test('release readiness passes when package, CI, docs, security, and blocker contracts are present', () => {
+test('release readiness passes when package, CI, docs, security, and checklist contracts are present', () => {
     const repoRoot = createReadinessFixture();
     try {
         const result = validateReleaseReadiness(repoRoot);
         const output = formatReleaseReadinessResult(result);
 
         assert.equal(result.passed, true, output);
-        assert.deepEqual(result.openBlockerTaskIds, []);
+        assert.deepEqual(result.openReleaseChecklistItems, []);
         assert.match(output, /RELEASE_READINESS_OK/);
         assert.match(output, /ReleaseNotesInput:/);
         assert.match(output, /Validation command: npm run release:preflight/);
@@ -217,17 +229,297 @@ test('release readiness passes when package, CI, docs, security, and blocker con
     }
 });
 
-test('release readiness fails while a required 1.1.0 blocker remains open', () => {
+test('release readiness fails while a tracked 1.1.0 checklist item remains open', () => {
     const repoRoot = createReadinessFixture('T-319');
     try {
         const result = validateReleaseReadiness(repoRoot);
         const output = formatReleaseReadinessResult(result);
 
         assert.equal(result.passed, false);
-        assert.deepEqual(result.openBlockerTaskIds, ['T-319']);
+        assert.deepEqual(result.openReleaseChecklistItems, ['T-319 fixture release blocker']);
         assert.match(output, /RELEASE_READINESS_FAILED/);
-        assert.match(output, /OpenBlockers: T-319/);
-        assert.ok(result.violations.includes('release-blockers: all required Release 1.1.0 blocker tasks before T-244 are closed'));
+        assert.match(output, /OpenReleaseChecklistItems: T-319 fixture release blocker/);
+        assert.ok(
+            result.violations.includes('release-blockers: tracked Release 1.1.0 readiness checklist is complete')
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness does not read local TASK.md as release blocker truth', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, 'TASK.md'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, true, output);
+        assert.match(output, /ReleaseChecklistItems: 19/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails closed when the tracked checklist is missing', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        fs.unlinkSync(path.join(repoRoot, 'docs', 'release-readiness.md'));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.match(output, /Missing tracked release checklist: docs\/release-readiness\.md/);
+        assert.ok(
+            result.violations.includes('release-blockers: tracked Release 1.1.0 readiness checklist is complete')
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails closed when the checklist exists but is untracked', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        runGit(repoRoot, ['rm', '--cached', '--', 'docs/release-readiness.md']);
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.match(output, /Untracked release checklist: docs\/release-readiness\.md/);
+        assert.ok(
+            result.violations.includes('release-blockers: tracked Release 1.1.0 readiness checklist is complete')
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness matches exact tracked checklist version heading', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, 'docs', 'release-readiness.md'),
+            [
+                '# Release Readiness',
+                '',
+                '## 1.1.0-alpha',
+                '',
+                '- [x] prerelease checklist must not satisfy 1.1.0',
+                '',
+                '## 1.1.0',
+                '',
+                '- [ ] final release checklist item'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /ReleaseChecklistItems: 1/);
+        assert.match(output, /OpenReleaseChecklistItems: final release checklist item/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness accepts multiline CI lifecycle smoke run steps', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
+            [
+                'validate-release:',
+                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '  steps:',
+                '    - run: npm run validate:release',
+                'smoke:',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '        - macos-latest',
+                '  steps:',
+                '    - name: lifecycle smoke',
+                '      run: |',
+                '        $CLI setup --target-root "$SMOKE_DIR"',
+                '        $CLI update git --target-root "$SMOKE_DIR"',
+                '        $CLI doctor --target-root "$SMOKE_DIR"',
+                '        $CLI uninstall --target-root "$SMOKE_DIR"'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, true, output);
+        assert.match(output, /RELEASE_READINESS_OK/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness accepts multiline CI lifecycle smoke run steps with chomping indicators', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
+            [
+                'validate-release:',
+                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '  steps:',
+                '    - run: npm run validate:release',
+                'smoke:',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '        - macos-latest',
+                '  steps:',
+                '    - name: lifecycle smoke',
+                '      run: |-',
+                '        $CLI setup --target-root "$SMOKE_DIR"',
+                '        $CLI update git --target-root "$SMOKE_DIR"',
+                '        $CLI doctor --target-root "$SMOKE_DIR"',
+                '        $CLI uninstall --target-root "$SMOKE_DIR"'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, true, output);
+        assert.match(output, /RELEASE_READINESS_OK/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects commented or echoed CI lifecycle smoke markers', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
+            [
+                'validate-release:',
+                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '  steps:',
+                '    - run: npm run validate:release',
+                'smoke:',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '        - macos-latest',
+                '  steps:',
+                '    - name: lifecycle smoke',
+                '      run: |',
+                '        # $CLI setup --target-root "$SMOKE_DIR"',
+                '        echo "$CLI update git --target-root $SMOKE_DIR"',
+                '        $CLI doctor --target-root "$SMOKE_DIR"',
+                '        $CLI uninstall --target-root "$SMOKE_DIR"'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.ok(result.violations.some(v => v.startsWith('ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness rejects CI lifecycle smoke markers inside heredoc payloads', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
+            [
+                'validate-release:',
+                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '  steps:',
+                '    - run: npm run validate:release',
+                'smoke:',
+                '  strategy:',
+                '    matrix:',
+                '      node-version:',
+                "        - '22.13.0'",
+                "        - '24'",
+                '      os:',
+                '        - ubuntu-latest',
+                '        - windows-latest',
+                '        - macos-latest',
+                '  steps:',
+                '    - name: lifecycle smoke',
+                '      run: |',
+                "        cat <<'EOF'",
+                '        $CLI setup --target-root "$SMOKE_DIR"',
+                '        $CLI update git --target-root "$SMOKE_DIR"',
+                '        $CLI doctor --target-root "$SMOKE_DIR"',
+                '        $CLI uninstall --target-root "$SMOKE_DIR"',
+                '        EOF'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.ok(result.violations.some(v => v.startsWith('ci:')));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -376,6 +668,29 @@ test('release readiness fails when package files omit a README-linked public doc
         const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
         pkg.files = pkg.files.filter((f: string) => f !== 'docs/cli-reference.md');
         writeFile(path.join(repoRoot, 'package.json'), JSON.stringify(pkg, null, 2));
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.ok(result.violations.some(v => v.includes('linked public-doc contracts')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when MANIFEST omits a README-linked public doc', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const manifest = fs.readFileSync(path.join(repoRoot, 'MANIFEST.md'), 'utf8');
+        writeFile(
+            path.join(repoRoot, 'MANIFEST.md'),
+            manifest
+                .split(/\r?\n/u)
+                .filter(line => !line.includes('docs/cli-reference.md'))
+                .join('\n')
+        );
 
         const result = validateReleaseReadiness(repoRoot);
         const output = formatReleaseReadinessResult(result);
