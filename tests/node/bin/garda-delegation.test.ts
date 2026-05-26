@@ -284,13 +284,18 @@ test('delegation trust model does not trust unrecognized current runtime identit
             package_root: path.resolve('/tmp/unrecognized-source'),
             runtime_kind: 'source_checkout',
             package_installed_under_node_modules: false,
-            recognized_package_name: false
+            recognized_package_name: false,
+            package_name: 'not-garda-agent-orchestrator',
+            package_version: null
         },
         {
             cli_path: path.resolve('/tmp/source/bin/garda.js'),
             root: path.resolve('/tmp/source'),
             runtime_kind: 'source_checkout',
-            reason: 'target_root_source_checkout'
+            reason: 'target_root_source_checkout',
+            package_name: 'garda-agent-orchestrator',
+            package_version: '1.0.0',
+            path_containment: 'validated'
         }
     );
 
@@ -309,13 +314,18 @@ test('delegation trust model fails closed for recognized package with unknown ru
             package_root: path.resolve('/tmp/spoofed-garda-shape'),
             runtime_kind: 'unknown',
             package_installed_under_node_modules: false,
-            recognized_package_name: true
+            recognized_package_name: true,
+            package_name: 'garda-agent-orchestrator',
+            package_version: null
         },
         {
             cli_path: path.resolve('/tmp/source/bin/garda.js'),
             root: path.resolve('/tmp/source'),
             runtime_kind: 'source_checkout',
-            reason: 'target_root_source_checkout'
+            reason: 'target_root_source_checkout',
+            package_name: 'garda-agent-orchestrator',
+            package_version: '1.0.0',
+            path_containment: 'validated'
         }
     );
 
@@ -393,10 +403,68 @@ test('delegation trust model allows installed package to delegate to trusted tar
         assert.equal(evidence.delegated_runtime?.cli_path, path.join(sourceRoot, 'bin', 'garda.js'));
         assert.equal(evidence.delegated_runtime?.runtime_kind, 'source_checkout');
         assert.equal(evidence.delegated_runtime?.reason, 'target_root_source_checkout');
+        assert.equal(evidence.delegated_runtime?.package_name, 'garda-agent-orchestrator');
+        assert.equal(evidence.delegated_runtime?.path_containment, 'validated');
         assert.equal(evidence.implementation_delegation.decision, 'allowed');
         assert.equal(evidence.implementation_delegation.trust_level, 'trusted_local_workspace');
         assert.equal(evidence.mandatory_review_delegation.decision, 'allowed');
         assert.equal(evidence.mandatory_review_delegation.requires_provider_launch_attestation, true);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model blocks target roots with unrecognized package metadata', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-unrecognized-target-'));
+    try {
+        const installedRoot = path.join(tempRoot, 'consumer', 'node_modules', 'garda-agent-orchestrator');
+        const sourceRoot = path.join(tempRoot, 'source');
+        writePackageRoot(installedRoot);
+        writePackageRoot(sourceRoot, { sourceCheckout: true, packageName: 'not-garda-agent-orchestrator' });
+        const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence(
+            ['status', '--target-root', sourceRoot],
+            path.join(tempRoot, 'consumer'),
+            currentScriptPath,
+            installedRoot
+        );
+
+        assert.equal(evidence.current_runtime.runtime_kind, 'packaged_npm');
+        assert.equal(evidence.delegated_runtime, null);
+        assert.equal(evidence.implementation_delegation.decision, 'blocked');
+        assert.match(evidence.implementation_delegation.reason, /could not resolve a trusted local source checkout or deployed bundle target/);
+        assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('delegation trust model rejects candidate launcher paths escaping the package root', {
+    skip: process.platform === 'win32' ? 'Symlink creation privileges are environment-dependent on Windows.' : false
+}, () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-escaping-launcher-'));
+    try {
+        const installedRoot = path.join(tempRoot, 'consumer', 'node_modules', 'garda-agent-orchestrator');
+        const sourceRoot = path.join(tempRoot, 'source');
+        const outsideRoot = path.join(tempRoot, 'outside');
+        writePackageRoot(installedRoot);
+        writePackageRoot(sourceRoot, { sourceCheckout: true });
+        writeFile(path.join(outsideRoot, 'garda.js'), '#!/usr/bin/env node\n');
+        fs.rmSync(path.join(sourceRoot, 'bin', 'garda.js'), { force: true });
+        fs.symlinkSync(path.join(outsideRoot, 'garda.js'), path.join(sourceRoot, 'bin', 'garda.js'));
+        const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
+
+        const evidence = resolveDelegatedLauncherTrustEvidence(
+            ['status', '--target-root', sourceRoot],
+            path.join(tempRoot, 'consumer'),
+            currentScriptPath,
+            installedRoot
+        );
+
+        assert.equal(evidence.delegated_runtime, null);
+        assert.equal(evidence.implementation_delegation.decision, 'blocked');
+        assert.equal(evidence.mandatory_review_delegation.decision, 'blocked');
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -546,7 +614,9 @@ test('delegation trust model blocks installed package when no trusted runtime ta
             package_root: path.resolve('/tmp/consumer/node_modules/garda-agent-orchestrator'),
             runtime_kind: 'packaged_npm',
             package_installed_under_node_modules: true,
-            recognized_package_name: true
+            recognized_package_name: true,
+            package_name: 'garda-agent-orchestrator',
+            package_version: null
         },
         null
     );

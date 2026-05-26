@@ -47,6 +47,9 @@ export interface DelegatedRuntimeEvidence {
     root: string;
     runtime_kind: Extract<DelegationRuntimeKind, 'source_checkout' | 'deployed_bundle'>;
     reason: DelegationTargetReason;
+    package_name: string;
+    package_version: string | null;
+    path_containment: 'validated';
 }
 
 export interface CurrentRuntimeEvidence {
@@ -54,6 +57,8 @@ export interface CurrentRuntimeEvidence {
     runtime_kind: DelegationRuntimeKind;
     package_installed_under_node_modules: boolean;
     recognized_package_name: boolean;
+    package_name: string | null;
+    package_version: string | null;
 }
 
 export interface DelegationTrustDecision {
@@ -114,6 +119,26 @@ function validateBundleName(bundleName: string, source: string): string {
 function isRecognizedPackageName(value: unknown): boolean {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized !== '' && RECOGNIZED_PACKAGE_NAMES.has(normalized);
+}
+
+function normalizePathForComparison(value: string): string {
+    const resolved = path.resolve(value);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isPathInsideOrEqual(parentPath: string, childPath: string): boolean {
+    const normalizedParent = normalizePathForComparison(parentPath);
+    const normalizedChild = normalizePathForComparison(childPath);
+    const relative = path.relative(normalizedParent, normalizedChild);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function tryRealpath(value: string): string | null {
+    try {
+        return fs.realpathSync.native(value);
+    } catch {
+        return null;
+    }
 }
 
 function rootHasAllPaths(rootPath: string, relativePaths: readonly string[]): boolean {
@@ -277,23 +302,36 @@ function isPackageInstalledUnderNodeModules(packageRoot: string): boolean {
     return path.resolve(packageRoot).split(path.sep).includes('node_modules');
 }
 
-function readPackageName(packageRoot: string): string | null {
+function readPackageMetadata(packageRoot: string): { name: string | null; version: string | null } {
     const packageJsonPath = path.join(packageRoot, 'package.json');
     if (!fs.existsSync(packageJsonPath)) {
-        return null;
+        return { name: null, version: null };
     }
     try {
-        const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as { name?: unknown };
-        return typeof parsed.name === 'string' ? parsed.name : null;
+        const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as { name?: unknown; version?: unknown };
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { name: null, version: null };
+        }
+        return {
+            name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : null,
+            version: typeof parsed.version === 'string' && parsed.version.trim() ? parsed.version : null
+        };
     } catch (_error) {
-        return null;
+        return { name: null, version: null };
     }
 }
 
 function isGardaPackageRoot(candidateRoot: string): boolean {
-    return isRecognizedPackageName(readPackageName(candidateRoot))
+    const packageMetadata = readPackageMetadata(candidateRoot);
+    const candidateCliPath = resolvePreferredCliPath(candidateRoot);
+    const realCandidateRoot = tryRealpath(candidateRoot);
+    const realCandidateCliPath = candidateCliPath ? tryRealpath(candidateCliPath) : null;
+    return isRecognizedPackageName(packageMetadata.name)
         && fs.existsSync(path.join(candidateRoot, 'VERSION'))
-        && resolvePreferredCliPath(candidateRoot) !== null;
+        && candidateCliPath !== null
+        && realCandidateRoot !== null
+        && realCandidateCliPath !== null
+        && isPathInsideOrEqual(realCandidateRoot, realCandidateCliPath);
 }
 
 function findSourceCheckoutRoot(startDir: string): string | null {
@@ -532,6 +570,10 @@ function resolveCliPathIfExternal(candidateRoot: string | null, currentScriptPat
 
     const currentRealPath = fs.realpathSync.native(currentScriptPath);
     const candidateRealPath = fs.realpathSync.native(candidateCli);
+    const candidateRootRealPath = fs.realpathSync.native(candidateRoot);
+    if (!isPathInsideOrEqual(candidateRootRealPath, candidateRealPath)) {
+        return null;
+    }
     if (candidateRealPath === currentRealPath) {
         return null;
     }
@@ -603,23 +645,31 @@ function resolveDelegatedRuntimeEvidence(
     for (const candidate of resolveDelegationStartDirs(argv, cwd)) {
         const sourceRoot = findSourceCheckoutRoot(candidate.startDir);
         const sourceCli = resolveCliPathIfExternal(sourceRoot, currentScriptPath);
-        if (sourceCli) {
+        if (sourceRoot && sourceCli) {
+            const packageMetadata = readPackageMetadata(sourceRoot);
             return {
                 cli_path: sourceCli,
                 root: path.dirname(path.dirname(sourceCli)),
                 runtime_kind: 'source_checkout',
-                reason: buildDelegationTargetReason(candidate.source, 'source_checkout')
+                reason: buildDelegationTargetReason(candidate.source, 'source_checkout'),
+                package_name: packageMetadata.name || '',
+                package_version: packageMetadata.version,
+                path_containment: 'validated'
             };
         }
 
         const bundleRoot = findDeployedBundleRoot(candidate.startDir);
         const bundleCli = resolveCliPathIfExternal(bundleRoot, currentScriptPath);
-        if (bundleCli) {
+        if (bundleRoot && bundleCli) {
+            const packageMetadata = readPackageMetadata(bundleRoot);
             return {
                 cli_path: bundleCli,
                 root: path.dirname(path.dirname(bundleCli)),
                 runtime_kind: 'deployed_bundle',
-                reason: buildDelegationTargetReason(candidate.source, 'deployed_bundle')
+                reason: buildDelegationTargetReason(candidate.source, 'deployed_bundle'),
+                package_name: packageMetadata.name || '',
+                package_version: packageMetadata.version,
+                path_containment: 'validated'
             };
         }
     }
@@ -636,12 +686,15 @@ export function resolveDelegatedLauncherTrustEvidence(
     const normalizedPackageRoot = path.resolve(packageRoot);
     const currentRuntimeKind = resolveCurrentRuntimeKind(normalizedPackageRoot, currentScriptPath);
     const installedUnderNodeModules = isPackageInstalledUnderNodeModules(normalizedPackageRoot);
+    const packageMetadata = readPackageMetadata(normalizedPackageRoot);
     const delegatedRuntime = resolveDelegatedRuntimeEvidence(argv, cwd, currentScriptPath, normalizedPackageRoot);
     const currentRuntime: CurrentRuntimeEvidence = {
         package_root: normalizedPackageRoot,
         runtime_kind: currentRuntimeKind,
         package_installed_under_node_modules: installedUnderNodeModules,
-        recognized_package_name: isRecognizedPackageName(readPackageName(normalizedPackageRoot))
+        recognized_package_name: isRecognizedPackageName(packageMetadata.name),
+        package_name: packageMetadata.name,
+        package_version: packageMetadata.version
     };
 
     return buildDelegationTrustEvidence(currentRuntime, delegatedRuntime);
