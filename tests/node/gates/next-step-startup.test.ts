@@ -7,7 +7,11 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
-import { formatNextStepText, resolveNextStep } from '../../../src/gates/next-step';
+import {
+    COPILOT_PROVIDER_ENV_KEYS,
+    formatNextStepText,
+    resolveNextStep
+} from '../../../src/gates/next-step';
 import {
     recordFullSuiteValidationDuration,
     type FullSuiteValidationConfig
@@ -53,6 +57,7 @@ const ALL_REVIEW_FLAGS = Object.freeze({
 let tempRoots: string[] = [];
 const PROVIDER_ENV_KEYS = Object.freeze([
     'GARDA_EXECUTION_PROVIDER',
+    ...COPILOT_PROVIDER_ENV_KEYS,
     'QWEN_CODE',
     'CODEX_THREAD_ID',
     'CODEX_HOME',
@@ -1278,6 +1283,22 @@ describe('gates/next-step startup routing', () => {
         const text = formatNextStepText(result);
         assert.ok(text.includes(EXPECTED_LOOP_LINE));
         assert.ok(text.includes('AfterCommand: rerun'));
+    });
+
+    it('prefers GitHub Copilot runtime markers over a Claude source-of-truth default', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {
+            SourceOfTruth: 'Claude'
+        });
+
+        const result = withProviderEnv({ GITHUB_COPILOT_CLI: '1' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.commands[0].command.includes('--provider "GitHubCopilot"'));
+        assert.equal(result.commands[0].command.includes('--provider "Claude"'), false);
     });
 
     it('surfaces optional Markdown working-plan metadata on next-step output', () => {

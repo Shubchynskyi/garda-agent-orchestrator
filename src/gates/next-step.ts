@@ -256,6 +256,14 @@ const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(Object.
 ));
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
+export const COPILOT_PROVIDER_ENV_KEYS = Object.freeze([
+    'GITHUB_COPILOT_CLI',
+    'GITHUB_COPILOT_AGENT',
+    'GITHUB_COPILOT_CODING_AGENT',
+    'COPILOT_CLI',
+    'COPILOT_AGENT',
+    'COPILOT_AGENT_ID'
+]);
 
 export type NextStepStatus = 'BLOCKED' | 'READY' | 'DONE' | 'DECOMPOSED' | 'SPLIT_REQUIRED';
 
@@ -4666,6 +4674,9 @@ function resolveProviderFromEnvironment(): string | null {
     const explicitProvider = normalizeProviderId(process.env.GARDA_EXECUTION_PROVIDER);
     if (explicitProvider) {
         return explicitProvider;
+    }
+    if (COPILOT_PROVIDER_ENV_KEYS.some((key) => process.env[key])) {
+        return 'GitHubCopilot';
     }
     if (process.env.QWEN_CODE) {
         return 'Qwen';
