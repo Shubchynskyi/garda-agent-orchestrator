@@ -2687,7 +2687,6 @@ function findReviewGateStaleUpstreamRecovery(params: {
                 !upstreamState
                 || !upstreamState.ready
                 || !upstreamState.domainScopeCurrent
-                || upstreamState.contextCurrent
                 || upstreamState.reusedExistingReview
                 || !reviewStateHasSatisfiedEvidence(params.repoRoot, params.eventsRoot, params.taskId, upstreamState)
             ) {
