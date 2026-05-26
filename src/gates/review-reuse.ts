@@ -119,12 +119,10 @@ function buildScopedDiffReuseMetadata(value: unknown): Record<string, unknown> {
     const hunkFilter = toRecord(metadata.hunk_filter);
     return {
         review_type: String(metadata.review_type || '').trim().toLowerCase() || null,
-        detection_source: String(metadata.detection_source || '').trim().toLowerCase() || null,
         changed_files: toNormalizedPathList(metadata.changed_files),
         matched_files: toNormalizedPathList(metadata.matched_files),
         changed_files_sha256: toLowerHash(metadata.changed_files_sha256),
         scope_content_sha256: toLowerHash(metadata.scope_content_sha256),
-        scope_sha256: toLowerHash(metadata.scope_sha256),
         use_staged: toBoolean(metadata.use_staged),
         include_untracked: toBoolean(metadata.include_untracked),
         untracked_files: toNormalizedPathList(metadata.untracked_files),

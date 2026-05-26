@@ -2255,9 +2255,15 @@ describe('gates/build-review-context', () => {
             pathOnlyMetadata.output_path = 'garda-agent-orchestrator/runtime/reviews/other-scoped.diff';
             assert.equal(computeReviewContextReuseHash(pathOnlyMutation), reuseHash);
 
-            const scopeMutation = cloneJson(result as Record<string, unknown>);
-            ((scopeMutation.scoped_diff as Record<string, unknown>).metadata as Record<string, unknown>).scope_sha256 = 'f'.repeat(64);
-            assert.notEqual(computeReviewContextReuseHash(scopeMutation), reuseHash);
+            const scopeRouteMutation = cloneJson(result as Record<string, unknown>);
+            const scopeRouteMetadata = (scopeRouteMutation.scoped_diff as Record<string, unknown>).metadata as Record<string, unknown>;
+            scopeRouteMetadata.detection_source = 'explicit_changed_files';
+            scopeRouteMetadata.scope_sha256 = 'f'.repeat(64);
+            assert.equal(computeReviewContextReuseHash(scopeRouteMutation), reuseHash);
+
+            const scopeContentMutation = cloneJson(result as Record<string, unknown>);
+            ((scopeContentMutation.scoped_diff as Record<string, unknown>).metadata as Record<string, unknown>).scope_content_sha256 = 'e'.repeat(64);
+            assert.notEqual(computeReviewContextReuseHash(scopeContentMutation), reuseHash);
 
             const staleMetadata = {
                 ...metadata,

@@ -292,10 +292,12 @@ describe('gates/review-reuse', () => {
                 expected: true,
                 metadata: {
                     ...(baseContext.scoped_diff.metadata),
+                    detection_source: 'explicit_changed_files',
                     preflight_path: 'runtime/reviews/T-1-preflight-refresh.json',
                     preflight_sha256: '2'.repeat(64),
                     output_path: 'runtime/reviews/T-1-security-scoped-refresh.diff',
-                    metadata_path: 'runtime/reviews/T-1-security-scoped-refresh.json'
+                    metadata_path: 'runtime/reviews/T-1-security-scoped-refresh.json',
+                    scope_sha256: '8'.repeat(64)
                 }
             }
         };
