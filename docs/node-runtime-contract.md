@@ -134,10 +134,13 @@ Ordinary `update` and `check-update --apply` additionally:
 - resolve trusted npm registry specs to exact package versions with integrity metadata before install, and record requested/exact/resolved provenance in CLI output and update reports
 - keep update-source trust in enforced mode unless the operator explicitly passes `--trust-override --no-prompt`
 - record trust-policy audit data (`TrustPolicy`, `TrustOverrideUsed`, `TrustOverrideSource`) in update CLI output and update reports
+- record release-update provenance status, summary, and recommendation in CLI output, sync metadata, update sentinels, and update reports
 
 Update trust model:
 
 - Trusted mode accepts only the allowlisted npm package name and allowlisted git repository URLs.
+- The preferred release path is the npm package-manager update path because it records exact package and registry integrity metadata.
+- Trusted git updates remain supported for operator-controlled source updates, but they are reported as allowlisted git sources without release-signature verification; use `--check-only` or `--dry-run` first for release-sensitive git updates.
 - Local `--source-path` update sources are test/dev-only flows and require explicit `--trust-override --no-prompt`.
 - The legacy `GARDA_UPDATE_TRUST_OVERRIDE` environment variable is ignored by ordinary CLI/runtime flows and is reserved for test-only harness paths.
 

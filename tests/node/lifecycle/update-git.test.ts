@@ -105,6 +105,7 @@ describe('runUpdateFromGit', () => {
             assert.equal(result.trustPolicy, 'overridden');
             assert.equal(result.trustOverrideUsed, true);
             assert.equal(result.trustOverrideSource, 'cli-flag');
+            assert.equal(result.releaseProvenanceStatus, 'TRUST_OVERRIDE_UNVERIFIED');
         } finally {
             removePathRecursive(repoRoot);
             removePathRecursive(targetRoot);
@@ -116,21 +117,28 @@ describe('runUpdateFromGit', () => {
         const { targetRoot, bundleRoot } = createDeployedWorkspace('2.0.0');
         try {
             let updateRunnerCalled = false;
+            let updateRunnerSourceType = '';
+            let updateRunnerSourceReference = '';
             const result = await runUpdateFromGit({
                 targetRoot,
                 bundleRoot,
                 repoUrl: repoRoot,
                 noPrompt: true,
                 trustOverride: true,
-                updateRunner: () => {
+                updateRunner: (options) => {
                     updateRunnerCalled = true;
+                    updateRunnerSourceType = options.sourceType;
+                    updateRunnerSourceReference = options.sourceReference;
                 }
             });
 
             assert.equal(result.checkUpdateResult, 'UPDATED');
             assert.equal(result.updateApplied, true);
             assert.equal(updateRunnerCalled, true);
+            assert.equal(updateRunnerSourceType, 'git');
+            assert.equal(updateRunnerSourceReference, repoRoot);
             assert.equal(result.trustOverrideSource, 'cli-flag');
+            assert.equal(result.releaseProvenanceStatus, 'TRUST_OVERRIDE_UNVERIFIED');
             assert.ok(fs.existsSync(path.join(bundleRoot, 'dist', 'src', 'index.js')));
         } finally {
             removePathRecursive(repoRoot);

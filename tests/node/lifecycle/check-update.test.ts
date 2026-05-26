@@ -588,6 +588,7 @@ describe('runCheckUpdate', () => {
             assert.equal(result.exactPackageSpec, sourceRoot);
             assert.equal(result.resolvedPackageVersion, null);
             assert.equal(result.resolvedPackageIntegrity, null);
+            assert.equal(result.releaseProvenanceStatus, 'TRUST_OVERRIDE_UNVERIFIED');
             assert.equal(result.updateAvailable, false);
             assert.equal(result.currentVersion, currentVersion);
             const updateTempRoot = getUpdateTempRoot(path.join(bundleRoot, 'runtime'));
@@ -1362,6 +1363,7 @@ describe('runCheckUpdate', () => {
             assert.equal(result.exactPackageSpec, 'garda-agent-orchestrator@9.9.9');
             assert.equal(result.resolvedPackageVersion, '9.9.9');
             assert.equal(result.resolvedPackageIntegrity, 'sha512-registry-integrity');
+            assert.equal(result.releaseProvenanceStatus, 'NPM_REGISTRY_INTEGRITY_RECORDED');
             assert.equal(installedSpec, 'garda-agent-orchestrator@9.9.9');
 
             assert.ok(sentinelDuringLifecycle, 'Sentinel must be readable during registry-backed apply');
@@ -1370,6 +1372,7 @@ describe('runCheckUpdate', () => {
             assert.equal(sentinel.exactPackageSpec, 'garda-agent-orchestrator@9.9.9');
             assert.equal(sentinel.resolvedPackageVersion, '9.9.9');
             assert.equal(sentinel.resolvedPackageIntegrity, 'sha512-registry-integrity');
+            assert.equal(sentinel.releaseProvenanceStatus, 'NPM_REGISTRY_INTEGRITY_RECORDED');
         } finally {
             removePathRecursive(projectRoot);
         }

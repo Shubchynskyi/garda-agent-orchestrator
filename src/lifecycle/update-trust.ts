@@ -38,6 +38,23 @@ export interface TrustValidationResult {
     overrideSource: TrustOverrideSource | null;
 }
 
+export interface ReleaseUpdateProvenanceInput {
+    sourceType: string;
+    sourceReference: string;
+    trustPolicy: string;
+    trustOverrideUsed: boolean;
+    requestedPackageSpec?: string | null;
+    exactPackageSpec?: string | null;
+    resolvedPackageVersion?: string | null;
+    resolvedPackageIntegrity?: string | null;
+}
+
+export interface ReleaseUpdateProvenance {
+    releaseProvenanceStatus: string;
+    releaseProvenanceSummary: string;
+    releaseProvenanceRecommendation: string;
+}
+
 interface ParsedNpmPackageSpec {
     name: string;
     version: string | null;
@@ -196,4 +213,48 @@ export function validatePathSourceTrust(sourcePath: string, options?: TrustOverr
         `Local source paths are not accepted in trusted mode. ` +
         'Use --trust-override together with --no-prompt to bypass.'
     );
+}
+
+export function buildReleaseUpdateProvenance(input: ReleaseUpdateProvenanceInput): ReleaseUpdateProvenance {
+    const sourceType = String(input.sourceType || '').trim().toLowerCase();
+    const sourceReference = String(input.sourceReference || 'unknown').trim() || 'unknown';
+    const exactPackageSpec = String(input.exactPackageSpec || input.requestedPackageSpec || '').trim();
+    const resolvedPackageIntegrity = String(input.resolvedPackageIntegrity || '').trim();
+
+    if (input.trustOverrideUsed || String(input.trustPolicy || '').trim().toLowerCase() === 'overridden') {
+        return {
+            releaseProvenanceStatus: 'TRUST_OVERRIDE_UNVERIFIED',
+            releaseProvenanceSummary: `Operator override bypassed the trusted-source allowlist for ${sourceType || 'unknown'} source '${sourceReference}'.`,
+            releaseProvenanceRecommendation: 'Use only for local/dev recovery. Prefer a dry-run or check-only pass first, then inspect the update report before applying.'
+        };
+    }
+
+    if (sourceType === 'npm') {
+        if (resolvedPackageIntegrity) {
+            return {
+                releaseProvenanceStatus: 'NPM_REGISTRY_INTEGRITY_RECORDED',
+                releaseProvenanceSummary: `Trusted npm source resolved to ${exactPackageSpec || sourceReference} with registry integrity metadata.`,
+                releaseProvenanceRecommendation: 'Preferred release update path: exact npm package provenance is recorded in CLI output, sentinel metadata, backups, and update reports.'
+            };
+        }
+        return {
+            releaseProvenanceStatus: 'NPM_REGISTRY_INTEGRITY_MISSING',
+            releaseProvenanceSummary: `Trusted npm source '${sourceReference}' did not expose registry integrity metadata.`,
+            releaseProvenanceRecommendation: 'Run a dry-run/check-update pass and prefer an exact registry package version with integrity before applying in release-sensitive environments.'
+        };
+    }
+
+    if (sourceType === 'git') {
+        return {
+            releaseProvenanceStatus: 'TRUSTED_GIT_NO_RELEASE_SIGNATURE',
+            releaseProvenanceSummary: `Trusted git source '${sourceReference}' passed allowlist policy, but no release signature is verified for git update sources.`,
+            releaseProvenanceRecommendation: 'For release-sensitive updates, run update git with --check-only or --dry-run first, or prefer the npm package-manager path with registry integrity.'
+        };
+    }
+
+    return {
+        releaseProvenanceStatus: 'LOCAL_SOURCE_UNVERIFIED',
+        releaseProvenanceSummary: `Local ${sourceType || 'path'} source '${sourceReference}' has no registry integrity or release signature provenance.`,
+        releaseProvenanceRecommendation: 'Use only for development/testing, and prefer package-manager updates for release-sensitive environments.'
+    };
 }

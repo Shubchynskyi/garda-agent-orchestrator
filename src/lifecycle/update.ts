@@ -43,6 +43,9 @@ interface UpdateTrustContext {
     exactPackageSpec?: string | null;
     resolvedPackageVersion?: string | null;
     resolvedPackageIntegrity?: string | null;
+    releaseProvenanceStatus?: string | null;
+    releaseProvenanceSummary?: string | null;
+    releaseProvenanceRecommendation?: string | null;
 }
 
 interface RunUpdateOptions {
@@ -164,7 +167,10 @@ function runValidatedUpdate(
         requestedPackageSpec: null,
         exactPackageSpec: null,
         resolvedPackageVersion: null,
-        resolvedPackageIntegrity: null
+        resolvedPackageIntegrity: null,
+        releaseProvenanceStatus: null,
+        releaseProvenanceSummary: null,
+        releaseProvenanceRecommendation: null
     };
 
     assertUpdateApplyAllowedInSwitchMode({

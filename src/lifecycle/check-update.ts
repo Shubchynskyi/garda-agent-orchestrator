@@ -26,6 +26,7 @@ import {
     withLifecycleOperationLockAsync
 } from './common';
 import {
+    buildReleaseUpdateProvenance,
     parseNpmPackageSpec,
     type TrustValidationResult,
     validateNpmSourceTrust,
@@ -145,6 +146,9 @@ export interface AcquiredUpdateSource {
     exactPackageSpec: string | null;
     resolvedPackageVersion: string | null;
     resolvedPackageIntegrity: string | null;
+    releaseProvenanceStatus: string | null;
+    releaseProvenanceSummary: string | null;
+    releaseProvenanceRecommendation: string | null;
     packageName: string | null;
     sourceRoot: string;
     trustPolicy: string;
@@ -169,6 +173,9 @@ export interface CheckUpdateRunnerOptions {
     exactPackageSpec?: string | null;
     resolvedPackageVersion?: string | null;
     resolvedPackageIntegrity?: string | null;
+    releaseProvenanceStatus?: string | null;
+    releaseProvenanceSummary?: string | null;
+    releaseProvenanceRecommendation?: string | null;
     lifecycleLockAlreadyHeld?: boolean;
 }
 
@@ -215,6 +222,9 @@ interface CheckUpdateResult {
     exactPackageSpec: string | null;
     resolvedPackageVersion: string | null;
     resolvedPackageIntegrity: string | null;
+    releaseProvenanceStatus: string | null;
+    releaseProvenanceSummary: string | null;
+    releaseProvenanceRecommendation: string | null;
     sourcePath: string | null;
     packageName: string | null;
     currentVersion: string;
@@ -446,6 +456,9 @@ function buildUpdateSentinelMetadata(
         exactPackageSpec: source.exactPackageSpec,
         resolvedPackageVersion: source.resolvedPackageVersion,
         resolvedPackageIntegrity: source.resolvedPackageIntegrity,
+        releaseProvenanceStatus: source.releaseProvenanceStatus,
+        releaseProvenanceSummary: source.releaseProvenanceSummary,
+        releaseProvenanceRecommendation: source.releaseProvenanceRecommendation,
         syncBackupRoot,
         syncBackupMetadataPath,
         plannedSyncItems
@@ -963,6 +976,16 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
         if (!stats.isDirectory()) {
             throw new Error(`Update source path must be a directory: ${resolvedSourcePath}`);
         }
+        const provenance = buildReleaseUpdateProvenance({
+            sourceType: diagnosticTool === 'git' ? 'git' : 'path',
+            sourceReference: diagnosticSourceReference || resolvedSourcePath,
+            trustPolicy: trustResult.policy,
+            trustOverrideUsed: trustResult.overridden,
+            requestedPackageSpec: null,
+            exactPackageSpec: null,
+            resolvedPackageVersion: null,
+            resolvedPackageIntegrity: null
+        });
 
         return {
             sourceType: 'path',
@@ -973,6 +996,9 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
             exactPackageSpec: null,
             resolvedPackageVersion: null,
             resolvedPackageIntegrity: null,
+            releaseProvenanceStatus: provenance.releaseProvenanceStatus,
+            releaseProvenanceSummary: provenance.releaseProvenanceSummary,
+            releaseProvenanceRecommendation: provenance.releaseProvenanceRecommendation,
             packageName: readPackageNameFromDirectory(resolvedSourcePath),
             sourceRoot: resolvedSourcePath,
             trustPolicy: trustResult.policy,
@@ -1047,6 +1073,16 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
         const installed = installedPackageRootResolver
             ? installedPackageRootResolver(tempInstallRoot, { sourceReference: effectiveDiagnosticSource })
             : resolveInstalledPackageRoot(tempInstallRoot, { sourceReference: effectiveDiagnosticSource });
+        const provenance = buildReleaseUpdateProvenance({
+            sourceType: 'npm',
+            sourceReference: installPackageSpec,
+            trustPolicy: trustResult.policy,
+            trustOverrideUsed: trustResult.overridden,
+            requestedPackageSpec: resolvedPackageSpec.requestedSpec,
+            exactPackageSpec: resolvedPackageSpec.exactSpec,
+            resolvedPackageVersion: resolvedPackageSpec.version,
+            resolvedPackageIntegrity: resolvedPackageSpec.integrity
+        });
         acquiredSource = {
             sourceType: 'npm',
             sourceReference: installPackageSpec,
@@ -1056,6 +1092,9 @@ export async function acquireUpdateSource(options: AcquireUpdateSourceOptions): 
             exactPackageSpec: resolvedPackageSpec.exactSpec,
             resolvedPackageVersion: resolvedPackageSpec.version,
             resolvedPackageIntegrity: resolvedPackageSpec.integrity,
+            releaseProvenanceStatus: provenance.releaseProvenanceStatus,
+            releaseProvenanceSummary: provenance.releaseProvenanceSummary,
+            releaseProvenanceRecommendation: provenance.releaseProvenanceRecommendation,
             packageName: installed.packageName,
             sourceRoot: installed.packageRoot,
             trustPolicy: trustResult.policy,
@@ -1141,6 +1180,9 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
         exactPackageSpec: source.exactPackageSpec,
         resolvedPackageVersion: source.resolvedPackageVersion,
         resolvedPackageIntegrity: source.resolvedPackageIntegrity,
+        releaseProvenanceStatus: source.releaseProvenanceStatus,
+        releaseProvenanceSummary: source.releaseProvenanceSummary,
+        releaseProvenanceRecommendation: source.releaseProvenanceRecommendation,
         sourcePath: source.sourceType === 'path' ? source.sourceReference : null,
         packageName: source.packageName,
         currentVersion,
@@ -1233,6 +1275,9 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                         exactPackageSpec: source.exactPackageSpec,
                         resolvedPackageVersion: source.resolvedPackageVersion,
                         resolvedPackageIntegrity: source.resolvedPackageIntegrity,
+                        releaseProvenanceStatus: source.releaseProvenanceStatus,
+                        releaseProvenanceSummary: source.releaseProvenanceSummary,
+                        releaseProvenanceRecommendation: source.releaseProvenanceRecommendation,
                         plannedSyncItems: plannedSyncItemNames,
                         preexistingMap: syncPreexistingMap
                     });
@@ -1286,6 +1331,9 @@ export async function runCheckUpdate(options: CheckUpdateOptions): Promise<Check
                             exactPackageSpec: result.exactPackageSpec,
                             resolvedPackageVersion: result.resolvedPackageVersion,
                             resolvedPackageIntegrity: result.resolvedPackageIntegrity,
+                            releaseProvenanceStatus: result.releaseProvenanceStatus,
+                            releaseProvenanceSummary: result.releaseProvenanceSummary,
+                            releaseProvenanceRecommendation: result.releaseProvenanceRecommendation,
                             lifecycleLockAlreadyHeld: true
                         });
                     }

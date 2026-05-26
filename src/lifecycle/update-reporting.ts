@@ -14,6 +14,9 @@ interface UpdateTrustContext {
     exactPackageSpec?: string | null;
     resolvedPackageVersion?: string | null;
     resolvedPackageIntegrity?: string | null;
+    releaseProvenanceStatus?: string | null;
+    releaseProvenanceSummary?: string | null;
+    releaseProvenanceRecommendation?: string | null;
 }
 
 export interface UpdateReportData {
@@ -57,6 +60,9 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
         `ExactPackageSpec: ${trustContext.exactPackageSpec || 'n/a'}`,
         `ResolvedPackageVersion: ${trustContext.resolvedPackageVersion || 'n/a'}`,
         `ResolvedPackageIntegrity: ${trustContext.resolvedPackageIntegrity || 'n/a'}`,
+        `ReleaseProvenanceStatus: ${trustContext.releaseProvenanceStatus || 'n/a'}`,
+        `ReleaseProvenanceSummary: ${trustContext.releaseProvenanceSummary || 'n/a'}`,
+        `ReleaseProvenanceRecommendation: ${trustContext.releaseProvenanceRecommendation || 'n/a'}`,
         `TrustPolicy: ${trustContext.policy}`,
         `TrustOverrideUsed: ${trustContext.overrideUsed ? 'yes' : 'no'}`,
         `TrustOverrideSource: ${trustContext.overrideSource}`,
@@ -178,6 +184,9 @@ export function buildUpdateResult(input: UpdateResultInput) {
         exactPackageSpec: trustContext.exactPackageSpec || null,
         resolvedPackageVersion: trustContext.resolvedPackageVersion || null,
         resolvedPackageIntegrity: trustContext.resolvedPackageIntegrity || null,
+        releaseProvenanceStatus: trustContext.releaseProvenanceStatus || null,
+        releaseProvenanceSummary: trustContext.releaseProvenanceSummary || null,
+        releaseProvenanceRecommendation: trustContext.releaseProvenanceRecommendation || null,
         previousVersion: sources.previousVersion,
         previousVersionSource: sources.previousVersionSource,
         bundleVersion: sources.bundleVersion,

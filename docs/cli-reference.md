@@ -346,6 +346,7 @@ Notes:
 - By default `check-update` uses the deployed package name from `garda-agent-orchestrator/package.json` with the npm `latest` tag.
 - `--package-spec` accepts npm specs such as `garda-agent-orchestrator@<target-version>`, dist-tags like `@latest`, and local tarballs like `.\garda-agent-orchestrator-<target-version>.tgz`.
 - Trusted npm registry specs are resolved before apply to an exact `name@version` package with registry integrity metadata. Update and check-update output include requested, exact, resolved-version, and resolved-integrity fields when registry provenance is available.
+- Output also includes `ReleaseProvenanceStatus`, `ReleaseProvenanceSummary`, and `ReleaseProvenanceRecommendation`. The preferred release path is npm registry provenance with integrity; local or override sources are marked unverified.
 - `--source-path` is for local testing against an unpacked repo or bundle directory.
 - `--trust-override` is an explicit bypass for non-allowlisted npm specs, git sources, or local `--source-path` testing, and the public CLI only accepts it together with `--no-prompt`.
 - Ordinary CLI/runtime flows ignore `GARDA_UPDATE_TRUST_OVERRIDE`; that environment variable is reserved for test-only harness paths, not for production or CI.
@@ -369,6 +370,7 @@ Notes:
 - `update` always applies the update workflow unless `--dry-run` is used.
 - If Garda is off, `update` fails before rollback snapshot creation, install, verify, or manifest validation. Run `garda on` first; `--dry-run` remains available.
 - Trusted npm registry specs are resolved before install to an exact package version with integrity metadata, and the resolved provenance is recorded in CLI output and update reports.
+- Release provenance status, summary, and recommendation are recorded alongside trust-policy fields. For release-sensitive updates, prefer the package-manager path when registry integrity is available.
 - Use `--trust-override --no-prompt` only when you intentionally bypass the trusted-source allowlist for a local or non-standard source; the update report records that override.
 - Successful applies sync bundle files, run install, re-materialize `live/`, apply built-in live-rule contract migrations for existing workspaces, run verify plus manifest validation, and only then write the final `VERSION` marker.
 - Successful applies create rollback artifacts under `garda-agent-orchestrator/runtime/update-rollbacks/` and `garda-agent-orchestrator/runtime/bundle-backups/`.
@@ -393,6 +395,7 @@ Notes:
 - `--check-only` compares the git source without applying it.
 - If Garda is off, applying `update git` fails before cloning the update source. Run `garda on` first; `--check-only` remains available.
 - Trusted git sources stay in enforced mode; if you bypass git-source trust with `--trust-override --no-prompt`, that override is recorded in CLI output and the update report.
+- Git updates record a trusted-source/no-release-signature provenance status. For release-sensitive git updates, run `garda update git --check-only` or `garda update git --dry-run` first, or prefer the npm update path with registry integrity.
 - With no extra flags, `garda update git` targets the current directory and uses the default GitHub repository URL.
 - Successful applies invalidate cached bundle runtime modules just like npm-based `update`, so long-lived host processes reload the new bundle on later commands.
 - Same-version content-drift syncs keep human output focused on operator-visible status and drift fields; internal workflow-config and project-memory handoff details remain available in JSON/report output.

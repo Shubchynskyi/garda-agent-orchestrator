@@ -57,6 +57,7 @@ version. `garda rollback` restores the previous snapshot.
 | Threat | Impact | Likelihood | Mitigations |
 |---|---|---|---|
 | Update replaces control-plane with tampered content | Gate bypass, rule injection | Low | Trusted manifest (SHA-256 hashes of protected files written at update time), manifest drift detection at preflight and completion gates |
+| Git-based self-update lacks release signature verification | Tampered trusted-repo transport or branch content could be applied by an operator | Medium | Git update sources are allowlisted and reported with `TRUSTED_GIT_NO_RELEASE_SIGNATURE`; release-sensitive operators should run `--check-only`/`--dry-run` first or prefer npm package-manager updates with registry integrity provenance |
 | Interrupted update leaves inconsistent state | Broken gates, partial materialization | Medium | Atomic temp-file writes, interruption sentinel detection, rollback snapshot preservation, `doctor` diagnosis of partial-state conditions |
 | Rollback restores a vulnerable version | Known-vulnerable code re-introduced | Low | Operator responsibility; `check-update` surfaces available versions; rollback reports record the restored version |
 | Stale rollback snapshot corruption | Rollback fails or restores wrong state | Low | Snapshot integrity validation at restore time, bounded retention policy via `cleanup` |

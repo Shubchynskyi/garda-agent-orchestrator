@@ -28,6 +28,9 @@ export interface UpdateLifecycleResult extends Record<string, unknown> {
     exactPackageSpec?: unknown;
     resolvedPackageVersion?: unknown;
     resolvedPackageIntegrity?: unknown;
+    releaseProvenanceStatus?: unknown;
+    releaseProvenanceSummary?: unknown;
+    releaseProvenanceRecommendation?: unknown;
     updateMessages?: unknown;
     releaseNotes?: unknown;
     updateAnnouncementWarnings?: unknown;
@@ -369,7 +372,10 @@ export function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: b
                 requestedPackageSpec: runnerOptions.requestedPackageSpec || null,
                 exactPackageSpec: runnerOptions.exactPackageSpec || null,
                 resolvedPackageVersion: runnerOptions.resolvedPackageVersion || null,
-                resolvedPackageIntegrity: runnerOptions.resolvedPackageIntegrity || null
+                resolvedPackageIntegrity: runnerOptions.resolvedPackageIntegrity || null,
+                releaseProvenanceStatus: runnerOptions.releaseProvenanceStatus || null,
+                releaseProvenanceSummary: runnerOptions.releaseProvenanceSummary || null,
+                releaseProvenanceRecommendation: runnerOptions.releaseProvenanceRecommendation || null
             },
             lifecycleLockAlreadyHeld: runnerOptions.lifecycleLockAlreadyHeld === true,
             contractMigrationRunner(options) {
@@ -419,6 +425,9 @@ export function mergeUpdateLifecycleOutput(
         exactPackageSpec: lifecycleResult.exactPackageSpec ?? baseResult.exactPackageSpec,
         resolvedPackageVersion: lifecycleResult.resolvedPackageVersion ?? baseResult.resolvedPackageVersion,
         resolvedPackageIntegrity: lifecycleResult.resolvedPackageIntegrity ?? baseResult.resolvedPackageIntegrity,
+        releaseProvenanceStatus: lifecycleResult.releaseProvenanceStatus ?? baseResult.releaseProvenanceStatus,
+        releaseProvenanceSummary: lifecycleResult.releaseProvenanceSummary ?? baseResult.releaseProvenanceSummary,
+        releaseProvenanceRecommendation: lifecycleResult.releaseProvenanceRecommendation ?? baseResult.releaseProvenanceRecommendation,
         updateMessages: lifecycleResult.updateMessages,
         releaseNotes: lifecycleResult.releaseNotes,
         updateAnnouncementWarnings: lifecycleResult.updateAnnouncementWarnings

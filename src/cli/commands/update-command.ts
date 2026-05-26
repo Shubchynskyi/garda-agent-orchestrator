@@ -199,6 +199,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
         formatHumanUpdateOutput(mergedUpdateResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
+            'releaseProvenanceStatus', 'releaseProvenanceSummary', 'releaseProvenanceRecommendation',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine',
@@ -278,6 +279,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
         printColoredVersionDelta(mergedUpdateGitResult);
         formatHumanUpdateOutput(mergedUpdateGitResult, [
             'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
+            'releaseProvenanceStatus', 'releaseProvenanceSummary', 'releaseProvenanceRecommendation',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
             'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine',
@@ -358,6 +360,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
         formatHumanUpdateOutput(mergedCheckResult, [
             'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
             'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
+            'releaseProvenanceStatus', 'releaseProvenanceSummary', 'releaseProvenanceRecommendation',
             'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
             'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
             'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine', 'projectMemoryRefreshHandoffPrompt',

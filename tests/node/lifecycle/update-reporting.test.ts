@@ -57,6 +57,9 @@ function makeTrustContext(overrides: Record<string, unknown> = {}) {
         exactPackageSpec: null,
         resolvedPackageVersion: null,
         resolvedPackageIntegrity: null,
+        releaseProvenanceStatus: 'TRUST_OVERRIDE_UNVERIFIED',
+        releaseProvenanceSummary: 'Operator override bypassed the trusted-source allowlist.',
+        releaseProvenanceRecommendation: 'Use dry-run before applying.',
         ...overrides
     };
 }
@@ -86,6 +89,9 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('ExactPackageSpec: n/a'));
         assert.ok(text.includes('ResolvedPackageVersion: n/a'));
         assert.ok(text.includes('ResolvedPackageIntegrity: n/a'));
+        assert.ok(text.includes('ReleaseProvenanceStatus: TRUST_OVERRIDE_UNVERIFIED'));
+        assert.ok(text.includes('ReleaseProvenanceSummary: Operator override bypassed the trusted-source allowlist.'));
+        assert.ok(text.includes('ReleaseProvenanceRecommendation: Use dry-run before applying.'));
         assert.ok(text.includes('TrustOverrideUsed: yes'));
         assert.ok(text.includes('TrustOverrideSource: cli-flag'));
         assert.ok(text.includes('PreviousVersion: 1.0.0'));
@@ -189,7 +195,10 @@ describe('buildUpdateReportLines', () => {
                 requestedPackageSpec: 'garda-agent-orchestrator@latest',
                 exactPackageSpec: 'garda-agent-orchestrator@2.3.4',
                 resolvedPackageVersion: '2.3.4',
-                resolvedPackageIntegrity: 'sha512-resolved'
+                resolvedPackageIntegrity: 'sha512-resolved',
+                releaseProvenanceStatus: 'NPM_REGISTRY_INTEGRITY_RECORDED',
+                releaseProvenanceSummary: 'Trusted npm source resolved with integrity.',
+                releaseProvenanceRecommendation: 'Preferred release update path.'
             }),
             previousVersion: '1.0.0',
             previousVersionSource: 'live/version.json',
@@ -202,6 +211,7 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('ExactPackageSpec: garda-agent-orchestrator@2.3.4'));
         assert.ok(text.includes('ResolvedPackageVersion: 2.3.4'));
         assert.ok(text.includes('ResolvedPackageIntegrity: sha512-resolved'));
+        assert.ok(text.includes('ReleaseProvenanceStatus: NPM_REGISTRY_INTEGRITY_RECORDED'));
     });
 });
 
@@ -214,7 +224,10 @@ describe('buildUpdateResult', () => {
                 requestedPackageSpec: 'garda-agent-orchestrator@latest',
                 exactPackageSpec: 'garda-agent-orchestrator@2.0.0',
                 resolvedPackageVersion: '2.0.0',
-                resolvedPackageIntegrity: 'sha512-result'
+                resolvedPackageIntegrity: 'sha512-result',
+                releaseProvenanceStatus: 'NPM_REGISTRY_INTEGRITY_RECORDED',
+                releaseProvenanceSummary: 'Trusted npm source resolved with integrity.',
+                releaseProvenanceRecommendation: 'Preferred release update path.'
             }),
             rollbackSnapshotRelativePath: 'snapshot-path',
             rollbackRecordsRelativePath: 'records-path',
@@ -238,6 +251,9 @@ describe('buildUpdateResult', () => {
         assert.equal(result.exactPackageSpec, 'garda-agent-orchestrator@2.0.0');
         assert.equal(result.resolvedPackageVersion, '2.0.0');
         assert.equal(result.resolvedPackageIntegrity, 'sha512-result');
+        assert.equal(result.releaseProvenanceStatus, 'NPM_REGISTRY_INTEGRITY_RECORDED');
+        assert.equal(result.releaseProvenanceSummary, 'Trusted npm source resolved with integrity.');
+        assert.equal(result.releaseProvenanceRecommendation, 'Preferred release update path.');
         assert.equal(result.installStatus, 'PASS');
         assert.equal(result.manifestValidationStatus, 'PASS');
         assert.equal(result.workflowConfigMergeStatus, WORKFLOW_CONFIG_MERGE_STATUS);

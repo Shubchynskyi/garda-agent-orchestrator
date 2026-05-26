@@ -309,7 +309,13 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
             skipManifestValidation,
             trustOverride: false,
             prevalidatedPathTrustResult: trustResult,
-            updateRunner
+            updateRunner: updateRunner
+                ? (runnerOptions) => updateRunner({
+                    ...runnerOptions,
+                    sourceType: 'git',
+                    sourceReference: normalizedRepoUrl
+                })
+                : null
         });
 
         return {

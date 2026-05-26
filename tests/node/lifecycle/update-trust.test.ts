@@ -6,6 +6,7 @@ import * as os from 'node:os';
 
 import {
     assertExplicitCliTrustOverride,
+    buildReleaseUpdateProvenance,
     TRUST_OVERRIDE_ENV_VAR,
     TRUSTED_GIT_REPO_URLS,
     TRUSTED_NPM_PACKAGE_NAMES,
@@ -307,6 +308,80 @@ describe('assertExplicitCliTrustOverride', () => {
                 noPrompt: true
             });
         });
+    });
+});
+
+describe('buildReleaseUpdateProvenance', () => {
+    it('marks npm registry integrity as preferred release provenance', () => {
+        const provenance = buildReleaseUpdateProvenance({
+            sourceType: 'npm',
+            sourceReference: 'garda-agent-orchestrator@2.0.0',
+            trustPolicy: 'enforced',
+            trustOverrideUsed: false,
+            requestedPackageSpec: 'garda-agent-orchestrator@latest',
+            exactPackageSpec: 'garda-agent-orchestrator@2.0.0',
+            resolvedPackageVersion: '2.0.0',
+            resolvedPackageIntegrity: 'sha512-registry'
+        });
+
+        assert.equal(provenance.releaseProvenanceStatus, 'NPM_REGISTRY_INTEGRITY_RECORDED');
+        assert.match(provenance.releaseProvenanceSummary, /registry integrity/);
+        assert.match(provenance.releaseProvenanceRecommendation, /Preferred release update path/);
+    });
+
+    it('marks trusted npm sources without integrity as missing registry integrity', () => {
+        const provenance = buildReleaseUpdateProvenance({
+            sourceType: 'npm',
+            sourceReference: 'garda-agent-orchestrator@latest',
+            trustPolicy: 'enforced',
+            trustOverrideUsed: false,
+            requestedPackageSpec: 'garda-agent-orchestrator@latest',
+            exactPackageSpec: 'garda-agent-orchestrator@latest',
+            resolvedPackageVersion: null,
+            resolvedPackageIntegrity: null
+        });
+
+        assert.equal(provenance.releaseProvenanceStatus, 'NPM_REGISTRY_INTEGRITY_MISSING');
+        assert.match(provenance.releaseProvenanceSummary, /did not expose registry integrity/);
+        assert.match(provenance.releaseProvenanceRecommendation, /exact registry package version with integrity/);
+    });
+
+    it('marks trusted git updates as no-signature provenance with dry-run recommendation', () => {
+        const provenance = buildReleaseUpdateProvenance({
+            sourceType: 'git',
+            sourceReference: 'https://github.com/Shubchynskyi/garda-agent-orchestrator.git#dev',
+            trustPolicy: 'enforced',
+            trustOverrideUsed: false
+        });
+
+        assert.equal(provenance.releaseProvenanceStatus, 'TRUSTED_GIT_NO_RELEASE_SIGNATURE');
+        assert.match(provenance.releaseProvenanceSummary, /no release signature/i);
+        assert.match(provenance.releaseProvenanceRecommendation, /--check-only|--dry-run/);
+    });
+
+    it('marks trust override updates as unverified', () => {
+        const provenance = buildReleaseUpdateProvenance({
+            sourceType: 'path',
+            sourceReference: '/local/source',
+            trustPolicy: 'overridden',
+            trustOverrideUsed: true
+        });
+
+        assert.equal(provenance.releaseProvenanceStatus, 'TRUST_OVERRIDE_UNVERIFIED');
+        assert.match(provenance.releaseProvenanceSummary, /Operator override/);
+    });
+
+    it('marks local source updates without registry or signature evidence as unverified', () => {
+        const provenance = buildReleaseUpdateProvenance({
+            sourceType: 'path',
+            sourceReference: '/local/source',
+            trustPolicy: 'enforced',
+            trustOverrideUsed: false
+        });
+
+        assert.equal(provenance.releaseProvenanceStatus, 'LOCAL_SOURCE_UNVERIFIED');
+        assert.match(provenance.releaseProvenanceSummary, /no registry integrity or release signature provenance/);
+        assert.match(provenance.releaseProvenanceRecommendation, /development\/testing/);
     });
 });
 
