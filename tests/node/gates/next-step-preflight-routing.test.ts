@@ -1319,6 +1319,63 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!command.includes('<task summary>'));
     });
 
+    it('blocks planned-scope preflight until the planned files have a materialized diff', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Create planned docs after classification',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'materialize-planned-scope');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('planned --changed-file hints [src/app.ts]'));
+        assert.ok(result.reason.includes('no materialized diff'));
+        assert.ok(result.reason.includes('rerun next-step'));
+    });
+
+    it('refreshes planned-scope preflight through classify-change after the planned files are materialized', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Create planned docs after classification',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const plannedMaterialized = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('Refresh classify-change for the current scope first'));
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('<path>'));
+    });
+
     it('preserves custom task-mode path when building classify-change commands', () => {
         const repoRoot = makeTempRepo();
         const customTaskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-custom-task-mode.json`);

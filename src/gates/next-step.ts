@@ -1001,6 +1001,7 @@ interface PreflightWorkspaceReadiness {
     currentChangedFiles?: string[];
     acceptedDocsOnlyDeltaFiles?: string[];
     acceptedCloseoutOnlyDeltaFiles?: string[];
+    awaitingMaterializedPlannedScope?: boolean;
 }
 
 interface PreflightWorkspaceReadinessOptions {
@@ -1008,6 +1009,7 @@ interface PreflightWorkspaceReadinessOptions {
     failedReviewVerdict?: string | null;
     docImpactPath?: string | null;
     allowDocsOnlyDelta?: boolean;
+    plannedChangedFiles?: string[];
 }
 
 interface PreflightCycleReadiness {
@@ -3301,6 +3303,9 @@ function readPreflightWorkspaceReadiness(
     const changedFiles = Array.isArray(preflight.changed_files)
         ? [...new Set(preflight.changed_files.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
         : [];
+    const plannedChangedFiles = Array.isArray(options.plannedChangedFiles)
+        ? [...new Set(options.plannedChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
     const expectedChangedFilesSha256 = stringSha256(changedFiles.join('\n'));
     const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
         ? metrics.scope_content_sha256.trim().toLowerCase()
@@ -3358,6 +3363,21 @@ function readPreflightWorkspaceReadiness(
                 !unchangedProtectedFiles.has(normalizePath(entry))
             ));
             currentChangedFiles = currentGitChangedFiles;
+            const plannedSet = new Set(plannedChangedFiles);
+            const preflightUsesOnlyPlannedScope = plannedSet.size > 0
+                && changedFiles.length > 0
+                && changedFiles.every((entry) => plannedSet.has(entry));
+            if (preflightUsesOnlyPlannedScope && currentGitChangedFiles.length === 0) {
+                return {
+                    ready: false,
+                    reason:
+                        `Preflight was classified from planned --changed-file hints ${describePathList(changedFiles)}, ` +
+                        'but the current git workspace has no materialized diff for that planned scope. ' +
+                        'Implement or create the planned files first, then rerun next-step so it can refresh classify-change for the real workspace diff before compile/review.',
+                    currentChangedFiles,
+                    awaitingMaterializedPlannedScope: true
+                };
+            }
             if (allowDocsOnlyDelta) {
                 const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
                     repoRoot,
@@ -6478,7 +6498,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: null,
             failedReviewVerdict: null,
-            docImpactPath
+            docImpactPath,
+            plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode)
         })
         : { ready: false, reason: 'No current preflight exists.' };
     const preflightCycleReadiness = readPreflightCycleReadiness(
@@ -6503,7 +6524,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
             failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
             failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
-            docImpactPath
+            docImpactPath,
+            plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode)
         })
         : preflightWorkspaceReadiness;
 
@@ -6814,6 +6836,16 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     if (!effectivePreflightWorkspaceReadiness.ready) {
+        if (effectivePreflightWorkspaceReadiness.awaitingMaterializedPlannedScope) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'materialize-planned-scope',
+                title: 'Materialize planned task changes before refreshing preflight.',
+                reason: effectivePreflightWorkspaceReadiness.reason,
+                commands: []
+            });
+        }
         const classifyCommand = buildClassifyChangeCommand({
             repoRoot,
             cliPrefix,
