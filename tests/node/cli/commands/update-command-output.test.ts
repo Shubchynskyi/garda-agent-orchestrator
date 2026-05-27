@@ -190,6 +190,23 @@ function assertHumanUpdateOutputOmitsInternalHandoffDetails(lines: string[]): vo
     assert.equal(lines.some((line) => line.includes('RefreshHandoffPrompt:')), false);
 }
 
+function stripAnsi(text: string): string {
+    return text.replace(/\u001b\[[0-9;]+m/gu, '');
+}
+
+function plainLines(lines: string[]): string[] {
+    return lines.map((line) => stripAnsi(line));
+}
+
+function assertPlainLine(lines: string[], expected: string): void {
+    assert.equal(plainLines(lines).includes(expected), true, `missing line: ${expected}`);
+}
+
+function assertHumanUpdateOutputOmitsRawDiagnostics(lines: string[]): void {
+    const text = plainLines(lines).join('\n');
+    assert.equal(/\n(?:TargetRoot|RepoUrl|ReleaseProvenanceStatus|ReleaseProvenanceSummary|ReleaseProvenanceRecommendation|CurrentVersion|LatestVersion|UpdateApplied|CheckUpdateResult|PreviousVersion|UpdatedVersion|ResolvedPackageVersion|ResolvedPackageIntegrity):/u.test(`\n${text}`), false);
+}
+
 test('handleUpdate surfaces update messages and release notes in plain text and json output', async () => {
     const packageJson: PackageJsonLike = {
         name: 'garda-agent-orchestrator',
@@ -268,12 +285,19 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.match(plainTextLines[1], /\u001b\[32mUpdated successfully\u001b\[0m/);
             assert.match(plainTextLines[2], /\u001b\[2mThe available update was applied to this workspace\.\u001b\[0m/);
             assert.match(plainTextLines[4], /\u001b\[1mVersion applied\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[32m1\.1\.0\u001b\[0m/);
-            assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
-            assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('RequestedPackageSpec: garda-agent-orchestrator@latest'), true);
-            assert.equal(plainTextLines.includes('ExactPackageSpec: garda-agent-orchestrator@1.1.0'), true);
-            assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-output'), true);
+            assertPlainLine(plainTextLines, 'Result');
+            assertPlainLine(plainTextLines, '  Status: UPDATED');
+            assertPlainLine(plainTextLines, '  Applied: yes');
+            assertPlainLine(plainTextLines, '  Version: 1.0.0 -> 1.1.0');
+            assertPlainLine(plainTextLines, 'Source');
+            assertPlainLine(plainTextLines, '  Package: garda-agent-orchestrator@1.1.0');
+            assertPlainLine(plainTextLines, '  Integrity: sha512-output');
+            assertPlainLine(plainTextLines, 'Safety');
+            assertPlainLine(plainTextLines, '  Trust override: yes');
+            assertPlainLine(plainTextLines, 'Recovery');
+            assertPlainLine(plainTextLines, '  Report: garda-agent-orchestrator/runtime/update-reports/update-1.md');
+            assertPlainLine(plainTextLines, 'Detailed diagnostics are available in the update report and with --json.');
+            assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
             assertHumanUpdateOutputOmitsInternalHandoffDetails(plainTextLines);
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('  1.1.0 - Major registry note'), true);
@@ -292,6 +316,9 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assert.equal(noColorLines[0], 'UPDATE STATUS');
             assert.equal(noColorLines[1], 'Updated successfully');
             assert.equal(noColorLines[2], 'The available update was applied to this workspace.');
+            assertPlainLine(noColorLines, '  Status: UPDATED');
+            assertPlainLine(noColorLines, '  Version: 1.0.0 -> 1.1.0');
+            assertHumanUpdateOutputOmitsRawDiagnostics(noColorLines);
             assertHumanUpdateOutputOmitsInternalHandoffDetails(noColorLines);
 
             const jsonLines = await captureConsoleLogs(async () => {
@@ -403,13 +430,15 @@ test('handleCheckUpdate --apply includes UpdateApplied in plain text and enriche
             assert.match(plainTextLines[0], /\u001b\[1mUPDATE STATUS\u001b\[0m/);
             assert.match(plainTextLines[1], /\u001b\[32mUpdated successfully\u001b\[0m/);
             assert.match(plainTextLines[4], /\u001b\[1mVersion applied\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[32m1\.1\.0\u001b\[0m/);
-            assert.equal(plainTextLines.includes('UpdateApplied: True'), true);
-            assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
-            assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('RequestedPackageSpec: garda-agent-orchestrator@latest'), true);
-            assert.equal(plainTextLines.includes('ExactPackageSpec: garda-agent-orchestrator@1.1.0'), true);
-            assert.equal(plainTextLines.includes('ResolvedPackageVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('ResolvedPackageIntegrity: sha512-check'), true);
+            assertPlainLine(plainTextLines, 'Result');
+            assertPlainLine(plainTextLines, '  Status: UPDATED');
+            assertPlainLine(plainTextLines, '  Applied: yes');
+            assertPlainLine(plainTextLines, '  Version: 1.0.0 -> 1.1.0');
+            assertPlainLine(plainTextLines, '  Package: garda-agent-orchestrator@1.1.0');
+            assertPlainLine(plainTextLines, '  Integrity: sha512-check');
+            assertPlainLine(plainTextLines, '  Report: garda-agent-orchestrator/runtime/update-reports/update-1.md');
+            assertPlainLine(plainTextLines, 'Detailed diagnostics are available in the update report and with --json.');
+            assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
             assertHumanUpdateOutputOmitsInternalHandoffDetails(plainTextLines);
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('ReleaseNotes:'), true);
@@ -546,8 +575,8 @@ test('handleCheckUpdate --apply corrects stale lifecycle UpdatedVersion after de
                     '--trust-override'
                 ], packageJson);
             });
-            assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('UpdatedVersion: 1.0.0'), false);
+            assertPlainLine(plainTextLines, '  Version: 1.0.0 -> 1.1.0');
+            assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
             assert.match(fs.readFileSync(updateReportPath, 'utf8'), /^UpdatedVersion: 1\.1\.0$/m);
 
             const jsonLines = await captureConsoleLogs(async () => {
@@ -826,6 +855,9 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
                         branch: 'main',
                         sourceType: 'git',
                         sourceReference: 'fixture',
+                        releaseProvenanceStatus: 'TRUSTED_GIT_NO_RELEASE_SIGNATURE',
+                        releaseProvenanceSummary: 'Trusted git source details should stay out of default stdout.',
+                        releaseProvenanceRecommendation: 'Prefer check-only first.',
                         currentVersion: '1.0.0',
                         latestVersion: '1.1.0',
                         updateAvailable: true,
@@ -854,9 +886,15 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
             assert.match(plainTextLines[1], /\u001b\[32mUpdated successfully\u001b\[0m/);
             assert.match(plainTextLines[2], /\u001b\[2mThe available update was applied to this workspace\.\u001b\[0m/);
             assert.match(plainTextLines[4], /\u001b\[1mVersion applied\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[32m1\.1\.0\u001b\[0m/);
-            assert.equal(plainTextLines.includes('RepoUrl: https://example.test/repo.git'), true);
-            assert.equal(plainTextLines.includes('PreviousVersion: 1.0.0'), true);
-            assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
+            assertPlainLine(plainTextLines, '  Repo: https://example.test/repo.git');
+            assertPlainLine(plainTextLines, '  Branch: main');
+            assertPlainLine(plainTextLines, '  Version: 1.0.0 -> 1.1.0');
+            assertPlainLine(plainTextLines, '  Provenance: trusted git source; no release signature for git sources (details in update report)');
+            assertPlainLine(plainTextLines, '  Report: garda-agent-orchestrator/runtime/update-reports/update-1.md');
+            assertPlainLine(plainTextLines, 'Detailed diagnostics are available in the update report and with --json.');
+            assert.equal(plainLines(plainTextLines).some((line) => line.includes('Trusted git source details should stay out')), false);
+            assert.equal(plainLines(plainTextLines).some((line) => line.includes('Prefer check-only first')), false);
+            assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
 
             const jsonLines = await captureConsoleLogs(async () => {
                 await reloaded.module.handleUpdateGit([
@@ -873,6 +911,7 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
             assert.equal(parsed.sourceType, 'git');
             assert.equal(parsed.repoUrl, 'https://example.test/repo.git');
             assert.equal(parsed.updatedVersion, '1.1.0');
+            assert.equal(parsed.releaseProvenanceSummary, 'Trusted git source details should stay out of default stdout.');
         } finally {
             reloaded.restore();
             restoreCachedModule(fixture.bundleUpdateModulePath, originalBundleModule);
@@ -958,11 +997,12 @@ test('handleUpdateGit keeps same-version content drift sync output operator-focu
             assert.equal(plainTextLines[0], 'UPDATE STATUS');
             assert.equal(plainTextLines[1], 'Updated successfully');
             assert.equal(plainTextLines.some((line) => line.includes('Version applied')), false);
-            assert.equal(plainTextLines.includes('CurrentVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('LatestVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('ContentDriftDetected: True'), true);
-            assert.equal(plainTextLines.includes('UpdateApplied: True'), true);
-            assert.equal(plainTextLines.includes('CheckUpdateResult: UPDATED'), true);
+            assertPlainLine(plainTextLines, '  Status: UPDATED');
+            assertPlainLine(plainTextLines, '  Applied: yes');
+            assert.equal(plainLines(plainTextLines).some((line) => line.startsWith('  Version: ') && line.includes('1.1.0')), true);
+            assertPlainLine(plainTextLines, '  Content drift: yes');
+            assertPlainLine(plainTextLines, '  Drifted items: dist, live');
+            assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
             assertHumanUpdateOutputOmitsInternalHandoffDetails(plainTextLines);
 
             const jsonLines = await captureConsoleLogs(async () => {
@@ -1067,8 +1107,8 @@ test('handleUpdateGit uses latest applied version for announcements when lifecyc
             });
 
             assert.equal(/\u001b\[/.test(plainTextLines.join('\n')), false);
-            assert.equal(plainTextLines.includes('UpdatedVersion: 1.1.0'), true);
-            assert.equal(plainTextLines.includes('UpdatedVersion: 1.0.0'), false);
+            assertPlainLine(plainTextLines, '  Version: 1.0.0 -> 1.1.0');
+            assertHumanUpdateOutputOmitsRawDiagnostics(plainTextLines);
             assert.equal(plainTextLines.includes('UpdateMessages:'), true);
             assert.equal(plainTextLines.includes('  1.1.0 - Major registry note'), true);
             assertHumanUpdateOutputOmitsInternalHandoffDetails(plainTextLines);

@@ -12,6 +12,7 @@ import {
     PackageJsonLike,
     parseOptions,
     printHelp,
+    red,
     supportsColor,
     yellow
 } from './cli-helpers';
@@ -30,12 +31,6 @@ import {
 } from './shared-command-utils';
 
 type UpdateStatusTone = 'success' | 'attention' | 'failure';
-
-const STRUCTURED_HUMAN_UPDATE_KEYS = new Set([
-    'workflowConfigMergeStatus',
-    'projectMemoryMaintenanceSummaryLine',
-    'projectMemoryRefreshHandoffPrompt'
-]);
 
 function resolveUpdateStatusBanner(result: Record<string, unknown>): {
     title: string;
@@ -80,13 +75,17 @@ function printUpdateStatusBanner(result: Record<string, unknown>): void {
     if (!banner) {
         return;
     }
-    const statusColor = banner.tone === 'success'
-        ? green
-        : yellow;
+    const statusColor = getToneColor(banner.tone);
     console.log(bold('UPDATE STATUS'));
     console.log(statusColor(banner.title));
     console.log(dim(banner.detail));
     console.log('');
+}
+
+function getToneColor(tone: UpdateStatusTone): (text: string) => string {
+    if (tone === 'success') return green;
+    if (tone === 'failure') return red;
+    return yellow;
 }
 
 function getUpdateVersionDelta(result: Record<string, unknown>): { fromVersion: string; toVersion: string; applied: boolean } | null {
@@ -117,11 +116,119 @@ function printColoredVersionDelta(result: Record<string, unknown>): void {
     console.log('');
 }
 
-function formatHumanUpdateOutput(result: Record<string, unknown>, keys: string[]): void {
-    formatKeyValueOutput(
-        result,
-        keys.filter((key) => !STRUCTURED_HUMAN_UPDATE_KEYS.has(key))
-    );
+function printableValue(value: unknown): string {
+    if (Array.isArray(value)) {
+        return value.map((entry) => String(entry)).filter((entry) => entry.trim().length > 0).join(', ');
+    }
+    if (typeof value === 'boolean') {
+        return value ? 'yes' : 'no';
+    }
+    return String(value ?? '').trim();
+}
+
+function hasPrintableValue(value: unknown): boolean {
+    return printableValue(value).length > 0;
+}
+
+function formatUpdateVersionSummary(result: Record<string, unknown>): string {
+    const fromVersion = printableValue(result.previousVersion || result.currentVersion);
+    const toVersion = printableValue(result.updatedVersion || result.latestVersion);
+    if (fromVersion && toVersion && fromVersion !== toVersion) {
+        return `${fromVersion} -> ${toVersion}`;
+    }
+    return toVersion || fromVersion || 'unknown';
+}
+
+function formatProvenanceSummary(result: Record<string, unknown>): string {
+    const status = printableValue(result.releaseProvenanceStatus);
+    if (!status) {
+        return '';
+    }
+    if (status === 'TRUSTED_GIT_NO_RELEASE_SIGNATURE') {
+        return 'trusted git source; no release signature for git sources (details in update report)';
+    }
+    if (status === 'TRUST_OVERRIDE_UNVERIFIED') {
+        return 'trust override used; source not allowlist-verified (details in update report)';
+    }
+    if (status === 'NPM_REGISTRY_INTEGRITY_RECORDED') {
+        return 'npm registry integrity recorded (details in update report)';
+    }
+    return `${status} (details in update report)`;
+}
+
+function colorUpdateValue(label: string, value: string): string {
+    const normalized = value.trim().toUpperCase();
+    if (label === 'Status') {
+        if (normalized === 'UPDATED' || normalized === 'UP_TO_DATE') return green(value);
+        if (normalized.includes('AVAILABLE') || normalized.includes('DRY_RUN')) return yellow(value);
+        if (normalized.includes('FAILED') || normalized.includes('ERROR')) return red(value);
+    }
+    if (label === 'Applied' || label === 'Update available' || label === 'Content drift') {
+        return normalized === 'YES' ? green(value) : dim(value);
+    }
+    if (label === 'Version' && value.includes('->')) {
+        const [fromVersion, toVersion] = value.split('->').map((part) => part.trim());
+        return `${yellow(fromVersion)} ${dim('->')} ${green(toVersion)}`;
+    }
+    if (label === 'Report' || label === 'Rollback snapshot') {
+        return cyan(value);
+    }
+    return value;
+}
+
+function printUpdateSection(title: string, rows: Array<[string, unknown]>): void {
+    const printableRows = rows
+        .map(([label, value]) => [label, printableValue(value)] as const)
+        .filter(([, value]) => value.length > 0);
+    if (printableRows.length === 0) {
+        return;
+    }
+
+    console.log(bold(title));
+    for (const [label, value] of printableRows) {
+        console.log(`  ${bold(`${label}:`)} ${colorUpdateValue(label, value)}`);
+    }
+    console.log('');
+}
+
+function formatHumanUpdateOutput(result: Record<string, unknown>): void {
+    printUpdateSection('Result', [
+        ['Status', result.checkUpdateResult],
+        ['Applied', result.updateApplied],
+        ['Update available', result.updateAvailable],
+        ['Version', formatUpdateVersionSummary(result)],
+        ['Content drift', result.contentDriftDetected],
+        ['Drifted items', result.driftedSyncItems]
+    ]);
+
+    printUpdateSection('Source', [
+        ['Type', result.sourceType],
+        ['Reference', result.sourceReference],
+        ['Package', result.exactPackageSpec || result.requestedPackageSpec || result.packageSpec],
+        ['Integrity', result.resolvedPackageIntegrity],
+        ['Repo', result.repoUrl],
+        ['Branch', result.branch],
+        ['Target', result.targetRoot]
+    ]);
+
+    printUpdateSection('Safety', [
+        ['Trust policy', result.trustPolicy],
+        ['Trust override', result.trustOverrideUsed],
+        ['Override source', result.trustOverrideSource],
+        ['Provenance', formatProvenanceSummary(result)]
+    ]);
+
+    printUpdateSection('Recovery', [
+        ['Rollback status', result.rollbackStatus],
+        ['Rollback snapshot', result.rollbackSnapshotPath],
+        ['Report', result.updateReportPath]
+    ]);
+
+    if (hasPrintableValue(result.updateReportPath)) {
+        console.log(dim('Detailed diagnostics are available in the update report and with --json.'));
+    } else {
+        console.log(dim('Detailed diagnostics are available with --json.'));
+    }
 }
 
 export async function handleUpdate(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
@@ -196,15 +303,7 @@ export async function handleUpdate(commandArgv: string[], packageJson: PackageJs
     } else {
         printUpdateStatusBanner(mergedUpdateResult);
         printColoredVersionDelta(mergedUpdateResult);
-        formatHumanUpdateOutput(mergedUpdateResult, [
-            'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
-            'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
-            'releaseProvenanceStatus', 'releaseProvenanceSummary', 'releaseProvenanceRecommendation',
-            'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
-            'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
-            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine',
-            'projectMemoryRefreshHandoffPrompt', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
-        ]);
+        formatHumanUpdateOutput(mergedUpdateResult);
         printUpdateAnnouncementSections(mergedUpdateResult);
     }
 }
@@ -277,14 +376,7 @@ export async function handleUpdateGit(commandArgv: string[], packageJson: Packag
     } else {
         printUpdateStatusBanner(mergedUpdateGitResult);
         printColoredVersionDelta(mergedUpdateGitResult);
-        formatHumanUpdateOutput(mergedUpdateGitResult, [
-            'targetRoot', 'repoUrl', 'branch', 'sourceType', 'sourceReference',
-            'releaseProvenanceStatus', 'releaseProvenanceSummary', 'releaseProvenanceRecommendation',
-            'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
-            'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource',
-            'previousVersion', 'updatedVersion', 'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine',
-            'projectMemoryRefreshHandoffPrompt', 'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
-        ]);
+        formatHumanUpdateOutput(mergedUpdateGitResult);
         printUpdateAnnouncementSections(mergedUpdateGitResult);
     }
 }
@@ -357,15 +449,7 @@ export async function handleCheckUpdate(commandArgv: string[], packageJson: Pack
     } else {
         printUpdateStatusBanner(mergedCheckResult);
         printColoredVersionDelta(mergedCheckResult);
-        formatHumanUpdateOutput(mergedCheckResult, [
-            'targetRoot', 'sourceType', 'sourceReference', 'packageSpec', 'sourcePath',
-            'requestedPackageSpec', 'exactPackageSpec', 'resolvedPackageVersion', 'resolvedPackageIntegrity',
-            'releaseProvenanceStatus', 'releaseProvenanceSummary', 'releaseProvenanceRecommendation',
-            'currentVersion', 'latestVersion', 'updateAvailable', 'versionDiffDetected', 'contentDriftDetected', 'driftedSyncItems',
-            'updateApplied', 'checkUpdateResult', 'trustPolicy', 'trustOverrideUsed', 'trustOverrideSource', 'previousVersion', 'updatedVersion',
-            'workflowConfigMergeStatus', 'projectMemoryMaintenanceSummaryLine', 'projectMemoryRefreshHandoffPrompt',
-            'rollbackSnapshotPath', 'rollbackStatus', 'updateReportPath'
-        ]);
+        formatHumanUpdateOutput(mergedCheckResult);
         printUpdateAnnouncementSections(mergedCheckResult);
     }
 }
