@@ -2792,6 +2792,7 @@ function getLatestReviewContextReuseAcceptedSequence(
 function readCompileReadiness(
     repoRoot: string,
     reviewsRoot: string,
+    eventsRoot: string,
     taskId: string,
     preflightPath: string
 ): CompileReadiness {
@@ -2827,6 +2828,20 @@ function readCompileReadiness(
     if (evidenceStatus !== 'PASSED' || evidenceOutcome !== 'PASS') {
         const evidenceError = String(evidence.error || '').trim();
         if (/\bPreflight scope drift detected\b/i.test(evidenceError)) {
+            const staleFailureReason = getStaleCompileScopeDriftFailureReason({
+                repoRoot,
+                eventsRoot,
+                taskId,
+                evidence,
+                preflightPath,
+                expectedPreflightHash
+            });
+            if (staleFailureReason) {
+                return {
+                    ready: false,
+                    reason: staleFailureReason
+                };
+            }
             return {
                 ready: false,
                 reason:
@@ -2923,6 +2938,62 @@ function readCompileReadiness(
         ready: true,
         reason: 'Compile gate evidence is current.'
     };
+}
+
+function normalizeCompileEvidencePath(repoRoot: string, candidatePath: unknown): string {
+    const rawPath = String(candidatePath || '').trim();
+    if (!rawPath) {
+        return '';
+    }
+    return normalizePath(path.isAbsolute(rawPath)
+        ? path.resolve(rawPath)
+        : path.resolve(repoRoot, rawPath));
+}
+
+function getStaleCompileScopeDriftFailureReason(params: {
+    repoRoot: string;
+    eventsRoot: string;
+    taskId: string;
+    evidence: Record<string, unknown>;
+    preflightPath: string;
+    expectedPreflightHash: string | null;
+}): string | null {
+    const staleReasons: string[] = [];
+    const evidencePreflightHash = String(params.evidence.preflight_hash_sha256 || '').trim().toLowerCase();
+    const expectedPreflightHash = String(params.expectedPreflightHash || '').trim().toLowerCase();
+    if (evidencePreflightHash && expectedPreflightHash && evidencePreflightHash !== expectedPreflightHash) {
+        staleReasons.push('compile failure preflight hash differs from the latest preflight hash');
+    }
+
+    const evidencePreflightPath = normalizeCompileEvidencePath(params.repoRoot, params.evidence.preflight_path);
+    const currentPreflightPath = normalizePath(path.resolve(params.preflightPath));
+    if (evidencePreflightPath && evidencePreflightPath !== currentPreflightPath) {
+        staleReasons.push('compile failure preflight path differs from the latest preflight path');
+    }
+
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(path.join(params.eventsRoot, `${params.taskId}.jsonl`), timelineErrors);
+    const latestCompileFailure = findLatestTimelineEvent(
+        timeline,
+        (entry) => entry.event_type === 'COMPILE_GATE_FAILED'
+    );
+    const latestPreflight = findLatestTimelineEvent(
+        timeline,
+        (entry) => entry.event_type === 'PREFLIGHT_CLASSIFIED'
+    );
+    if (latestCompileFailure && latestPreflight && latestCompileFailure.sequence < latestPreflight.sequence) {
+        staleReasons.push(
+            `compile failure seq ${latestCompileFailure.sequence} predates latest preflight seq ${latestPreflight.sequence}`
+        );
+    }
+
+    if (staleReasons.length === 0) {
+        return null;
+    }
+    return (
+        `Compile gate failed because an older preflight scope was stale, but that failed compile evidence is no longer current ` +
+        `(${staleReasons.join('; ')}). Rerun compile-gate against the refreshed preflight before continuing.`
+    );
 }
 
 function buildCompileEvidenceDocsOnlyExtensionReadiness(
@@ -7278,7 +7349,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     const compileReadiness = preflight
-        ? readCompileReadiness(repoRoot, reviewsRoot, taskId, preflightPath)
+        ? readCompileReadiness(repoRoot, reviewsRoot, eventsRoot, taskId, preflightPath)
         : { ready: false, reason: 'No current preflight exists.' };
     if (!isGatePassed(summary, 'compile-gate') || !compileReadiness.ready) {
         if (preflight && compileReadiness.recoveryGate === 'classify-change') {

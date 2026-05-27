@@ -1322,6 +1322,36 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.match(text, /MinimalRecoveryChain: classify-change -> rerun navigator for POST_PREFLIGHT, compile, and review refresh decisions/);
     });
 
+    it('reruns compile after a scope-drift compile failure is recovered by newer preflight evidence', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const oldPreflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const oldPreflightHash = fileSha256(oldPreflightPath);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const drift = 2;\n', 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'FAILED',
+            outcome: 'FAIL',
+            error:
+                'Preflight scope drift detected. Refresh preflight for the current scope before compile: rerun classify-change, rerun load-rule-pack --stage POST_PREFLIGHT, and then rerun compile-gate.',
+            preflight_path: oldPreflightPath.replace(/\\/g, '/'),
+            preflight_hash_sha256: oldPreflightHash
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_FAILED', 'FAIL');
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.ok(result.reason.includes('failed compile evidence is no longer current'), result.reason);
+        assert.ok(result.reason.includes('predates latest preflight'), result.reason);
+        assert.ok(result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+    });
+
     it('refreshes explicit preflight when later rework adds a source file after review evidence exists', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
