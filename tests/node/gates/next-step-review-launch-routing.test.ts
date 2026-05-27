@@ -1380,6 +1380,8 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('routing=current'));
         assert.ok(result.reason.includes('launch artifact=missing or stale'));
         assert.ok(result.reason.includes('invocation=blocked until launch artifact'));
+        assert.ok(result.reason.includes('ProviderLaunchTarget:'));
+        assert.ok(result.reason.includes('launch clean-context reviewers'));
         assert.equal(result.commands[0].label, 'Prepare delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
@@ -1434,6 +1436,8 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(result.reason.includes('this is expected behavior in this repository'));
         assert.ok(result.reason.includes('complete-reviewer-launch'));
+        assert.ok(result.reason.includes('ProviderLaunchTarget:'));
+        assert.ok(result.reason.includes('launch clean-context reviewers'));
         assertGateChainDecision(result.reason, {
             edgeId: 'review-launch-prepared-to-launch-completed',
             status: 'pass'
@@ -1442,6 +1446,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
         assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        assert.ok(result.commands[0].command.includes('--record-invocation'));
         assert.ok(!result.commands[0].command.includes('--launched-at-utc'));
     });
 

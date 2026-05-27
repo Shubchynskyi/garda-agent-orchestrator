@@ -2993,6 +2993,8 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         '--fresh-context': { key: 'freshContext', type: 'boolean' },
         '--isolated-context': { key: 'isolatedContext', type: 'boolean' },
         '--fork-context': { key: 'forkContext', type: 'boolean' },
+        '--record-invocation': { key: 'recordInvocation', type: 'boolean' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
     const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
@@ -3158,6 +3160,20 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     const recordCommand = getStringField(preparedArtifact, 'record_invocation_command', 'recordInvocationCommand');
     if (recordCommand) {
         console.log(`RecordInvocationCommand: ${recordCommand}`);
+    }
+    if (options.recordInvocation === true) {
+        await handleRecordReviewInvocation([
+            '--task-id', taskId,
+            '--review-type', reviewType,
+            '--reviewer-execution-mode', reviewerExecutionMode,
+            '--reviewer-identity', reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            ...(options.reviewContextPath ? ['--review-context-path', String(options.reviewContextPath)] : []),
+            ...(options.taskModePath ? ['--task-mode-path', String(options.taskModePath)] : []),
+            '--repo-root', repoRoot
+        ]);
+        console.log('NextAction: record-review-invocation was attested by complete-reviewer-launch; run record-review-result after the delegated reviewer returns.');
+        return;
     }
     console.log('NextAction: run RecordInvocationCommand to attest the invocation.');
 }

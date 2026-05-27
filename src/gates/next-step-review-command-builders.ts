@@ -107,6 +107,7 @@ export function buildCompleteReviewerLaunchCommand(params: {
     reviewType: string;
     reviewerIdentity: string;
     launchArtifactPath: string;
+    recordInvocation?: boolean;
 }): string {
     return [
         `${params.cliPrefix} gate complete-reviewer-launch`,
@@ -118,6 +119,7 @@ export function buildCompleteReviewerLaunchCommand(params: {
         '--provider-invocation-id "<actual-invocation-id>"',
         '--attestation-source "<provider-source>"',
         '--fork-context false',
+        ...(params.recordInvocation ? ['--record-invocation'] : []),
         '--repo-root "."'
     ].join(' ');
 }

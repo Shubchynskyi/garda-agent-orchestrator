@@ -136,6 +136,7 @@ import {
     buildCoherentCycleRestartCommand
 } from './completion-reporting';
 import {
+    getProviderEntryById,
     normalizeProviderId
 } from '../core/provider-registry';
 import {
@@ -2340,6 +2341,18 @@ function buildReviewerReadinessChainSummary(
         `invocation=${invocationStatus}`,
         `review output/receipt=${resultStatus}.`
     ].join(' -> ')}`;
+}
+
+function buildProviderNativeReviewerLaunchTargetSummary(taskMode: Record<string, unknown> | null): string {
+    const provider = normalizeProviderId(taskMode?.provider);
+    const providerEntry = provider ? getProviderEntryById(provider) : null;
+    if (!providerEntry) {
+        return 'ProviderLaunchTarget: unresolved; launch a provider-native/internal delegated reviewer subagent with a fresh isolated context.';
+    }
+    return (
+        `ProviderLaunchTarget: ${providerEntry.reviewerLaunchLabel || providerEntry.displayLabel}; ` +
+        `${providerEntry.delegatedReviewerLaunchInstruction || 'launch a clean-context delegated reviewer subagent with isolated context.'}`
+    );
 }
 
 function buildReviewGateChainStatusSummary(options: {
@@ -7796,6 +7809,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             });
         }
         const contextReviewerIdentity = state.contextReviewerIdentity || '';
+        const providerLaunchTargetSummary = buildProviderNativeReviewerLaunchTargetSummary(taskMode);
         if (
             !currentReviewReuseRecorded
             && (
@@ -7820,7 +7834,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 status: 'BLOCKED',
                 nextGate: 'record-review-routing',
                 title: `Record '${reviewType}' delegated reviewer routing.`,
-                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION} ${reviewerReadinessChain} ${reviewRoutingChain}`,
+                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION} ${reviewerReadinessChain} ${reviewRoutingChain}`,
                 commands: [
                     buildCommand(
                         'Record fresh delegated review routing',
@@ -7870,7 +7884,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     status: 'BLOCKED',
                     nextGate: 'prepare-reviewer-launch',
                     title: `Prepare '${reviewType}' delegated reviewer launch metadata.`,
-                    reason: `Required review '${reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. This prepares hashes and prompt paths only; it is not completed invocation evidence. ${reviewerReadinessChain} ${launchPreparationChain}`,
+                    reason: `Required review '${reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. This prepares hashes and prompt paths only; it is not completed invocation evidence. ${providerLaunchTargetSummary} ${reviewerReadinessChain} ${launchPreparationChain}`,
                     commands: [
                         buildCommand(
                             'Prepare delegated reviewer launch metadata',
@@ -7906,17 +7920,18 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
                 reason:
                     `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, including its own launch timestamp, before invocation attestation. ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
+                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, including its own launch timestamp, before invocation attestation. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
                 commands: [
                     buildCommand(
                         'Complete delegated reviewer launch metadata',
-                        buildCompleteReviewerLaunchCommand({
-                            cliPrefix,
-                            taskId,
-                            reviewType,
-                            reviewerIdentity,
-                            launchArtifactPath
-                        })
+                    buildCompleteReviewerLaunchCommand({
+                        cliPrefix,
+                        taskId,
+                        reviewType,
+                        reviewerIdentity,
+                        launchArtifactPath,
+                        recordInvocation: true
+                    })
                     )
                     ]
                 });
