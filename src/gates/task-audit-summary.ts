@@ -484,8 +484,8 @@ function buildReviewTimingAuditSummary(
             review_output_path: readAuditString(receipt.review_output_path),
             review_output_sha256: readAuditSha256(receipt.review_output_sha256),
             provider: readAuditString(
-                invocationDetails?.provider
-                ?? invocationDetails?.execution_provider
+                invocationDetails?.execution_provider
+                ?? invocationDetails?.provider
                 ?? invocationDetails?.provider_family
                 ?? invocationDetails?.reviewer_launch_tool
             ),
@@ -1076,4 +1076,3 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         final_closeout: finalCloseout
     };
 }
-

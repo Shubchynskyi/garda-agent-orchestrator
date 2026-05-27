@@ -712,6 +712,9 @@ describe('cli/commands/gates review launch routing', () => {
         const invocationDetails = invocationEvent?.details as Record<string, unknown> | undefined;
         assert.equal(invocationDetails?.review_type, 'code');
         assert.equal(invocationDetails?.reviewer_session_id, 'agent:test-reviewer');
+        assert.equal(invocationDetails?.execution_provider, 'Antigravity');
+        assert.equal(invocationDetails?.execution_provider_source, 'provider_bridge');
+        assert.equal(invocationDetails?.canonical_source_of_truth, 'Antigravity');
         assert.equal(invocationDetails?.reviewer_launch_tool, 'test-subagent-spawn');
         assert.equal(invocationDetails?.provider_invocation_id, 'test-invocation-123');
 

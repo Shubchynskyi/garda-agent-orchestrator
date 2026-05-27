@@ -435,6 +435,8 @@ describe('gates/task-audit-summary', () => {
                         reviewer_identity: reviewerIdentity,
                         review_context_sha256: fixture.reviewContextSha256,
                         routing_event_sha256: 'd'.repeat(64),
+                        execution_provider: 'GitHubCopilot',
+                        provider: 'Claude',
                         reviewer_launch_tool: 'Codex',
                         provider_invocation_id: 'codex-subagent-run-123',
                         reviewer_launch_attestation_source: 'codex_subagent',
@@ -487,7 +489,7 @@ describe('gates/task-audit-summary', () => {
             const [entry] = result.final_closeout.review_timing_audit?.entries || [];
             assert.ok(entry);
             assert.equal(entry.review_type, 'code');
-            assert.equal(entry.provider, 'Codex');
+            assert.equal(entry.provider, 'GitHubCopilot');
             assert.equal(entry.provider_invocation_id, 'codex-subagent-run-123');
             assert.equal(entry.launch_to_result_ms, 53000);
             assert.equal(entry.launch_to_source_mtime_ms, 54000);
@@ -495,7 +497,7 @@ describe('gates/task-audit-summary', () => {
             assert.equal(entry.hidden_timing_distrust_code, null);
             const rendered = formatTaskAuditSummaryText(result);
             assert.ok(rendered.includes('Review timing audit: code(TRUSTED, launch_to_result=53000ms'));
-            assert.ok(rendered.includes('provider=Codex provider_invocation=codex-subagent-run-123'));
+            assert.ok(rendered.includes('provider=GitHubCopilot provider_invocation=codex-subagent-run-123'));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Review timing audit: code(TRUSTED'));
         });
     });

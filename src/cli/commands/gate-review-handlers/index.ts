@@ -3316,6 +3316,11 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
             launchDetails: {
                 reviewer_launch_artifact_path: normalizePath(launchArtifact.artifactPath),
                 reviewer_launch_artifact_sha256: launchArtifact.artifactSha256,
+                execution_provider: runtimeIdentity.execution_provider,
+                execution_provider_source: runtimeIdentity.execution_provider_source,
+                canonical_source_of_truth: runtimeIdentity.canonical_source_of_truth,
+                routed_to: runtimeIdentity.routed_to,
+                provider_bridge: runtimeIdentity.provider_bridge,
                 reviewer_launch_attestation_source: launchArtifact.attestationSource,
                 reviewer_launch_tool: launchArtifact.launchTool,
                 provider_invocation_id: launchArtifact.providerInvocationId,
