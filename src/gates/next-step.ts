@@ -137,7 +137,8 @@ import {
 } from './completion-reporting';
 import {
     getProviderEntryById,
-    normalizeProviderId
+    normalizeProviderId,
+    resolveProviderFromEnvironment as resolveProviderFromRegistryEnvironment
 } from '../core/provider-registry';
 import {
     evaluateScopeBudgetGuard,
@@ -257,14 +258,6 @@ const REVIEW_VERDICT_FAIL_TOKENS: Record<string, string> = Object.freeze(Object.
 ));
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
-export const COPILOT_PROVIDER_ENV_KEYS = Object.freeze([
-    'GITHUB_COPILOT_CLI',
-    'GITHUB_COPILOT_AGENT',
-    'GITHUB_COPILOT_CODING_AGENT',
-    'COPILOT_CLI',
-    'COPILOT_AGENT',
-    'COPILOT_AGENT_ID'
-]);
 
 export type NextStepStatus = 'BLOCKED' | 'READY' | 'DONE' | 'DECOMPOSED' | 'SPLIT_REQUIRED';
 
@@ -4883,26 +4876,7 @@ function buildNextStepProfileSummary(
 }
 
 function resolveProviderFromEnvironment(): string | null {
-    const explicitProvider = normalizeProviderId(process.env.GARDA_EXECUTION_PROVIDER);
-    if (explicitProvider) {
-        return explicitProvider;
-    }
-    if (COPILOT_PROVIDER_ENV_KEYS.some((key) => process.env[key])) {
-        return 'GitHubCopilot';
-    }
-    if (process.env.QWEN_CODE) {
-        return 'Qwen';
-    }
-    if (process.env.CODEX_THREAD_ID || process.env.CODEX_HOME) {
-        return 'Codex';
-    }
-    if (process.env.CLAUDE_CODE_SSE_PORT) {
-        return 'Claude';
-    }
-    if (process.env.CURSOR_TRACE_ID || process.env.CURSOR_AGENT) {
-        return 'Cursor';
-    }
-    return null;
+    return resolveProviderFromRegistryEnvironment(process.env);
 }
 
 function quoteProviderForCommand(provider: string | null): string {

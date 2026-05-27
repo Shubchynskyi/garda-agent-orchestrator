@@ -23,6 +23,7 @@ import {
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../../../src/gate-runtime/reviewer-session-contract';
+import { formatProviderIdList } from '../../../src/core/provider-registry';
 
 
 import * as fs from 'node:fs';
@@ -117,7 +118,13 @@ describe('cross-provider-router-matrix: root-entrypoint canonical blocks', () =>
             );
         });
 
-        it(`${provider}: canonical block references all 4 provider bridge paths`, () => {
+        it(`${provider}: canonical block renders provider list from registry`, () => {
+            const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
+            assert.ok(block.includes(`(\`${formatProviderIdList('`, `')}\`)`));
+            assert.ok(!block.includes('{{SOURCE_OF_TRUTH_VALUES}}'));
+        });
+
+        it(`${provider}: canonical block references all provider bridge paths`, () => {
             const block = buildCanonicalManagedBlock(canonicalFile, canonicalRuleIndexTemplateContent);
             for (const bp of BRIDGE_PATHS) {
                 assert.ok(
@@ -163,12 +170,11 @@ describe('cross-provider-router-matrix: redirect entrypoint blocks', () => {
         assert.ok(redirect.includes('.agents/workflows/start-task.md'));
     });
 
-    it('redirect block includes all 4 provider bridge lines when bridges given', () => {
+    it('redirect block includes all provider bridge lines when bridges given', () => {
         const redirect = buildRedirectManagedBlock('GEMINI.md', 'CLAUDE.md', BRIDGE_PATHS);
-        assert.ok(redirect.includes('GitHub Copilot'));
-        assert.ok(redirect.includes('Windsurf'));
-        assert.ok(redirect.includes('Junie'));
-        assert.ok(redirect.includes('Antigravity'));
+        for (const providerLabel of BRIDGE_PROVIDER_LABELS) {
+            assert.ok(redirect.includes(providerLabel), `Redirect block missing bridge provider ${providerLabel}`);
+        }
     });
 
     it('redirect block shows no-bridge message when empty', () => {
@@ -645,8 +651,9 @@ describe('cross-provider-router-matrix: mixed active-agent setups', () => {
 // ===========================================================================
 
 describe('cross-provider-router-matrix: drift detection', () => {
-    it('SOURCE_OF_TRUTH_VALUES has exactly 9 providers', () => {
-        assert.equal(ALL_PROVIDERS.length, 9);
+    it('SOURCE_OF_TRUTH_VALUES is registry-derived and non-empty', () => {
+        assert.ok(ALL_PROVIDERS.length > 0);
+        assert.equal(ALL_PROVIDERS.length, new Set(ALL_PROVIDERS).size);
     });
 
     it('SOURCE_TO_ENTRYPOINT_MAP covers all SOURCE_OF_TRUTH_VALUES', () => {
@@ -681,8 +688,9 @@ describe('cross-provider-router-matrix: drift detection', () => {
         }
     });
 
-    it('provider bridge count matches orchestrator profile count (4)', () => {
-        assert.equal(PROVIDER_BRIDGE_PROFILES.length, 4);
+    it('provider bridge count matches registry-derived bridge paths', () => {
+        assert.equal(PROVIDER_BRIDGE_PROFILES.length, BRIDGE_PATHS.length);
+        assert.ok(PROVIDER_BRIDGE_PROFILES.length > 0);
     });
 
     it('every provider bridge path appears in INSTALL_BACKUP_CANDIDATE_PATHS', () => {

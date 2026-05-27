@@ -14,7 +14,9 @@ import {
     getProviderBridgeEntries,
     getProviderBridgeRelativePaths,
     getProviderEntries,
+    getProviderEnvironmentDetectionMarkers,
     getProviderEntrypointFiles,
+    formatProviderIdList,
     getRequiredProviderEntryByBridgePath,
     getRequiredReviewSkillBridgeHostEntry
 } from '../core/provider-registry';
@@ -134,13 +136,10 @@ export function getLegacyUninstallBackupGitignoreEntry(): string {
 }
 export const COMMIT_GUARD_ENV_NAME = 'GARDA_ALLOW_COMMIT';
 export const COMMIT_GUARD_EXTRA_MARKERS_ENV = 'GARDA_AGENT_ENV_MARKERS';
-export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([
-    'CODEX_THREAD_ID',
-    'CLAUDE_CODE_SSE_PORT',
+export const COMMIT_GUARD_AGENT_MARKERS = Object.freeze([...new Set([
+    ...getProviderEnvironmentDetectionMarkers(),
     'AIDER_SESSION_ID',
-    'CURSOR_TRACE_ID',
-    'CURSOR_AGENT'
-]);
+])]);
 
 export const INSTALL_BACKUP_CANDIDATE_PATHS = Object.freeze([
     ...getProviderEntrypointFiles(), 'TASK.md',
@@ -519,7 +518,12 @@ export function buildCanonicalManagedBlock(canonicalFile: string, entrypointTemp
     if (!baseBlock) {
         throw new Error('Entrypoint template managed block is missing; cannot build canonical entrypoint.');
     }
-    return restoreEntrypointRuleLinks(baseBlock).replace(/^# .+$/m, `# ${canonicalFile}`);
+    return restoreEntrypointRuleLinks(baseBlock)
+        .replace(/^# .+$/m, `# ${canonicalFile}`)
+        .replace(
+            /At setup, source of truth is selected via `-SourceOfTruth` \([^)]+\)\./,
+            `At setup, source of truth is selected via \`-SourceOfTruth\` (\`${formatProviderIdList('`, `')}\`).`
+        );
 }
 
 export function buildRedirectManagedBlock(

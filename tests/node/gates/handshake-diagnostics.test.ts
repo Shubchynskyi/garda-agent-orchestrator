@@ -13,6 +13,7 @@ import {
     type HandshakeDiagnosticsArtifact
 } from '../../../src/gates/handshake-diagnostics';
 import { buildTaskModeArtifact } from '../../../src/gates/task-mode';
+import { getProviderIds } from '../../../src/core/provider-registry';
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-handshake-test-'));
@@ -246,9 +247,8 @@ describe('gates/handshake-diagnostics', () => {
             assert.equal(result.cli_path, 'node garda-agent-orchestrator/bin/garda.js');
         });
 
-        it('records all 9 supported providers', () => {
-            const providers = ['Claude', 'Codex', 'Cursor', 'Gemini', 'Qwen', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity'];
-            for (const provider of providers) {
+        it('records all supported registry providers', () => {
+            for (const provider of getProviderIds()) {
                 const providerDir = createTempDir();
                 try {
                     scaffoldWorkspace(providerDir, {

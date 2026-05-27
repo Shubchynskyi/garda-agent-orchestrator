@@ -11,6 +11,9 @@ import {
     initAnswersSchema,
     validateAgainstSchema
 } from '../../../src/schemas/config-schemas';
+import {
+    SOURCE_OF_TRUTH_VALUES
+} from '../../../src/core/constants';
 
 test('validateInitAnswers normalizes booleans and canonical entrypoint selections', () => {
     const normalized = validateInitAnswers({
@@ -138,8 +141,7 @@ test('serialized init-answers without ActiveAgentFiles validates against initAns
 });
 
 test('all SourceOfTruth enum values pass schema validation', () => {
-    const sourceValues = ['Claude', 'Codex', 'Cursor', 'Gemini', 'Qwen', 'GitHubCopilot', 'Windsurf', 'Junie', 'Antigravity'];
-    for (const source of sourceValues) {
+    for (const source of SOURCE_OF_TRUTH_VALUES) {
         const doc = {
             AssistantLanguage: 'English',
             AssistantBrevity: 'concise',

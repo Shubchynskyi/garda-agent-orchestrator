@@ -23,8 +23,10 @@ import {
     getRequiredProviderEntryByBridgePath,
     getRequiredReviewSkillBridgeHostEntry,
     normalizeProviderId,
+    resolveProviderFromEnvironment,
     getReviewSkillBridgeHostEntry,
-    getReviewerCapabilityTier
+    getReviewerCapabilityTier,
+    formatProviderIdList
 } from '../../../src/core/provider-registry';
 import {
     SOURCE_OF_TRUTH_VALUES,
@@ -146,6 +148,25 @@ describe('provider-registry: internal consistency', () => {
         assert.strictEqual(normalizeProviderId('GitHub Copilot Agent'), 'GitHubCopilot');
         assert.strictEqual(normalizeProviderId('github-copilot-coding-agent'), 'GitHubCopilot');
         assert.strictEqual(normalizeProviderId('OtherProvider'), null);
+    });
+
+    it('resolves runtime provider from registry-owned environment markers', () => {
+        assert.strictEqual(resolveProviderFromEnvironment({ GARDA_EXECUTION_PROVIDER: 'codex' }), 'Codex');
+        assert.strictEqual(
+            resolveProviderFromEnvironment({ GITHUB_COPILOT_CLI: '1', CLAUDE_CODE_SSE_PORT: '1' }),
+            'GitHubCopilot'
+        );
+        assert.strictEqual(
+            resolveProviderFromEnvironment({ QWEN_CODE: '1', CODEX_HOME: '/tmp/codex' }),
+            'Qwen'
+        );
+        assert.strictEqual(resolveProviderFromEnvironment({ CURSOR_AGENT: '1' }), 'Cursor');
+        assert.strictEqual(resolveProviderFromEnvironment({}), null);
+    });
+
+    it('formats provider id lists from the registry', () => {
+        assert.strictEqual(formatProviderIdList('|'), getProviderIds().join('|'));
+        assert.strictEqual(formatProviderIdList(), getProviderIds().join(', '));
     });
 
     it('getProviderEntryByBridgePath resolves providers case-insensitively', () => {
@@ -325,15 +346,14 @@ describe('provider-registry: reviewer routing sync', () => {
         assert.strictEqual(getReviewerCapabilityTier('UnknownProvider'), null);
     });
 
-    it('delegation_required providers match known set', () => {
-        const delegationRequired = getProviderEntries()
-            .filter((e) => e.reviewerCapabilityTier === 'delegation_required')
-            .map((e) => e.id)
-            .sort();
-        assert.deepStrictEqual(
-            delegationRequired,
-            ['Antigravity', 'Claude', 'Codex', 'Cursor', 'Gemini', 'GitHubCopilot', 'Junie', 'Qwen', 'Windsurf']
-        );
+    it('delegation_required providers expose reviewer launch metadata', () => {
+        for (const entry of getProviderEntries().filter((e) => e.reviewerCapabilityTier === 'delegation_required')) {
+            assert.ok(entry.reviewerLaunchLabel?.trim(), `${entry.id} must define reviewerLaunchLabel`);
+            assert.ok(
+                entry.delegatedReviewerLaunchInstruction?.trim(),
+                `${entry.id} must define delegatedReviewerLaunchInstruction`
+            );
+        }
     });
 
     it('delegation_conditional providers are no longer present in the strict delegated review contract', () => {

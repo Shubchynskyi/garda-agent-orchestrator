@@ -12,6 +12,13 @@ export type ReviewerCapabilityTier = 'delegation_required' | 'delegation_conditi
 export type ProviderBridgeProfileVariant = 'standard' | 'compact_router';
 export type ProviderBridgeSelfReferenceRequirement = 'none' | 'bridge_path';
 
+export interface ProviderEnvironmentDetection {
+    /** Environment variables that identify this runtime provider when set. */
+    readonly markers: readonly string[];
+    /** Lower numbers are checked first when several provider markers are present. */
+    readonly priority: number;
+}
+
 export interface ProviderEntry {
     /** Canonical provider id used across SOURCE_OF_TRUTH_VALUES, routing, and gate artifacts. */
     readonly id: string;
@@ -27,6 +34,8 @@ export interface ProviderEntry {
     readonly delegatedReviewerLaunchInstruction?: string;
     /** Provider orchestrator bridge definition (null when the provider has no dedicated bridge). */
     readonly bridge: ProviderBridgeDefinition | null;
+    /** Optional environment-marker based runtime detection metadata. */
+    readonly environmentDetection?: ProviderEnvironmentDetection;
     /** Known alias tokens for normalizeAgentEntrypointToken. */
     readonly aliases: readonly string[];
 }
@@ -72,12 +81,44 @@ function validateProviderEntries(entries: readonly ProviderEntry[]): void {
         );
     }
 
+    const aliasOwners = new Map<string, string>();
+    const environmentMarkerOwners = new Map<string, string>();
+
     for (const entry of entries) {
         if (!entry.reviewerLaunchLabel?.trim()) {
             throw new Error(`Delegation-required provider '${entry.id}' is missing reviewerLaunchLabel.`);
         }
         if (!entry.delegatedReviewerLaunchInstruction?.trim()) {
             throw new Error(`Delegation-required provider '${entry.id}' is missing delegatedReviewerLaunchInstruction.`);
+        }
+
+        const aliasCandidates = [entry.id, entry.displayLabel, ...entry.aliases];
+        for (const alias of aliasCandidates) {
+            const normalizedAlias = normalizeProviderLookupToken(alias);
+            if (!normalizedAlias) {
+                continue;
+            }
+            const existingOwner = aliasOwners.get(normalizedAlias);
+            if (existingOwner && existingOwner !== entry.id) {
+                throw new Error(
+                    `Provider alias '${alias}' is shared by '${existingOwner}' and '${entry.id}'.`
+                );
+            }
+            aliasOwners.set(normalizedAlias, entry.id);
+        }
+
+        for (const marker of entry.environmentDetection?.markers || []) {
+            const normalizedMarker = String(marker || '').trim().toUpperCase();
+            if (!normalizedMarker) {
+                throw new Error(`Provider '${entry.id}' has an empty environment detection marker.`);
+            }
+            const existingOwner = environmentMarkerOwners.get(normalizedMarker);
+            if (existingOwner && existingOwner !== entry.id) {
+                throw new Error(
+                    `Provider environment marker '${normalizedMarker}' is shared by '${existingOwner}' and '${entry.id}'.`
+                );
+            }
+            environmentMarkerOwners.set(normalizedMarker, entry.id);
         }
 
         if (!entry.bridge) {
@@ -115,8 +156,18 @@ function validateProviderEntries(entries: readonly ProviderEntry[]): void {
                 `Provider '${entry.id}' entrypointCoveredByDirectoryIgnore does not match gitignoreEntries coverage.`
             );
         }
+
     }
 }
+
+export const COPILOT_PROVIDER_ENV_KEYS = Object.freeze([
+    'GITHUB_COPILOT_CLI',
+    'GITHUB_COPILOT_AGENT',
+    'GITHUB_COPILOT_CODING_AGENT',
+    'COPILOT_CLI',
+    'COPILOT_AGENT',
+    'COPILOT_AGENT_ID'
+]);
 
 const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
     {
@@ -127,6 +178,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerCapabilityTier: 'delegation_required',
         delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via Agent tool (`fork_context=false`).',
         bridge: null,
+        environmentDetection: {
+            markers: ['CLAUDE_CODE_SSE_PORT'],
+            priority: 40
+        },
         aliases: ['claude', 'claude.md']
     },
     {
@@ -137,6 +192,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerCapabilityTier: 'delegation_required',
         delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via sub-agents with isolated context.',
         bridge: null,
+        environmentDetection: {
+            markers: ['CODEX_THREAD_ID', 'CODEX_HOME'],
+            priority: 30
+        },
         aliases: ['codex', 'agents', 'agents.md']
     },
     {
@@ -147,6 +206,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerCapabilityTier: 'delegation_required',
         delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
         bridge: null,
+        environmentDetection: {
+            markers: ['CURSOR_TRACE_ID', 'CURSOR_AGENT'],
+            priority: 50
+        },
         aliases: ['cursor']
     },
     {
@@ -167,6 +230,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         reviewerCapabilityTier: 'delegation_required',
         delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
         bridge: null,
+        environmentDetection: {
+            markers: ['QWEN_CODE'],
+            priority: 20
+        },
         aliases: ['qwen', 'qwen.md']
     },
     {
@@ -184,6 +251,10 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
             profileVariant: 'standard',
             reviewSkillBridgeHost: true,
             selfReferenceRequirement: 'none'
+        },
+        environmentDetection: {
+            markers: COPILOT_PROVIDER_ENV_KEYS,
+            priority: 10
         },
         aliases: [
             'githubcopilot',
@@ -323,6 +394,46 @@ export function getRequiredProviderEntryByBridgePath(bridgeRelativePath: string)
 /** Ordered canonical provider ids (used as SOURCE_OF_TRUTH_VALUES). */
 export function getProviderIds(): readonly string[] {
     return PROVIDER_ENTRIES.map((entry) => entry.id);
+}
+
+export function formatProviderIdList(separator = ', '): string {
+    return getProviderIds().join(separator);
+}
+
+export function getProviderEnvironmentDetectionMarkers(): readonly string[] {
+    const markers = new Set<string>();
+    for (const entry of PROVIDER_ENTRIES) {
+        for (const marker of entry.environmentDetection?.markers || []) {
+            markers.add(marker);
+        }
+    }
+    return Object.freeze([...markers]);
+}
+
+export function getProviderRuntimeEnvironmentKeys(): readonly string[] {
+    return Object.freeze(['GARDA_EXECUTION_PROVIDER', ...getProviderEnvironmentDetectionMarkers()]);
+}
+
+export function resolveProviderFromEnvironment(
+    env: NodeJS.ProcessEnv = process.env
+): string | null {
+    const explicitProvider = normalizeProviderId(env.GARDA_EXECUTION_PROVIDER);
+    if (explicitProvider) {
+        return explicitProvider;
+    }
+
+    const candidates = PROVIDER_ENTRIES
+        .filter((entry) => entry.environmentDetection)
+        .sort((left, right) => (
+            left.environmentDetection!.priority - right.environmentDetection!.priority
+        ));
+
+    for (const entry of candidates) {
+        if (entry.environmentDetection!.markers.some((key) => env[key])) {
+            return entry.id;
+        }
+    }
+    return null;
 }
 
 /** Map: provider id → entrypoint file. */

@@ -8,10 +8,13 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import {
-    COPILOT_PROVIDER_ENV_KEYS,
     formatNextStepText,
     resolveNextStep
 } from '../../../src/gates/next-step';
+import {
+    COPILOT_PROVIDER_ENV_KEYS,
+    getProviderRuntimeEnvironmentKeys
+} from '../../../src/core/provider-registry';
 import {
     recordFullSuiteValidationDuration,
     type FullSuiteValidationConfig
@@ -55,16 +58,7 @@ const ALL_REVIEW_FLAGS = Object.freeze({
 });
 
 let tempRoots: string[] = [];
-const PROVIDER_ENV_KEYS = Object.freeze([
-    'GARDA_EXECUTION_PROVIDER',
-    ...COPILOT_PROVIDER_ENV_KEYS,
-    'QWEN_CODE',
-    'CODEX_THREAD_ID',
-    'CODEX_HOME',
-    'CLAUDE_CODE_SSE_PORT',
-    'CURSOR_TRACE_ID',
-    'CURSOR_AGENT'
-]);
+const PROVIDER_ENV_KEYS = getProviderRuntimeEnvironmentKeys();
 
 function withProviderEnv<T>(updates: Record<string, string | undefined>, callback: () => T): T {
     const previousValues = new Map<string, string | undefined>();
