@@ -1314,8 +1314,10 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Compatible doc-impact choices:'));
         assert.ok(result.reason.includes('no user-facing docs -> --decision "NO_DOC_UPDATES"'));
         assert.ok(result.reason.includes('docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false'));
-        assert.ok(result.reason.includes('changelog touched -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true'));
+        assert.ok(result.reason.includes('changelog/docs maintenance only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true'));
+        assert.ok(result.reason.includes('changelog plus implementation scope -> next-step defaults to --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
         assert.ok(result.reason.includes('behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed true'));
     });
 
     it('routes to doc-impact without refreshing preflight when task closeout is added after reviews', () => {
@@ -1840,6 +1842,33 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
         assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
         assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed true'));
+        assert.ok(result.commands[0].command.includes('--changelog-updated true'));
+    });
+
+    it('keeps changelog-only documentation maintenance default non-behavior-changing', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\n- Maintenance note.\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS },
+            { changedFiles: ['CHANGELOG.md'], seedPostPreflight: false }
+        );
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'docs';
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed false'));
         assert.ok(result.commands[0].command.includes('--changelog-updated true'));
     });
 

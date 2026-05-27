@@ -4970,6 +4970,28 @@ function getDocImpactChangedFiles(
     ));
 }
 
+function hasNonDocumentationPreflightScope(
+    preflight: Record<string, unknown> | null,
+    repoRoot: string
+): boolean {
+    const classificationConfig = getClassificationConfig(repoRoot);
+    return getPreflightChangedFiles(preflight).some((filePath) => (
+        !isDocumentationLikePath(filePath, classificationConfig.ordinary_doc_paths)
+    ));
+}
+
+function shouldDefaultDocImpactBehaviorChanged(
+    preflight: Record<string, unknown> | null,
+    repoRoot: string,
+    docsUpdated: string[]
+): boolean {
+    const changelogUpdated = docsUpdated.some((filePath) => isChangelogPath(filePath));
+    if (!changelogUpdated) {
+        return false;
+    }
+    return hasNonDocumentationPreflightScope(preflight, repoRoot);
+}
+
 function buildDocImpactCommand(
     cliPrefix: string,
     taskId: string,
@@ -4983,6 +5005,7 @@ function buildDocImpactCommand(
         ...additionalDocsUpdated.map((entry) => normalizePath(entry)).filter(Boolean)
     ])].sort();
     const changelogUpdated = docsUpdated.some((filePath) => isChangelogPath(filePath));
+    const behaviorChanged = shouldDefaultDocImpactBehaviorChanged(preflight, repoRoot, docsUpdated);
     const parts = [
         `${cliPrefix} gate doc-impact-gate`,
         `--task-id ${quoteCommandValue(taskId)}`,
@@ -4990,7 +5013,7 @@ function buildDocImpactCommand(
     ];
     if (docsUpdated.length > 0) {
         parts.push('--decision "DOCS_UPDATED"');
-        parts.push('--behavior-changed false');
+        parts.push(`--behavior-changed ${behaviorChanged ? 'true' : 'false'}`);
         for (const docPath of docsUpdated) {
             parts.push(`--docs-updated ${quoteCommandValue(docPath)}`);
         }
@@ -5004,7 +5027,9 @@ function buildDocImpactCommand(
         parts.push('--sensitive-scope-reviewed true');
     }
     parts.push(docsUpdated.length > 0
-        ? '--rationale "Documentation or changelog files were changed in the current preflight; next-step records them without requiring a fresh code/test review when non-doc scope is unchanged."'
+        ? behaviorChanged
+            ? '--rationale "Changelog and implementation files changed in the current preflight; recording documentation impact as behavior-changing by default. Adjust only if the changelog entry is not user-visible behavior."'
+            : '--rationale "Documentation or changelog files were changed in the current preflight; next-step records them without requiring a fresh code/test review when non-doc scope is unchanged."'
         : '--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."');
     parts.push('--repo-root "."');
     return parts.join(' ');
@@ -5015,7 +5040,8 @@ function buildDocImpactCompatibilityHint(): string {
         'Compatible doc-impact choices:',
         'no user-facing docs -> --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false;',
         'docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false plus --docs-updated for each user-facing doc;',
-        'changelog touched -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true plus --docs-updated "CHANGELOG.md";',
+        'changelog/docs maintenance only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true plus --docs-updated "CHANGELOG.md";',
+        'changelog plus implementation scope -> next-step defaults to --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true;',
         'behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true plus docs/changelog evidence.'
     ].join(' ');
 }
