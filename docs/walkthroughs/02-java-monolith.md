@@ -141,49 +141,51 @@ billing-platform/
 |---|---|---|---|---|---|
 | T-301 | 🟦 TODO | P1 | backend | Add late-payment fee calculation to InvoiceService | strict |
 
-This task touches service logic, database queries, and monetary calculations — the `strict` profile (depth=3) is appropriate.
+This task touches service logic, database queries, and monetary calculations,
+so the `strict` profile is appropriate. The active profile and preflight decide
+the effective depth; agents should still drive the task with `next-step`.
 
 ### Execute the Task
 
 ```
-Execute task T-301 depth=3
+Execute task T-301 strictly through the orchestrator.
 ```
 
 #### Agent Lifecycle
 
 ```
- 1. Read task + rules                → PLAN_CREATED
- 2. Classify changes                 → PREFLIGHT_CLASSIFIED
-    garda gate enter-task-mode --task-id "T-301" --task-summary "Add late-payment fee calculation"
-    garda gate load-rule-pack --task-id "T-301" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    garda gate classify-change --use-staged --task-id "T-301" --task-intent "Add late-payment fee calculation"
-    garda gate load-rule-pack --task-id "T-301" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-301-preflight.json" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/70-security.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    Result: FULL_PATH, reviews: [code, db, security]
- 3. Implement code + tests           → (working…)
+ 1. next-step loop through startup   -> task-mode, rules, handshake, shell smoke
+ 2. classify-change                  -> PREFLIGHT_CLASSIFIED (reviews: code, db, security)
+ 3. POST_PREFLIGHT rule evidence     -> ready to implement
+ 4. Implement code + tests           -> (working...)
     - InvoiceService.java — new calculateLateFee() method
     - Invoice.java — new lateFeeAmount field
     - V2__add_late_fee.sql — new migration
     - InvoiceServiceTest.java — new test cases for fee calculation
- 4. Run compile gate                 → COMPILE_GATE_PASSED ✅
+ 5. Run compile gate                 → COMPILE_GATE_PASSED
     garda gate compile-gate --task-id "T-301"
     (Maven build: `mvn compile test` — output filtered by maven profile)
- 5. Launch code review               → reviewer spawned
- 6. Launch DB review                 → reviewer spawned (triggered by V2__add_late_fee.sql)
- 7. Launch security review           → reviewer spawned (monetary calculation path)
- 8. Review gate check                → REVIEW_GATE_FAILED ❌
-    garda gate required-reviews-check --task-id "T-301" --code-review-verdict "pass" --db-review-verdict "findings" --security-review-verdict "pass"
+ 6. Launch fresh code reviewer       → REVIEW_RECORDED (PASS)
+ 7. Launch fresh DB reviewer         → REVIEW_RECORDED (FAIL)
+ 8. Launch fresh security reviewer   → REVIEW_RECORDED (PASS)
+ 9. Review gate check                → REVIEW_GATE_FAILED
     DB reviewer found: missing index on late_fee_amount column
- 9. Rework: add index to migration   → REWORK_STARTED
-10. Re-run compile gate              → COMPILE_GATE_PASSED ✅
-11. Re-run DB review                 → REVIEW_GATE_PASSED ✅
-12. Doc impact gate                  → DOC_IMPACT_ASSESSED ✅
-13. Completion gate                  → COMPLETION_GATE_PASSED ✅
-14. Mark DONE                        → TASK_DONE
+10. Rework: add index to migration   → workspace diff changes
+11. Rerun next-step                  → refresh preflight/POST_PREFLIGHT as needed
+12. Re-run compile gate              → COMPILE_GATE_PASSED
+13. Rerun next-step                  → build-review-context for invalidated DB lane
+14. Launch fresh DB reviewer         → DB REVIEW PASSED
+15. required-reviews-check           → REVIEW_GATE_PASSED
+16. doc-impact-gate                  → DOC_IMPACT_GATE_PASSED
+17. project-memory-impact if enabled → current evidence recorded
+18. completion-gate                  → COMPLETION_GATE_PASSED
+19. task-audit-summary               → final closeout materialized
+20. next-step                        → DONE
 ```
 
 #### Classify-Change Detail
 
-With `depth=3`, the classify-change gate loads the full rule set and detects:
+With the `strict` profile, the classify-change gate detects:
 - `*.java` in `service/` → triggers **code** review (mandatory).
 - `db/migration/*.sql` → triggers **db** review (mandatory).
 - Monetary field in model → triggers **security** review (mandatory).
@@ -198,20 +200,21 @@ garda gate task-events-summary --task-id "T-301"
 
 ```
 Task: T-301
-Events: 12
+Events: abbreviated
 Timeline:
 [01] 2026-03-21T14:00:00Z | PLAN_CREATED              | INFO  | actor=orchestrator
 [02] 2026-03-21T14:01:00Z | PREFLIGHT_CLASSIFIED      | INFO
 [03] 2026-03-21T14:25:00Z | COMPILE_GATE_PASSED       | PASS
 [04] 2026-03-21T14:26:00Z | REVIEW_PHASE_STARTED      | INFO
-[05] 2026-03-21T14:27:00Z | REVIEW_REQUESTED          | INFO  | actor=code-review
-[06] 2026-03-21T14:28:00Z | REVIEW_REQUESTED          | INFO  | actor=db-review
-[07] 2026-03-21T14:29:00Z | REVIEW_REQUESTED          | INFO  | actor=security-review
+[05] 2026-03-21T14:27:00Z | REVIEW_RECORDED           | PASS  | actor=code-review
+[06] 2026-03-21T14:28:00Z | REVIEW_RECORDED           | FAIL  | actor=db-review
+[07] 2026-03-21T14:29:00Z | REVIEW_RECORDED           | PASS  | actor=security-review
 [08] 2026-03-21T14:40:00Z | REVIEW_GATE_FAILED        | FAIL
-[09] 2026-03-21T14:41:00Z | REWORK_STARTED            | INFO
-[10] 2026-03-21T14:55:00Z | REVIEW_GATE_PASSED        | PASS
-[11] 2026-03-21T14:56:00Z | COMPLETION_GATE_PASSED    | PASS
-[12] 2026-03-21T14:57:00Z | TASK_DONE                 | PASS
+[09] 2026-03-21T14:41:00Z | PREFLIGHT_CLASSIFIED      | INFO  | remediation cycle
+[10] 2026-03-21T14:55:00Z | REVIEW_RECORDED           | PASS  | actor=db-review
+[11] 2026-03-21T14:56:00Z | REVIEW_GATE_PASSED        | PASS
+[12] 2026-03-21T14:57:00Z | COMPLETION_GATE_PASSED    | PASS
+[13] 2026-03-21T14:58:00Z | FINAL_CLOSEOUT_READY      | PASS
 IntegrityStatus: VALID
 ```
 
@@ -303,7 +306,7 @@ Removed:
 - **Output filters**: The `maven` and `gradle` profiles in `live/config/output-filters.json` handle build output compaction automatically.
 - **Skill packs**: `java-spring` adds Spring-specific review guidance. Pair with `data-database` if you have Flyway/Liquibase migrations.
 - **paths.json**: Add your project-specific source roots if the defaults (`src/main/java`, `src/test/java`) don't match. Trigger patterns for `db/migration/` are already included.
-- **Profile selection**: Use the `strict` profile (depth=3) for tasks that touch database migrations, security-sensitive code, or cross-module logic. Use `default` or `balanced` (depth=2) for standard feature work.
+- **Profile selection**: Use the `strict` profile for tasks that touch database migrations, security-sensitive code, or cross-module logic. Use `default` or `balanced` for standard feature work.
 - **Multi-module Maven**: If you have submodules, ensure the compile gate command in the agent rules points to the correct `mvn` invocation for your root POM.
 
 ---

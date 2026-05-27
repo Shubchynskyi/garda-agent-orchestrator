@@ -164,35 +164,33 @@ order-service/
 ### Execute the Task
 
 ```
-Execute task T-401 depth=2
+Execute task T-401 strictly through the orchestrator.
 ```
+
+The agent uses `garda next-step "T-401"` as the navigator before the first gate
+and after every suggested command.
 
 #### Agent Lifecycle
 
 ```
- 1. Read task + rules                → PLAN_CREATED
- 2. Classify changes                 → PREFLIGHT_CLASSIFIED
-    garda gate enter-task-mode --task-id "T-401" --task-summary "Add order cancellation with refund"
-    garda gate load-rule-pack --task-id "T-401" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    garda gate classify-change --use-staged --task-id "T-401" --task-intent "Add order cancellation with refund"
-    garda gate load-rule-pack --task-id "T-401" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-401-preflight.json" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/70-security.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    Result: STANDARD_PATH, reviews: [code, security]
- 3. Implement code + tests           → (working…)
+ 1. next-step startup loop           → task-mode, rules, handshake, shell smoke
+ 2. classify-change                  → PREFLIGHT_CLASSIFIED (reviews: code, security)
+ 3. POST_PREFLIGHT rule evidence     → ready to implement
+ 4. Implement code + tests           → (working...)
     - app/routers/orders.py — new POST /orders/{id}/cancel endpoint
     - app/services/refund.py — new refund service module
     - tests/test_cancel_order.py — new test file
- 4. Run compile gate                 → COMPILE_GATE_PASSED ✅
+ 5. Run compile gate                 → COMPILE_GATE_PASSED
     garda gate compile-gate --task-id "T-401"
     (Runs: pytest --tb=short — output filtered by generic test profile)
- 5. Launch code review               → reviewer spawned
- 6. Launch security review           → reviewer spawned (refund/payment path detected)
- 7. Review gate check                → REVIEW_GATE_PASSED ✅
-    garda gate required-reviews-check --task-id "T-401" --code-review-verdict "pass" --security-review-verdict "pass"
- 8. Doc impact gate                  → DOC_IMPACT_ASSESSED ✅
-    garda gate doc-impact-gate --task-id "T-401" --decision "NO_DOC_UPDATES"
- 9. Completion gate                  → COMPLETION_GATE_PASSED ✅
-    garda gate completion-gate --task-id "T-401"
-10. Mark DONE                        → TASK_DONE
+ 6. Launch fresh code reviewer       → REVIEW_RECORDED (PASS)
+ 7. Launch fresh security reviewer   → REVIEW_RECORDED (PASS)
+ 8. required-reviews-check           → REVIEW_GATE_PASSED
+ 9. doc-impact-gate                  → DOC_IMPACT_GATE_PASSED
+10. project-memory-impact if enabled → current evidence recorded
+11. completion-gate                  → COMPLETION_GATE_PASSED
+12. task-audit-summary               → final closeout materialized
+13. next-step                        → DONE
 ```
 
 #### Why Security Review Triggered
@@ -207,16 +205,17 @@ garda gate task-events-summary --task-id "T-401"
 
 ```
 Task: T-401
-Events: 8
+Events: abbreviated
 Timeline:
 [01] 2026-03-22T11:00:00Z | PLAN_CREATED              | INFO  | actor=orchestrator
 [02] 2026-03-22T11:01:00Z | PREFLIGHT_CLASSIFIED      | INFO
 [03] 2026-03-22T11:15:00Z | COMPILE_GATE_PASSED       | PASS
 [04] 2026-03-22T11:16:00Z | REVIEW_PHASE_STARTED      | INFO
-[05] 2026-03-22T11:17:00Z | REVIEW_REQUESTED          | INFO  | actor=code-review
-[06] 2026-03-22T11:18:00Z | REVIEW_REQUESTED          | INFO  | actor=security-review
+[05] 2026-03-22T11:17:00Z | REVIEW_RECORDED           | PASS  | actor=code-review
+[06] 2026-03-22T11:18:00Z | REVIEW_RECORDED           | PASS  | actor=security-review
 [07] 2026-03-22T11:28:00Z | REVIEW_GATE_PASSED        | PASS
-[08] 2026-03-22T11:29:00Z | TASK_DONE                 | PASS
+[08] 2026-03-22T11:29:00Z | COMPLETION_GATE_PASSED    | PASS
+[09] 2026-03-22T11:30:00Z | FINAL_CLOSEOUT_READY      | PASS
 IntegrityStatus: VALID
 ```
 

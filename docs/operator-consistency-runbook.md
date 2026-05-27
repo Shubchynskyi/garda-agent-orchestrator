@@ -77,7 +77,9 @@ Safe recovery:
 
 1. Verify the owning PID is gone.
 2. Remove the stale `*-completion-gate.lock` directory manually.
-3. Re-run `garda gate completion-gate --task-id "T-xxx"` or `garda gate task-audit-summary --task-id "T-xxx"`.
+3. Re-run `garda next-step "T-xxx"` and follow its printed recovery command.
+   It may route back to `completion-gate` with the current preflight artifact,
+   or directly to `task-audit-summary` if completion evidence is already valid.
 
 Why manual? Completion finalization locks are intentionally separate from the stale-lock cleanup surface.
 

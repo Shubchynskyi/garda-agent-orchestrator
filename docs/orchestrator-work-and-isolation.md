@@ -156,11 +156,15 @@ unexpected pre-start or widened protected drift.
 
 You edited a control-plane file in a task that should not have touched it.
 
-**Fix:** Revert the change, then re-run the completion gate:
+**Fix:** Revert the change, then re-run `next-step` and follow the printed
+recovery command. If it routes directly back to completion, pass the current
+preflight artifact:
 
 ```bash
 git checkout -- garda-agent-orchestrator/live/docs/agent-rules/00-core.md
-garda gate completion-gate --task-id "T-xxx"
+garda gate completion-gate \
+  --task-id "T-xxx" \
+  --preflight-path "garda-agent-orchestrator/runtime/reviews/T-xxx-preflight.json"
 ```
 
 ### 2. Intentional orchestrator change without the flag
@@ -177,7 +181,7 @@ garda gate enter-task-mode \
   --orchestrator-work \
   --operator-confirmed yes \
   --operator-confirmed-at-utc "<ISO-8601 timestamp>"
-# then re-run preflight → implementation → gates as normal
+# then rerun next-step and follow the printed preflight -> gates route
 ```
 
 ### 3. Pre-existing manifest drift
@@ -202,8 +206,10 @@ garda setup   --target-root "."
 garda update  --target-root "." --init-answers-path "..."
 garda reinit  --target-root "." --init-answers-path "..."
 
-# Then retry
-garda gate completion-gate --task-id "T-xxx"
+# Then rerun next-step. If it routes directly back to completion:
+garda gate completion-gate \
+  --task-id "T-xxx" \
+  --preflight-path "garda-agent-orchestrator/runtime/reviews/T-xxx-preflight.json"
 ```
 
 ### 4. Invalid or missing manifest

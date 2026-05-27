@@ -150,6 +150,7 @@ Notes:
 - `BlockedReviewLanes` names dependency reasons such as upstream review types or `full-suite-validation`. Full-suite placement controls when that dependency appears: `after_compile_before_reviews` blocks reviewer launch after compile until current full-suite evidence exists, `before_test_review` blocks only the `test` reviewer, and `before_completion` leaves reviewer context neutral while completion still enforces the suite later.
 - True docs-only scopes record `NOT_REQUIRED` full-suite evidence instead of running the configured suite, even when security-sensitive documentation still requires security review. Mixed docs plus code/test/config scopes stay on the normal full validation path.
 - A failed current-cycle review takes remediation priority over downstream launch work. Fix and rerun or validly reuse the failed review as PASS before treating blocked downstream lanes as ready.
+- After a failed review, the agent must rerun `next-step` and follow the printed recovery chain. A remediation diff can refresh preflight, require a new compile, rebuild scoped diff metadata, and require a fresh delegated reviewer for the failed or invalidated lane. Do not carry a failed review forward to completion merely because the code was changed.
 - For mandatory reviews, `next-step`, rule packs, orchestration skills, review contexts, and provider bridges expect a newly spawned clean-context reviewer for the current review context; do not reuse an existing reviewer session, and close or release the reviewer sub-agent after `record-review-result` or `record-review-receipt` persists the receipt.
 
 ### `garda debug env`
@@ -679,13 +680,13 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Classify change | `garda gate classify-change --use-staged --task-id "T-001" --task-intent "..."` |
 | Compile gate | `garda gate compile-gate --task-id "T-001"` |
 | Optional skill activation | `garda gate activate-optional-skill --task-id "T-001" --skill-id "<selected-skill-id>"` |
-| Review gate | `garda gate required-reviews-check --task-id "T-001" --code-review-verdict "..."` |
+| Review gate | `garda gate required-reviews-check --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Audited no-op | `garda gate record-no-op --task-id "T-001" --reason "Already implemented in current branch"` |
 | Doc impact | `garda gate doc-impact-gate --task-id "T-001" --decision "NO_DOC_UPDATES"` |
 | Project memory impact | `garda gate project-memory-impact --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
-| Completion gate | `garda gate completion-gate --task-id "T-001"` |
+| Completion gate | `garda gate completion-gate --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Scoped diff | `garda gate build-scoped-diff --review-type "db"` |
-| Review context | `garda gate build-review-context --review-type "code" --depth 2` |
+| Review context | `garda gate build-review-context --task-id "T-001" --review-type "code" --depth 2 --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Task events | `garda gate task-events-summary --task-id "T-001"`; use `--compact-latest-cycle` for bounded machine-readable latest-cycle JSON |
 | Task audit | `garda gate task-audit-summary --task-id "T-001"`; human stdout may be colored, while `--as-json` and `--output-path` remain uncolored |
 | Next step | `garda next-step "T-001"` or `garda gate next-step "T-001"` |

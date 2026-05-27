@@ -235,15 +235,17 @@ No configuration changes are needed to use freeform mode — it is the default.
 ┌─────────────────────────────────────────────────────┐
 │  Executor (cheap model)                             │
 │                                                     │
-│  1. enter-task-mode --plan-path <plan>              │
-│  2. classify-change (preflight)                     │
-│  3. Implement following plan steps in order         │
-│  4. compile-gate → drift detection against plan     │
+│  1. Run next-step and follow its printed command    │
+│  2. enter-task-mode --plan-path <plan>              │
+│  3. classify-change (preflight)                     │
+│  4. Implement following plan steps in order         │
+│  5. compile-gate -> drift detection against plan    │
 │     • NO_DRIFT → pass                              │
 │     • REPLAN_REQUIRED → stop, request new plan     │
 │     • PLAN_DRIFT + override → pass with violation  │
-│  5. Reviews (plan metadata visible to reviewers)    │
-│  6. completion-gate (plan evidence in output)       │
+│  6. Reviews (plan metadata visible to reviewers)    │
+│  7. completion-gate (plan evidence in output)       │
+│  8. next-step -> task-audit-summary -> DONE         │
 └─────────────────────────────────────────────────────┘
 ```
 

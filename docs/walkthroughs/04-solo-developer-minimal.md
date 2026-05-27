@@ -1,6 +1,7 @@
 # Walkthrough: Solo Developer — Minimal Mode
 
-A single developer working on a small project with one AI agent, using `depth=1` for fast, lightweight task execution.
+A single developer working on a small project with one AI agent, using a `fast`
+task profile for lightweight task execution.
 
 This walkthrough applies to **any stack** — the focus is on the streamlined workflow, not language specifics.
 
@@ -73,7 +74,7 @@ my-tool/
 │   │   │   └── project-memory/       # context, stack, conventions, etc.
 │   │   ├── skills/
 │   │   │   ├── orchestration/
-│   │   │   ├── orchestration-depth1/ # ← compact rules for depth=1
+│   │   │   ├── orchestration-depth1/ # ← compact fast-profile workflow rules
 │   │   │   ├── code-review/
 │   │   │   ├── security-review/
 │   │   │   └── …
@@ -99,12 +100,14 @@ my-tool/
 - No `CLAUDE.md`, `AGENTS.md`, or `GEMINI.md` — only the selected source-of-truth and its bridges.
 - No `.claude/settings.local.json` — Claude full access was set to `no`.
 - No `.git/hooks/pre-commit` — the commit guard was set to `no`.
-- The `orchestration-depth1` skill provides a compact workflow specifically for `depth=1` tasks.
+- The `orchestration-depth1` compatibility skill provides compact workflow
+  guidance for fast-profile tasks; agents should still enter tasks through
+  `next-step`, not by asking the user for a raw depth value.
 - The footprint is minimal: only one entrypoint, essential bridges, and the bundle.
 
 ---
 
-## Example Task Execution — depth=1
+## Example Task Execution — Fast Profile
 
 ### Create a Task
 
@@ -114,51 +117,53 @@ my-tool/
 |---|---|---|---|---|---|
 | T-501 | 🟦 TODO | P2 | cli | Add --verbose flag to CLI | fast |
 
-Small, localized, low-risk — perfect for the `fast` profile (depth=1).
+Small, localized, low-risk — perfect for the `fast` profile.
 
 ### Execute the Task
 
 ```
-Execute task T-501 depth=1
+Execute task T-501 strictly through the orchestrator.
 ```
 
-#### What depth=1 Means
+The agent uses `garda next-step "T-501"` before the first gate and after every
+suggested command.
 
-| Aspect | depth=1 | depth=2 (default) |
+#### What The Fast Profile Means
+
+| Aspect | Fast profile | Balanced/default profile |
 |---|---|---|
-| Context loaded | Core + workflow only | Most rule files |
+| Context loaded | Compact rule context | Standard rule context |
 | Token economy | Full compaction | Full compaction |
 | Reviews | Minimal required | Standard required |
 | Typical use | Small fixes, single-file changes | Feature work |
 
-At `depth=1`:
-- The agent loads only core rules and the `orchestration-depth1` skill.
-- Token economy applies full compaction — reviewer context is minimal.
-- Only mandatory reviews triggered by file paths are required.
+With a fast profile:
+- Token economy applies strong compaction.
+- Reviewer context is smaller, but mandatory reviews triggered by preflight still run.
+- `next-step` can still route through compile, doc-impact, project-memory, completion, and task-audit closeout.
 
-#### Agent Lifecycle (depth=1)
+#### Agent Lifecycle
 
 ```
- 1. Read task + rules (compact)     → PLAN_CREATED
- 2. Classify changes                → PREFLIGHT_CLASSIFIED
-    garda gate enter-task-mode --task-id "T-501" --task-summary "Add --verbose flag"
-    garda gate load-rule-pack --task-id "T-501" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    garda gate classify-change --use-staged --task-id "T-501" --task-intent "Add --verbose flag"
-    garda gate load-rule-pack --task-id "T-501" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-501-preflight.json" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/70-security.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    Result: FAST_PATH, reviews: [code]
- 3. Implement + test                → (working…)
+ 1. next-step startup loop          → task-mode, rules, handshake, shell smoke
+ 2. classify-change                 → PREFLIGHT_CLASSIFIED (reviews: code)
+ 3. POST_PREFLIGHT rule evidence    → ready to implement
+ 4. Implement + test                → (working...)
     - src/cli.ts — add --verbose flag parsing
     - tests/cli.test.ts — add test for --verbose
- 4. Run compile gate                → COMPILE_GATE_PASSED ✅
-    garda gate compile-gate --task-id "T-501"
- 5. Code review (compact context)   → REVIEW_GATE_PASSED ✅
-    garda gate required-reviews-check --task-id "T-501" --code-review-verdict "pass"
- 6. Completion gate                 → COMPLETION_GATE_PASSED ✅
-    garda gate completion-gate --task-id "T-501"
- 7. Mark DONE                       → TASK_DONE
+ 5. compile-gate                    → COMPILE_GATE_PASSED
+ 6. Fresh code reviewer             → REVIEW_RECORDED (PASS)
+ 7. required-reviews-check          → REVIEW_GATE_PASSED
+ 8. doc-impact-gate                 → DOC_IMPACT_GATE_PASSED
+ 9. project-memory-impact if enabled -> current evidence recorded
+10. completion-gate                 → COMPLETION_GATE_PASSED
+11. task-audit-summary              → final closeout materialized
+12. next-step                       → DONE
 ```
 
-Notice: no doc-impact gate for a small change at `depth=1` when the classify-change result is `FAST_PATH`. The pipeline is shorter and faster.
+Notice: fast mode reduces context and cost; it does not remove mandatory gates.
+The docs decision still goes through `doc-impact-gate`, even when the decision
+is `NO_DOC_UPDATES`.
 
 #### Task Timeline
 
@@ -168,14 +173,16 @@ garda gate task-events-summary --task-id "T-501"
 
 ```
 Task: T-501
-Events: 6
+Events: abbreviated
 Timeline:
 [01] 2026-03-23T10:00:00Z | PLAN_CREATED              | INFO  | actor=orchestrator
 [02] 2026-03-23T10:01:00Z | PREFLIGHT_CLASSIFIED      | INFO
 [03] 2026-03-23T10:08:00Z | COMPILE_GATE_PASSED       | PASS
-[04] 2026-03-23T10:09:00Z | REVIEW_REQUESTED          | INFO  | actor=code-review
+[04] 2026-03-23T10:09:00Z | REVIEW_RECORDED           | PASS  | actor=code-review
 [05] 2026-03-23T10:12:00Z | REVIEW_GATE_PASSED        | PASS
-[06] 2026-03-23T10:13:00Z | TASK_DONE                 | PASS
+[06] 2026-03-23T10:13:00Z | DOC_IMPACT_GATE_PASSED    | PASS
+[07] 2026-03-23T10:14:00Z | COMPLETION_GATE_PASSED    | PASS
+[08] 2026-03-23T10:15:00Z | FINAL_CLOSEOUT_READY      | PASS
 IntegrityStatus: VALID
 ```
 
@@ -183,9 +190,9 @@ Total time: ~13 minutes for a small CLI change with automated review.
 
 ---
 
-## When to Escalate to depth=2
+## When to Use A Broader Profile
 
-Even as a solo developer, some tasks need `depth=2`:
+Even as a solo developer, some tasks need the `balanced` or `strict` profile:
 
 | Scenario | Reason |
 |---|---|
@@ -195,10 +202,10 @@ Even as a solo developer, some tasks need `depth=2`:
 | Refactor touching >5 files | Broader review coverage |
 
 ```
-Execute task T-502 depth=2
+Execute task T-502 strictly through the orchestrator.
 ```
 
-The agent automatically loads more context and runs the full gate pipeline.
+The agent automatically loads more context and runs the required gate pipeline.
 
 ---
 
@@ -261,9 +268,9 @@ The project is back to its exact original state.
 
 ## Tips for Solo / Minimal Workflows
 
-- **Default to depth=1** for most small tasks. Escalate to `depth=2` only when the change scope warrants it.
+- **Default to the fast profile** for most small tasks. Escalate to `balanced` or `strict` only when the change scope warrants it.
 - **Skip optional skill packs** unless your project grows into a specific domain (e.g. add `node-backend` later if you add an API layer).
-- **Token economy at depth=1** provides maximum compaction — reviewer context is minimal, keeping interactions fast and cheap.
+- **Token economy in fast mode** provides strong compaction, keeping interactions smaller while preserving mandatory reviews.
 - **Single provider** means minimal file footprint — no unused entrypoints or bridge files.
 - **No commit guard** is fine for solo work where you control all commits. Enable it later (`garda reinit`) if collaborators join.
 - **Change init answers later** without reinstalling:

@@ -159,34 +159,45 @@ The agent adds to `TASK.md`:
 ### Execute the Task
 
 ```
-Execute task T-101 depth=2
+Execute task T-101 strictly through the orchestrator.
 ```
+
+The agent uses `garda next-step "T-101"` before the first gate and after every
+suggested command. The `TASK.md` profile, active profile config, and preflight
+risk decide the effective depth; user-facing task starts should not rely on
+`depth=1|2|3` as a review shortcut.
 
 #### Agent Lifecycle
 
 ```
- 1. Read task + rules                → PLAN_CREATED
- 2. Classify changes                 → PREFLIGHT_CLASSIFIED
-    garda gate enter-task-mode --task-id "T-101" --task-summary "Add PDF export endpoint"
-    garda gate load-rule-pack --task-id "T-101" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    garda gate classify-change --use-staged --task-id "T-101" --task-intent "Add PDF export endpoint"
-    garda gate load-rule-pack --task-id "T-101" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-101-preflight.json" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/50-structure-and-docs.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/70-security.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md"
-    Result: STANDARD_PATH, reviews: [code]
- 3. Implement code + tests           → (working…)
+ 1. next-step                        -> enter-task-mode command
+ 2. enter-task-mode                  -> TASK_MODE_ENTERED
+ 3. next-step                        -> TASK_ENTRY rule load
+ 4. load-rule-pack TASK_ENTRY        -> RULE_PACK_LOADED
+ 5. next-step                        -> handshake + shell smoke
+ 6. handshake and shell smoke        -> preflight prerequisites pass
+ 7. next-step                        -> classify-change
+ 8. classify-change                  -> PREFLIGHT_CLASSIFIED (reviews: code)
+ 9. next-step                        -> POST_PREFLIGHT load or bind
+10. POST_PREFLIGHT rule evidence     -> ready to implement
+11. Implement code + tests           -> (working...)
     - src/routes/invoices.ts — new POST /invoices/:id/pdf route
     - src/services/pdf-export.ts — new service
     - tests/pdf-export.test.ts — new test file
- 4. Run compile gate                 → COMPILE_GATE_PASSED ✅
-    garda gate compile-gate --task-id "T-101"
- 5. Launch code review               → reviewer spawned with clean context
-    garda gate build-review-context --review-type "code" --depth 2
- 6. Review gate check                → REVIEW_GATE_PASSED ✅
-    garda gate required-reviews-check --task-id "T-101" --code-review-verdict "pass"
- 7. Doc impact gate                  → DOC_IMPACT_ASSESSED ✅
-    garda gate doc-impact-gate --task-id "T-101" --decision "NO_DOC_UPDATES"
- 8. Completion gate                  → COMPLETION_GATE_PASSED ✅
-    garda gate completion-gate --task-id "T-101"
- 9. Mark DONE                        → TASK_DONE + summary + commit suggestion
+12. next-step                        -> compile-gate
+13. compile-gate                     -> COMPILE_GATE_PASSED
+14. next-step                        -> full-suite-validation if enabled
+15. next-step                        -> build-review-context for code
+16. Launch fresh code reviewer       -> delegated reviewer with clean context
+17. record-review-result             -> REVIEW_RECORDED
+18. Close reviewer session           -> reviewer is not reused
+19. required-reviews-check           -> REVIEW_GATE_PASSED
+20. doc-impact-gate                  -> DOC_IMPACT_GATE_PASSED
+21. project-memory-impact if enabled -> current evidence recorded
+22. completion-gate                  -> COMPLETION_GATE_PASSED
+23. next-step                        -> task-audit-summary
+24. task-audit-summary               -> final closeout materialized
+25. next-step                        -> DONE, then final report + commit question
 ```
 
 #### Task Timeline
@@ -197,22 +208,23 @@ garda gate task-events-summary --task-id "T-101"
 
 ```
 Task: T-101
-Events: 8
+Events: abbreviated
 Timeline:
 [01] 2026-03-20T09:00:00Z | PLAN_CREATED              | INFO  | actor=orchestrator
 [02] 2026-03-20T09:01:00Z | PREFLIGHT_CLASSIFIED      | INFO
 [03] 2026-03-20T09:20:00Z | COMPILE_GATE_PASSED       | PASS
 [04] 2026-03-20T09:21:00Z | REVIEW_PHASE_STARTED      | INFO
-[05] 2026-03-20T09:22:00Z | REVIEW_REQUESTED          | INFO  | actor=code-review
+[05] 2026-03-20T09:22:00Z | REVIEW_RECORDED           | PASS  | actor=code-review
 [06] 2026-03-20T09:30:00Z | REVIEW_GATE_PASSED        | PASS
-[07] 2026-03-20T09:31:00Z | COMPLETION_GATE_PASSED    | PASS
-[08] 2026-03-20T09:32:00Z | TASK_DONE                 | PASS
+[07] 2026-03-20T09:31:00Z | DOC_IMPACT_GATE_PASSED    | PASS
+[08] 2026-03-20T09:32:00Z | COMPLETION_GATE_PASSED    | PASS
+[09] 2026-03-20T09:33:00Z | FINAL_CLOSEOUT_READY      | PASS
 IntegrityStatus: VALID
 ```
 
 The `TASK.md` row now reads:
 
-| T-101 | ✅ DONE | P1 | backend | Add invoice PDF export endpoint | default |
+| T-101 | DONE | P1 | backend | Add invoice PDF export endpoint | default |
 
 ---
 
@@ -305,7 +317,10 @@ Removed:
 - **Output filters**: `live/config/output-filters.json` includes built-in profiles for `npm` and `tsc` — compile gate output is automatically compacted.
 - **Skill packs**: The `node-backend` pack adds Node-specific review guidance. Consider also `quality-architecture` for larger codebases.
 - **paths.json**: Default trigger patterns already cover `src/**/*.ts` and `tests/**/*.test.ts` — adjust if your layout differs.
-- **Token economy**: At `depth=1`, reviewer context is heavily compacted — use this for small bug fixes. Use `depth=2` (default) for feature work.
+- **Token economy**: Fast-profile work uses heavier reviewer-context
+  compaction for small bug fixes. Use the balanced/default profile for feature
+  work and let `next-step` decide the effective depth from the task profile
+  and preflight risk.
 
 ---
 

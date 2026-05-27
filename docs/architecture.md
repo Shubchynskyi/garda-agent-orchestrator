@@ -140,20 +140,33 @@ TODO -> IN_PROGRESS -> IN_REVIEW -> DONE
 Gate pipeline:
 
 ```text
+0. next-step before the first gate and after every gate
 1. enter-task-mode
 2. load-rule-pack (TASK_ENTRY)
-3. classify-change
-4. load-rule-pack (POST_PREFLIGHT)
-5. implementation
-6. compile-gate
-7. independent reviews
-8. required-reviews-check
-9. doc-impact-gate
-10. completion-gate
-11. DONE
+3. handshake-diagnostics
+4. shell-smoke-preflight
+5. classify-change
+6. load-rule-pack or bind-rule-pack-to-preflight (POST_PREFLIGHT)
+7. implementation
+8. compile-gate
+9. full-suite-validation when the active workflow placement requires it
+10. build-review-context for each required review
+11. fresh delegated reviewer launch and review-result recording
+12. required-reviews-check
+13. doc-impact-gate
+14. project-memory-impact when enabled
+15. completion-gate
+16. task-audit-summary
+17. DONE reported by next-step
 ```
 
 Root entrypoints and provider bridges must route task execution through `.agents/workflows/start-task.md`; that file is a thin shared router, not a second workflow source.
+
+Failed reviews re-enter this loop through `next-step`. The agent fixes the
+finding, lets the navigator refresh preflight/compile/review-context evidence
+as needed, launches a new clean-context delegated reviewer for any invalidated
+review lane, records the new verdict, and only then retries
+`required-reviews-check`.
 
 All gate events are logged to `runtime/task-events/<task-id>.jsonl` with hash-chain integrity.
 
