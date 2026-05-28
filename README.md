@@ -6,7 +6,7 @@
 
 **Governed workflows for AI coding agents.**
 
-Garda turns Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravity into a controlled local development workflow with task lifecycle, mandatory gates, review artifacts, doc-impact checks, and auditable completion.
+Garda turns Claude, Codex, Copilot, DeepSeek, Gemini, Qwen, Windsurf, Junie, and Antigravity into a controlled local development workflow with task lifecycle, mandatory gates, review artifacts, doc-impact checks, and auditable completion.
 
 `GARDA = Governed Agent Runtime, Deployment, and Audit.`
 
@@ -39,7 +39,7 @@ Garda adds a governance layer:
 
 - task lifecycle: `TODO → IN_PROGRESS → IN_REVIEW → DONE`
 - mandatory gates: preflight, compile, review, doc-impact, completion
-- provider-agnostic rules for Claude, Codex, Copilot, Gemini, Qwen, Windsurf, Junie, and Antigravity
+- provider-agnostic rules for Claude, Codex, Copilot, DeepSeek, Gemini, Qwen, Windsurf, Junie, and Antigravity
 - auditable task events and review artifacts
 - local Node/TypeScript CLI runtime
 - token-economy defaults for compact green-path execution
@@ -77,7 +77,7 @@ If you want persistent commands, install globally.
 
 | Feature | Description |
 |---|---|
-| **Many Provider Surfaces** | Claude, Codex, Copilot, Gemini, Qwen, GitHub Copilot, Windsurf, Junie, and Antigravity — one canonical workflow with provider-specific entrypoints and bridges |
+| **Many Provider Surfaces** | Claude, Codex, Copilot, DeepSeek, Gemini, Qwen, GitHub Copilot, Windsurf, Junie, and Antigravity — one canonical workflow with provider-specific entrypoints and bridges |
 | **Mandatory Quality Gates** | Preflight → Compile → Review → Doc-Impact → Completion |
 | **Token Economy** | Reviewer-context compaction, scoped diffs, gate output filtering — saves 60–100% on green builds |
 | **Task Lifecycle** | `TODO → IN_PROGRESS → IN_REVIEW → DONE` with hash-chain integrity |
@@ -91,6 +91,7 @@ If you want persistent commands, install globally.
 |---|---|---|
 | Claude | `CLAUDE.md` | `.claude/settings.local.json` |
 | Codex | `AGENTS.md` | — |
+| DeepSeek | `AGENTS.md` | — |
 | Gemini | `GEMINI.md` | — |
 | Qwen | `QWEN.md` | optional `.qwen/settings.json` context bootstrap |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/*.md` |

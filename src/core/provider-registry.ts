@@ -213,6 +213,27 @@ const PROVIDER_ENTRIES: readonly ProviderEntry[] = deepFreeze([
         aliases: ['cursor']
     },
     {
+        id: 'DeepSeek',
+        displayLabel: 'DeepSeek',
+        reviewerLaunchLabel: 'DeepSeek',
+        entrypointFile: 'AGENTS.md',
+        reviewerCapabilityTier: 'delegation_required',
+        delegatedReviewerLaunchInstruction: 'launch clean-context reviewers via delegated reviewer sub-agents with isolated context.',
+        bridge: null,
+        aliases: [
+            'deepseek',
+            'deepseek coder',
+            'deepseek-coder',
+            'deepseek_coder',
+            'deepseekchat',
+            'deepseek chat',
+            'deepseek-chat',
+            'deepseekreasoner',
+            'deepseek reasoner',
+            'deepseek-reasoner'
+        ]
+    },
+    {
         id: 'Gemini',
         displayLabel: 'Gemini',
         reviewerLaunchLabel: 'Gemini',

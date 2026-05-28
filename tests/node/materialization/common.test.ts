@@ -18,6 +18,7 @@ describe('getCanonicalEntrypointFile', () => {
         assert.equal(getCanonicalEntrypointFile('Claude'), 'CLAUDE.md');
         assert.equal(getCanonicalEntrypointFile('Codex'), 'AGENTS.md');
         assert.equal(getCanonicalEntrypointFile('Cursor'), 'AGENTS.md');
+        assert.equal(getCanonicalEntrypointFile('DeepSeek'), 'AGENTS.md');
         assert.equal(getCanonicalEntrypointFile('Gemini'), 'GEMINI.md');
         assert.equal(getCanonicalEntrypointFile('Qwen'), 'QWEN.md');
         assert.equal(getCanonicalEntrypointFile('GitHubCopilot'), '.github/copilot-instructions.md');
@@ -40,6 +41,7 @@ describe('normalizeAgentEntrypointToken', () => {
     it('resolves aliases to canonical paths', () => {
         assert.equal(normalizeAgentEntrypointToken('claude'), 'CLAUDE.md');
         assert.equal(normalizeAgentEntrypointToken('codex'), 'AGENTS.md');
+        assert.equal(normalizeAgentEntrypointToken('deepseek'), 'AGENTS.md');
         assert.equal(normalizeAgentEntrypointToken('copilot'), '.github/copilot-instructions.md');
         assert.equal(normalizeAgentEntrypointToken('windsurf'), '.windsurf/rules/rules.md');
         assert.equal(normalizeAgentEntrypointToken('qwen'), 'QWEN.md');

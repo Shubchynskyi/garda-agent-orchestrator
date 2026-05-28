@@ -754,7 +754,7 @@ describe('provider-workflow-execution: cross-provider execution context', () => 
     beforeEach(() => { tempDir = createTempDir(); });
     afterEach(() => { removeTempDir(tempDir); });
 
-    it('shared canonical entrypoints stay explicit and limited to the approved provider set', () => {
+    it('shared canonical entrypoints stay explicit and registry-owned', () => {
         const providersByEntrypoint = new Map<string, string[]>();
         for (const provider of ALL_PROVIDERS) {
             const file = getCanonicalEntrypointFile(provider);
@@ -763,7 +763,10 @@ describe('provider-workflow-execution: cross-provider execution context', () => 
             providers.push(provider);
             providersByEntrypoint.set(file, providers);
         }
-        assert.deepEqual(providersByEntrypoint.get('AGENTS.md'), ['Codex', 'Cursor']);
+        const expectedSharedAgentsProviders = getProviderEntries()
+            .filter((entry) => entry.entrypointFile === 'AGENTS.md')
+            .map((entry) => entry.id);
+        assert.deepEqual(providersByEntrypoint.get('AGENTS.md'), expectedSharedAgentsProviders);
         for (const [entrypoint, providers] of providersByEntrypoint.entries()) {
             if (entrypoint === 'AGENTS.md') {
                 continue;

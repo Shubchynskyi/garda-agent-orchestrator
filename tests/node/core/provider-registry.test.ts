@@ -60,9 +60,9 @@ describe('provider-registry: internal consistency', () => {
         assert.strictEqual(files.length, new Set(files).size);
     });
 
-    it('shared AGENTS.md entrypoint is owned by both Codex and Cursor', () => {
+    it('shared AGENTS.md entrypoint is owned by registry providers without dedicated native files', () => {
         const entries = getProviderEntriesByEntrypointFile('AGENTS.md');
-        assert.deepStrictEqual(entries.map((entry) => entry.id), ['Codex', 'Cursor']);
+        assert.deepStrictEqual(entries.map((entry) => entry.id), ['Codex', 'Cursor', 'DeepSeek']);
     });
 
     it('every entry has at least one alias', () => {
