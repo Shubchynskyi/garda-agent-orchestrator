@@ -10,6 +10,8 @@ import { getRepoRoot } from '../../../scripts/node-foundation/build';
 const RETRYABLE_WINDOWS_CLEANUP_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
 const SPAWN_OUTPUT_TAIL_LENGTH = 4000;
 const CONSUMER_INSTALL_LIFECYCLE_SCRIPTS = ['preinstall', 'install', 'postinstall', 'prepare'];
+const NPM_PACK_TIMEOUT_MS = 120_000;
+const NPM_INSTALL_TARBALL_TIMEOUT_MS = process.platform === 'win32' ? 300_000 : 120_000;
 
 function getErrorCode(error: unknown): string {
     return error && typeof error === 'object' && 'code' in error
@@ -101,13 +103,13 @@ function buildEnvWithoutBundleName(): NodeJS.ProcessEnv {
     return env;
 }
 
-function spawnNpm(args: string[], cwd: string): childProcess.SpawnSyncReturns<string> {
+function spawnNpm(args: string[], cwd: string, timeoutMs = NPM_PACK_TIMEOUT_MS): childProcess.SpawnSyncReturns<string> {
     if (process.platform === 'win32') {
         const commandLine = ['npm.cmd', ...args].map(quoteWindowsArgument).join(' ');
         return childProcess.spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', commandLine], {
             cwd,
             encoding: 'utf8',
-            timeout: 120_000,
+            timeout: timeoutMs,
             windowsHide: true
         });
     }
@@ -115,7 +117,7 @@ function spawnNpm(args: string[], cwd: string): childProcess.SpawnSyncReturns<st
     return childProcess.spawnSync('npm', args, {
         cwd,
         encoding: 'utf8',
-        timeout: 120_000,
+        timeout: timeoutMs,
         windowsHide: true
     });
 }
@@ -228,11 +230,13 @@ function npmInstallTarball(tarballPath: string, installDir: string): void {
         '--no-fund',
         '--no-audit',
         '--no-progress',
+        '--no-save',
+        '--package-lock=false',
         tarballPath
-    ], installDir);
+    ], installDir, NPM_INSTALL_TARBALL_TIMEOUT_MS);
 
     if (result.status !== 0) {
-        throw new Error(formatSpawnFailure('npm install', result));
+        throw new Error(formatSpawnFailure(`npm install (timeout ${NPM_INSTALL_TARBALL_TIMEOUT_MS}ms)`, result));
     }
 }
 
