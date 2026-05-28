@@ -83,7 +83,7 @@ import {
     collectRequiredReviewBlockers
 } from './task-audit-summary-review-evidence';
 import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-project-memory';
-export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
+export { formatFinalCloseoutMarkdown, formatFinalUserReport, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
 export { synchronizeFinalCloseoutArtifacts } from './task-audit-summary-closeout-sync';
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
@@ -427,6 +427,109 @@ function latestCompileSequence(events: readonly TaskAuditEvent[]): number | null
     return latest;
 }
 
+function listReviewReceiptPaths(reviewsRoot: string, taskId: string, reviewType: string): string[] {
+    const canonicalPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
+    const candidates = new Set<string>();
+    if (fs.existsSync(canonicalPath) && fs.statSync(canonicalPath).isFile()) {
+        candidates.add(canonicalPath);
+    }
+    if (fs.existsSync(reviewsRoot) && fs.statSync(reviewsRoot).isDirectory()) {
+        const prefix = `${taskId}-${reviewType}-receipt-`;
+        for (const entry of fs.readdirSync(reviewsRoot)) {
+            if (entry.startsWith(prefix) && entry.endsWith('.json')) {
+                candidates.add(path.join(reviewsRoot, entry));
+            }
+        }
+    }
+    return [...candidates].sort((left, right) => {
+        const leftReceipt = safeReadJson(left);
+        const rightReceipt = safeReadJson(right);
+        const leftTime = Date.parse(readAuditTimestamp(leftReceipt?.review_result_recorded_at_utc ?? leftReceipt?.recorded_at_utc) || '');
+        const rightTime = Date.parse(readAuditTimestamp(rightReceipt?.review_result_recorded_at_utc ?? rightReceipt?.recorded_at_utc) || '');
+        const leftOrder = Number.isFinite(leftTime) ? leftTime : Number.MAX_SAFE_INTEGER;
+        const rightOrder = Number.isFinite(rightTime) ? rightTime : Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder || left.localeCompare(right);
+    });
+}
+
+function buildReviewTimingAuditEntry(
+    taskId: string,
+    reviewType: string,
+    receiptPath: string,
+    events: readonly TaskAuditEvent[],
+    compileSequence: number | null
+): FinalCloseoutReviewTimingAuditEntry | null {
+    if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
+        return null;
+    }
+    const receipt = safeReadJson(receiptPath);
+    if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
+        return null;
+    }
+    const provenance = asAuditRecord(receipt.reviewer_provenance);
+    const invocationEvent = findReviewerInvocationEvent(events, provenance);
+    const invocationDetails = asAuditRecord(invocationEvent?.details);
+    const launchPreparedAtUtc = readAuditTimestamp(
+        provenance?.launch_prepared_at_utc ?? invocationDetails?.launch_prepared_at_utc
+    );
+    const launchedAtUtc = readAuditTimestamp(
+        provenance?.launched_at_utc ?? invocationDetails?.launched_at_utc
+    );
+    const launchCompletedAtUtc = readAuditTimestamp(
+        provenance?.launch_completed_at_utc ?? invocationDetails?.launch_completed_at_utc
+    );
+    const invocationAttestedAtUtc = readAuditTimestamp(
+        provenance?.invocation_attested_at_utc ?? invocationDetails?.invocation_attested_at_utc
+    );
+    const reviewResultRecordedAtUtc = readAuditTimestamp(
+        receipt.review_result_recorded_at_utc ?? receipt.recorded_at_utc
+    );
+    const reviewOutputSourceMtimeUtc = readAuditTimestamp(receipt.review_output_source_mtime_utc);
+    const reusedExistingReview = receipt.reused_existing_review === true;
+    const timingTrust = evaluateHiddenReviewTimingTrust({
+        reviewType,
+        reusedExistingReview,
+        reviewerProvenance: provenance,
+        reviewResultRecordedAtUtc,
+        recordedAtUtc: readAuditTimestamp(receipt.recorded_at_utc),
+        reviewOutputSourceMtimeUtc,
+        timelineEvents: events,
+        latestCompileSequence: compileSequence
+    });
+    return {
+        review_type: reviewType,
+        reviewer_identity: readAuditString(receipt.reviewer_identity),
+        reviewer_execution_mode: readAuditString(receipt.reviewer_execution_mode),
+        reused_existing_review: reusedExistingReview,
+        receipt_path: toPosix(receiptPath),
+        receipt_sha256: fileSha256(receiptPath),
+        review_output_path: readAuditString(receipt.review_output_path),
+        review_output_sha256: readAuditSha256(receipt.review_output_sha256),
+        provider: readAuditString(
+            invocationDetails?.execution_provider
+            ?? invocationDetails?.provider
+            ?? invocationDetails?.provider_family
+            ?? invocationDetails?.reviewer_launch_tool
+        ),
+        provider_invocation_id: readAuditString(invocationDetails?.provider_invocation_id),
+        reviewer_launch_attestation_source: readAuditString(invocationDetails?.reviewer_launch_attestation_source),
+        launch_prepared_at_utc: launchPreparedAtUtc,
+        launched_at_utc: launchedAtUtc,
+        launch_completed_at_utc: launchCompletedAtUtc,
+        invocation_attested_at_utc: invocationAttestedAtUtc,
+        review_result_recorded_at_utc: reviewResultRecordedAtUtc,
+        review_output_source_mtime_utc: reviewOutputSourceMtimeUtc,
+        launch_to_result_ms: elapsedMs(launchedAtUtc, reviewResultRecordedAtUtc),
+        launch_to_source_mtime_ms: elapsedMs(launchedAtUtc, reviewOutputSourceMtimeUtc),
+        hidden_timing_status: reusedExistingReview
+            ? 'SKIPPED_REUSED'
+            : timingTrust.trusted
+                ? 'TRUSTED'
+                : 'DISTRUSTED',
+        hidden_timing_distrust_code: timingTrust.code
+    };
+}
+
 function buildReviewTimingAuditSummary(
     reviewsRoot: string,
     taskId: string,
@@ -436,76 +539,12 @@ function buildReviewTimingAuditSummary(
     const entries: FinalCloseoutReviewTimingAuditEntry[] = [];
 
     for (const reviewType of REVIEW_TIMING_AUDIT_TYPES) {
-        const receiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
-        if (!fs.existsSync(receiptPath) || !fs.statSync(receiptPath).isFile()) {
-            continue;
+        for (const receiptPath of listReviewReceiptPaths(reviewsRoot, taskId, reviewType)) {
+            const entry = buildReviewTimingAuditEntry(taskId, reviewType, receiptPath, events, compileSequence);
+            if (entry) {
+                entries.push(entry);
+            }
         }
-        const receipt = safeReadJson(receiptPath);
-        if (!receipt || receipt.task_id !== taskId || receipt.review_type !== reviewType) {
-            continue;
-        }
-        const provenance = asAuditRecord(receipt.reviewer_provenance);
-        const invocationEvent = findReviewerInvocationEvent(events, provenance);
-        const invocationDetails = asAuditRecord(invocationEvent?.details);
-        const launchPreparedAtUtc = readAuditTimestamp(
-            provenance?.launch_prepared_at_utc ?? invocationDetails?.launch_prepared_at_utc
-        );
-        const launchedAtUtc = readAuditTimestamp(
-            provenance?.launched_at_utc ?? invocationDetails?.launched_at_utc
-        );
-        const launchCompletedAtUtc = readAuditTimestamp(
-            provenance?.launch_completed_at_utc ?? invocationDetails?.launch_completed_at_utc
-        );
-        const invocationAttestedAtUtc = readAuditTimestamp(
-            provenance?.invocation_attested_at_utc ?? invocationDetails?.invocation_attested_at_utc
-        );
-        const reviewResultRecordedAtUtc = readAuditTimestamp(
-            receipt.review_result_recorded_at_utc ?? receipt.recorded_at_utc
-        );
-        const reviewOutputSourceMtimeUtc = readAuditTimestamp(receipt.review_output_source_mtime_utc);
-        const reusedExistingReview = receipt.reused_existing_review === true;
-        const timingTrust = evaluateHiddenReviewTimingTrust({
-            reviewType,
-            reusedExistingReview,
-            reviewerProvenance: provenance,
-            reviewResultRecordedAtUtc,
-            recordedAtUtc: readAuditTimestamp(receipt.recorded_at_utc),
-            reviewOutputSourceMtimeUtc,
-            timelineEvents: events,
-            latestCompileSequence: compileSequence
-        });
-        entries.push({
-            review_type: reviewType,
-            reviewer_identity: readAuditString(receipt.reviewer_identity),
-            reviewer_execution_mode: readAuditString(receipt.reviewer_execution_mode),
-            reused_existing_review: reusedExistingReview,
-            receipt_path: toPosix(receiptPath),
-            receipt_sha256: fileSha256(receiptPath),
-            review_output_path: readAuditString(receipt.review_output_path),
-            review_output_sha256: readAuditSha256(receipt.review_output_sha256),
-            provider: readAuditString(
-                invocationDetails?.execution_provider
-                ?? invocationDetails?.provider
-                ?? invocationDetails?.provider_family
-                ?? invocationDetails?.reviewer_launch_tool
-            ),
-            provider_invocation_id: readAuditString(invocationDetails?.provider_invocation_id),
-            reviewer_launch_attestation_source: readAuditString(invocationDetails?.reviewer_launch_attestation_source),
-            launch_prepared_at_utc: launchPreparedAtUtc,
-            launched_at_utc: launchedAtUtc,
-            launch_completed_at_utc: launchCompletedAtUtc,
-            invocation_attested_at_utc: invocationAttestedAtUtc,
-            review_result_recorded_at_utc: reviewResultRecordedAtUtc,
-            review_output_source_mtime_utc: reviewOutputSourceMtimeUtc,
-            launch_to_result_ms: elapsedMs(launchedAtUtc, reviewResultRecordedAtUtc),
-            launch_to_source_mtime_ms: elapsedMs(launchedAtUtc, reviewOutputSourceMtimeUtc),
-            hidden_timing_status: reusedExistingReview
-                ? 'SKIPPED_REUSED'
-                : timingTrust.trusted
-                    ? 'TRUSTED'
-                    : 'DISTRUSTED',
-            hidden_timing_distrust_code: timingTrust.code
-        });
     }
 
     if (entries.length === 0) {
@@ -658,6 +697,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const changedLinesTotal = preflightSummary.changedLinesTotal;
     const finalCloseoutJsonPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.json`);
     const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.md`);
+    const finalUserReportPath = path.join(reviewsRoot, `${safeTaskId}-final-user-report.md`);
     const hasCompletionPass = gates.some(
         (g) => g.gate === 'completion-gate' && g.status === 'PASS'
     );
@@ -956,10 +996,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
                     ? `Completion gate passed, but final closeout is blocked: ${blockers.map((blocker) => blocker.reason).join(' ')}`
                 : 'Completion gate has not passed cleanly yet; do not deliver the task-complete final report contract.',
         required_order: [
-            'review integrity attestation',
-            'implementation summary',
-            commitCommandSuggestion,
-            ...(commitRequired ? [commitQuestionText] : [])
+            'short agent-authored summary of what changed',
+            'verbatim Garda final user report'
         ],
         implementation_summary_requirements: implementationSummaryRequirements,
         commit_command_template: commitCommandTemplate,
@@ -995,7 +1033,8 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             : null,
         artifact_paths: {
             json: toPosix(finalCloseoutJsonPath),
-            markdown: toPosix(finalCloseoutMarkdownPath)
+            markdown: toPosix(finalCloseoutMarkdownPath),
+            final_user_report: toPosix(finalUserReportPath)
         },
         implementation_summary: {
             requested_depth: parseOptionalNumber(taskMode?.requested_depth),

@@ -445,16 +445,27 @@ describe('cli/commands/gates', () => {
         const reviewsRoot = getReviewsRoot(repoRoot);
         const finalCloseoutJsonPath = path.join(reviewsRoot, `${taskId}-final-closeout.json`);
         const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${taskId}-final-closeout.md`);
+        const finalUserReportPath = path.join(reviewsRoot, `${taskId}-final-user-report.md`);
         assert.equal(fs.existsSync(finalCloseoutJsonPath), true);
         assert.equal(fs.existsSync(finalCloseoutMarkdownPath), true);
+        assert.equal(fs.existsSync(finalUserReportPath), true);
         const finalCloseoutJson = JSON.parse(fs.readFileSync(finalCloseoutJsonPath, 'utf8'));
         assert.equal(finalCloseoutJson.status, 'READY');
         assert.equal(finalCloseoutJson.artifact_state, 'MATERIALIZED');
+        assert.equal(finalCloseoutJson.artifact_paths.final_user_report.endsWith(`${taskId}-final-user-report.md`), true);
         assert.deepEqual(finalCloseoutJson.implementation_summary.review_verdicts, {
             code: 'REVIEW PASSED',
             test: 'TEST REVIEW PASSED'
         });
         assert.ok(fs.readFileSync(finalCloseoutMarkdownPath, 'utf8').includes(String(finalCloseoutJson.commit_question)));
+        const finalUserReport = fs.readFileSync(finalUserReportPath, 'utf8');
+        assert.ok(finalUserReport.includes('GARDA FINAL REPORT'));
+        assert.ok(finalUserReport.includes(`Task: ${taskId}`));
+        assert.ok(finalUserReport.includes('Status: DONE'));
+        assert.ok(finalUserReport.includes('Review Timing Warning:\nnone'));
+        assert.ok(!finalUserReport.includes('PathMode:'));
+        assert.ok(!finalUserReport.includes('Commit Readiness:'));
+        assert.ok(!finalUserReport.includes('Operator Question:'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

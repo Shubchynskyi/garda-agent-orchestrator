@@ -1732,12 +1732,15 @@ describe('gates/next-step', () => {
         assert.equal(result.commands.length, 0);
         assert.equal(result.task_queue_status_contract.agent_may_edit_non_status_task_content, true);
         assert.equal(result.final_report?.required_order.length, 4);
+        assert.ok(result.final_report?.final_user_report_path.endsWith(`${TASK_ID}-final-user-report.md`));
         assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
         assert.match(result.reason, /canonical final closeout is materialized/i);
         assert.ok(text.includes('Task status sync: gate-owned for IN_PROGRESS/IN_REVIEW/SPLIT_REQUIRED/DONE'));
+        assert.ok(text.includes('FinalUserReportPath:'));
+        assert.ok(text.includes('FinalUserReportInstruction: write a short summary of what you did, then print FinalUserReportPath verbatim without interpreting, summarizing, or rewriting it; after that, present any commit command and commit permission question listed in FinalReportOrder.'));
         assert.ok(text.includes('FinalReportOrder:'));
-        assert.ok(text.includes('1. review integrity attestation'));
-        assert.ok(text.includes('2. implementation summary (include path mode, review verdicts, docs updated)'));
+        assert.ok(text.includes('1. short agent-authored summary of what changed'));
+        assert.ok(text.includes('2. verbatim Garda final user report'));
         assert.ok(text.includes('3. git commit -m "'));
         assert.ok(text.includes('4. Do you want me to commit now? (yes/no)'));
         assert.ok(text.includes('Commands:'));
@@ -1762,13 +1765,13 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, null);
         assert.equal(result.commands.length, 0);
         assert.deepEqual(result.final_report?.required_order, [
-            'review integrity attestation',
-            'implementation summary (include path mode, review verdicts, docs updated)',
-            'No commit required: no committable changes are present.'
+            'short agent-authored summary of what changed',
+            'verbatim Garda final user report'
         ]);
         assert.equal(result.final_report?.commit_command_suggestion, 'No commit required: no committable changes are present.');
         assert.equal(result.final_report?.commit_question, 'No commit confirmation required.');
-        assert.ok(text.includes('3. No commit required: no committable changes are present.'));
+        assert.ok(text.includes('FinalUserReportPath:'));
+        assert.ok(!text.includes('3. No commit required: no committable changes are present.'));
         assert.ok(!text.includes('git commit -m "'));
         assert.ok(!text.includes('Do you want me to commit now? (yes/no)'));
     });
@@ -1784,11 +1787,17 @@ describe('gates/next-step', () => {
         assert.equal(result.status, 'DONE', result.reason);
         assert.equal(result.next_gate, null);
         assert.equal(result.commands.length, 0);
-        assert.equal(result.final_report?.required_order[0], 'review integrity attestation');
+        assert.equal(result.final_report?.required_order[0], 'short agent-authored summary of what changed');
+        assert.equal(result.final_report?.required_order[1], 'verbatim Garda final user report');
+        assert.ok(result.final_report?.required_order[2].startsWith('git commit -m "'));
+        assert.equal(result.final_report?.required_order[3], 'Do you want me to commit now? (yes/no)');
         assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
         assert.match(result.reason, /canonical final closeout is materialized/i);
         assert.ok(text.includes('Review trust: INDEPENDENT_AUDITED via DELEGATED_SUBAGENT; independent reviewer launch attested.'));
-        assert.ok(text.includes('1. review integrity attestation'));
+        assert.ok(text.includes('1. short agent-authored summary of what changed'));
+        assert.ok(text.includes('2. verbatim Garda final user report'));
+        assert.ok(text.includes('3. git commit -m "'));
+        assert.ok(text.includes('4. Do you want me to commit now? (yes/no)'));
         assert.ok(text.includes('Commands:'));
         assert.ok(text.includes('  none'));
     });
@@ -1801,7 +1810,9 @@ describe('gates/next-step', () => {
             'reformatted-json',
             'forged-markdown',
             'missing-markdown-final-newline',
-            'extra-markdown-trailing-blank'
+            'extra-markdown-trailing-blank',
+            'missing-final-user-report',
+            'forged-final-user-report'
         ]) {
             const repoRoot = makeTempRepo();
             seedStartedTask(repoRoot, TASK_ID);
@@ -1814,6 +1825,7 @@ describe('gates/next-step', () => {
             const closeoutRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
             const closeoutPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.json`);
             const closeoutMarkdownPath = path.join(closeoutRoot, `${TASK_ID}-final-closeout.md`);
+            const finalUserReportPath = path.join(closeoutRoot, `${TASK_ID}-final-user-report.md`);
             const closeout = JSON.parse(fs.readFileSync(closeoutPath, 'utf8')) as Record<string, unknown>;
             if (tamper === 'missing-json-attestation') {
                 delete closeout.review_integrity_attestation; writeJson(closeoutPath, closeout);
@@ -1827,6 +1839,10 @@ describe('gates/next-step', () => {
                 fs.writeFileSync(closeoutMarkdownPath, fs.readFileSync(closeoutMarkdownPath, 'utf8').trimEnd(), 'utf8');
             } else if (tamper === 'extra-markdown-trailing-blank') {
                 fs.appendFileSync(closeoutMarkdownPath, '\n', 'utf8');
+            } else if (tamper === 'missing-final-user-report') {
+                fs.rmSync(finalUserReportPath, { force: true });
+            } else if (tamper === 'forged-final-user-report') {
+                fs.appendFileSync(finalUserReportPath, '\nforged review timing warning\n', 'utf8');
             } else {
                 fs.writeFileSync(closeoutMarkdownPath, `${fs.readFileSync(closeoutMarkdownPath, 'utf8')}\nforged review integrity line\n`, 'utf8');
             }

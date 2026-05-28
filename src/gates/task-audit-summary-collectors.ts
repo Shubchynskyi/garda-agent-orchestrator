@@ -71,6 +71,7 @@ export interface FinalReportContract {
 export interface FinalCloseoutArtifactPaths {
     json: string;
     markdown: string;
+    final_user_report?: string;
 }
 
 export interface FinalCloseoutDocsSummary {

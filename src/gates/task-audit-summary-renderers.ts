@@ -9,6 +9,7 @@ import { getNodeGateCommandPrefix } from '../materialization/command-constants';
 import { buildTaskQueueStatusContract } from '../core/task-queue-status-contract';
 
 type ReviewIntegrityAttestation = NonNullable<FinalCloseoutArtifact['review_integrity_attestation']>;
+type ReviewTimingAuditEntry = NonNullable<FinalCloseoutArtifact['review_timing_audit']>['entries'][number];
 
 function buildFallbackReviewIntegrityAttestation(closeout: FinalCloseoutArtifact): ReviewIntegrityAttestation {
     const reviewVerdictCount = Object.keys(closeout.implementation_summary.review_verdicts || {}).length;
@@ -87,6 +88,106 @@ function hasMultipleCommitSubjectWords(subject: string): boolean {
         .split(/\s+/u)
         .filter(Boolean)
         .length >= 2;
+}
+
+function formatDurationMsAsMinutesSeconds(durationMs: number | null | undefined): string {
+    if (durationMs == null || !Number.isFinite(durationMs) || durationMs < 0) {
+        return 'unknown';
+    }
+    const totalSeconds = Math.floor(durationMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+}
+
+function normalizeFinalUserReportVerdict(value: string): string {
+    const text = String(value || '').trim();
+    if (!text) {
+        return 'unknown';
+    }
+    if (/\bPASSED\b/iu.test(text)) {
+        return 'passed';
+    }
+    if (/\bFAILED\b/iu.test(text)) {
+        return 'failed';
+    }
+    return text.toLowerCase();
+}
+
+function buildFinalUserReportReviewLine(
+    reviewType: string,
+    verdict: string,
+    timingEntries: ReviewTimingAuditEntry[]
+): string {
+    const normalizedVerdict = normalizeFinalUserReportVerdict(verdict);
+    const durations = timingEntries
+        .filter((entry) => !entry.reused_existing_review)
+        .map((entry) => entry.launch_to_result_ms)
+        .filter((durationMs): durationMs is number =>
+            durationMs != null && Number.isFinite(durationMs) && durationMs >= 0
+        )
+        .map((durationMs) => formatDurationMsAsMinutesSeconds(durationMs));
+    if (durations.length === 0) {
+        return `${reviewType}: ${normalizedVerdict}`;
+    }
+    return `${reviewType}(${durations.length}): ${normalizedVerdict} (${durations.join(' / ')})`;
+}
+
+function buildReviewTimingWarning(closeout: FinalCloseoutArtifact, attestation: ReviewIntegrityAttestation): string {
+    const suspiciousEntries = (closeout.review_timing_audit?.entries || [])
+        .filter((entry) => entry.hidden_timing_status === 'DISTRUSTED');
+    if (suspiciousEntries.length > 0) {
+        const reviewTypes = suspiciousEntries
+            .map((entry) => entry.review_type)
+            .filter(Boolean)
+            .sort()
+            .join(', ');
+        return `WARNING: suspicious or insufficiently verified review timing/evidence detected for ${reviewTypes || 'one or more reviews'}. Do not treat this task as independently reviewed until fresh review evidence is recorded.`;
+    }
+    if (attestation.completion_allowed !== true || attestation.status === 'DEGRADED_OR_UNVERIFIABLE') {
+        return `WARNING: review evidence is degraded or unverifiable. ${attestation.reason}`;
+    }
+    return 'none';
+}
+
+export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
+    const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
+    const profile = closeout.implementation_summary.active_profile || 'unknown';
+    const fullSuiteEnabled = closeout.workflow?.mandatory_full_suite_enabled === true ? 'enabled' : 'disabled';
+    const docsUpdated = closeout.implementation_summary.docs_updated ? 'yes' : 'no';
+    const taskStatus = closeout.status === 'READY' && closeout.audit_status === 'PASS' ? 'DONE' : 'BLOCKED';
+    const timingEntries = new Map<string, ReviewTimingAuditEntry[]>();
+    for (const entry of closeout.review_timing_audit?.entries || []) {
+        if (entry.review_type) {
+            const entries = timingEntries.get(entry.review_type) || [];
+            entries.push(entry);
+            timingEntries.set(entry.review_type, entries);
+        }
+    }
+    const reviewEntries = Object.entries(closeout.implementation_summary.review_verdicts || {})
+        .sort(([left], [right]) => left.localeCompare(right));
+    const lines = [
+        'GARDA FINAL REPORT',
+        '',
+        `Task: ${closeout.task_id}`,
+        `Status: ${taskStatus}`,
+        `Profile: ${profile}`,
+        `MandatoryFullSuite: ${fullSuiteEnabled}`,
+        `DocsUpdated: ${docsUpdated}`,
+        '',
+        'Review Verdicts:'
+    ];
+    if (reviewEntries.length === 0) {
+        lines.push('none required');
+    } else {
+        for (const [reviewType, verdict] of reviewEntries) {
+            lines.push(buildFinalUserReportReviewLine(reviewType, verdict, timingEntries.get(reviewType) || []));
+        }
+    }
+    lines.push('');
+    lines.push('Review Timing Warning:');
+    lines.push(buildReviewTimingWarning(closeout, reviewIntegrityAttestation));
+    return lines.join('\n');
 }
 
 function isLowQualityCommitSubject(subject: string, scope: string): boolean {
@@ -526,6 +627,9 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     lines.push(`FinalCloseout: ${summary.final_closeout.status} (${summary.final_closeout.artifact_state})`);
     lines.push(`  JsonArtifact: ${summary.final_closeout.artifact_paths.json}`);
     lines.push(`  MarkdownArtifact: ${summary.final_closeout.artifact_paths.markdown}`);
+    if (summary.final_closeout.artifact_paths.final_user_report) {
+        lines.push(`  FinalUserReportArtifact: ${summary.final_closeout.artifact_paths.final_user_report}`);
+    }
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(summary.final_closeout);
     if (summary.final_closeout.optional_skills?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.optional_skills.visible_summary_line}`);

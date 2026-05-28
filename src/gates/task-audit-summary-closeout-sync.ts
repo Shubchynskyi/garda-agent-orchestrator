@@ -9,12 +9,13 @@ import {
 import { cleanupTerminalReviewTempOutputs } from '../cli/commands/gates-artifacts';
 import { runDailyRetentionMaintenance } from '../lifecycle/daily-retention-maintenance';
 import { updateEvidenceArtifactState } from './task-audit-summary-collectors';
-import { formatFinalCloseoutMarkdown } from './task-audit-summary-renderers';
+import { formatFinalCloseoutMarkdown, formatFinalUserReport } from './task-audit-summary-renderers';
 import { type TaskAuditSummaryResult } from './task-audit-summary';
 
 export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResult): TaskAuditSummaryResult {
     const jsonPath = summary.final_closeout.artifact_paths.json;
     const markdownPath = summary.final_closeout.artifact_paths.markdown;
+    const finalUserReportPath = summary.final_closeout.artifact_paths.final_user_report;
     const bundleRoot = path.dirname(path.dirname(path.dirname(jsonPath)));
     const ledgerPath = resolveTaskHistoryLedgerPath(bundleRoot, summary.task_id);
 
@@ -25,6 +26,9 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         }) as typeof summary.final_closeout;
         writeFileAtomically(jsonPath, JSON.stringify(closeout, null, 2) + '\n', { encoding: 'utf8' });
         writeFileAtomically(markdownPath, formatFinalCloseoutMarkdown(closeout) + '\n', { encoding: 'utf8' });
+        if (finalUserReportPath) {
+            writeFileAtomically(finalUserReportPath, formatFinalUserReport(closeout) + '\n', { encoding: 'utf8' });
+        }
         cleanupTerminalReviewTempOutputs(path.resolve(path.dirname(jsonPath), '..', '..', '..'), summary.task_id);
         runDailyRetentionMaintenance({
             targetRoot: path.resolve(path.dirname(jsonPath), '..', '..', '..'),
@@ -33,27 +37,38 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         summary.final_closeout = closeout;
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, true);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, true);
+        if (finalUserReportPath) {
+            updateEvidenceArtifactState(summary.evidence, 'final-user-report', finalUserReportPath, true);
+        }
     } else if (summary.point_in_time_snapshot.status === 'FINALIZATION_IN_FLIGHT') {
         const jsonExists = fs.existsSync(jsonPath);
         const markdownExists = fs.existsSync(markdownPath);
+        const finalUserReportExists = finalUserReportPath ? fs.existsSync(finalUserReportPath) : false;
         summary.final_closeout = {
             ...summary.final_closeout,
-            artifact_state: jsonExists || markdownExists ? 'MATERIALIZED' : 'NOT_READY'
+            artifact_state: jsonExists || markdownExists || finalUserReportExists ? 'MATERIALIZED' : 'NOT_READY'
         };
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, jsonExists);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, markdownExists);
+        if (finalUserReportPath) {
+            updateEvidenceArtifactState(summary.evidence, 'final-user-report', finalUserReportPath, finalUserReportExists);
+        }
     } else if (summary.blockers.some((blocker) => blocker.gate === 'post-done-drift')) {
         const jsonExists = fs.existsSync(jsonPath);
         const markdownExists = fs.existsSync(markdownPath);
+        const finalUserReportExists = finalUserReportPath ? fs.existsSync(finalUserReportPath) : false;
         summary.final_closeout = {
             ...summary.final_closeout,
-            artifact_state: jsonExists || markdownExists ? 'MATERIALIZED' : 'NOT_READY'
+            artifact_state: jsonExists || markdownExists || finalUserReportExists ? 'MATERIALIZED' : 'NOT_READY'
         };
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, jsonExists);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, markdownExists);
+        if (finalUserReportPath) {
+            updateEvidenceArtifactState(summary.evidence, 'final-user-report', finalUserReportPath, finalUserReportExists);
+        }
     } else {
         let removed = false;
-        for (const artifactPath of [jsonPath, markdownPath]) {
+        for (const artifactPath of [jsonPath, markdownPath, finalUserReportPath].filter(Boolean) as string[]) {
             if (fs.existsSync(artifactPath)) {
                 fs.rmSync(artifactPath, { force: true });
                 removed = true;
@@ -65,6 +80,9 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
         };
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-json', jsonPath, false);
         updateEvidenceArtifactState(summary.evidence, 'final-closeout-markdown', markdownPath, false);
+        if (finalUserReportPath) {
+            updateEvidenceArtifactState(summary.evidence, 'final-user-report', finalUserReportPath, false);
+        }
     }
 
     if (summary.status !== 'INCOMPLETE') {
@@ -80,4 +98,3 @@ export function synchronizeFinalCloseoutArtifacts(summary: TaskAuditSummaryResul
     }
     return summary;
 }
-

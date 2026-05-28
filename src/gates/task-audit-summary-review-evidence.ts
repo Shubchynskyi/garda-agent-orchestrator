@@ -29,6 +29,7 @@ const ARTIFACT_PATTERNS: ReadonlyArray<{ kind: string; suffix: string }> = [
     { kind: 'optional-skill-selection', suffix: '-optional-skill-selection.json' },
     { kind: 'final-closeout-json', suffix: '-final-closeout.json' },
     { kind: 'final-closeout-markdown', suffix: '-final-closeout.md' },
+    { kind: 'final-user-report', suffix: '-final-user-report.md' },
     { kind: 'no-op', suffix: '-no-op.json' },
     { kind: 'code-review', suffix: '-code.md' },
     { kind: 'code-review-context', suffix: '-code-review-context.json' },
@@ -231,5 +232,4 @@ export function collectEvidenceArtifacts(
 
     return evidence;
 }
-
 

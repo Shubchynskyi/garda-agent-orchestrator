@@ -31,6 +31,7 @@ import {
 import {
     buildTaskAuditSummary,
     formatFinalCloseoutMarkdown,
+    formatFinalUserReport,
     type TaskAuditSummaryResult
 } from './task-audit-summary';
 import {
@@ -322,6 +323,7 @@ export interface NextStepBlockedReviewLane {
 export interface NextStepFinalReportSummary {
     closeout_json_path: string;
     closeout_markdown_path: string;
+    final_user_report_path: string;
     required_order: string[];
     commit_command_suggestion: string;
     commit_question: string;
@@ -5625,24 +5627,26 @@ function buildSourceRuntimeRemediationResult(params: {
     });
 }
 
-function buildFinalReportOrder(summary: TaskAuditSummaryResult, commitCommandSuggestion: string, commitQuestion: string): string[] {
-    const requirements = summary.final_report_contract.implementation_summary_requirements
-        .map((entry) => String(entry || '').trim())
-        .filter(Boolean);
-    const implementationSummary = requirements.length > 0
-        ? `implementation summary (include ${requirements.join(', ')})`
-        : 'implementation summary';
+function buildFinalReportOrder(summary: TaskAuditSummaryResult): string[] {
     const contractOrder = summary.final_report_contract.required_order.length > 0
         ? summary.final_report_contract.required_order
         : [
-            'review integrity attestation',
-            'implementation summary',
-            commitCommandSuggestion,
-            ...(commitQuestion ? [commitQuestion] : [])
+            'short agent-authored summary of what changed',
+            'verbatim Garda final user report'
         ];
-    return contractOrder
-        .map((entry) => entry === 'implementation summary' ? implementationSummary : entry)
+    const reportOrder = contractOrder
+        .map((entry) => entry === 'implementation summary' ? 'short agent-authored summary of what changed' : entry)
+        .filter((entry) => !/^git commit -m /u.test(entry))
+        .filter((entry) => entry !== 'Do you want me to commit now? (yes/no)' && entry !== 'No commit confirmation required.')
         .filter((entry) => String(entry || '').trim().length > 0);
+    if (
+        /^git commit -m /u.test(summary.final_report_contract.commit_command_suggestion || '') &&
+        summary.final_report_contract.commit_question === 'Do you want me to commit now? (yes/no)'
+    ) {
+        reportOrder.push(summary.final_report_contract.commit_command_suggestion);
+        reportOrder.push(summary.final_report_contract.commit_question);
+    }
+    return reportOrder;
 }
 
 function finalCloseoutMatchesCurrentCycle(
@@ -5672,7 +5676,8 @@ function readReadyFinalReportSummary(
 ): NextStepFinalReportSummary | null {
     const closeoutJsonPath = path.join(reviewsRoot, `${taskId}-final-closeout.json`);
     const closeoutMarkdownPath = path.join(reviewsRoot, `${taskId}-final-closeout.md`);
-    if (!fileExists(closeoutJsonPath) || !fileExists(closeoutMarkdownPath)) {
+    const finalUserReportPath = path.join(reviewsRoot, `${taskId}-final-user-report.md`);
+    if (!fileExists(closeoutJsonPath) || !fileExists(closeoutMarkdownPath) || !fileExists(finalUserReportPath)) {
         return null;
     }
 
@@ -5700,11 +5705,16 @@ function readReadyFinalReportSummary(
     if (fs.readFileSync(closeoutMarkdownPath, 'utf8') !== expectedMarkdown) {
         return null;
     }
+    const expectedFinalUserReport = `${formatFinalUserReport(expectedCloseout)}\n`;
+    if (fs.readFileSync(finalUserReportPath, 'utf8') !== expectedFinalUserReport) {
+        return null;
+    }
 
     return {
         closeout_json_path: toRepoDisplayPath(repoRoot, closeoutJsonPath),
         closeout_markdown_path: toRepoDisplayPath(repoRoot, closeoutMarkdownPath),
-        required_order: buildFinalReportOrder(summary, summary.final_report_contract.commit_command_suggestion, summary.final_report_contract.commit_question),
+        final_user_report_path: toRepoDisplayPath(repoRoot, finalUserReportPath),
+        required_order: buildFinalReportOrder(summary),
         commit_command_suggestion: summary.final_report_contract.commit_command_suggestion,
         commit_question: summary.final_report_contract.commit_question
     };

@@ -209,6 +209,8 @@ export function formatNextStepText(result: NextStepResult): string {
         lines.push(`MissingArtifacts: ${result.missing_artifacts.map((artifact) => artifact.key).join(', ')}`);
     }
     if (result.final_report) {
+        lines.push(`FinalUserReportPath: ${result.final_report.final_user_report_path}`);
+        lines.push('FinalUserReportInstruction: write a short summary of what you did, then print FinalUserReportPath verbatim without interpreting, summarizing, or rewriting it; after that, present any commit command and commit permission question listed in FinalReportOrder.');
         lines.push(`CloseoutArtifact: ${result.final_report.closeout_json_path}`);
         lines.push(`CloseoutMarkdown: ${result.final_report.closeout_markdown_path}`);
         lines.push('FinalReportOrder:');
