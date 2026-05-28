@@ -15,7 +15,7 @@ const TIMING_ENFORCED_REVIEW_TYPES = new Set([
     'infra',
     'dependency'
 ]);
-const SHORT_REVIEW_DURATION_MS = 30_000;
+const SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS = 30_000;
 const FUTURE_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
 export type HiddenReviewTimingDistrustCode =
@@ -23,7 +23,7 @@ export type HiddenReviewTimingDistrustCode =
     | 'future_timestamp'
     | 'impossible_ordering'
     | 'duplicate_provider_invocation_id'
-    | 'too_short_review_duration';
+    | 'too_short_without_strong_provider_evidence';
 
 export interface ReviewTimingTrustEventLike {
     event_type?: unknown;
@@ -174,6 +174,56 @@ function hasDuplicateProviderInvocationId(options: {
     return false;
 }
 
+function normalizeEvidenceToken(value: unknown): string {
+    return String(value || '').trim().toLowerCase();
+}
+
+function hasStrongProviderInvocationEvidence(details: Record<string, unknown> | null | undefined): boolean {
+    const providerInvocationId = getStringField(details, 'provider_invocation_id', 'providerInvocationId');
+    if (!providerInvocationId) {
+        return false;
+    }
+    if (/^(?:unknown|n\/a|na|null|none|manual|mock|test|placeholder|<.*>)$/i.test(providerInvocationId)) {
+        return false;
+    }
+    const normalizedProviderInvocationId = normalizeEvidenceToken(providerInvocationId);
+    if (/^agent:/i.test(providerInvocationId)) {
+        return false;
+    }
+    const reviewerIdentity = getStringField(
+        details,
+        'reviewer_identity',
+        'reviewerIdentity',
+        'reviewer_session_id',
+        'reviewerSessionId'
+    );
+    if (reviewerIdentity && normalizedProviderInvocationId === normalizeEvidenceToken(reviewerIdentity)) {
+        return false;
+    }
+    const attestationSource = getStringField(
+        details,
+        'reviewer_launch_attestation_source',
+        'reviewerLaunchAttestationSource',
+        'attestation_source',
+        'attestationSource'
+    ).toLowerCase();
+    if (!attestationSource || [
+        'controller',
+        'local_controller',
+        'manual',
+        'mock',
+        'orchestrator_mock',
+        'garda_prepare_reviewer_launch',
+        'provider_subagent'
+    ].includes(attestationSource)) {
+        return false;
+    }
+    if (['gemini', 'gemini_cli'].includes(attestationSource)) {
+        return /(?:invocation|run|task|spawn|subagent|reviewer)/i.test(providerInvocationId);
+    }
+    return /(?:spawn|subagent|task|tool|launch|run|invocation)/i.test(attestationSource);
+}
+
 function distrust(code: HiddenReviewTimingDistrustCode): HiddenReviewTimingTrustResult {
     return {
         trusted: false,
@@ -260,8 +310,13 @@ export function evaluateHiddenReviewTimingTrust(options: {
     }
 
     const launchToResultMs = Number(reviewResultRecordedAtMs) - Number(launchedAtMs);
-    if (launchToResultMs >= 0 && launchToResultMs < SHORT_REVIEW_DURATION_MS) {
-        return distrust('too_short_review_duration');
+    if (
+        !hasStrongProviderInvocationEvidence(details)
+        && launchToResultMs >= 0
+        && launchToResultMs < SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS
+    ) {
+        return distrust('too_short_without_strong_provider_evidence');
     }
+
     return { trusted: true, code: null, message: null };
 }

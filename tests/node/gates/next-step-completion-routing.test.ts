@@ -713,7 +713,7 @@ function writeReviewEvidence(
     const launchedAtUtc = '2026-04-28T00:00:01.000Z';
     const launchCompletedAtUtc = '2026-04-28T00:00:02.000Z';
     const invocationAttestedAtUtc = '2026-04-28T00:00:03.000Z';
-    const reviewResultRecordedAtUtc = '2026-04-28T00:00:32.000Z';
+    const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
     let reviewerLaunchArtifactSha256 = '';
     if (options.includeLaunchArtifact !== false) {
         const launchBindingSha256 = 'c'.repeat(64);
