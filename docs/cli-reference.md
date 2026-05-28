@@ -132,9 +132,9 @@ Notes:
 Deterministic task navigator. Use this as the default task loop: run it before the first gate, after every suggested command, and after any gate failure.
 
 ```text
-garda next-step "T-137" --target-root "."
-garda next-step "T-137" --as-json --target-root "."
-garda gate next-step "T-137" --repo-root "."
+garda next-step T-137
+garda next-step T-137 --as-json
+garda gate next-step T-137
 garda gate next-step --preflight-path "garda-agent-orchestrator/runtime/reviews/T-137-preflight.json" --repo-root "."
 ```
 
@@ -142,7 +142,7 @@ Notes:
 - `next-step` reads current task events and review artifacts, then prints the current status, effective full-suite config including placement, review policy, missing artifacts, and the single next command to run.
 - The command accepts either a positional task id (`T-137`), `--task-id`, or a `--preflight-path` that ends in `<task-id>-preflight.json`.
 - Before the first preflight, `next-step` reuses task-mode `planned_changed_files` to print concrete `classify-change --changed-file` arguments; agents should not invent placeholder paths.
-- After every suggested command completes, rerun `garda next-step "T-137"` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
+- After every suggested command completes, rerun `garda next-step T-137` instead of guessing gate flags, reading default templates for effective config, or starting with `compile-gate`.
 - If preflight scope touches protected orchestrator control-plane files without `--orchestrator-work`, restart task mode with the exact command printed by `next-step` or by the failed preflight gate before continuing, except in application workspaces where Garda self-guard is on and `next-step` routes to `operator-maintenance`.
 - In materialized/application workspaces the `garda-agent-orchestrator/` bundle is vendor/control-plane. With `garda_self_guard=on`, agents cannot self-escalate into `--orchestrator-work`; operators must run update/repair/maintenance or deliberately relax the policy with `workflow set --garda-self-guard off`.
 - Review navigation uses the launch batch, not only the legacy single-review field. Human output can include `ReviewLaunchableBatch`, `BlockedReviewLanes`, and `ReviewFailedCurrent`; JSON includes `review.launchable_review_types`, `review.blocked_review_lanes`, and `review.failed_review_type`.
@@ -689,12 +689,12 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Review context | `garda gate build-review-context --task-id "T-001" --review-type "code" --depth 2 --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Task events | `garda gate task-events-summary --task-id "T-001"`; use `--compact-latest-cycle` for bounded machine-readable latest-cycle JSON |
 | Task audit | `garda gate task-audit-summary --task-id "T-001"`; human stdout may be colored, while `--as-json` and `--output-path` remain uncolored |
-| Next step | `garda next-step "T-001"` or `garda gate next-step "T-001"` |
+| Next step | `garda next-step T-001` or `garda gate next-step T-001` |
 | Log event | `garda gate log-task-event --task-id "T-001" --event-type "..."` |
 | Manifest validation | `garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"` |
 | Human commit | `garda gate human-commit --operator-confirmed yes --message "<message>"` |
 
-Use `garda next-step "T-001"` as the task-loop command before and after gates; it reports the effective full-suite config including placement, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
+Use `garda next-step T-001` as the task-loop command before and after gates; it reports the effective full-suite config including placement, review policy, missing artifacts, review trust status, and a single recommended command. Full gate examples live in `template/docs/agent-rules/40-commands.md`.
 
 Task-start identity and preflight notes:
 - `enter-task-mode` and related runtime identity checks normalize explicit provider aliases such as `github-copilot-cli` to the canonical provider id `GitHubCopilot`; artifacts record the canonical id.

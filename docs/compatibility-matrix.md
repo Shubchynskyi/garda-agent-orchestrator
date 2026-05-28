@@ -5,6 +5,7 @@ Status badges: **✅ Tested** · **🟡 Partial** · **🔬 Experimental** · **
 This matrix documents the current support level for each provider family.
 Every claim below is backed by automated tests or implementation evidence in the repository;
 see the [Evidence Sources](#evidence-sources) section for traceability.
+For a shorter human-readable list, see [Supported Providers](providers.md).
 
 ## Provider Overview
 
@@ -23,9 +24,11 @@ see the [Evidence Sources](#evidence-sources) section for traceability.
 
 `Codex`, `Cursor`, and `DeepSeek` intentionally share the same root entrypoint file while remaining distinct runtime providers.
 
+Antigravity can run the Garda task workflow through `.antigravity/rules.md`, but current Antigravity tooling does not provide a confirmed independent sub-agent launch surface. Mandatory independent reviews cannot be satisfied through Antigravity alone in this version.
+
 ## Core Feature Matrix
 
-| Feature | Claude | Codex | Cursor | DeepSeek | Gemini | Qwen | Copilot | Windsurf | Junie | Antigravity |
+| Feature | Claude | Codex | Cursor | DeepSeek | Gemini | Qwen | GitHub Copilot | Windsurf | Junie | Antigravity |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Entrypoint materialization | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Managed-block injection | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -42,7 +45,7 @@ see the [Evidence Sources](#evidence-sources) section for traceability.
 All supported providers share the same mandatory gate sequence.
 Tests verify that each materialized entrypoint and start-task router includes the full ordered gate set.
 
-| Gate | Claude | Codex | Cursor | DeepSeek | Gemini | Qwen | Copilot | Windsurf | Junie | Antigravity |
+| Gate | Claude | Codex | Cursor | DeepSeek | Gemini | Qwen | GitHub Copilot | Windsurf | Junie | Antigravity |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | `enter-task-mode` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `load-rule-pack` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -55,7 +58,7 @@ Tests verify that each materialized entrypoint and start-task router includes th
 
 ## Review Delegation
 
-Required reviews run as independent fresh-context delegated sub-agents on every supported provider.
+Required reviews run as independent fresh-context delegated sub-agents only on providers with a confirmed delegated launch surface.
 
 | Provider | Delegation Mode | Mechanism | Status |
 |---|---|---|:---:|
@@ -66,17 +69,17 @@ Required reviews run as independent fresh-context delegated sub-agents on every 
 | GitHub Copilot | Delegated sub-agent | `task` tool (`agent_type="general-purpose"`) | ✅ |
 | Windsurf | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
 | Junie | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
-| Antigravity | Delegated sub-agent | Provider sub-agents with isolated review context | ✅ |
+| Antigravity | Not currently supported | No confirmed provider-native sub-agent launch tool in the current version | 🟡 |
 | Gemini | Delegated sub-agent | Delegated reviewer sub-agents with isolated context | ✅ |
 | Qwen | Delegated sub-agent | Delegated reviewer sub-agents with isolated context | ✅ |
 
 **Notes:**
-- Required reviews must use `delegated_subagent` mode on every supported provider.
+- Required reviews must use `delegated_subagent` mode on every provider that supports mandatory independent review.
 - Providers or bridges that cannot launch delegated reviewer sub-agents cannot satisfy the mandatory review workflow.
 
 ## Review Type Support
 
-All 9 review types are available to every provider through the same gate infrastructure.
+Review lanes are available through the same gate infrastructure.
 Whether a specific review type activates depends on the preflight classifier and `review-capabilities.json`,
 not the provider.
 
@@ -95,27 +98,25 @@ not the provider.
 ## Test Coverage by Provider
 
 The execution-path test suite (`tests/node/gates/provider-workflow-execution.test.ts`) validates
-all 9 providers across multiple dimensions.
+all supported provider entries across multiple dimensions.
 
-| Test Dimension | Tests per Provider | Total |
-|---|:---:|:---:|
-| Handshake diagnostics | 5 | 45 |
-| Evidence lifecycle | 2 | 18 |
-| Provider compliance | 4 | 36 |
-| Gate sequence verification | 5 | 45 |
-| Bridge execution contracts | 5 (bridge only) | 20 |
-| Cross-provider context | — | 6 |
-| Multi-provider workspace | — | 3 |
-| Redirect entrypoints | 2 | 18 |
-| Structural invariants | — | 8 |
-| Compliance format output | — | 2 |
-| **Total** | | **~201** |
+| Test Dimension | Coverage Shape |
+|---|---|
+| Handshake diagnostics | Checked for each supported provider entry. |
+| Evidence lifecycle | Checked for each supported provider entry. |
+| Provider compliance | Checked for managed blocks, entrypoints, bridges, and expected provider-owned files. |
+| Gate sequence verification | Checked for the mandatory ordered gate set. |
+| Bridge execution contracts | Checked for providers with bridge profiles. |
+| Cross-provider context | Checked for shared-entrypoint and multi-provider workspaces. |
+| Redirect entrypoints | Checked for generated redirect files and canonical source-of-truth routing. |
+| Structural invariants | Checked for registry and materialization consistency. |
+| Compliance format output | Checked for machine-readable validator output. |
 
 Additional provider-relevant test suites:
 
 | Suite | Path | Scope |
 |---|---|---|
-| Cross-provider router matrix | `tests/node/materialization/cross-provider-router-matrix.test.ts` | Entrypoint canonicalization across 9 providers and 8 unique entrypoints |
+| Cross-provider router matrix | `tests/node/materialization/cross-provider-router-matrix.test.ts` | Entrypoint canonicalization across supported provider entries and unique entrypoints |
 | Provider compliance validators | `tests/node/validators/provider-compliance.test.ts` | Managed-block and structure validation |
 | CLI provider routing | `tests/node/cli/commands/gates.test.ts` | `--provider` option dispatch |
 

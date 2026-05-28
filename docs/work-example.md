@@ -25,13 +25,13 @@ User asks:
 The agent starts with the navigator and reruns it after every suggested command:
 
 ```shell
-garda next-step "T-201" --target-root "."
+garda next-step T-201
 ```
 
 In a source checkout the equivalent developer command is:
 
 ```shell
-node bin/garda.js next-step "T-201" --repo-root "."
+node bin/garda.js next-step T-201
 ```
 
 ## Happy Path

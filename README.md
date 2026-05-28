@@ -6,11 +6,11 @@
 
 **Governed workflows for AI coding agents.**
 
-Garda turns Claude, Codex, Copilot, DeepSeek, Gemini, Qwen, Windsurf, Junie, and Antigravity into a controlled local development workflow with task lifecycle, mandatory gates, review artifacts, doc-impact checks, and auditable completion.
+Garda supports multiple AI coding agent provider surfaces through one canonical workflow. See [Supported Providers](docs/providers.md) for the current provider list, entrypoints, bridge profiles, and known provider-specific limitations.
 
 `GARDA = Governed Agent Runtime, Deployment, and Audit.`
 
-**[Website](https://garda-workflow.netlify.app/)** · **[Quick Start](#quick-start)** · **[User Guide](HOW_TO.md)** · **[Architecture](docs/architecture.md)** · **[Work Example](docs/work-example.md)** · **[CLI Reference](docs/cli-reference.md)** · **[Configuration](docs/configuration.md)** · **[Changelog](CHANGELOG.md)**
+**[Website](https://garda-workflow.netlify.app/)** · **[Quick Start](#quick-start)** · **[User Guide](HOW_TO.md)** · **[Providers](docs/providers.md)** · **[Architecture](docs/architecture.md)** · **[Work Example](docs/work-example.md)** · **[CLI Reference](docs/cli-reference.md)** · **[Configuration](docs/configuration.md)** · **[Changelog](CHANGELOG.md)**
 
 ## Without Garda / With Garda
 
@@ -39,7 +39,7 @@ Garda adds a governance layer:
 
 - task lifecycle: `TODO → IN_PROGRESS → IN_REVIEW → DONE`
 - mandatory gates: preflight, compile, review, doc-impact, completion
-- provider-agnostic rules for Claude, Codex, Copilot, DeepSeek, Gemini, Qwen, Windsurf, Junie, and Antigravity
+- provider-agnostic rules with documented provider entrypoints and bridge profiles
 - auditable task events and review artifacts
 - local Node/TypeScript CLI runtime
 - token-economy defaults for compact green-path execution
@@ -77,7 +77,7 @@ If you want persistent commands, install globally.
 
 | Feature | Description |
 |---|---|
-| **Many Provider Surfaces** | Claude, Codex, Copilot, DeepSeek, Gemini, Qwen, GitHub Copilot, Windsurf, Junie, and Antigravity — one canonical workflow with provider-specific entrypoints and bridges |
+| **Many Provider Surfaces** | One canonical workflow with provider-specific entrypoints and bridges; see [Supported Providers](docs/providers.md) for the current list |
 | **Mandatory Quality Gates** | Preflight → Compile → Review → Doc-Impact → Completion |
 | **Token Economy** | Reviewer-context compaction, scoped diffs, gate output filtering — saves 60–100% on green builds |
 | **Task Lifecycle** | `TODO → IN_PROGRESS → IN_REVIEW → DONE` with hash-chain integrity |
@@ -87,17 +87,7 @@ If you want persistent commands, install globally.
 
 ## Supported Providers
 
-| Provider | Entrypoint | Bridge Profile |
-|---|---|---|
-| Claude | `CLAUDE.md` | `.claude/settings.local.json` |
-| Codex | `AGENTS.md` | — |
-| DeepSeek | `AGENTS.md` | — |
-| Gemini | `GEMINI.md` | — |
-| Qwen | `QWEN.md` | optional `.qwen/settings.json` context bootstrap |
-| GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/*.md` |
-| Windsurf | `.windsurf/rules/rules.md` | `.windsurf/agents/orchestrator.md` |
-| Junie | `.junie/guidelines.md` | `.junie/agents/orchestrator.md` |
-| Antigravity | `.antigravity/rules.md` | `.antigravity/agents/orchestrator.md` |
+The provider list is maintained in [docs/providers.md](docs/providers.md). That page documents current entrypoints, bridge profiles, shared `AGENTS.md` providers, and the Antigravity independent-review limitation.
 
 ## CLI Commands
 

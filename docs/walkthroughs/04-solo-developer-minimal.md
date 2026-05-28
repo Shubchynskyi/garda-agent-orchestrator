@@ -125,7 +125,7 @@ Small, localized, low-risk — perfect for the `fast` profile.
 Execute task T-501 strictly through the orchestrator.
 ```
 
-The agent uses `garda next-step "T-501"` before the first gate and after every
+The agent uses `garda next-step T-501` before the first gate and after every
 suggested command.
 
 #### What The Fast Profile Means

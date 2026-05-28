@@ -167,7 +167,7 @@ order-service/
 Execute task T-401 strictly through the orchestrator.
 ```
 
-The agent uses `garda next-step "T-401"` as the navigator before the first gate
+The agent uses `garda next-step T-401` as the navigator before the first gate
 and after every suggested command.
 
 #### Agent Lifecycle

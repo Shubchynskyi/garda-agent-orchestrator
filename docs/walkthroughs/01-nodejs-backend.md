@@ -162,7 +162,7 @@ The agent adds to `TASK.md`:
 Execute task T-101 strictly through the orchestrator.
 ```
 
-The agent uses `garda next-step "T-101"` before the first gate and after every
+The agent uses `garda next-step T-101` before the first gate and after every
 suggested command. The `TASK.md` profile, active profile config, and preflight
 risk decide the effective depth; user-facing task starts should not rely on
 `depth=1|2|3` as a review shortcut.

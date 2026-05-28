@@ -85,6 +85,115 @@ test('review timing trust rejects too-short review result without strong provide
     assert.equal(result.code, 'too_short_without_strong_provider_evidence');
 });
 
+test('review timing trust rejects Chronobot-shaped generic Antigravity review metadata', () => {
+    const result = evaluateHiddenReviewTimingTrust({
+        reviewType: 'db',
+        reusedExistingReview: false,
+        reviewerProvenance: provenance({
+            launched_at_utc: '2026-05-28T09:05:34.903Z',
+            launch_completed_at_utc: '2026-05-28T09:05:35.095Z',
+            invocation_attested_at_utc: '2026-05-28T09:05:35.300Z'
+        }),
+        reviewResultRecordedAtUtc: '2026-05-28T09:05:46.740Z',
+        timelineEvents: [
+            invocationEvent({
+                review_type: 'db',
+                reviewer_identity: 'agent:t088-db-reviewer-v1',
+                reviewer_session_id: 'agent:t088-db-reviewer-v1',
+                provider_invocation_id: 'agent:t088-db-reviewer-v1',
+                reviewer_launch_attestation_source: 'provider_subagent',
+                launched_at_utc: '2026-05-28T09:05:34.903Z',
+                launch_completed_at_utc: '2026-05-28T09:05:35.095Z',
+                invocation_attested_at_utc: '2026-05-28T09:05:35.300Z'
+            })
+        ],
+        nowMs: Date.parse('2026-05-28T09:06:30.000Z')
+    });
+
+    assert.equal(result.trusted, false);
+    assert.equal(result.code, 'too_short_without_strong_provider_evidence');
+    assert.equal(result.message, HIDDEN_REVIEW_TIMING_DISTRUST_MESSAGE);
+});
+
+test('review timing trust treats generic provider_subagent source as weak even with non-agent invocation id', () => {
+    const result = evaluateHiddenReviewTimingTrust({
+        reviewType: 'refactor',
+        reusedExistingReview: false,
+        reviewerProvenance: provenance(),
+        recordedAtUtc: '2026-05-17T20:00:30.000Z',
+        timelineEvents: [
+            invocationEvent({
+                review_type: 'refactor',
+                provider_invocation_id: 'provider-run-weak-1',
+                reviewer_launch_attestation_source: 'provider_subagent'
+            })
+        ],
+        nowMs: Date.parse('2026-05-17T20:01:00.000Z')
+    });
+
+    assert.equal(result.trusted, false);
+    assert.equal(result.code, 'too_short_without_strong_provider_evidence');
+});
+
+test('review timing trust accepts weak-provider evidence after the hidden baseline', () => {
+    const result = evaluateHiddenReviewTimingTrust({
+        reviewType: 'test',
+        reusedExistingReview: false,
+        reviewerProvenance: provenance(),
+        recordedAtUtc: '2026-05-17T20:00:32.000Z',
+        timelineEvents: [
+            invocationEvent({
+                review_type: 'test',
+                provider_invocation_id: 'provider-run-weak-2',
+                reviewer_launch_attestation_source: 'provider_subagent'
+            })
+        ],
+        nowMs: Date.parse('2026-05-17T20:03:00.000Z')
+    });
+
+    assert.equal(result.trusted, true);
+    assert.equal(result.code, null);
+});
+
+test('review timing trust accepts short review with concrete provider-native invocation evidence', () => {
+    const result = evaluateHiddenReviewTimingTrust({
+        reviewType: 'code',
+        reusedExistingReview: false,
+        reviewerProvenance: provenance(),
+        recordedAtUtc: '2026-05-17T20:00:20.000Z',
+        timelineEvents: [
+            invocationEvent({
+                provider_invocation_id: 'codex-run-20260517-abc123',
+                reviewer_launch_attestation_source: 'codex.spawn_agent'
+            })
+        ],
+        nowMs: Date.parse('2026-05-17T20:01:00.000Z')
+    });
+
+    assert.equal(result.trusted, true);
+    assert.equal(result.code, null);
+});
+
+test('review timing trust accepts observed short Gemini invocation evidence', () => {
+    const result = evaluateHiddenReviewTimingTrust({
+        reviewType: 'db',
+        reusedExistingReview: false,
+        reviewerProvenance: provenance(),
+        recordedAtUtc: '2026-05-17T20:00:11.000Z',
+        timelineEvents: [
+            invocationEvent({
+                review_type: 'db',
+                provider_invocation_id: 'invocation:generalist:T-063-db-v4',
+                reviewer_launch_attestation_source: 'gemini'
+            })
+        ],
+        nowMs: Date.parse('2026-05-17T20:01:00.000Z')
+    });
+
+    assert.equal(result.trusted, true);
+    assert.equal(result.code, null);
+});
+
 test('review timing trust rejects provider invocation id reuse across lanes', () => {
     const result = evaluateHiddenReviewTimingTrust({
         reviewType: 'code',
