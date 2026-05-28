@@ -848,6 +848,45 @@ test('runEnterTaskModeCommand without --plan-path produces plan: null', () => {
     }
 });
 
+test('runEnterTaskModeCommand does not infer runtime provider from SourceOfTruth', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const runtimeDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime');
+        fs.mkdirSync(runtimeDir, { recursive: true });
+        fs.writeFileSync(path.join(runtimeDir, 'init-answers.json'), JSON.stringify({
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Claude',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'AGENT_INIT_PROMPT.md',
+            ActiveAgentFiles: 'CLAUDE.md'
+        }, null, 2), 'utf8');
+
+        assert.throws(
+            () => runEnterTaskModeCommand({
+                repoRoot: tmpDir,
+                taskId: 'T-099',
+                entryMode: 'EXPLICIT_TASK_EXECUTION',
+                requestedDepth: 2,
+                effectiveDepth: 2,
+                taskSummary: 'Implement the widget feature end to end',
+                emitMetrics: false
+            }),
+            (error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                assert.match(message, /Runtime execution identity is 'missing'/);
+                assert.match(message, /Do not infer runtime provider from canonical SourceOfTruth/);
+                assert.equal(message.includes("--provider \"Claude\""), false);
+                return true;
+            }
+        );
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
 test('runEnterTaskModeCommand surfaces optional Markdown working plan without enabling plan-guided mode', () => {
     const tmpDir = makeTempDir();
     try {

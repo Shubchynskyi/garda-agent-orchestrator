@@ -189,6 +189,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
 ]);
 
 export const SOURCE_OF_TRUTH_VALUES: readonly string[] = Object.freeze([...getProviderIds()]);
+export const DEFAULT_AGENTS_MD_SOURCE_OF_TRUTH = 'Codex';
 
 export const BREVITY_VALUES: readonly string[] = Object.freeze([
     'concise',
@@ -197,7 +198,9 @@ export const BREVITY_VALUES: readonly string[] = Object.freeze([
 
 export const DEFAULT_ASSISTANT_LANGUAGE = 'English';
 export const DEFAULT_ASSISTANT_BREVITY = BREVITY_VALUES[0];
-export const DEFAULT_SOURCE_OF_TRUTH = SOURCE_OF_TRUTH_VALUES[0];
+export const DEFAULT_SOURCE_OF_TRUTH = SOURCE_OF_TRUTH_VALUES.includes(DEFAULT_AGENTS_MD_SOURCE_OF_TRUTH)
+    ? DEFAULT_AGENTS_MD_SOURCE_OF_TRUTH
+    : SOURCE_OF_TRUTH_VALUES[0];
 
 export const COLLECTED_VIA_VALUES: readonly string[] = Object.freeze([
     'AGENT_INIT_PROMPT.md',

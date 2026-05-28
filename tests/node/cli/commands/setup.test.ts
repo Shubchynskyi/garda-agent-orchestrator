@@ -181,12 +181,12 @@ test('getSetupAnswerDefaults returns sensible defaults for empty workspace', () 
         const defaults = getSetupAnswerDefaults(tmpDir, INIT_ANSWERS_RELATIVE_PATH, {});
         assert.equal(defaults.assistantLanguage, 'English');
         assert.equal(defaults.assistantBrevity, 'concise');
-        assert.equal(defaults.sourceOfTruth, 'Claude');
+        assert.equal(defaults.sourceOfTruth, 'Codex');
         assert.equal(defaults.enforceNoAutoCommit, true);
         assert.equal(defaults.claudeOrchestratorFullAccess, false);
         assert.equal(defaults.tokenEconomyEnabled, true);
         assert.equal(defaults.providerMinimalism, true);
-        assert.equal(defaults.activeAgentFiles, 'CLAUDE.md');
+        assert.equal(defaults.activeAgentFiles, 'AGENTS.md');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

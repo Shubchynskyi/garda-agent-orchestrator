@@ -1876,7 +1876,7 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('rejects shell-smoke-preflight when runtime identity would fall back to canonical SourceOfTruth', () => {
+    it('rejects shell-smoke-preflight when runtime identity is missing instead of inferring SourceOfTruth', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-shell-smoke-legacy-fallback';
         seedTaskQueue(repoRoot, taskId);
@@ -1887,7 +1887,7 @@ describe('cli/commands/gates — preflight', () => {
             taskId
         }));
 
-        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before shell-smoke-preflight/i);
+        assert.match(error.message, /Runtime execution identity is 'missing' before shell-smoke-preflight/i);
         assert.match(error.message, /Re-enter task mode with explicit runtime identity via `--provider "<provider>"`/i);
         assert.match(error.message, /enter-task-mode/i);
 
@@ -1907,7 +1907,7 @@ describe('cli/commands/gates — preflight', () => {
             taskModePath: customTaskModePath
         }));
 
-        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before shell-smoke-preflight/i);
+        assert.match(error.message, /Runtime execution identity is 'missing' before shell-smoke-preflight/i);
         assert.match(error.message, /--artifact-path/i);
         assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
         assert.match(error.message, /--task-mode-path/i);
@@ -2065,7 +2065,7 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('rejects command-timeout-diagnostics when runtime identity would fall back to canonical SourceOfTruth', () => {
+    it('rejects command-timeout-diagnostics when runtime identity is missing instead of inferring SourceOfTruth', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-command-timeout-legacy-fallback';
         seedTaskQueue(repoRoot, taskId);
@@ -2076,7 +2076,7 @@ describe('cli/commands/gates — preflight', () => {
             taskId
         }));
 
-        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before command-timeout-diagnostics/i);
+        assert.match(error.message, /Runtime execution identity is 'missing' before command-timeout-diagnostics/i);
         assert.match(error.message, /Re-enter task mode with explicit runtime identity via `--provider "<provider>"`/i);
         assert.match(error.message, /command-timeout-diagnostics/i);
 
@@ -2096,7 +2096,7 @@ describe('cli/commands/gates — preflight', () => {
             taskModePath: customTaskModePath
         }));
 
-        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' before command-timeout-diagnostics/i);
+        assert.match(error.message, /Runtime execution identity is 'missing' before command-timeout-diagnostics/i);
         assert.match(error.message, /--artifact-path/i);
         assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
         assert.match(error.message, /--task-mode-path/i);

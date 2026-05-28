@@ -27,7 +27,7 @@ export function readRoutingDecision(
         taskModePath,
         executionProvider: providerOverride,
         routedTo: routedToOverride,
-        allowLegacyFallback: true
+        allowLegacyFallback: false
     });
     return {
         provider: identity.execution_provider,

@@ -739,8 +739,8 @@ describe('cli/commands/gates — task-start', () => {
             taskSummary: 'Refresh runtime identity without trusting stale task-mode evidence'
         }));
 
-        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' at task-mode entry/i);
-        assert.match(error.message, /--provider\s+['"]?Codex['"]?/i);
+        assert.match(error.message, /Runtime execution identity is 'missing' at task-mode entry/i);
+        assert.match(error.message, /--provider\s+['"]?<provider>['"]?/i);
         assert.match(error.message, /--routed-to ['"]?AGENTS\.md['"]?/i);
         const staleArtifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
         assert.equal(staleArtifact.provider, 'Qwen');
@@ -749,7 +749,7 @@ describe('cli/commands/gates — task-start', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('keeps custom task-mode artifact paths in task-mode entry legacy-fallback remediation', () => {
+    it('keeps custom task-mode artifact paths in task-mode entry missing-identity remediation', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-900c-stale-routing-custom-artifact';
         const customTaskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
@@ -763,7 +763,7 @@ describe('cli/commands/gates — task-start', () => {
             artifactPath: customTaskModePath
         }));
 
-        assert.match(error.message, /Runtime execution identity is 'legacy_fallback' at task-mode entry/i);
+        assert.match(error.message, /Runtime execution identity is 'missing' at task-mode entry/i);
         assert.match(error.message, /--artifact-path/i);
         assert.match(error.message, new RegExp(escapeRegExp(customTaskModePath)));
         assert.equal(fs.existsSync(customTaskModePath), false);

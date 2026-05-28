@@ -46,6 +46,7 @@ import {
     tryParseBooleanText
 } from '../../../../src/cli/commands/cli-helpers';
 import { dispatchCliCommand } from '../../../../src/cli/commands/command-dispatch';
+import { DEFAULT_SOURCE_OF_TRUTH } from '../../../../src/core/constants';
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
@@ -276,7 +277,8 @@ test('normalizeSourceOfTruth throws for invalid values', () => {
 test('tryNormalizeSourceOfTruth returns fallback for empty', () => {
     assert.equal(tryNormalizeSourceOfTruth(null, 'Claude'), 'Claude');
     assert.equal(tryNormalizeSourceOfTruth('', 'Claude'), 'Claude');
-    assert.equal(tryNormalizeSourceOfTruth(undefined), 'Claude');
+    assert.equal(tryNormalizeSourceOfTruth(undefined), 'Codex');
+    assert.equal(DEFAULT_SOURCE_OF_TRUTH, 'Codex');
 });
 
 test('tryNormalizeSourceOfTruth returns fallback for invalid', () => {
