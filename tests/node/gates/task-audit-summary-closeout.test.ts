@@ -1009,7 +1009,7 @@ describe('gates/task-audit-summary', () => {
                             launch_to_result_ms: 11_840,
                             launch_to_source_mtime_ms: null,
                             hidden_timing_status: 'DISTRUSTED',
-                            hidden_timing_distrust_code: 'too_short_without_strong_provider_evidence'
+                            hidden_timing_distrust_code: 'too_short_review_duration'
                         },
                         {
                             review_type: 'test',

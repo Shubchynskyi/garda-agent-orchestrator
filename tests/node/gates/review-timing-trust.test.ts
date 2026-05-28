@@ -65,7 +65,7 @@ test('review timing trust rejects missing timing with generic remediation only',
     assert.equal(/timing|threshold|seconds|elapsed|duration/i.test(result.message || ''), false);
 });
 
-test('review timing trust rejects too-short review result without strong provider evidence', () => {
+test('review timing trust rejects too-short review result', () => {
     const result = evaluateHiddenReviewTimingTrust({
         reviewType: 'security',
         reusedExistingReview: false,
@@ -82,7 +82,7 @@ test('review timing trust rejects too-short review result without strong provide
     });
 
     assert.equal(result.trusted, false);
-    assert.equal(result.code, 'too_short_without_strong_provider_evidence');
+    assert.equal(result.code, 'too_short_review_duration');
 });
 
 test('review timing trust rejects Chronobot-shaped generic Antigravity review metadata', () => {
@@ -111,7 +111,7 @@ test('review timing trust rejects Chronobot-shaped generic Antigravity review me
     });
 
     assert.equal(result.trusted, false);
-    assert.equal(result.code, 'too_short_without_strong_provider_evidence');
+    assert.equal(result.code, 'too_short_review_duration');
     assert.equal(result.message, HIDDEN_REVIEW_TIMING_DISTRUST_MESSAGE);
 });
 
@@ -132,7 +132,7 @@ test('review timing trust treats generic provider_subagent source as weak even w
     });
 
     assert.equal(result.trusted, false);
-    assert.equal(result.code, 'too_short_without_strong_provider_evidence');
+    assert.equal(result.code, 'too_short_review_duration');
 });
 
 test('review timing trust accepts weak-provider evidence after the hidden baseline', () => {
@@ -155,7 +155,7 @@ test('review timing trust accepts weak-provider evidence after the hidden baseli
     assert.equal(result.code, null);
 });
 
-test('review timing trust accepts short review with concrete provider-native invocation evidence', () => {
+test('review timing trust rejects short review with concrete provider-native invocation evidence', () => {
     const result = evaluateHiddenReviewTimingTrust({
         reviewType: 'code',
         reusedExistingReview: false,
@@ -170,11 +170,11 @@ test('review timing trust accepts short review with concrete provider-native inv
         nowMs: Date.parse('2026-05-17T20:01:00.000Z')
     });
 
-    assert.equal(result.trusted, true);
-    assert.equal(result.code, null);
+    assert.equal(result.trusted, false);
+    assert.equal(result.code, 'too_short_review_duration');
 });
 
-test('review timing trust accepts observed short Gemini invocation evidence', () => {
+test('review timing trust rejects observed short Gemini invocation evidence', () => {
     const result = evaluateHiddenReviewTimingTrust({
         reviewType: 'db',
         reusedExistingReview: false,
@@ -190,8 +190,8 @@ test('review timing trust accepts observed short Gemini invocation evidence', ()
         nowMs: Date.parse('2026-05-17T20:01:00.000Z')
     });
 
-    assert.equal(result.trusted, true);
-    assert.equal(result.code, null);
+    assert.equal(result.trusted, false);
+    assert.equal(result.code, 'too_short_review_duration');
 });
 
 test('review timing trust rejects provider invocation id reuse across lanes', () => {

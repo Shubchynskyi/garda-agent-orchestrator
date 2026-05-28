@@ -537,11 +537,19 @@ function buildReviewTimingAuditSummary(
 ): FinalCloseoutReviewTimingAuditSummary | null {
     const compileSequence = latestCompileSequence(events);
     const entries: FinalCloseoutReviewTimingAuditEntry[] = [];
+    const seenReceiptHashes = new Set<string>();
 
     for (const reviewType of REVIEW_TIMING_AUDIT_TYPES) {
         for (const receiptPath of listReviewReceiptPaths(reviewsRoot, taskId, reviewType)) {
             const entry = buildReviewTimingAuditEntry(taskId, reviewType, receiptPath, events, compileSequence);
             if (entry) {
+                const receiptIdentity = entry.receipt_sha256
+                    ? `${entry.review_type}:${entry.receipt_sha256}`
+                    : `${entry.review_type}:${entry.receipt_path}`;
+                if (seenReceiptHashes.has(receiptIdentity)) {
+                    continue;
+                }
+                seenReceiptHashes.add(receiptIdentity);
                 entries.push(entry);
             }
         }

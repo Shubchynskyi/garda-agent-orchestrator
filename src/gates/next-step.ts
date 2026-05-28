@@ -5627,6 +5627,13 @@ function buildSourceRuntimeRemediationResult(params: {
     });
 }
 
+function isFinalReportCommitCommandSuggestion(value: string): boolean {
+    const text = String(value || '').trim();
+    return /^git commit -m /u.test(text)
+        || /\bgarda(?:\.js)?\s+gate\s+human-commit\b/u.test(text)
+        || /\bhuman-commit\s+--operator-confirmed\s+yes\b/u.test(text);
+}
+
 function buildFinalReportOrder(summary: TaskAuditSummaryResult): string[] {
     const contractOrder = summary.final_report_contract.required_order.length > 0
         ? summary.final_report_contract.required_order
@@ -5636,11 +5643,11 @@ function buildFinalReportOrder(summary: TaskAuditSummaryResult): string[] {
         ];
     const reportOrder = contractOrder
         .map((entry) => entry === 'implementation summary' ? 'short agent-authored summary of what changed' : entry)
-        .filter((entry) => !/^git commit -m /u.test(entry))
+        .filter((entry) => !isFinalReportCommitCommandSuggestion(entry))
         .filter((entry) => entry !== 'Do you want me to commit now? (yes/no)' && entry !== 'No commit confirmation required.')
         .filter((entry) => String(entry || '').trim().length > 0);
     if (
-        /^git commit -m /u.test(summary.final_report_contract.commit_command_suggestion || '') &&
+        isFinalReportCommitCommandSuggestion(summary.final_report_contract.commit_command_suggestion || '') &&
         summary.final_report_contract.commit_question === 'Do you want me to commit now? (yes/no)'
     ) {
         reportOrder.push(summary.final_report_contract.commit_command_suggestion);
