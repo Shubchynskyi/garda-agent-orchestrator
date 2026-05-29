@@ -1,5 +1,6 @@
 # CI pipeline for Garda Agent Orchestrator.
-# Runs: typecheck/lint → unit tests → release quality validation matrix → cross-platform lifecycle smoke matrix.
+# Runs: typecheck/lint → [test-unit | test-gates | test-cli | test-lifecycle | test-bin] → release quality validation → cross-platform smoke.
+# Gate and CLI test shards use GARDA_NODE_FOUNDATION_TEST_SHARDS=2 for parallel file execution.
 name: CI
 
 on:
@@ -8,13 +9,11 @@ on:
       - main
       - master
       - dev
-      - 'release/**'
   pull_request:
     branches:
       - main
       - master
       - dev
-      - 'release/**'
   workflow_dispatch:
 
 # Cancel in-progress runs for the same PR; let push runs complete.
@@ -52,8 +51,8 @@ jobs:
       - name: Run lint
         run: npm run lint
 
-  # ── 2. Unit test suite ───────────────────────────────────────────────────────
-  test:
+  # ── 2. Unit tests (core, gate-runtime, schemas, validators, etc.) ────────────
+  test-unit:
     name: Unit Tests / Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
     needs: typecheck
@@ -74,16 +73,141 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-fund --no-audit
 
-      - name: Run Linux full suite with color enabled
+      - name: Build node-foundation
+        run: npm run build:node-foundation
+
+      - name: Run unit tests
         env:
           FORCE_COLOR: '1'
-        run: npm run build:node-foundation && npm test
+        run: npm run test:unit
 
-  # ── 3. Release validation matrix (version parity + build + quality + pack smoke)
+  # ── 3. Gate tests (next-step, review, routing, workflow evidence) ─────────────
+  test-gates:
+    name: Gate Tests / Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    needs: typecheck
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '22.13.0'
+          - '24'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Build node-foundation
+        run: npm run build:node-foundation
+
+      - name: Run gate tests (parallel shards)
+        env:
+          FORCE_COLOR: '1'
+          GARDA_NODE_FOUNDATION_TEST_SHARDS: '2'
+        run: npm run test:gates
+
+  # ── 4. CLI tests (command surfaces, gate flows, review handlers) ──────────────
+  test-cli:
+    name: CLI Tests / Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    needs: typecheck
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '22.13.0'
+          - '24'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Build node-foundation
+        run: npm run build:node-foundation
+
+      - name: Run CLI tests (parallel shards)
+        env:
+          FORCE_COLOR: '1'
+          GARDA_NODE_FOUNDATION_TEST_SHARDS: '2'
+        run: npm run test:cli
+
+  # ── 5. Lifecycle tests (setup, update, on/off, uninstall, cleanup) ────────────
+  test-lifecycle:
+    name: Lifecycle Tests / Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    needs: typecheck
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '22.13.0'
+          - '24'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Build node-foundation
+        run: npm run build:node-foundation
+
+      - name: Run lifecycle tests
+        env:
+          FORCE_COLOR: '1'
+        run: npm run test:lifecycle
+
+  # ── 5b. Binary & Materialization tests (bin, materialization) ────────────────
+  test-bin:
+    name: Binary Tests / Node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    needs: typecheck
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - '22.13.0'
+          - '24'
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
+
+      - name: Build node-foundation
+        run: npm run build:node-foundation
+
+      - name: Run binary tests
+        env:
+          FORCE_COLOR: '1'
+        run: npm run test:bin
+
+  # ── 6. Release validation matrix (version parity + build + quality + pack smoke)
   validate-release:
     name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
-    needs: test
+    needs: [test-unit, test-gates, test-cli, test-lifecycle, test-bin]
     strategy:
       fail-fast: false
       matrix:
@@ -105,15 +229,14 @@ jobs:
         run: npm ci --no-fund --no-audit
 
       - name: Validate release
-        run: npm run validate:release
+        run: npm run validate:release:fast
 
-  # ── 4. Cross-platform lifecycle smoke matrix ──────────────────────────────────
-  # Runs in parallel with unit tests once typecheck passes.
-  # Covers: install → init → reinit → update/doctor → uninstall on all 3 OSes.
+  # ── 7. Cross-platform lifecycle smoke matrix ─────────────────────────────────
+  # Runs after all test shards pass. Covers: setup → update git → doctor → uninstall on all 3 OSes.
   smoke:
     name: Smoke / ${{ matrix.os }} / Node ${{ matrix.node-version }}
     runs-on: ${{ matrix.os }}
-    needs: [typecheck, test]
+    needs: [typecheck, test-unit, test-gates, test-cli, test-lifecycle, test-bin]
     strategy:
       fail-fast: false
       matrix:

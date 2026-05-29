@@ -82,7 +82,11 @@ test('package quality scripts expose lint, coverage, audit, and composed release
     assert.equal(scripts['validate:release-readiness'], 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness');
     assert.equal(
         scripts['validate:release'],
-        'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && node --test .node-build/tests/node/packaging/pack-smoke.test.js && npm run validate:clean-worktree'
+        'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && npm run test:packaging && npm run validate:clean-worktree'
+    );
+    assert.equal(
+        scripts['validate:release:fast'],
+        'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality:fast && npm run test:packaging && npm run validate:clean-worktree'
     );
     assert.equal(scripts['release:preflight'], 'npm run validate:release-readiness && npm run validate:release');
     assert.match(scripts.prepack, /^npm run validate:clean-worktree && npm run build:publish-runtime/);
@@ -100,22 +104,60 @@ test('quality script dependencies and eslint config are present', () => {
     assert.equal(fs.existsSync(eslintConfigPath), true);
 });
 
-test('release validation CI covers Windows quality script execution', () => {
+test('release validation CI covers Windows quality:fast script execution', () => {
     const ciWorkflow = readTextRepoFile('.github/workflows/ci.yml');
     const releaseJob = assertJobMatrixValues(ciWorkflow, 'validate-release', 'node-version', ['22.13.0', '24']);
 
     assert.match(releaseJob, /name:\s*Release Validation \/ \$\{\{ matrix\.os \}\} \/ Node \$\{\{ matrix\.node-version \}\}/);
     assert.match(releaseJob, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
     assert.deepEqual(extractYamlListAfterKey(releaseJob, 'os'), ['ubuntu-latest', 'windows-latest']);
-    assert.match(releaseJob, /run:\s*npm run validate:release/);
+    assert.match(releaseJob, /run:\s*npm run validate:release:fast/);
 });
 
-test('Linux unit CI lane runs the full node foundation suite with ANSI enabled on supported Node lines', () => {
+test('CI defines focused test shard jobs covering unit, gates, CLI, lifecycle, and bin on supported Node lines', () => {
     const ciWorkflow = readTextRepoFile('.github/workflows/ci.yml');
-    const testJob = assertJobMatrixValues(ciWorkflow, 'test', 'node-version', ['22.13.0', '24']);
 
-    assert.match(testJob, /name:\s*Unit Tests \/ Node \$\{\{ matrix\.node-version \}\}/);
-    assert.match(testJob, /runs-on:\s*ubuntu-latest/);
-    assert.match(testJob, /FORCE_COLOR:\s+'1'/);
-    assert.match(testJob, /run:\s*npm run build:node-foundation && npm test/);
+    const testUnitJob = assertJobMatrixValues(ciWorkflow, 'test-unit', 'node-version', ['22.13.0', '24']);
+    assert.match(testUnitJob, /name:\s*Unit Tests \/ Node \$\{\{ matrix\.node-version \}\}/);
+    assert.match(testUnitJob, /runs-on:\s*ubuntu-latest/);
+    assert.match(testUnitJob, /FORCE_COLOR:\s+'1'/);
+    assert.match(testUnitJob, /run:\s*npm run test:unit/);
+
+    const testGatesJob = assertJobMatrixValues(ciWorkflow, 'test-gates', 'node-version', ['22.13.0', '24']);
+    assert.match(testGatesJob, /GARDA_NODE_FOUNDATION_TEST_SHARDS:\s*'2'/);
+    assert.match(testGatesJob, /run:\s*npm run test:gates/);
+
+    const testCliJob = assertJobMatrixValues(ciWorkflow, 'test-cli', 'node-version', ['22.13.0', '24']);
+    assert.match(testCliJob, /GARDA_NODE_FOUNDATION_TEST_SHARDS:\s*'2'/);
+    assert.match(testCliJob, /run:\s*npm run test:cli/);
+
+    const testLifecycleJob = assertJobMatrixValues(ciWorkflow, 'test-lifecycle', 'node-version', ['22.13.0', '24']);
+    assert.match(testLifecycleJob, /run:\s*npm run test:lifecycle/);
+
+    const testBinJob = assertJobMatrixValues(ciWorkflow, 'test-bin', 'node-version', ['22.13.0', '24']);
+    assert.match(testBinJob, /run:\s*npm run test:bin/);
+});
+
+test('package.json exposes focused test shard scripts for targeted validation', () => {
+    const scripts = getScripts();
+
+    const requiredShards = [
+        'test:unit',
+        'test:gates',
+        'test:cli',
+        'test:lifecycle',
+        'test:bin',
+        'test:packaging',
+        'test:full',
+        'test:fast'
+    ];
+    for (const script of requiredShards) {
+        assert.equal(typeof scripts[script], 'string', `package.json must define '${script}'`);
+        assert.ok(scripts[script].length > 0, `'${script}' must not be empty`);
+    }
+
+    // test:packaging must exercise the compiled pack-smoke directly, not via npm test
+    assert.match(scripts['test:packaging'], /pack-smoke\.test\.ts/);
+    // test:full must rebuild before running to keep it self-contained
+    assert.match(scripts['test:full'], /build.js node-foundation/);
 });

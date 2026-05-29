@@ -102,12 +102,58 @@ function buildCompiledTestLookup(buildResult: BuildResult, compiledTestFiles: st
     return lookup;
 }
 
+function collectTestFilesUnderDir(dirPath: string): string[] {
+    if (!fs.existsSync(dirPath)) {
+        return [];
+    }
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) {
+        return [];
+    }
+    const results: string[] = [];
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+        const entryPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            results.push(...collectTestFilesUnderDir(entryPath));
+        } else if (entry.isFile() && entry.name.endsWith('.test.js')) {
+            results.push(entryPath);
+        }
+    }
+    return results.sort();
+}
+
+function resolveCompiledTestDirectoryTargets(
+    buildResult: BuildResult,
+    target: string
+): string[] {
+    const normalizedTarget = normalizeCliPath(target).replace(/^\.\//,  '');
+    const repoRelativeTarget = normalizeCliPath(path.relative(buildResult.repoRoot, path.resolve(buildResult.repoRoot, target)));
+
+    const dirCandidates = [normalizedTarget, repoRelativeTarget];
+    for (const candidate of dirCandidates) {
+        const strippedCandidate = candidate.replace(/^\.\//,  '');
+        let compiledDirPath: string | null = null;
+        if (strippedCandidate.startsWith('tests/node/')) {
+            compiledDirPath = path.join(buildResult.buildRoot, ...strippedCandidate.split('/'));
+        } else if (strippedCandidate.startsWith('.node-build/tests/node/')) {
+            compiledDirPath = path.join(buildResult.repoRoot, ...strippedCandidate.split('/'));
+        }
+        if (compiledDirPath !== null) {
+            const files = collectTestFilesUnderDir(compiledDirPath);
+            if (files.length > 0) {
+                return files;
+            }
+        }
+    }
+    return [];
+}
+
 function resolveCompiledTestTarget(
     buildResult: BuildResult,
     compiledTestLookup: Map<string, string>,
     target: string
 ): string | null {
-    const normalizedTarget = normalizeCliPath(target).replace(/^\.\//, '');
+    const normalizedTarget = normalizeCliPath(target).replace(/^\.\//,  '');
     const repoRelativeTarget = normalizeCliPath(path.relative(buildResult.repoRoot, path.resolve(buildResult.repoRoot, target)));
     const candidates = new Set<string>([normalizedTarget, repoRelativeTarget]);
 
@@ -133,7 +179,7 @@ function resolveCompiledTestTarget(
     }
 
     for (const candidate of candidates) {
-        const normalizedCandidate = candidate.replace(/^\.\//, '');
+        const normalizedCandidate = candidate.replace(/^\.\//,  '');
         if (normalizedCandidate.startsWith('tests/node/')) {
             const compiledPath = path.join(buildResult.buildRoot, ...normalizedCandidate.replace(/\.ts$/i, '.js').split('/'));
             if (fs.existsSync(compiledPath)) {
@@ -161,6 +207,19 @@ function resolveSelectedTestFiles(buildResult: BuildResult, compiledTestFiles: s
     const seen = new Set<string>();
 
     for (const fileTarget of fileTargets) {
+        // First, try to expand as a directory target.
+        const dirFiles = resolveCompiledTestDirectoryTargets(buildResult, fileTarget);
+        if (dirFiles.length > 0) {
+            for (const dirFile of dirFiles) {
+                if (!seen.has(dirFile)) {
+                    seen.add(dirFile);
+                    selectedTestFiles.push(dirFile);
+                }
+            }
+            continue;
+        }
+
+        // Fall back to single file resolution.
         const compiledPath = resolveCompiledTestTarget(buildResult, compiledTestLookup, fileTarget);
         if (!compiledPath) {
             throw new Error(`Unable to resolve targeted Node foundation test path: ${fileTarget}`);
@@ -183,8 +242,11 @@ function hasExplicitTestShardOption(optionArgs: string[]): boolean {
     return optionArgs.some((arg) => arg === '--test-shard' || arg.startsWith('--test-shard='));
 }
 
-function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs: string[], fileTargets: string[]): number {
-    if (fileTargets.length > 0 || hasExplicitTestShardOption(optionArgs)) {
+function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs: string[], _fileTargets: string[]): number {
+    // Disable sharding only when an explicit --test-shard option is provided (manual shard selection).
+    // Directory fileTargets expand to multiple files and should still benefit from GARDA_NODE_FOUNDATION_TEST_SHARDS.
+    // Single-file targets still get shardCount=1 naturally since min(parsed, 1)=1.
+    if (hasExplicitTestShardOption(optionArgs)) {
         return 1;
     }
 
@@ -202,11 +264,36 @@ function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs
 }
 
 function buildNodeFoundationTestShards(selectedTestFiles: string[], shardCount: number): string[][] {
-    const shards = Array.from({ length: shardCount }, () => [] as string[]);
-    selectedTestFiles.forEach((testFile, index) => {
-        shards[index % shardCount].push(testFile);
+    const fileWithSizes = selectedTestFiles.map((file) => {
+        try {
+            return { file, size: fs.statSync(file).size };
+        } catch {
+            return { file, size: 0 };
+        }
     });
-    return shards.filter((shard) => shard.length > 0);
+
+    // Sort files by size from heaviest to lightest
+    fileWithSizes.sort((a, b) => b.size - a.size);
+
+    const shards = Array.from({ length: shardCount }, () => ({
+        files: [] as string[],
+        totalSize: 0
+    }));
+
+    for (const item of fileWithSizes) {
+        let minShardIndex = 0;
+        let minSize = shards[0].totalSize;
+        for (let i = 1; i < shardCount; i++) {
+            if (shards[i].totalSize < minSize) {
+                minSize = shards[i].totalSize;
+                minShardIndex = i;
+            }
+        }
+        shards[minShardIndex].files.push(item.file);
+        shards[minShardIndex].totalSize += item.size;
+    }
+
+    return shards.map((s) => s.files).filter((files) => files.length > 0);
 }
 
 function runSingleNodeTestProcess(repoRoot: string, optionArgs: string[], selectedTestFiles: string[]): number {

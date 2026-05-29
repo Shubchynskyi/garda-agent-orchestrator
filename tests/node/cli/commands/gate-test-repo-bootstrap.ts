@@ -149,9 +149,24 @@ export function runGit(repoRoot: string, args: string[]): childProcess.SpawnSync
 }
 
 export function initializeGitRepo(repoRoot: string): void {
-    runGit(repoRoot, ['init']);
-    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
-    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com']);
+    const gitArgs = [
+        '-c', 'init.defaultBranch=main',
+        '-c', 'commit.gpgsign=false',
+        '-c', 'tag.gpgsign=false',
+        '-c', 'core.hooksPath='
+    ];
+
+    // 1. Initialize the repository with optimization parameters
+    runGit(repoRoot, [...gitArgs, 'init']);
+
+    // 2. Direct write of user and GPG properties to .git/config to save process spawning
+    const configPath = path.join(repoRoot, '.git', 'config');
+    if (fs.existsSync(configPath)) {
+        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
+        fs.appendFileSync(configPath, userConfig, 'utf8');
+    }
+
+    // 3. Add and commit all seeded files
     runGit(repoRoot, ['add', '.']);
     runGit(repoRoot, ['commit', '-m', 'test: baseline']);
 }

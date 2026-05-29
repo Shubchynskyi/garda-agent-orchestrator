@@ -2176,8 +2176,11 @@ describe('gates/task-audit-summary', () => {
             // Setup a clean git repo in tmpDir
             const execSync = require('node:child_process').execSync;
             execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
-            execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'ignore' });
-            execSync('git config user.email "test@example.com"', { cwd: tmpDir, stdio: 'ignore' });
+            const configPath = path.join(tmpDir, '.git', 'config');
+            if (fs.existsSync(configPath)) {
+                const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Test\n\temail = test@example.com\n';
+                fs.appendFileSync(configPath, userConfig, 'utf8');
+            }
             execSync('git commit --allow-empty -m "Initial commit"', { cwd: tmpDir, stdio: 'ignore' });
 
             writePreflight(reviewsDir, TASK_ID, {

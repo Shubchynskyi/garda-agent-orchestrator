@@ -561,6 +561,11 @@ function escapeRegExp(value: string): string {
 function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean; details: string[] } {
     const releaseJob = getWorkflowJobBlock(ciWorkflow, 'validate-release');
     const smokeJob = getWorkflowJobBlock(ciWorkflow, 'smoke');
+    const testUnitJob = getWorkflowJobBlock(ciWorkflow, 'test-unit');
+    const testGatesJob = getWorkflowJobBlock(ciWorkflow, 'test-gates');
+    const testCliJob = getWorkflowJobBlock(ciWorkflow, 'test-cli');
+    const testLifecycleJob = getWorkflowJobBlock(ciWorkflow, 'test-lifecycle');
+    const testBinJob = getWorkflowJobBlock(ciWorkflow, 'test-bin');
     const supportedNodeLines = ['22.13.0', '24'];
     const releaseOsLines = ['ubuntu-latest', 'windows-latest'];
     const smokeOsLines = ['ubuntu-latest', 'windows-latest', 'macos-latest'];
@@ -568,9 +573,21 @@ function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean;
     const smokeNodeVersions = extractYamlListAfterKey(smokeJob, 'node-version');
     const releaseOsVersions = extractYamlListAfterKey(releaseJob, 'os');
     const smokeOsVersions = extractYamlListAfterKey(smokeJob, 'os');
+    // Validate that all test shard jobs exist with correct Node matrix
+    const testUnitOk = testUnitJob !== null
+        && stringArraysEqual(extractYamlListAfterKey(testUnitJob, 'node-version'), supportedNodeLines);
+    const testGatesOk = testGatesJob !== null
+        && stringArraysEqual(extractYamlListAfterKey(testGatesJob, 'node-version'), supportedNodeLines)
+        && testGatesJob.includes('GARDA_NODE_FOUNDATION_TEST_SHARDS');
+    const testCliOk = testCliJob !== null
+        && stringArraysEqual(extractYamlListAfterKey(testCliJob, 'node-version'), supportedNodeLines);
+    const testLifecycleOk = testLifecycleJob !== null
+        && stringArraysEqual(extractYamlListAfterKey(testLifecycleJob, 'node-version'), supportedNodeLines);
+    const testBinOk = testBinJob !== null
+        && stringArraysEqual(extractYamlListAfterKey(testBinJob, 'node-version'), supportedNodeLines);
     const releaseMatrixOk = stringArraysEqual(releaseNodeVersions, supportedNodeLines)
         && stringArraysEqual(releaseOsVersions, releaseOsLines)
-        && workflowJobHasRunStep(releaseJob, 'npm run validate:release');
+        && (workflowJobHasRunStep(releaseJob, 'npm run validate:release:fast') || workflowJobHasRunStep(releaseJob, 'npm run validate:release'));
     const smokeMatrixOk = stringArraysEqual(smokeNodeVersions, supportedNodeLines)
         && stringArraysEqual(smokeOsVersions, smokeOsLines)
         && workflowJobHasRunStep(smokeJob, '$CLI setup')
@@ -578,8 +595,13 @@ function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean;
         && workflowJobHasRunStep(smokeJob, '$CLI doctor')
         && workflowJobHasRunStep(smokeJob, '$CLI uninstall');
     return {
-        passed: releaseMatrixOk && smokeMatrixOk,
+        passed: releaseMatrixOk && smokeMatrixOk && testUnitOk && testGatesOk && testCliOk && testLifecycleOk && testBinOk,
         details: [
+            `test-unit present=${testUnitOk}`,
+            `test-gates present+sharded=${testGatesOk}`,
+            `test-cli present=${testCliOk}`,
+            `test-lifecycle present=${testLifecycleOk}`,
+            `test-bin present=${testBinOk}`,
             `validate-release node-version=${releaseNodeVersions.join(', ') || 'missing'}`,
             `validate-release os=${releaseOsVersions.join(', ') || 'missing'}`,
             `smoke node-version=${smokeNodeVersions.join(', ') || 'missing'}`,
@@ -604,6 +626,8 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
     const prepack = scripts.prepack || '';
     const manifestText = readTextFileIfExists(path.join(normalizedRoot, 'MANIFEST.md')) || '';
 
+    const validateReleaseFast = scripts['validate:release:fast'] || '';
+
     pushCheck(
         checks,
         violations,
@@ -614,9 +638,24 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
             validateRelease.includes('npm run build') &&
             validateRelease.includes('npm run validate:embedded-bundle-parity') &&
             validateRelease.includes('npm run quality') &&
-            validateRelease.includes('node --test .node-build/tests/node/packaging/pack-smoke.test.js') &&
+            validateRelease.includes('npm run test:packaging') &&
             countOccurrences(validateRelease, 'npm run validate:clean-worktree') >= 2,
         [validateRelease || 'missing validate:release']
+    );
+
+    pushCheck(
+        checks,
+        violations,
+        'package-fast',
+        'validate:release:fast composes clean worktree, version parity, build, embedded parity, fast quality, pack smoke, and final clean worktree',
+        Boolean(validateReleaseFast) &&
+            validateReleaseFast.includes('npm run validate:version-parity') &&
+            validateReleaseFast.includes('npm run build') &&
+            validateReleaseFast.includes('npm run validate:embedded-bundle-parity') &&
+            validateReleaseFast.includes('npm run quality:fast') &&
+            validateReleaseFast.includes('npm run test:packaging') &&
+            countOccurrences(validateReleaseFast, 'npm run validate:clean-worktree') >= 2,
+        [validateReleaseFast || 'missing validate:release:fast']
     );
 
     pushCheck(
@@ -665,6 +704,27 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
             manifestListsEvery(manifestText, PUBLIC_PACKAGE_DOC_ITEMS) &&
             !packageFiles.includes('.node-build'),
         [prepack || 'missing prepack', `files=${packageFiles.join(', ') || 'missing'}`]
+    );
+
+    const REQUIRED_TEST_SHARD_SCRIPTS = Object.freeze([
+        'test:unit',
+        'test:gates',
+        'test:cli',
+        'test:lifecycle',
+        'test:bin',
+        'test:packaging',
+        'test:full'
+    ]);
+    const missingShardScripts = REQUIRED_TEST_SHARD_SCRIPTS.filter((name) => !scripts[name]);
+    pushCheck(
+        checks,
+        violations,
+        'test-shards',
+        'focused test shard scripts are present in package.json for targeted validation',
+        missingShardScripts.length === 0,
+        missingShardScripts.length === 0
+            ? REQUIRED_TEST_SHARD_SCRIPTS.map((name) => `${name}: present`)
+            : missingShardScripts.map((name) => `missing: ${name}`)
     );
 
     const ciWorkflow = readTextFileIfExists(path.join(normalizedRoot, '.github', 'workflows', 'ci.yml')) || '';

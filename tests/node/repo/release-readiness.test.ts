@@ -66,11 +66,22 @@ function buildPackageJson(): string {
             'validate:release-readiness': 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness',
             lint: 'eslint "src/**/*.ts" "tests/node/**/*.ts" "scripts/node-foundation/**/*.ts"',
             coverage: 'c8 --reporter=text --reporter=lcov npm test',
+            'coverage:fast': 'c8 --reporter=text --reporter=lcov npm run test:fast',
             'audit:prod': 'npm audit --omit=dev',
             quality: 'npm run typecheck && npm run lint && npm run coverage && npm run audit:prod',
-            'validate:release': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && node --test .node-build/tests/node/packaging/pack-smoke.test.js && npm run validate:clean-worktree',
+            'quality:fast': 'npm run typecheck && npm run lint && npm run coverage:fast && npm run audit:prod',
+            'validate:release': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && npm run test:packaging && npm run validate:clean-worktree',
+            'validate:release:fast': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality:fast && npm run test:packaging && npm run validate:clean-worktree',
             'release:preflight': 'npm run validate:release-readiness && npm run validate:release',
-            prepack: 'npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create'
+            prepack: 'npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create',
+            'test:unit': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core',
+            'test:gates': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates',
+            'test:cli': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/cli',
+            'test:lifecycle': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/lifecycle',
+            'test:bin': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/bin',
+            'test:packaging': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/packaging/pack-smoke.test.ts',
+            'test:full': 'node scripts/node-foundation/build-scripts.cjs test.js',
+            'test:fast': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core'
         },
         files: [
             'bin',
@@ -113,6 +124,71 @@ function buildReleaseChecklist(openItem?: string): string {
         '',
         '## 1.2.0'
     ].join('\n');
+}
+
+interface BuildCiWorkflowOptions {
+    includeNodeVersionInJobs?: boolean;
+    smokeSteps?: string;
+}
+
+function buildCiWorkflow(options: BuildCiWorkflowOptions = {}): string {
+    const includeNode = options.includeNodeVersionInJobs !== false;
+    const smokeSteps = options.smokeSteps || '    - run: $CLI setup\n    - run: $CLI update git\n    - run: $CLI doctor\n    - run: $CLI uninstall';
+
+    return [
+        'validate-release:',
+        '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
+        '  strategy:',
+        '    matrix:',
+        includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
+        '      os:',
+        '        - ubuntu-latest',
+        '        - windows-latest',
+        '  steps:',
+        '    - run: npm run validate:release:fast',
+        'test-unit:',
+        '  strategy:',
+        '    matrix:',
+        includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
+        '  steps:',
+        '    - run: npm run test:unit',
+        'test-gates:',
+        '  strategy:',
+        '    matrix:',
+        includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
+        '  steps:',
+        '    - run: npm run test:gates',
+        '      env:',
+        '        GARDA_NODE_FOUNDATION_TEST_SHARDS: 2',
+        'test-cli:',
+        '  strategy:',
+        '    matrix:',
+        includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
+        '  steps:',
+        '    - run: npm run test:cli',
+        'test-lifecycle:',
+        '  strategy:',
+        '    matrix:',
+        includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
+        '  steps:',
+        '    - run: npm run test:lifecycle',
+        'test-bin:',
+        '  strategy:',
+        '    matrix:',
+        includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
+        '  steps:',
+        '    - run: npm run test:bin',
+        'smoke:',
+        '  strategy:',
+        '    matrix:',
+        includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
+        '      os:',
+        '        - ubuntu-latest',
+        '        - windows-latest',
+        '        - macos-latest',
+        '  steps:',
+        smokeSteps
+    ].filter(Boolean).join('\n');
 }
 
 function createReadinessFixture(openChecklistItem?: string): string {
@@ -175,35 +251,7 @@ function createReadinessFixture(openChecklistItem?: string): string {
     );
     writeFile(
         path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
-        [
-            'validate-release:',
-            '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
-            '  strategy:',
-            '    matrix:',
-            '      node-version:',
-            "        - '22.13.0'",
-            "        - '24'",
-            '      os:',
-            '        - ubuntu-latest',
-            '        - windows-latest',
-            '  steps:',
-            '    - run: npm run validate:release',
-            'smoke:',
-            '  strategy:',
-            '    matrix:',
-            '      node-version:',
-            "        - '22.13.0'",
-            "        - '24'",
-            '      os:',
-            '        - ubuntu-latest',
-            '        - windows-latest',
-            '        - macos-latest',
-            '  steps:',
-            '    - run: $CLI setup',
-            '    - run: $CLI update git',
-            '    - run: $CLI doctor',
-            '    - run: $CLI uninstall'
-        ].join('\n')
+        buildCiWorkflow()
     );
 
     initializeGitIndex(repoRoot);
@@ -334,37 +382,16 @@ test('release readiness accepts multiline CI lifecycle smoke run steps', () => {
     try {
         writeFile(
             path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
-            [
-                'validate-release:',
-                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '  steps:',
-                '    - run: npm run validate:release',
-                'smoke:',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '        - macos-latest',
-                '  steps:',
-                '    - name: lifecycle smoke',
-                '      run: |',
-                '        $CLI setup --target-root "$SMOKE_DIR"',
-                '        $CLI update git --target-root "$SMOKE_DIR"',
-                '        $CLI doctor --target-root "$SMOKE_DIR"',
-                '        $CLI uninstall --target-root "$SMOKE_DIR"'
-            ].join('\n')
+            buildCiWorkflow({
+                smokeSteps: [
+                    '    - name: lifecycle smoke',
+                    '      run: |',
+                    '        $CLI setup --target-root "$SMOKE_DIR"',
+                    '        $CLI update git --target-root "$SMOKE_DIR"',
+                    '        $CLI doctor --target-root "$SMOKE_DIR"',
+                    '        $CLI uninstall --target-root "$SMOKE_DIR"'
+                ].join('\n')
+            })
         );
 
         const result = validateReleaseReadiness(repoRoot);
@@ -382,37 +409,16 @@ test('release readiness accepts multiline CI lifecycle smoke run steps with chom
     try {
         writeFile(
             path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
-            [
-                'validate-release:',
-                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '  steps:',
-                '    - run: npm run validate:release',
-                'smoke:',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '        - macos-latest',
-                '  steps:',
-                '    - name: lifecycle smoke',
-                '      run: |-',
-                '        $CLI setup --target-root "$SMOKE_DIR"',
-                '        $CLI update git --target-root "$SMOKE_DIR"',
-                '        $CLI doctor --target-root "$SMOKE_DIR"',
-                '        $CLI uninstall --target-root "$SMOKE_DIR"'
-            ].join('\n')
+            buildCiWorkflow({
+                smokeSteps: [
+                    '    - name: lifecycle smoke',
+                    '      run: |-',
+                    '        $CLI setup --target-root "$SMOKE_DIR"',
+                    '        $CLI update git --target-root "$SMOKE_DIR"',
+                    '        $CLI doctor --target-root "$SMOKE_DIR"',
+                    '        $CLI uninstall --target-root "$SMOKE_DIR"'
+                ].join('\n')
+            })
         );
 
         const result = validateReleaseReadiness(repoRoot);
@@ -430,37 +436,16 @@ test('release readiness rejects commented or echoed CI lifecycle smoke markers',
     try {
         writeFile(
             path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
-            [
-                'validate-release:',
-                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '  steps:',
-                '    - run: npm run validate:release',
-                'smoke:',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '        - macos-latest',
-                '  steps:',
-                '    - name: lifecycle smoke',
-                '      run: |',
-                '        # $CLI setup --target-root "$SMOKE_DIR"',
-                '        echo "$CLI update git --target-root $SMOKE_DIR"',
-                '        $CLI doctor --target-root "$SMOKE_DIR"',
-                '        $CLI uninstall --target-root "$SMOKE_DIR"'
-            ].join('\n')
+            buildCiWorkflow({
+                smokeSteps: [
+                    '    - name: lifecycle smoke',
+                    '      run: |',
+                    '        # $CLI setup --target-root "$SMOKE_DIR"',
+                    '        echo "$CLI update git --target-root $SMOKE_DIR"',
+                    '        $CLI doctor --target-root "$SMOKE_DIR"',
+                    '        $CLI uninstall --target-root "$SMOKE_DIR"'
+                ].join('\n')
+            })
         );
 
         const result = validateReleaseReadiness(repoRoot);
@@ -479,39 +464,18 @@ test('release readiness rejects CI lifecycle smoke markers inside heredoc payloa
     try {
         writeFile(
             path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
-            [
-                'validate-release:',
-                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '  steps:',
-                '    - run: npm run validate:release',
-                'smoke:',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'",
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '        - macos-latest',
-                '  steps:',
-                '    - name: lifecycle smoke',
-                '      run: |',
-                "        cat <<'EOF'",
-                '        $CLI setup --target-root "$SMOKE_DIR"',
-                '        $CLI update git --target-root "$SMOKE_DIR"',
-                '        $CLI doctor --target-root "$SMOKE_DIR"',
-                '        $CLI uninstall --target-root "$SMOKE_DIR"',
-                '        EOF'
-            ].join('\n')
+            buildCiWorkflow({
+                smokeSteps: [
+                    '    - name: lifecycle smoke',
+                    '      run: |',
+                    "        cat <<'EOF'",
+                    '        $CLI setup --target-root "$SMOKE_DIR"',
+                    '        $CLI update git --target-root "$SMOKE_DIR"',
+                    '        $CLI doctor --target-root "$SMOKE_DIR"',
+                    '        $CLI uninstall --target-root "$SMOKE_DIR"',
+                    '        EOF'
+                ].join('\n')
+            })
         );
 
         const result = validateReleaseReadiness(repoRoot);
@@ -530,35 +494,7 @@ test('release readiness fails when Node matrix markers are outside required CI j
     try {
         writeFile(
             path.join(repoRoot, '.github', 'workflows', 'ci.yml'),
-            [
-                'validate-release:',
-                '  name: Release Validation / ${{ matrix.os }} / Node ${{ matrix.node-version }}',
-                '  strategy:',
-                '    matrix:',
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '  steps:',
-                '    - run: npm run validate:release',
-                'smoke:',
-                '  strategy:',
-                '    matrix:',
-                '      os:',
-                '        - ubuntu-latest',
-                '        - windows-latest',
-                '        - macos-latest',
-                '  steps:',
-                '    - run: $CLI setup',
-                '    - run: $CLI update git',
-                '    - run: $CLI doctor',
-                '    - run: $CLI uninstall',
-                'metadata-only:',
-                '  strategy:',
-                '    matrix:',
-                '      node-version:',
-                "        - '22.13.0'",
-                "        - '24'"
-            ].join('\n')
+            buildCiWorkflow({ includeNodeVersionInJobs: false })
         );
 
         const result = validateReleaseReadiness(repoRoot);

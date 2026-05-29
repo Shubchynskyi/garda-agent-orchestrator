@@ -116,8 +116,13 @@ function runGitFixtureCommand(repoRoot: string, args: string[]): void {
 export function initGitRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n', 'utf8');
     runGitFixtureCommand(repoRoot, ['init']);
-    runGitFixtureCommand(repoRoot, ['config', 'user.email', 'garda-test@example.invalid']);
-    runGitFixtureCommand(repoRoot, ['config', 'user.name', 'Garda Test']);
+    
+    const configPath = path.join(repoRoot, '.git', 'config');
+    if (fs.existsSync(configPath)) {
+        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Test\n\temail = garda-test@example.invalid\n';
+        fs.appendFileSync(configPath, userConfig, 'utf8');
+    }
+    
     runGitFixtureCommand(repoRoot, ['add', '.']);
     runGitFixtureCommand(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
 }

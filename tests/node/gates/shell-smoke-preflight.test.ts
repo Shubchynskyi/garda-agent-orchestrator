@@ -39,14 +39,11 @@ function initGitRepo(root: string): void {
         cwd: root,
         stdio: 'ignore'
     });
-    execFileSync('git', ['config', 'user.name', 'Garda Tests'], {
-        cwd: root,
-        stdio: 'ignore'
-    });
-    execFileSync('git', ['config', 'user.email', 'garda-tests@example.invalid'], {
-        cwd: root,
-        stdio: 'ignore'
-    });
+    const configPath = path.join(root, '.git', 'config');
+    if (fs.existsSync(configPath)) {
+        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.invalid\n';
+        fs.appendFileSync(configPath, userConfig, 'utf8');
+    }
     execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], {
         cwd: root,
         stdio: 'ignore'

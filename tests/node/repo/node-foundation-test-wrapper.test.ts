@@ -196,3 +196,42 @@ test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shard
         cleanup();
     }
 });
+
+test('runNodeFoundationTests expands a directory fileTarget to all .test.js files under it', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawnSync = mutableChildProcess.spawnSync;
+    let observedArgs: string[] = [];
+
+    try {
+        // Pass the directory 'tests/node/cli/commands' as a fileTarget.
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            'tests/node/cli/commands'
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawnSync = ((_: string, args: readonly string[] = []) => {
+            observedArgs = Array.from(args);
+            return { status: 0 } as childProcess.SpawnSyncReturns<Buffer>;
+        }) as typeof childProcess.spawnSync;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        // The directory target should have expanded to the gates.test.js file inside cli/commands.
+        assert.ok(
+            observedArgs.includes(path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js')),
+            `Expected expanded directory file in args, got: ${JSON.stringify(observedArgs)}`
+        );
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawnSync = originalSpawnSync;
+        cleanup();
+    }
+});

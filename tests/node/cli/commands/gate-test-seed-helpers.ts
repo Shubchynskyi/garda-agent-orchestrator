@@ -424,8 +424,13 @@ export function runGit(
 
 export function initializeGitRepo(repoRoot: string): void {
     runGit(repoRoot, ['init'], { retryFixtureSetup: true });
-    runGit(repoRoot, ['config', 'user.name', 'Garda Tests'], { retryFixtureSetup: true });
-    runGit(repoRoot, ['config', 'user.email', 'garda-tests@example.com'], { retryFixtureSetup: true });
+    
+    const configPath = path.join(repoRoot, '.git', 'config');
+    if (fs.existsSync(configPath)) {
+        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
+        fs.appendFileSync(configPath, userConfig, 'utf8');
+    }
+
     runGit(repoRoot, ['add', '.']);
     runGit(repoRoot, ['commit', '-m', 'test: baseline']);
 }
@@ -472,8 +477,11 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
     if (!fs.existsSync(path.join(repoRoot, '.git'))) {
         runGitBestEffort(repoRoot, ['init'], { retryFixtureSetup: true });
     }
-    runGitBestEffort(repoRoot, ['config', 'user.name', 'Garda Tests'], { retryFixtureSetup: true });
-    runGitBestEffort(repoRoot, ['config', 'user.email', 'garda-tests@example.com'], { retryFixtureSetup: true });
+    const configPath = path.join(repoRoot, '.git', 'config');
+    if (fs.existsSync(configPath)) {
+        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
+        fs.appendFileSync(configPath, userConfig, 'utf8');
+    }
     const head = childProcess.spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
         cwd: repoRoot,
         encoding: 'utf8',

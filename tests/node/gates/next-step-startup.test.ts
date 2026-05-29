@@ -162,8 +162,13 @@ function makeTempRepo(): string {
 function initGitRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n', 'utf8');
     execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.email', 'garda-test@example.invalid'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', ['config', 'user.name', 'Garda Test'], { cwd: repoRoot, stdio: 'ignore' });
+    
+    const configPath = path.join(repoRoot, '.git', 'config');
+    if (fs.existsSync(configPath)) {
+        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Test\n\temail = garda-test@example.invalid\n';
+        fs.appendFileSync(configPath, userConfig, 'utf8');
+    }
+    
     execFileSync('git', ['add', '.'], { cwd: repoRoot, stdio: 'ignore' });
     execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repoRoot, stdio: 'ignore' });
 }

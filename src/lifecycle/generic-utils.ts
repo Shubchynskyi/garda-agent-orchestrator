@@ -225,7 +225,12 @@ export function copyPathRecursive(sourcePath: string, destinationPath: string): 
 
 export function removePathRecursive(targetPath: string): void {
     if (!fs.existsSync(targetPath)) return;
-    fs.rmSync(targetPath, { recursive: true, force: true });
+    fs.rmSync(targetPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100
+    });
 }
 
 export function readdirRecursiveFiles(dirPath: string): string[] {
