@@ -167,6 +167,59 @@ describe('gates/isolation-sandbox', () => {
             assert.ok(fs.existsSync(path.join(second.sandbox_root, 'bin', 'extra.js')), 'New file should be in sandbox');
         });
 
+        it('retries transient cleanup failures when refreshing an existing sandbox', () => {
+            writeIsolationConfig(tempDir, { enabled: true });
+            prepareSandbox(tempDir);
+
+            const realFs = require('node:fs');
+            const originalRmSync = realFs.rmSync;
+            let attempts = 0;
+            try {
+                realFs.rmSync = function (targetPath: string, ...args: unknown[]) {
+                    if (targetPath.includes(ISOLATION_SANDBOX_DIR) && attempts === 0) {
+                        attempts++;
+                        const error = new Error('EPERM: simulated transient sandbox cleanup contention') as NodeJS.ErrnoException;
+                        error.code = 'EPERM';
+                        throw error;
+                    }
+                    attempts++;
+                    return originalRmSync.call(realFs, targetPath, ...args);
+                };
+
+                const result = prepareSandbox(tempDir);
+
+                assert.ok(fs.existsSync(result.sandbox_root));
+                assert.ok(attempts >= 2, 'Expected retry after transient cleanup failure');
+            } finally {
+                realFs.rmSync = originalRmSync;
+            }
+        });
+
+        it('fails closed for unrecoverable cleanup failures when refreshing an existing sandbox', () => {
+            writeIsolationConfig(tempDir, { enabled: true });
+            prepareSandbox(tempDir);
+
+            const realFs = require('node:fs');
+            const originalRmSync = realFs.rmSync;
+            try {
+                realFs.rmSync = function (targetPath: string, ...args: unknown[]) {
+                    if (targetPath.includes(ISOLATION_SANDBOX_DIR)) {
+                        const error = new Error('EINVAL: simulated unrecoverable sandbox cleanup failure') as NodeJS.ErrnoException;
+                        error.code = 'EINVAL';
+                        throw error;
+                    }
+                    return originalRmSync.call(realFs, targetPath, ...args);
+                };
+
+                assert.throws(
+                    () => prepareSandbox(tempDir),
+                    /simulated unrecoverable sandbox cleanup failure/
+                );
+            } finally {
+                realFs.rmSync = originalRmSync;
+            }
+        });
+
         it('writes valid sandbox manifest', () => {
             writeIsolationConfig(tempDir, { enabled: true });
             const result = prepareSandbox(tempDir);

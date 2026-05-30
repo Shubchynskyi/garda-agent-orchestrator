@@ -118,6 +118,26 @@ describe('gates/compile-gate', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
+        it('extracts commands from markdown section with CRLF line endings', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
+            const filePath = path.join(tmpDir, 'commands.md');
+            fs.writeFileSync(filePath, [
+                '# Commands',
+                '',
+                '### Compile Gate (Mandatory)',
+                '',
+                '```bash',
+                'npm run build',
+                '```',
+                ''
+            ].join('\r\n'), 'utf8');
+
+            const commands = getCompileCommands(filePath);
+
+            assert.deepEqual(commands, ['npm run build']);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
         it('throws when section is missing', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
             const filePath = path.join(tmpDir, 'commands.md');

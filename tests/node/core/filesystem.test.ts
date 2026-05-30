@@ -95,3 +95,66 @@ test('writeFileAtomically preserves existing file mode where POSIX mode bits are
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
+
+test('writeFileAtomically preserves content when fchmod metadata preservation is rejected', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-node-foundation-'));
+
+    try {
+        const targetPath = path.join(tempRoot, 'state.json');
+        fs.writeFileSync(targetPath, '{"old":true}\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalFchmodSync = realFs.fchmodSync;
+        let intercepted = false;
+        try {
+            realFs.fchmodSync = function (..._args: any[]) {
+                intercepted = true;
+                const error = new Error('ENOTSUP: simulated unsupported fchmod') as NodeJS.ErrnoException;
+                error.code = 'ENOTSUP';
+                throw error;
+            };
+
+            writeFileAtomically(targetPath, '{"new":true}\n', { encoding: 'utf8' });
+        } finally {
+            realFs.fchmodSync = originalFchmodSync;
+        }
+
+        assert.equal(intercepted, true);
+        assert.equal(fs.readFileSync(targetPath, 'utf8'), '{"new":true}\n');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('writeFileAtomically rethrows unexpected fchmod metadata preservation failures', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-node-foundation-'));
+
+    try {
+        const targetPath = path.join(tempRoot, 'state.json');
+        fs.writeFileSync(targetPath, '{"old":true}\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalFchmodSync = realFs.fchmodSync;
+        let intercepted = false;
+        try {
+            realFs.fchmodSync = function (..._args: any[]) {
+                intercepted = true;
+                const error = new Error('EBADF: simulated invalid descriptor') as NodeJS.ErrnoException;
+                error.code = 'EBADF';
+                throw error;
+            };
+
+            assert.throws(
+                () => writeFileAtomically(targetPath, '{"new":true}\n', { encoding: 'utf8' }),
+                /simulated invalid descriptor/
+            );
+        } finally {
+            realFs.fchmodSync = originalFchmodSync;
+        }
+
+        assert.equal(intercepted, true);
+        assert.equal(fs.readFileSync(targetPath, 'utf8'), '{"old":true}\n');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});

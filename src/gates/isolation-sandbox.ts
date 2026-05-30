@@ -12,6 +12,8 @@ import { loadIsolationModeConfig } from './isolation-mode';
 
 export const ISOLATION_SANDBOX_DIR = '.isolation-sandbox';
 const SANDBOX_MANIFEST_NAME = 'sandbox-manifest.json';
+const SANDBOX_CLEANUP_RETRY_DELAYS_MS = [0, 25, 100];
+const RETRYABLE_SANDBOX_CLEANUP_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
 
 export interface SandboxManifest {
     schema_version: 1;
@@ -89,8 +91,7 @@ export function prepareSandbox(repoRoot: string): PrepareSandboxResult {
 
     // Clean previous sandbox if present
     if (fs.existsSync(sandboxRoot)) {
-        clearReadOnlyRecursive(sandboxRoot);
-        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        removeExistingSandboxRoot(sandboxRoot);
     }
     fs.mkdirSync(sandboxRoot, { recursive: true });
 
@@ -542,6 +543,36 @@ function clearReadOnlyRecursive(dirPath: string): void {
     };
 
     walk(dirPath);
+}
+
+function sleepSync(milliseconds: number): void {
+    if (milliseconds <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function isRetryableSandboxCleanupError(error: unknown): boolean {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return typeof code === 'string' && RETRYABLE_SANDBOX_CLEANUP_ERROR_CODES.has(code);
+}
+
+function removeExistingSandboxRoot(sandboxRoot: string): void {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < SANDBOX_CLEANUP_RETRY_DELAYS_MS.length; attempt++) {
+        clearReadOnlyRecursive(sandboxRoot);
+        try {
+            fs.rmSync(sandboxRoot, { recursive: true, force: true });
+            return;
+        } catch (error: unknown) {
+            lastError = error;
+            if (!isRetryableSandboxCleanupError(error) || attempt === SANDBOX_CLEANUP_RETRY_DELAYS_MS.length - 1) {
+                throw error;
+            }
+            sleepSync(SANDBOX_CLEANUP_RETRY_DELAYS_MS[attempt + 1] || 0);
+        }
+    }
+    throw lastError;
 }
 
 /**

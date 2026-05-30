@@ -65,7 +65,13 @@ function readExistingFileMetadata(filePath: string): ExistingFileMetadata {
 
 function applyExistingFileMetadata(fileDescriptor: number, metadata: ExistingFileMetadata): void {
     if (typeof metadata.mode === 'number') {
-        fs.fchmodSync(fileDescriptor, metadata.mode);
+        try {
+            fs.fchmodSync(fileDescriptor, metadata.mode);
+        } catch (error) {
+            if (!isUnsupportedMetadataPreservationError(error)) {
+                throw error;
+            }
+        }
     }
     if (typeof metadata.uid === 'number' && typeof metadata.gid === 'number') {
         try {
@@ -74,6 +80,14 @@ function applyExistingFileMetadata(fileDescriptor: number, metadata: ExistingFil
             // Ownership preservation is best-effort for non-privileged users.
         }
     }
+}
+
+function isUnsupportedMetadataPreservationError(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+        return false;
+    }
+    const code = String((error as NodeJS.ErrnoException).code || '').toUpperCase();
+    return ['EACCES', 'EINVAL', 'ENOSYS', 'ENOTSUP', 'EPERM'].includes(code);
 }
 
 function fsyncDirectoryBestEffort(directoryPath: string): void {

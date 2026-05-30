@@ -72,7 +72,7 @@ export function getCompileCommandProfile(command: string) {
  */
 export function getCompileCommands(rulePath: string): string[] {
     const content = fs.readFileSync(rulePath, 'utf8');
-    const lines = content.split('\n');
+    const lines = content.split(/\r?\n/);
     if (!lines.length) throw new Error(`Commands file is empty: ${rulePath}`);
 
     let sectionIndex = -1;
@@ -267,7 +267,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
             const errText = String(result.stderr || '').trim();
             throw new Error(`${failMsg} git exited with code ${result.status}. ${errText}`);
         }
-        return (String(result.stdout || '')).split('\n').filter(l => l.trim());
+        return (String(result.stdout || '')).split(/\r?\n/).filter(l => l.trim());
     }
 
     const allNormalizedExplicit = [...new Set(
@@ -396,7 +396,7 @@ function countWorktreeFileLines(repoRoot: string, relativePath: string): number 
     try {
         let count = 0;
         const content = fs.readFileSync(filePath, 'utf8');
-        for (const line of content.split('\n')) {
+        for (const line of content.split(/\r?\n/)) {
             if (line.trimEnd() !== '') count++;
         }
         return count;

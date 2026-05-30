@@ -26,6 +26,9 @@ import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
 import { resolveReviewerRoutingPolicy } from '../../../../src/gates/reviewer-routing';
 import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 
+const GIT_INIT_RETRY_DELAYS_MS = [0, 25, 100];
+const RETRYABLE_GIT_INIT_PATTERNS = /\b(?:EACCES|EBUSY|ENOTEMPTY|EPERM|Permission denied)\b/i;
+
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -892,12 +895,42 @@ function writeHandshakeArtifact(repoRoot: string, taskId: string, provider = 'Co
     }, null, 2), 'utf8');
 }
 
-function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
-    const result = childProcess.spawnSync('git', args, {
+function sleepSync(milliseconds: number): void {
+    if (milliseconds <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function spawnGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
+    return childProcess.spawnSync('git', args, {
         cwd: repoRoot,
         windowsHide: true,
         encoding: 'utf8'
     });
+}
+
+function isRetryableGitInitFailure(args: string[], result: childProcess.SpawnSyncReturns<string>): boolean {
+    if (args[0] !== 'init') {
+        return false;
+    }
+    const output = `${String(result.error?.message || '')}\n${String(result.stderr || '')}\n${String(result.stdout || '')}`;
+    return RETRYABLE_GIT_INIT_PATTERNS.test(output);
+}
+
+function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
+    let result: childProcess.SpawnSyncReturns<string> | null = null;
+    for (const retryDelayMs of GIT_INIT_RETRY_DELAYS_MS) {
+        sleepSync(retryDelayMs);
+        result = spawnGit(repoRoot, args);
+        if (!result.error && result.status === 0) {
+            return result;
+        }
+        if (!isRetryableGitInitFailure(args, result)) {
+            break;
+        }
+    }
+    assert.ok(result, `git ${args.join(' ')} did not run`);
     if (result.error) {
         throw result.error;
     }
