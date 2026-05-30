@@ -128,6 +128,8 @@ interface ReviewerLaunchArtifactValidationResult {
 }
 
 interface ReviewerHandoffBindings {
+    rolePromptPath: string | null;
+    rolePromptSha256: string | null;
     promptTemplatePath: string;
     promptTemplateSha256: string;
     outputTemplatePath: string;
@@ -293,23 +295,44 @@ function resolveReviewerDraftOutputPath(reviewerLaunchArtifactPath: string): str
 function buildCopyPasteReviewerLaunchPrompt(options: {
     repoRoot: string;
     reviewType: string;
+    rolePromptPath: string | null;
+    rolePromptSha256: string | null;
     reviewerPromptPath: string;
+    reviewerPromptSha256: string;
     promptTemplatePath: string;
+    promptTemplateSha256: string;
     outputTemplatePath: string;
+    outputTemplateSha256: string;
     evidenceManifestPath: string;
+    evidenceManifestSha256: string;
     reviewOutputPath: string;
 }): string {
-    return [
+    const lines = [
         `You are the delegated ${options.reviewType} reviewer for this Garda task.`,
-        `Repository: ${options.repoRoot}`,
-        `First open and read PromptTemplatePath: ${options.promptTemplatePath}`,
+        `Repository: ${options.repoRoot}`
+    ];
+    if (options.rolePromptPath) {
+        lines.push(`First open and read RolePromptPath: ${options.rolePromptPath}`);
+        if (options.rolePromptSha256) {
+            lines.push(`RolePromptSha256: ${options.rolePromptSha256}`);
+        }
+        lines.push(`Then open and read PromptTemplatePath: ${options.promptTemplatePath}`);
+    } else {
+        lines.push(`First open and read PromptTemplatePath: ${options.promptTemplatePath}`);
+    }
+    lines.push(
+        `PromptTemplateSha256: ${options.promptTemplateSha256}`,
         `Then open and read ReviewerPromptPath: ${options.reviewerPromptPath}`,
+        `ReviewerPromptSha256: ${options.reviewerPromptSha256}`,
         `Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence: ${options.evidenceManifestPath}`,
+        `EvidenceManifestSha256: ${options.evidenceManifestSha256}`,
         `Fill OutputTemplatePath exactly, preserving the required sections: ${options.outputTemplatePath}`,
+        `OutputTemplateSha256: ${options.outputTemplateSha256}`,
         'Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.',
         `Write the final review report to ReviewOutputPath when file writing is available, or return the filled report in your final response: ${options.reviewOutputPath}`,
         'Do not replace the required verdict token with a summary sentence.'
-    ].join('\n');
+    );
+    return lines.join('\n');
 }
 
 function printCopyPasteReviewerLaunchPrompt(prompt: string): void {
@@ -334,6 +357,14 @@ function resolveReviewerHandoffBindings(options: {
     reviewContext: Record<string, unknown>;
     gateName: string;
 }): ReviewerHandoffBindings {
+    const handoff = getObjectField(options.reviewContext, 'reviewer_handoff');
+    const rolePrompt = handoff && getObjectField(handoff, 'role_prompt')
+        ? resolveReviewerHandoffArtifactBinding({
+            ...options,
+            handoffKey: 'role_prompt',
+            artifactLabel: 'reviewer role prompt'
+        })
+        : null;
     const promptTemplate = resolveReviewerHandoffArtifactBinding({
         ...options,
         handoffKey: 'prompt_template',
@@ -350,6 +381,8 @@ function resolveReviewerHandoffBindings(options: {
         artifactLabel: 'reviewer evidence manifest'
     });
     return {
+        rolePromptPath: rolePrompt?.artifactPath || null,
+        rolePromptSha256: rolePrompt?.artifactSha256 || null,
         promptTemplatePath: promptTemplate.artifactPath,
         promptTemplateSha256: promptTemplate.artifactSha256,
         outputTemplatePath: outputTemplate.artifactPath,
@@ -369,6 +402,7 @@ function getReviewerLaunchArtifactMismatchReasons(
         reviewContextSha256: string;
         routingEventSha256: string;
         reviewerPromptSha256: string | null;
+        rolePromptSha256?: string | null;
         promptTemplateSha256?: string | null;
         outputTemplateSha256?: string | null;
         evidenceManifestSha256?: string | null;
@@ -407,6 +441,12 @@ function getReviewerLaunchArtifactMismatchReasons(
         && getStringField(artifact, 'reviewer_prompt_sha256', 'reviewerPromptSha256').toLowerCase() !== options.reviewerPromptSha256
     ) {
         mismatches.push('reviewer_prompt_sha256 mismatch');
+    }
+    if (
+        options.rolePromptSha256
+        && getStringField(artifact, 'role_prompt_sha256', 'rolePromptSha256').toLowerCase() !== options.rolePromptSha256
+    ) {
+        mismatches.push('role_prompt_sha256 mismatch');
     }
     if (
         options.promptTemplateSha256
@@ -1673,6 +1713,7 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256: string | null;
+    rolePromptSha256?: string | null;
     promptTemplateSha256?: string | null;
     outputTemplateSha256?: string | null;
     evidenceManifestSha256?: string | null;
@@ -1698,6 +1739,7 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
         reviewContextSha256: options.reviewContextSha256,
         routingEventSha256: options.routingEventSha256,
         reviewerPromptSha256: options.reviewerPromptSha256,
+        rolePromptSha256: options.rolePromptSha256,
         promptTemplateSha256: options.promptTemplateSha256,
         outputTemplateSha256: options.outputTemplateSha256,
         evidenceManifestSha256: options.evidenceManifestSha256,
@@ -1737,6 +1779,7 @@ function isCurrentCompletedReviewerLaunchArtifact(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256: string | null;
+    rolePromptSha256?: string | null;
     promptTemplateSha256?: string | null;
     outputTemplateSha256?: string | null;
     evidenceManifestSha256?: string | null;
@@ -1754,6 +1797,7 @@ function isCurrentCompletedReviewerLaunchArtifact(options: {
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
             reviewerPromptSha256: options.reviewerPromptSha256,
+            rolePromptSha256: options.rolePromptSha256,
             promptTemplateSha256: options.promptTemplateSha256,
             outputTemplateSha256: options.outputTemplateSha256,
             evidenceManifestSha256: options.evidenceManifestSha256,
@@ -1792,6 +1836,7 @@ function assertPreparedReviewerLaunchArtifact(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256?: string | null;
+    rolePromptSha256?: string | null;
     promptTemplateSha256?: string | null;
     outputTemplateSha256?: string | null;
     evidenceManifestSha256?: string | null;
@@ -1848,6 +1893,12 @@ function assertPreparedReviewerLaunchArtifact(options: {
         ).toLowerCase();
         if (actualPromptSha256 !== options.reviewerPromptSha256) {
             violations.push('reviewer_prompt_sha256 must match the current review context prompt artifact');
+        }
+    }
+    if (options.rolePromptSha256) {
+        const actualRolePromptSha256 = getStringField(artifact, 'role_prompt_sha256', 'rolePromptSha256').toLowerCase();
+        if (actualRolePromptSha256 !== options.rolePromptSha256) {
+            violations.push('role_prompt_sha256 must match the current review context role prompt artifact');
         }
     }
     if (options.promptTemplateSha256) {
@@ -1922,6 +1973,7 @@ function validateReviewerLaunchArtifact(options: {
     reviewContextSha256: string;
     routingEventSha256: string;
     reviewerPromptSha256?: string | null;
+    rolePromptSha256?: string | null;
     promptTemplateSha256?: string | null;
     outputTemplateSha256?: string | null;
     evidenceManifestSha256?: string | null;
@@ -1983,6 +2035,7 @@ function validateReviewerLaunchArtifact(options: {
         'preparedLaunchEventSha256'
     ).toLowerCase();
     const reviewerPromptSha256 = getStringField(artifact, 'reviewer_prompt_sha256', 'reviewerPromptSha256').toLowerCase();
+    const rolePromptSha256 = getStringField(artifact, 'role_prompt_sha256', 'rolePromptSha256').toLowerCase();
     const promptTemplateSha256 = getStringField(artifact, 'prompt_template_sha256', 'promptTemplateSha256').toLowerCase();
     const outputTemplateSha256 = getStringField(artifact, 'output_template_sha256', 'outputTemplateSha256').toLowerCase();
     const evidenceManifestSha256 = getStringField(artifact, 'evidence_manifest_sha256', 'evidenceManifestSha256').toLowerCase();
@@ -2043,6 +2096,9 @@ function validateReviewerLaunchArtifact(options: {
     }
     if (options.reviewerPromptSha256 && reviewerPromptSha256 !== options.reviewerPromptSha256) {
         violations.push('reviewer_prompt_sha256 must match the current review context prompt artifact');
+    }
+    if (options.rolePromptSha256 && rolePromptSha256 !== options.rolePromptSha256) {
+        violations.push('role_prompt_sha256 must match the current review context role prompt artifact');
     }
     if (options.promptTemplateSha256 && promptTemplateSha256 !== options.promptTemplateSha256) {
         violations.push('prompt_template_sha256 must match the current review context prompt template artifact');
@@ -2687,10 +2743,18 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
             repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
             reviewType,
+            rolePromptPath: handoffBindings.rolePromptPath
+                ? toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)
+                : null,
+            rolePromptSha256: handoffBindings.rolePromptSha256,
             reviewerPromptPath: toReviewerHandoffAbsolutePath(repoRoot, promptPath),
+            reviewerPromptSha256,
             promptTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath),
+            promptTemplateSha256: handoffBindings.promptTemplateSha256,
             outputTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath),
+            outputTemplateSha256: handoffBindings.outputTemplateSha256,
             evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
+            evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
             reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
         });
         const preparedMismatches = getCurrentPreparedReviewerLaunchMismatches({
@@ -2703,6 +2767,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             reviewContextSha256: contextSha256,
             routingEventSha256: routingEventProvenance.event_sha256,
             reviewerPromptSha256,
+            rolePromptSha256: handoffBindings.rolePromptSha256,
             promptTemplateSha256: handoffBindings.promptTemplateSha256,
             outputTemplateSha256: handoffBindings.outputTemplateSha256,
             evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
@@ -2727,6 +2792,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`RoutingEventSha256: ${routingEventProvenance.event_sha256}`);
             console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
             console.log(`PreparedLaunchEventSha256: ${getStringField(existingArtifact, 'prepared_launch_event_sha256', 'preparedLaunchEventSha256')}`);
+            if (handoffBindings.rolePromptPath) {
+                console.log(`RolePromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)}`);
+            }
             console.log(`ReviewerPromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, promptPath)}`);
             console.log(`PromptTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath)}`);
             console.log(`OutputTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath)}`);
@@ -2765,6 +2833,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 reviewContextSha256: contextSha256,
                 routingEventSha256: routingEventProvenance.event_sha256,
                 reviewerPromptSha256,
+                rolePromptSha256: handoffBindings.rolePromptSha256,
                 promptTemplateSha256: handoffBindings.promptTemplateSha256,
                 outputTemplateSha256: handoffBindings.outputTemplateSha256,
                 evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
@@ -2796,13 +2865,37 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
         repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
         reviewType,
+        rolePromptPath: handoffBindings.rolePromptPath
+            ? toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)
+            : null,
+        rolePromptSha256: handoffBindings.rolePromptSha256,
         reviewerPromptPath: toReviewerHandoffAbsolutePath(repoRoot, promptPath),
+        reviewerPromptSha256,
         promptTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath),
+        promptTemplateSha256: handoffBindings.promptTemplateSha256,
         outputTemplatePath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath),
+        outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestPath: toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.evidenceManifestPath),
+        evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
     });
     const launchPreparedAtUtc = new Date().toISOString();
+    const preservePreparedFields = [
+        'review_context_sha256',
+        'routing_event_sha256',
+        'reviewer_prompt_sha256',
+        ...(handoffBindings.rolePromptSha256 ? ['role_prompt_sha256'] : []),
+        'prompt_template_sha256',
+        'output_template_sha256',
+        'evidence_manifest_sha256',
+        'review_tree_state_sha256',
+        'launch_binding_sha256',
+        'prepared_launch_event_sha256',
+        'prepared_launch_event_task_sequence'
+    ];
+    const handoffArtifactNames = handoffBindings.rolePromptPath
+        ? 'role_prompt_path, prompt_template_path, reviewer_prompt_path, output_template_path, and evidence_manifest_path'
+        : 'prompt_template_path, reviewer_prompt_path, output_template_path, and evidence_manifest_path';
     const preparedArtifact = {
         schema_version: 1,
         evidence_type: PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
@@ -2817,6 +2910,12 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         routing_event_task_sequence: routingEventProvenance.task_sequence,
         reviewer_prompt_path: normalizePath(promptPath),
         reviewer_prompt_sha256: reviewerPromptSha256,
+        ...(handoffBindings.rolePromptPath && handoffBindings.rolePromptSha256
+            ? {
+                role_prompt_path: normalizePath(handoffBindings.rolePromptPath),
+                role_prompt_sha256: handoffBindings.rolePromptSha256
+            }
+            : {}),
         prompt_template_path: normalizePath(handoffBindings.promptTemplatePath),
         prompt_template_sha256: handoffBindings.promptTemplateSha256,
         output_template_path: normalizePath(handoffBindings.outputTemplatePath),
@@ -2847,26 +2946,14 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             isolated_context: true,
             fork_context: false
         },
-        preserve_prepared_fields: [
-            'review_context_sha256',
-            'routing_event_sha256',
-            'reviewer_prompt_sha256',
-            'prompt_template_sha256',
-            'output_template_sha256',
-            'evidence_manifest_sha256',
-            'review_tree_state_sha256',
-            'launch_binding_sha256',
-            'prepared_launch_event_sha256',
-            'prepared_launch_event_task_sequence'
-        ],
+        preserve_prepared_fields: preservePreparedFields,
         record_invocation_command: recordInvocationCommand,
         attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
         superseded_launch_artifact: supersededLaunchArtifact,
         generated_by: 'garda prepare-reviewer-launch',
         generated_at_utc: launchPreparedAtUtc,
         next_action: (
-            'Launch a fresh delegated reviewer with prompt_template_path, reviewer_prompt_path, output_template_path, ' +
-            'and evidence_manifest_path as opaque handoff artifacts; ' +
+            `Launch a fresh delegated reviewer with ${handoffArtifactNames} as opaque handoff artifacts; ` +
             `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
             'do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
@@ -2888,6 +2975,12 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
                 reviewer_prompt_path: normalizePath(promptPath),
                 reviewer_prompt_sha256: reviewerPromptSha256,
+                ...(handoffBindings.rolePromptPath && handoffBindings.rolePromptSha256
+                    ? {
+                        role_prompt_path: normalizePath(handoffBindings.rolePromptPath),
+                        role_prompt_sha256: handoffBindings.rolePromptSha256
+                    }
+                    : {}),
                 prompt_template_path: normalizePath(handoffBindings.promptTemplatePath),
                 prompt_template_sha256: handoffBindings.promptTemplateSha256,
                 output_template_path: normalizePath(handoffBindings.outputTemplatePath),
@@ -2924,6 +3017,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256,
+        rolePromptSha256: handoffBindings.rolePromptSha256,
         promptTemplateSha256: handoffBindings.promptTemplateSha256,
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
@@ -2941,6 +3035,9 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`RoutingEventSha256: ${routingEventProvenance.event_sha256}`);
     console.log(`LaunchBindingSha256: ${launchBindingSha256}`);
     console.log(`PreparedLaunchEventSha256: ${preparedLaunchEventSha256}`);
+    if (handoffBindings.rolePromptPath) {
+        console.log(`RolePromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.rolePromptPath)}`);
+    }
     console.log(`ReviewerPromptPath: ${toReviewerHandoffAbsolutePath(repoRoot, promptPath)}`);
     console.log(`PromptTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.promptTemplatePath)}`);
     console.log(`OutputTemplatePath: ${toReviewerHandoffAbsolutePath(repoRoot, handoffBindings.outputTemplatePath)}`);
@@ -2971,10 +3068,10 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`HandoffInstruction: ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION}`);
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
     console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
-    console.log('PreservePreparedFields: review_context_sha256, routing_event_sha256, reviewer_prompt_sha256, prompt_template_sha256, output_template_sha256, evidence_manifest_sha256, review_tree_state_sha256, launch_binding_sha256, prepared_launch_event_sha256, prepared_launch_event_task_sequence');
+    console.log(`PreservePreparedFields: ${preservePreparedFields.join(', ')}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-    console.log(`NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Update after_launch_required_updates, then run RecordInvocationCommand.`);
+    console.log(`NextAction: launch the delegated reviewer with ${handoffBindings.rolePromptPath ? 'RolePromptPath, ' : ''}PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Update after_launch_required_updates, then run RecordInvocationCommand.`);
 }
 
 export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
@@ -3115,6 +3212,7 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256: promptBinding.reviewerPromptSha256,
+        rolePromptSha256: handoffBindings.rolePromptSha256,
         promptTemplateSha256: handoffBindings.promptTemplateSha256,
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
@@ -3311,6 +3409,7 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256: promptBinding.reviewerPromptSha256,
+        rolePromptSha256: handoffBindings.rolePromptSha256,
         promptTemplateSha256: handoffBindings.promptTemplateSha256,
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,

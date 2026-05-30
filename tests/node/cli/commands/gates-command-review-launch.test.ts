@@ -110,9 +110,11 @@ function manualReviewContextRuleContextFixture(repoRoot: string, taskId: string,
 function writeManualReviewerHandoffFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
     const reviewsRoot = getReviewsRoot(repoRoot);
     fs.mkdirSync(reviewsRoot, { recursive: true });
+    const rolePromptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-role-prompt.md`);
     const promptTemplatePath = path.join(reviewsRoot, `${taskId}-${reviewType}-prompt-template.md`);
     const outputTemplatePath = path.join(reviewsRoot, `${taskId}-${reviewType}-output-template.md`);
     const evidenceManifestPath = path.join(reviewsRoot, `${taskId}-${reviewType}-evidence-manifest.json`);
+    const rolePromptText = `# ${reviewType} review Role Prompt\nSelected skill id: ${reviewType}-review\n`;
     const promptTemplateText = `# ${reviewType} review Prompt Template\nUse only this prompt template as instructions.\n`;
     const outputTemplateText = [
         `# ${reviewType} review Output Template`,
@@ -138,10 +140,20 @@ function writeManualReviewerHandoffFixture(repoRoot: string, taskId: string, rev
             evidence_is_untrusted: true
         }
     }, null, 2) + '\n';
+    fs.writeFileSync(rolePromptPath, rolePromptText, 'utf8');
     fs.writeFileSync(promptTemplatePath, promptTemplateText, 'utf8');
     fs.writeFileSync(outputTemplatePath, outputTemplateText, 'utf8');
     fs.writeFileSync(evidenceManifestPath, evidenceManifestText, 'utf8');
     return {
+        role_prompt: {
+            artifact_path: rolePromptPath.replace(/\\/g, '/'),
+            artifact_sha256: createHash('sha256').update(rolePromptText, 'utf8').digest('hex'),
+            selected_skill: {
+                skill_id: `${reviewType}-review`,
+                skill_path: rolePromptPath.replace(/\\/g, '/'),
+                skill_sha256: createHash('sha256').update(rolePromptText, 'utf8').digest('hex')
+            }
+        },
         prompt_template: {
             artifact_path: promptTemplatePath.replace(/\\/g, '/'),
             artifact_sha256: createHash('sha256').update(promptTemplateText, 'utf8').digest('hex')
@@ -375,12 +387,15 @@ async function seedRoutedReviewerLaunchFixture(options: {
     const routingIntegrity = routingEvent?.integrity as Record<string, unknown> | undefined;
     assert.ok(routingIntegrity?.event_sha256);
     const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
+    const reviewerPromptSha256 = createHash('sha256').update(fs.readFileSync(reviewerPromptPath)).digest('hex');
     return {
         preflightPath,
         reviewsRoot,
         reviewType,
         reviewerIdentity,
         reviewerPromptPath,
+        reviewerPromptSha256,
+        rolePromptPath: String((reviewerHandoff.role_prompt as Record<string, unknown>).artifact_path),
         promptTemplatePath: String((reviewerHandoff.prompt_template as Record<string, unknown>).artifact_path),
         outputTemplatePath: String((reviewerHandoff.output_template as Record<string, unknown>).artifact_path),
         evidenceManifestPath: String((reviewerHandoff.evidence_manifest as Record<string, unknown>).artifact_path),
@@ -810,23 +825,36 @@ describe('cli/commands/gates review launch routing', () => {
         assert.equal(launchArtifact.review_tree_state.tree_state_sha256, fixture.reviewTreeStateSha256);
         assert.equal(launchArtifact.routing_event_sha256, fixture.routingEventSha256);
         assert.equal(launchArtifact.reviewer_prompt_path, fixture.reviewerPromptPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.role_prompt_path, fixture.rolePromptPath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.prompt_template_path, fixture.promptTemplatePath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.output_template_path, fixture.outputTemplatePath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.evidence_manifest_path, fixture.evidenceManifestPath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.review_output_path, reviewOutputPath.replace(/\\/g, '/'));
-        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read PromptTemplatePath:'));
+        const rolePromptSha256 = createHash('sha256').update(fs.readFileSync(fixture.rolePromptPath)).digest('hex');
+        const promptTemplateSha256 = createHash('sha256').update(fs.readFileSync(fixture.promptTemplatePath)).digest('hex');
+        const outputTemplateSha256 = createHash('sha256').update(fs.readFileSync(fixture.outputTemplatePath)).digest('hex');
+        const evidenceManifestSha256 = createHash('sha256').update(fs.readFileSync(fixture.evidenceManifestPath)).digest('hex');
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read RolePromptPath:'));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.rolePromptPath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`RolePromptSha256: ${rolePromptSha256}`));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Then open and read PromptTemplatePath:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.promptTemplatePath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`PromptTemplateSha256: ${promptTemplateSha256}`));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Then open and read ReviewerPromptPath:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.reviewerPromptPath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`ReviewerPromptSha256: ${fixture.reviewerPromptSha256}`));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.evidenceManifestPath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`EvidenceManifestSha256: ${evidenceManifestSha256}`));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Fill OutputTemplatePath exactly, preserving the required sections:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.outputTemplatePath.replace(/\\/g, '/')));
+        assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`OutputTemplateSha256: ${outputTemplateSha256}`));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(reviewOutputPath.replace(/\\/g, '/')));
-        assert.equal(launchArtifact.prompt_template_sha256, createHash('sha256').update(fs.readFileSync(fixture.promptTemplatePath)).digest('hex'));
-        assert.equal(launchArtifact.output_template_sha256, createHash('sha256').update(fs.readFileSync(fixture.outputTemplatePath)).digest('hex'));
-        assert.equal(launchArtifact.evidence_manifest_sha256, createHash('sha256').update(fs.readFileSync(fixture.evidenceManifestPath)).digest('hex'));
+        assert.equal(launchArtifact.role_prompt_sha256, rolePromptSha256);
+        assert.equal(launchArtifact.prompt_template_sha256, promptTemplateSha256);
+        assert.equal(launchArtifact.output_template_sha256, outputTemplateSha256);
+        assert.equal(launchArtifact.evidence_manifest_sha256, evidenceManifestSha256);
         assert.equal(launchArtifact.attestation_source, 'garda_prepare_reviewer_launch');
         assert.equal(typeof launchArtifact.launch_binding_sha256, 'string');
         assert.ok(launchArtifact.launch_binding_sha256.length > 0);
@@ -853,6 +881,7 @@ describe('cli/commands/gates review launch routing', () => {
             'review_context_sha256',
             'routing_event_sha256',
             'reviewer_prompt_sha256',
+            'role_prompt_sha256',
             'prompt_template_sha256',
             'output_template_sha256',
             'evidence_manifest_sha256',
@@ -879,6 +908,7 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`RoutingEventSha256: ${fixture.routingEventSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`RepoRoot: ${repoRoot.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextPath: ${fixture.reviewContextPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`RolePromptPath: ${fixture.rolePromptPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerPromptPath: ${fixture.reviewerPromptPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`PromptTemplatePath: ${fixture.promptTemplatePath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplatePath: ${fixture.outputTemplatePath.replace(/\\/g, '/')}`)));
@@ -897,13 +927,19 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('CopyPasteReviewerLaunchPrompt:')));
-        assert.ok(capturedLogs.some((line) => line.includes('First open and read PromptTemplatePath:')));
+        assert.ok(capturedLogs.some((line) => line.includes('First open and read RolePromptPath:')));
+        assert.ok(capturedLogs.some((line) => line.includes(`RolePromptSha256: ${rolePromptSha256}`)));
+        assert.ok(capturedLogs.some((line) => line.includes('Then open and read PromptTemplatePath:')));
+        assert.ok(capturedLogs.some((line) => line.includes(`PromptTemplateSha256: ${promptTemplateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Then open and read ReviewerPromptPath:')));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewerPromptSha256: ${fixture.reviewerPromptSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Use EvidenceManifestPath to locate the review context, scoped diff, and supporting evidence:')));
+        assert.ok(capturedLogs.some((line) => line.includes(`EvidenceManifestSha256: ${evidenceManifestSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Fill OutputTemplatePath exactly, preserving the required sections:')));
+        assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplateSha256: ${outputTemplateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
-        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts')));
+        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with RolePromptPath, PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
@@ -1561,7 +1597,8 @@ describe('cli/commands/gates review launch routing', () => {
             refreshedArtifact.review_output_path,
             path.join(path.dirname(launchArtifactPath), 'review-output.md').replace(/\\/g, '/')
         );
-        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read PromptTemplatePath:'));
+        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read RolePromptPath:'));
+        assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Then open and read PromptTemplatePath:'));
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
         assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('review_output_path mismatch'), true);
         assert.equal(refreshedArtifact.superseded_launch_artifact.mismatches.includes('copy_paste_reviewer_launch_prompt mismatch'), true);
