@@ -1,6 +1,5 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -13,6 +12,7 @@ import {
     resolveShellSmokeArtifactPath,
     type ShellSmokePreflightArtifact
 } from '../../../src/gates/shell-smoke-preflight';
+import { initGitRepo as initGitFixtureRepo } from './git-fixtures';
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-shell-smoke-test-'));
@@ -35,18 +35,13 @@ function scaffoldWorkspace(root: string, options: {
 }
 
 function initGitRepo(root: string): void {
-    execFileSync('git', ['init', '-b', 'main'], {
-        cwd: root,
-        stdio: 'ignore'
-    });
-    const configPath = path.join(root, '.git', 'config');
-    if (fs.existsSync(configPath)) {
-        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.invalid\n';
-        fs.appendFileSync(configPath, userConfig, 'utf8');
-    }
-    execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], {
-        cwd: root,
-        stdio: 'ignore'
+    initGitFixtureRepo(root, {
+        allowEmptyCommit: true,
+        gitignoreContent: null,
+        initialCommitMessage: 'init',
+        stageAll: false,
+        userEmail: 'garda-tests@example.invalid',
+        userName: 'Garda Tests'
     });
 }
 

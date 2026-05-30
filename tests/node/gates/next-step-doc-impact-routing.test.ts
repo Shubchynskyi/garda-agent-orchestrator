@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { initGitRepo } from './git-fixtures';
 
 import { formatNextStepText, resolveNextStep } from '../../../src/gates/next-step';
 import { getProviderRuntimeEnvironmentKeys } from '../../../src/core/provider-registry';
@@ -151,20 +152,6 @@ function makeTempRepo(): string {
         'utf8'
     );
     return repoRoot;
-}
-
-function initGitRepo(repoRoot: string): void {
-    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n', 'utf8');
-    execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
-    
-    const configPath = path.join(repoRoot, '.git', 'config');
-    if (fs.existsSync(configPath)) {
-        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Test\n\temail = garda-test@example.invalid\n';
-        fs.appendFileSync(configPath, userConfig, 'utf8');
-    }
-    
-    execFileSync('git', ['add', '.'], { cwd: repoRoot, stdio: 'ignore' });
-    execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repoRoot, stdio: 'ignore' });
 }
 
 function reviewsRoot(repoRoot: string): string {

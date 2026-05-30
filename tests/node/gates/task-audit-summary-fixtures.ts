@@ -30,6 +30,7 @@ import {
 } from '../../../src/gates/project-memory-impact';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
+import { initGitRepo as initGitFixtureRepo } from './git-fixtures';
 
 export {
     spawn,
@@ -71,60 +72,10 @@ export function makeTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'task-audit-test-'));
 }
 
-const GIT_FIXTURE_CONFIG_ARGS = [
-    '-c',
-    'init.defaultBranch=main',
-    '-c',
-    'commit.gpgsign=false',
-    '-c',
-    'tag.gpgsign=false',
-    '-c',
-    'core.hooksPath='
-];
-
-function formatGitFixtureOutput(value: string | null | undefined): string {
-    const output = String(value || '').trim();
-    return output || '<empty>';
-}
-
-function runGitFixtureCommand(repoRoot: string, args: string[]): void {
-    const result = spawnSync('git', [...GIT_FIXTURE_CONFIG_ARGS, ...args], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        env: {
-            ...process.env,
-            GIT_EDITOR: 'true',
-            GIT_TERMINAL_PROMPT: '0'
-        },
-        windowsHide: true
-    });
-
-    if (result.status === 0) {
-        return;
-    }
-
-    const status = result.status == null ? 'unknown' : String(result.status);
-    throw new Error([
-        `Git fixture command failed: git ${args.join(' ')}`,
-        `cwd: ${repoRoot}`,
-        `exit: ${status}`,
-        `stdout: ${formatGitFixtureOutput(result.stdout)}`,
-        `stderr: ${formatGitFixtureOutput(result.stderr)}`
-    ].join('\n'));
-}
-
 export function initGitRepo(repoRoot: string): void {
-    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n', 'utf8');
-    runGitFixtureCommand(repoRoot, ['init']);
-    
-    const configPath = path.join(repoRoot, '.git', 'config');
-    if (fs.existsSync(configPath)) {
-        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Test\n\temail = garda-test@example.invalid\n';
-        fs.appendFileSync(configPath, userConfig, 'utf8');
-    }
-    
-    runGitFixtureCommand(repoRoot, ['add', '.']);
-    runGitFixtureCommand(repoRoot, ['commit', '--allow-empty', '-m', 'baseline']);
+    initGitFixtureRepo(repoRoot, {
+        allowEmptyCommit: true
+    });
 }
 
 export function writeEvent(eventsDir: string, taskId: string, event: Record<string, unknown>): void {
