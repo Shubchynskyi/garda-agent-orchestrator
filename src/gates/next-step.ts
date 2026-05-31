@@ -234,6 +234,9 @@ import {
     toNextStepBlockedReviewLanes
 } from './next-step-review-launch-planner';
 import {
+    resolveDelegatedReviewReadinessRoute
+} from './next-step-review-readiness-routing';
+import {
     buildCommand,
     buildBundleRelativePath,
     buildNavigatorCommand,
@@ -7061,121 +7064,126 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
         const contextReviewerIdentity = state.contextReviewerIdentity || '';
         const providerLaunchTargetSummary = buildProviderNativeReviewerLaunchTargetSummary(taskMode);
-        if (
-            !currentReviewReuseRecorded
-            && (
-                !contextReviewerIdentity.startsWith('agent:')
-                || !timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot, taskId, reviewType, contextReviewerIdentity)
-            )
-        ) {
-            const reviewerIdentity = contextReviewerIdentity || '<agent:reviewer-session-id-from-delegated-agent>';
-            const reviewRoutingChain = buildReviewGateChainStatusSummary({
-                repoRoot,
-                eventsRoot,
-                taskId,
-                reviewType,
-                edgeId: 'review-context-to-routing',
-                reason: `current '${reviewType}' review context is ready for routing before reviewer launch preparation`,
-                preflightPath: preflightCommandPath,
-                reviewContextPath: state?.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
-                depth: reviewDepth
-            });
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'record-review-routing',
-                title: `Record '${reviewType}' delegated reviewer routing.`,
-                reason: `Required review '${reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION} ${reviewerReadinessChain} ${reviewRoutingChain}`,
-                commands: [
-                    buildCommand(
-                        'Record fresh delegated review routing',
-                        buildReviewRoutingCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, taskModePath)
-                    )
-                ]
-            });
-        }
-        if (
-            !currentReviewReuseRecorded
-            && !currentReviewContextInvocationAttested
-            && (
-                !state.artifactExists
-                || !state.receiptExists
-                || state.reviewerIdentity !== state.contextReviewerIdentity
-                || state.ready
-            )
-        ) {
-            const reviewerIdentity = state.contextReviewerIdentity
-                || '<agent:reviewer-session-id-from-review-context>';
-            const launchArtifactPath = buildDefaultReviewScratchCommandPath(
-                repoRoot,
-                taskId,
-                reviewType,
-                'reviewer-launch.json'
-            );
-            const launchArtifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
-                repoRoot,
-                eventsRoot,
-                taskId,
-                state
-            );
-            const launchArtifactState = launchArtifactEvidence.state;
-            if (launchArtifactState === 'missing_or_invalid') {
-                const launchPreparationChain = buildReviewGateChainStatusSummary({
-                    repoRoot,
-                    eventsRoot,
-                    taskId,
-                    reviewType,
-                    edgeId: 'review-routing-to-launch-prepared',
-                    reason: `current '${reviewType}' routing telemetry is ready before reviewer launch preparation`,
-                    preflightPath: preflightCommandPath,
-                    reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
-                    depth: reviewDepth
-                });
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'prepare-reviewer-launch',
-                    title: `Prepare '${reviewType}' delegated reviewer launch metadata.`,
-                    reason: `Required review '${reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. This prepares hashes and prompt paths only; it is not completed invocation evidence. ${providerLaunchTargetSummary} ${reviewerReadinessChain} ${launchPreparationChain}`,
-                    commands: [
-                        buildCommand(
-                            'Prepare delegated reviewer launch metadata',
-                            buildPrepareReviewerLaunchCommand(
-                                repoRoot,
-                                cliPrefix,
-                                taskId,
-                                reviewType,
-                                reviewerIdentity,
-                                launchArtifactPath,
-                                taskModePath
-                            )
-                        )
-                    ]
-                });
-            }
-            if (launchArtifactState === 'prepared') {
-                const launchCompletionChain = buildReviewGateChainStatusSummary({
-                    repoRoot,
-                    eventsRoot,
-                    taskId,
-                    reviewType,
-                    edgeId: 'review-launch-prepared-to-launch-completed',
-                    reason: `prepared '${reviewType}' launch metadata is ready to be completed with provider-owned invocation evidence`,
-                    preflightPath: preflightCommandPath,
-                    reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
-                    depth: reviewDepth
-                });
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                nextGate: 'complete-reviewer-launch',
-                title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
-                reason:
-                    `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, launch input hash evidence, and its own launch timestamp before invocation attestation. Do not reconstruct reviewer prompts from memory. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
-                commands: [
-                    buildCommand(
-                        'Complete delegated reviewer launch metadata',
+        const routingCurrent = (
+            contextReviewerIdentity.startsWith('agent:')
+            && timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot, taskId, reviewType, contextReviewerIdentity)
+        );
+        const reviewerIdentity = contextReviewerIdentity || '<agent:reviewer-session-id-from-review-context>';
+        const routingReviewerIdentity = contextReviewerIdentity || '<agent:reviewer-session-id-from-delegated-agent>';
+        const launchArtifactPath = buildDefaultReviewScratchCommandPath(
+            repoRoot,
+            taskId,
+            reviewType,
+            'reviewer-launch.json'
+        );
+        const launchArtifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            state
+        );
+        const reviewRoutingChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'review-context-to-routing',
+            reason: `current '${reviewType}' review context is ready for routing before reviewer launch preparation`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
+            depth: reviewDepth
+        });
+        const launchPreparationChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'review-routing-to-launch-prepared',
+            reason: `current '${reviewType}' routing telemetry is ready before reviewer launch preparation`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
+            depth: reviewDepth
+        });
+        const launchCompletionChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'review-launch-prepared-to-launch-completed',
+            reason: `prepared '${reviewType}' launch metadata is ready to be completed with provider-owned invocation evidence`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
+            depth: reviewDepth
+        });
+        const reviewInvocationChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'review-launch-completed-to-invocation',
+            reason: `completed '${reviewType}' launch evidence is ready for invocation attestation before review output materialization`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
+            depth: reviewDepth
+        });
+        const reviewResultChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'review-invocation-to-result',
+            reason: `current '${reviewType}' invocation attestation is ready before review result materialization`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
+            depth: reviewDepth
+        });
+        const acceptedVerdictTokens = formatAcceptedReviewVerdictTokens(
+            buildReviewVerdictTokenSet(reviewType, state.passToken || null, state.failToken || null)
+        );
+        const stateViolations = state.violations.length > 0
+            ? state.violations.join('; ')
+            : 'review artifact or receipt is missing';
+        const delegatedReadinessRoute = resolveDelegatedReviewReadinessRoute({
+            reviewType,
+            currentReviewReuseRecorded,
+            currentReviewEvidenceSatisfied,
+            currentReviewContextInvocationAttested,
+            routingCurrent,
+            artifactExists: state.artifactExists,
+            receiptExists: state.receiptExists,
+            stateReady: state.ready,
+            stateViolationsText: stateViolations,
+            reviewerIdentity: state.reviewerIdentity || '',
+            contextReviewerIdentity,
+            launchArtifactState: launchArtifactEvidence.state,
+            providerLaunchTargetSummary,
+            reviewerReadinessChain,
+            reviewRoutingChain,
+            launchPreparationChain,
+            launchCompletionChain,
+            reviewInvocationChain,
+            reviewResultChain,
+            acceptedVerdictTokens,
+            hiddenTimingTrustRemediation: getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state),
+            reusedExistingReview: state.reusedExistingReview,
+            instructions: {
+                opaqueHandoff: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
+                freshContextLaunch: REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
+                sessionReuseBoundary: REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION,
+                realSubagentOrStop: REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION,
+                cleanupAfterReceipt: REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
+            },
+            commands: {
+                recordRouting: buildCommand(
+                    'Record fresh delegated review routing',
+                    buildReviewRoutingCommand(repoRoot, cliPrefix, taskId, reviewType, routingReviewerIdentity, taskModePath)
+                ),
+                prepareLaunch: buildCommand(
+                    'Prepare delegated reviewer launch metadata',
+                    buildPrepareReviewerLaunchCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, launchArtifactPath, taskModePath)
+                ),
+                completeLaunch: buildCommand(
+                    'Complete delegated reviewer launch metadata',
                     buildCompleteReviewerLaunchCommand({
                         cliPrefix,
                         taskId,
@@ -7186,119 +7194,25 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256,
                         recordInvocation: true
                     })
-                    )
-                    ]
-                });
+                ),
+                recordInvocation: buildCommand(
+                    'Record delegated reviewer launch attestation',
+                    buildRecordReviewerInvocationCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, launchArtifactPath, taskModePath)
+                ),
+                recordResult: buildCommand(
+                    'Record delegated review output, then close reviewer',
+                    buildRecordReviewResultCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, preflightCommandPath, taskModePath)
+                )
             }
-            const reviewInvocationChain = buildReviewGateChainStatusSummary({
-                repoRoot,
-                eventsRoot,
-                taskId,
-                reviewType,
-                edgeId: 'review-launch-completed-to-invocation',
-                reason: `completed '${reviewType}' launch evidence is ready for invocation attestation before review output materialization`,
-                preflightPath: preflightCommandPath,
-                reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
-                depth: reviewDepth
-            });
+        });
+        if (delegatedReadinessRoute) {
             return buildResult({
                 ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'record-review-invocation',
-                title: `Record '${reviewType}' delegated reviewer launch attestation.`,
-                reason:
-                    `Required review '${reviewType}' has launch metadata for the current routing event and review context. ` +
-                    `The launch artifact already contains completed launch evidence; record that evidence with record-review-invocation. ${reviewerReadinessChain} ${reviewInvocationChain}`,
-                commands: [
-                    buildCommand(
-                        'Record delegated reviewer launch attestation',
-                        buildRecordReviewerInvocationCommand(
-                            repoRoot,
-                            cliPrefix,
-                            taskId,
-                            reviewType,
-                            reviewerIdentity,
-                            launchArtifactPath,
-                            taskModePath
-                        )
-                    )
-                ]
-            });
-        }
-        if (!state.ready) {
-            const stateViolations = state.violations.length > 0
-                ? state.violations.join('; ')
-                : 'review artifact or receipt is missing';
-            const reviewerIdentity = state.contextReviewerIdentity
-                || '<agent:reviewer-session-id-from-review-context>';
-            const reviewResultChain = buildReviewGateChainStatusSummary({
-                repoRoot,
-                eventsRoot,
-                taskId,
-                reviewType,
-                edgeId: 'review-invocation-to-result',
-                reason: `current '${reviewType}' invocation attestation is ready before review result materialization`,
-                preflightPath: preflightCommandPath,
-                reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
-                depth: reviewDepth
-            });
-            const acceptedVerdictTokens = formatAcceptedReviewVerdictTokens(
-                buildReviewVerdictTokenSet(reviewType, state.passToken || null, state.failToken || null)
-            );
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'record-review-result',
-                title: `Record '${reviewType}' review result from a delegated reviewer.`,
-                reason: `Required review '${reviewType}' needs a valid delegated artifact and receipt (${stateViolations}). ${acceptedVerdictTokens} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} ${reviewerReadinessChain} ${reviewResultChain}`,
-                commands: [
-                    buildCommand(
-                        'Record delegated review output, then close reviewer',
-                        buildRecordReviewResultCommand(
-                            repoRoot,
-                            cliPrefix,
-                            taskId,
-                            reviewType,
-                            reviewerIdentity,
-                            preflightCommandPath,
-                            taskModePath
-                        )
-                    )
-                ]
-            });
-        }
-        if (!currentReviewEvidenceSatisfied) {
-            const reviewerIdentity = state.contextReviewerIdentity
-                || '<agent:reviewer-session-id-from-review-context>';
-            const acceptedVerdictTokens = formatAcceptedReviewVerdictTokens(
-                buildReviewVerdictTokenSet(reviewType, state.passToken || null, state.failToken || null)
-            );
-            const hiddenTimingTrustRemediation = getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state);
-            const missingEvidenceReason = hiddenTimingTrustRemediation
-                ? `Required review '${reviewType}' evidence is not sufficiently trustworthy. ${hiddenTimingTrustRemediation}`
-                : state.reusedExistingReview && !currentReviewReuseRecorded
-                ? `Required review '${reviewType}' is reused, but current-cycle REVIEW_RECORDED reuse telemetry is missing or does not match the receipt, review artifact, review context, and tree-state provenance, so rerun review reuse materialization or record a fresh delegated review result.`
-                : `Required review '${reviewType}' has stale or invalid reviewer_provenance; fresh delegated-review launch evidence is missing, stale, or spoof-like for the current receipt, so launch a fresh delegated reviewer with the printed handoff artifacts and record the exact reviewer output again.`;
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'record-review-result',
-                title: `Record '${reviewType}' review result from a delegated reviewer.`,
-                reason: `${missingEvidenceReason} ${acceptedVerdictTokens} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} ${reviewerReadinessChain}`,
-                commands: [
-                    buildCommand(
-                        'Record delegated review output, then close reviewer',
-                        buildRecordReviewResultCommand(
-                            repoRoot,
-                            cliPrefix,
-                            taskId,
-                            reviewType,
-                            reviewerIdentity,
-                            preflightCommandPath,
-                            taskModePath
-                        )
-                    )
-                ]
+                status: delegatedReadinessRoute.status,
+                nextGate: delegatedReadinessRoute.nextGate,
+                title: delegatedReadinessRoute.title,
+                reason: delegatedReadinessRoute.reason,
+                commands: delegatedReadinessRoute.commands
             });
         }
     }
