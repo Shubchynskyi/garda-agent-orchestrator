@@ -295,6 +295,12 @@ function getWorkflowConfigTemplatePath(bundleRoot: string): string {
     return path.join(bundleRoot, 'template', 'config', 'workflow-config.json');
 }
 
+function warnWorkflowConfigTemplateFallback(templatePath: string, reason: string): void {
+    process.stderr.write(
+        `WARNING: WORKFLOW_CONFIG_TEMPLATE_FALLBACK: path=${templatePath.replace(/\\/g, '/')}; reason=${reason}; using built-in defaults.\n`
+    );
+}
+
 function readWorkflowConfigTemplate(bundleRoot: string): WorkflowConfigData {
     const templatePath = getWorkflowConfigTemplatePath(bundleRoot);
     if (!pathExists(templatePath)) {
@@ -304,10 +310,13 @@ function readWorkflowConfigTemplate(bundleRoot: string): WorkflowConfigData {
     try {
         const parsed = readJsonFile(templatePath);
         if (!isPlainObject(parsed)) {
+            warnWorkflowConfigTemplateFallback(templatePath, 'non_object_template');
             return buildDefaultWorkflowConfig();
         }
         return mergeConfig(buildDefaultWorkflowConfig(), parsed) as WorkflowConfigData;
-    } catch {
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnWorkflowConfigTemplateFallback(templatePath, `invalid_json_template:${message}`);
         return buildDefaultWorkflowConfig();
     }
 }

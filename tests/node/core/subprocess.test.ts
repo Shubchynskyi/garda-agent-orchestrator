@@ -343,15 +343,15 @@ describe('shell-surface hardening', () => {
     it('buildWindowsBatchCommandLine rejects unsafe cmd.exe expansion literals', () => {
         assert.throws(
             () => buildWindowsBatchCommandLine('C:\\Tools\\npm.cmd', ['%PATH%']),
-            /cmd\.exe expansion, quoting, or control characters/
+            /cmd\.exe expansion, delayed expansion, quote, or control characters/
         );
         assert.throws(
             () => buildWindowsBatchCommandLine('C:\\Tools\\npm.cmd', ['bang!']),
-            /cmd\.exe expansion, quoting, or control characters/
+            /without a proven escaping strategy/
         );
         assert.throws(
             () => buildWindowsBatchCommandLine('C:\\Tools\\npm.cmd', ['safe" & echo INJECTED']),
-            /cmd\.exe expansion, quoting, or control characters/
+            /percent signs, exclamation marks, quotes, CR, or LF/
         );
     });
 

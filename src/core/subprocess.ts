@@ -228,7 +228,8 @@ function assertSafeWindowsBatchLiteral(value: string, label: string): void {
     }
     if (WINDOWS_BATCH_UNSAFE_LITERAL_PATTERN.test(value)) {
         throw new Error(
-            `${label} contains cmd.exe expansion, quoting, or control characters that are not allowed for Windows batch execution.`
+            `${label} contains cmd.exe expansion, delayed expansion, quote, or control characters (` +
+            'percent signs, exclamation marks, quotes, CR, or LF) that are not allowed for Windows batch execution without a proven escaping strategy.'
         );
     }
 }
