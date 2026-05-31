@@ -3359,7 +3359,15 @@ function buildStaleCompletionFailureDocCloseoutAllowance(
 
 function isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource: string): boolean {
     const normalized = String(detectionSource || '').trim().toLowerCase();
-    return normalized === 'git_auto' || normalized === 'explicit_changed_files';
+    return normalized === 'git_auto'
+        || normalized === 'explicit_changed_files'
+        || normalized === 'git_staged_only'
+        || normalized === 'git_staged_plus_untracked';
+}
+
+function isStagedReviewScopeDetectionSource(detectionSource: string): boolean {
+    const normalized = String(detectionSource || '').trim().toLowerCase();
+    return normalized === 'git_staged_only' || normalized === 'git_staged_plus_untracked';
 }
 
 function isOrdinaryDocumentationDeltaPath(
@@ -3442,6 +3450,10 @@ function buildDocsOnlyDeltaReadiness(
             acceptedDocsOnlyDeltaFiles: acceptedDocsDeltaFiles,
             acceptedCloseoutOnlyDeltaFiles: acceptedCloseoutDeltaFiles
         };
+    }
+
+    if (isStagedReviewScopeDetectionSource(detectionSource)) {
+        return null;
     }
 
     const nonOrdinaryDocs = docsOnlyDeltaFiles.filter((filePath) => !isOrdinaryDocumentationDeltaPath(filePath, classificationConfig));

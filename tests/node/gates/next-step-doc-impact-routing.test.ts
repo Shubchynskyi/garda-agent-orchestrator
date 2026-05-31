@@ -622,6 +622,80 @@ function seedGitAutoCompilePass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
 }
 
+function stageFiles(repoRoot: string, ...relativePaths: string[]): void {
+    execFileSync('git', ['add', ...relativePaths], { cwd: repoRoot, stdio: 'ignore' });
+}
+
+function writeStagedPreflight(
+    repoRoot: string,
+    taskId: string,
+    requiredReviews: Record<string, boolean>
+): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+    const domainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource: snapshot.detection_source,
+        includeUntracked: snapshot.include_untracked,
+        changedFiles: snapshot.changed_files
+    });
+    writeJson(preflightPath, {
+        task_id: taskId,
+        detection_source: snapshot.detection_source,
+        include_untracked: snapshot.include_untracked,
+        mode: 'FULL_PATH',
+        scope_category: 'mixed',
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256,
+            domain_scope_fingerprints: domainScopeFingerprints
+        },
+        required_reviews: requiredReviews,
+        changed_files: snapshot.changed_files,
+        review_execution_policy: {
+            mode: 'strict_sequential',
+            visible_summary_line: 'Review execution policy: strict_sequential'
+        }
+    });
+    appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+        output_path: normalizeForTimeline(preflightPath)
+    });
+    seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+    return preflightPath;
+}
+
+function seedStagedCompilePass(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+    const domainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource: snapshot.detection_source,
+        includeUntracked: snapshot.include_untracked,
+        changedFiles: snapshot.changed_files
+    });
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
+        timestamp_utc: new Date().toISOString(),
+        task_id: taskId,
+        event_source: 'compile-gate',
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_hash_sha256: fileSha256(preflightPath),
+        scope_detection_source: snapshot.detection_source,
+        scope_include_untracked: snapshot.include_untracked,
+        scope_changed_files: snapshot.changed_files,
+        scope_changed_files_count: snapshot.changed_files_count,
+        scope_changed_lines_total: snapshot.changed_lines_total,
+        scope_changed_files_sha256: snapshot.changed_files_sha256,
+        scope_content_sha256: snapshot.scope_content_sha256,
+        scope_sha256: snapshot.scope_sha256,
+        domain_scope_fingerprints: domainScopeFingerprints
+    });
+    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
+}
+
 function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const preflight = fs.existsSync(preflightPath)
@@ -1326,6 +1400,31 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--behavior-changed true'));
     });
 
+    it('routes to doc-impact without refreshing preflight when a staged changelog is added after reviews', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        stageFiles(repoRoot, 'src/app.ts');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStagedPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedStagedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Documented staged reviewed behavior.\n', 'utf8');
+        stageFiles(repoRoot, 'CHANGELOG.md');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate', result.reason);
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+    });
+
     it('routes to doc-impact without refreshing preflight when task closeout is added after reviews', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
@@ -1504,6 +1603,36 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('build-review-context'));
         assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
         assert.ok(result.commands[0].command.includes('--docs-updated "CHANGELOG.md"'));
+    });
+
+    it('keeps refreshed staged configured ordinary-doc extension in doc-impact lane after review gate passed', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json'), {
+            ordinary_doc_paths: ['BACKLOG']
+        });
+        fs.writeFileSync(path.join(repoRoot, 'BACKLOG'), 'Pending release note\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        stageFiles(repoRoot, 'src/app.ts');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStagedPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedStagedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'BACKLOG'), 'Documented reviewed behavior.\n', 'utf8');
+        stageFiles(repoRoot, 'BACKLOG');
+
+        writeStagedPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate', result.reason);
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(result.commands[0].command.includes('--decision "DOCS_UPDATED"'));
+        assert.ok(result.commands[0].command.includes('--docs-updated "BACKLOG"'));
     });
 
     it('keeps ordinary docs-only closeout in doc-impact lane after failed completion', () => {
@@ -1696,6 +1825,28 @@ describe('gates/next-step', () => {
             assert.ok(result.reason.includes('Preflight evidence is older than the latest COMPLETION_GATE_FAILED'));
         });
     }
+
+    it('routes back to preflight when staged ordinary doc closeout is combined with source drift', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        stageFiles(repoRoot, 'src/app.ts');
+        seedStartedTask(repoRoot, TASK_ID);
+        writeStagedPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedStagedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- Documented staged reviewed behavior.\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra.ts'), 'export const extra = 3;\n', 'utf8');
+        stageFiles(repoRoot, 'CHANGELOG.md', 'src/extra.ts');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('src/extra.ts'));
+        assert.ok(!result.commands[0].command.includes('gate doc-impact-gate'));
+    });
 
     it('routes back to preflight when post-review docs delta touches protected control-plane docs', () => {
         const repoRoot = makeTempRepo();
