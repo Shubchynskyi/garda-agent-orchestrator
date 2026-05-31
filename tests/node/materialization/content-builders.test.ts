@@ -25,6 +25,7 @@ import {
     buildVscodeSettingsContent,
     stripJsoncComments,
     IDE_EXCLUDED_DIRECTORIES,
+    ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION,
     getLegacyUninstallBackupGitignoreEntry,
     UNINSTALL_BACKUP_GITIGNORE_COMMENT,
     getUninstallBackupGitignoreEntry,
@@ -358,6 +359,26 @@ ${MANAGED_END}`;
         assert.ok(result.includes('close or release the reviewer sub-agent session'));
     });
 
+    it('adds Antigravity independent-review unavailable hard stop to canonical Antigravity entrypoint', () => {
+        const templateContent = `${MANAGED_START}
+# canonical-rule-index.md
+- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
+${MANAGED_END}`;
+        const result = buildCanonicalManagedBlock('.antigravity/rules.md', templateContent);
+        assert.ok(result.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
+        assert.ok(result.includes('do not write review output files'));
+        assert.ok(result.includes('do not invent reviewer launch routing, telemetry, receipts, or review artifacts'));
+    });
+
+    it('does not add Antigravity-specific hard stop to other canonical entrypoints', () => {
+        const templateContent = `${MANAGED_START}
+# canonical-rule-index.md
+- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
+${MANAGED_END}`;
+        const result = buildCanonicalManagedBlock('AGENTS.md', templateContent);
+        assert.ok(!result.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
+    });
+
     it('throws for missing managed block', () => {
         assert.throws(
             () => buildCanonicalManagedBlock('AGENTS.md', 'no managed block'),
@@ -395,6 +416,19 @@ describe('buildRedirectManagedBlock', () => {
         assert.ok(result!.includes('scan'));
         assert.ok(result!.includes('inspect'));
         assert.ok(result!.includes('debug'));
+    });
+
+    it('adds Antigravity independent-review unavailable hard stop to Antigravity redirects only', () => {
+        const antigravity = buildRedirectManagedBlock(
+            '.antigravity/rules.md', 'AGENTS.md',
+            ['.antigravity/agents/orchestrator.md']
+        );
+        const windsurf = buildRedirectManagedBlock(
+            '.windsurf/rules/rules.md', 'AGENTS.md',
+            ['.windsurf/agents/orchestrator.md']
+        );
+        assert.ok(antigravity.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
+        assert.ok(!windsurf.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
     });
 });
 
@@ -471,6 +505,13 @@ describe('buildProviderOrchestratorAgentContent', () => {
         assert.ok(result.includes(REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION));
         assert.ok(result.includes(REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION));
         assert.ok(result.includes(REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION));
+    });
+
+    it('pins Antigravity hard stop for missing real delegated reviewer tooling', () => {
+        const result = buildProviderOrchestratorAgentContent('Antigravity', 'AGENTS.md', '.antigravity/agents/orchestrator.md');
+        assert.ok(result.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
+        assert.ok(result.includes('current runtime has no real provider sub-agent launch tool'));
+        assert.ok(result.includes('do not invent reviewer launch routing, telemetry, receipts, or review artifacts'));
     });
 
     it('builds a compact Antigravity router instead of a full duplicate workflow', () => {

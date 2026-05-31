@@ -16,7 +16,8 @@ import {
     buildRedirectManagedBlock,
     buildProviderOrchestratorAgentContent,
     buildSharedStartTaskWorkflowContent,
-    buildGitHubSkillBridgeAgentContent
+    buildGitHubSkillBridgeAgentContent,
+    ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION
 } from '../../../src/materialization/content-builders';
 import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
@@ -276,6 +277,7 @@ describe('cross-provider-router-matrix: provider orchestrator bridges', () => {
         assert.ok(content.includes('Antigravity Agent: Orchestrator'));
         assert.ok(content.includes('delegated_subagent'));
         assert.ok(content.includes('stale fallback metadata cannot satisfy a fresh cycle'));
+        assert.ok(content.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
         assert.ok(!content.includes('## Required Execution Contract'));
         assert.ok(content.includes('.agents/workflows/start-task.md'));
     });

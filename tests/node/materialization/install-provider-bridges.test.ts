@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { runInstall } from '../../../src/materialization/install';
+import { ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION } from '../../../src/materialization/content-builders';
 import {
     findRepoRoot,
     setupTestWorkspace,
@@ -123,6 +124,9 @@ describe('runInstall — provider bridges and start-task router', () => {
             const bridge = fs.readFileSync(bridgePath, 'utf8');
             const workflow = fs.readFileSync(workflowPath, 'utf8');
             assert.ok(bridge.includes('.agents/workflows/start-task.md'));
+            assert.ok(bridge.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
+            assert.ok(bridge.includes('do not write review output files'));
+            assert.ok(bridge.includes('do not invent reviewer launch routing, telemetry, receipts, or review artifacts'));
             assert.ok(bridge.includes('dependent downstream reviewer'));
             assert.ok(bridge.includes('upstream PASS artifact and receipt'));
             assert.ok(bridge.includes('Parallel reviewer fan-out is allowed only between independent review types'));
@@ -132,6 +136,54 @@ describe('runInstall — provider bridges and start-task router', () => {
             assert.ok(workflow.includes('gate completion-gate'));
             assert.ok(workflow.includes('Do not fan out known producer-consumer validation commands as raw shell sidecars'));
             assert.ok(workflow.includes('build:node-foundation'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('refreshes stale managed Antigravity missing-reviewer-tool hard stop on rerun install', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Antigravity',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Antigravity',
+                initAnswersPath: answersPath
+            });
+
+            const bridgePath = path.join(projectRoot, '.antigravity', 'agents', 'orchestrator.md');
+            const staleBridge = fs.readFileSync(bridgePath, 'utf8')
+                .replace(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION, 'Antigravity may write a local review note if no reviewer tool is available.');
+            assert.ok(staleBridge.includes('Antigravity may write a local review note'));
+            assert.ok(!staleBridge.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
+            fs.writeFileSync(bridgePath, staleBridge, 'utf8');
+
+            runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Antigravity',
+                initAnswersPath: answersPath
+            });
+
+            const refreshedBridge = fs.readFileSync(bridgePath, 'utf8');
+            assert.ok(refreshedBridge.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
+            assert.ok(!refreshedBridge.includes('Antigravity may write a local review note'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

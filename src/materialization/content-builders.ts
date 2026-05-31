@@ -34,6 +34,11 @@ const REVIEW_LAUNCH_NAVIGATION_INSTRUCTION =
 const OPTIONAL_MARKDOWN_WORKING_PLAN_INSTRUCTION =
     'If `garda-agent-orchestrator/runtime/plans/<task-id>.md` exists for the selected task, read it as optional executor guidance. Missing Markdown working plans are normal: do not block, invent a waiver, pass them as `--plan-path`, or treat their absence as a reviewer/completion issue.';
 
+export const ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION =
+    'Antigravity hard stop: if mandatory independent review is required and the current runtime has no real provider sub-agent launch tool, do not write review output files, do not invent reviewer launch routing, telemetry, receipts, or review artifacts, stop and ask the operator whether to switch provider or continue without independent review under the audited gate policy.';
+
+const ANTIGRAVITY_ENTRYPOINT_FILE = '.antigravity/rules.md';
+
 function getDelegationRequiredProviderLaunchLines(): readonly string[] {
     return Object.freeze(
         getProviderEntries()
@@ -59,6 +64,27 @@ function getSourceGateCommandPrefix(): string {
 
 function buildBundleRelativePath(relativePath: string, bundleName = resolveBundleName()): string {
     return `${bundleName}/${relativePath}`;
+}
+
+function isAntigravityEntrypointPath(relativePath: string): boolean {
+    return relativePath.replace(/\\/g, '/') === ANTIGRAVITY_ENTRYPOINT_FILE;
+}
+
+function addAntigravityCanonicalStopInstruction(content: string, canonicalFile: string): string {
+    if (!isAntigravityEntrypointPath(canonicalFile) || content.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION)) {
+        return content;
+    }
+    const reviewerLaunchRule = '- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.';
+    if (content.includes(reviewerLaunchRule)) {
+        return content.replace(
+            reviewerLaunchRule,
+            `${reviewerLaunchRule}\n- ${ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION}`
+        );
+    }
+    return content.replace(
+        MANAGED_END,
+        `- ${ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION}\n${MANAGED_END}`
+    );
 }
 
 function buildTaskEntryRuleFileFlags(bundleName = resolveBundleName()): string {
@@ -518,12 +544,13 @@ export function buildCanonicalManagedBlock(canonicalFile: string, entrypointTemp
     if (!baseBlock) {
         throw new Error('Entrypoint template managed block is missing; cannot build canonical entrypoint.');
     }
-    return restoreEntrypointRuleLinks(baseBlock)
+    const canonicalBlock = restoreEntrypointRuleLinks(baseBlock)
         .replace(/^# .+$/m, `# ${canonicalFile}`)
         .replace(
             /At setup, source of truth is selected via `-SourceOfTruth` \([^)]+\)\./,
             `At setup, source of truth is selected via \`-SourceOfTruth\` (\`${formatProviderIdList('`, `')}\`).`
         );
+    return addAntigravityCanonicalStopInstruction(canonicalBlock, canonicalFile);
 }
 
 export function buildRedirectManagedBlock(
@@ -549,6 +576,9 @@ export function buildRedirectManagedBlock(
     const providerBridgeSection = uniqueProviderLines.length > 0
         ? uniqueProviderLines.join('\r\n')
         : 'No provider-specific bridge files are enabled for this workspace.';
+    const targetSpecificInstructions = isAntigravityEntrypointPath(targetFile)
+        ? [ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION]
+        : [];
 
     return [
         MANAGED_START,
@@ -568,6 +598,7 @@ export function buildRedirectManagedBlock(
         'Treat `.agents/workflows/start-task.md` as the shared start-task router for root entrypoints and provider bridges; it routes to the canonical workflow and does not replace `80-task-workflow.md`.',
         `After opening downstream workflow files, record them via \`node bin/garda.js gate load-rule-pack ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/garda.js gate load-rule-pack ...\` inside a materialized/deployed workspace.`,
         `Before each required reviewer invocation, run \`node bin/garda.js gate build-review-context ...\` in a self-hosted source checkout, or \`node ${resolveBundleName()}/bin/garda.js gate build-review-context ...\` inside a materialized/deployed workspace; completion for code-changing tasks expects review-skill telemetry from that step. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION} ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION} Downstream \`test\` review must wait for current-cycle PASS evidence from every required upstream non-\`test\` review.`,
+        ...targetSpecificInstructions,
         `Ignored orchestration control-plane files (for example \`TASK.md\`, \`${resolveBundleName()}/runtime/**\`, and \`${resolveBundleName()}/live/docs/changes/CHANGELOG.md\`) are expected local artifacts; never \`git add -f\` them unless the user explicitly asks to version orchestrator internals.`,
         providerBridgeSection,
         MANAGED_END
@@ -642,18 +673,19 @@ Required:
 8. Use compact command protocol from \`40-commands.md\`: first \`scan\`, then \`inspect\`, then verbose \`debug\` only by exception.
 9. Do not bypass gates, fake review artifacts, or use provider-default review flow outside Garda.
 10. ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
-11. Mandatory reviews on this provider must preserve \`delegated_subagent\` reviewer execution; same-agent self-review is invalid and stale fallback metadata cannot satisfy a fresh cycle.
-12. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
-13. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
-14. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
-15. ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
-16. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
-17. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
-18. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
-19. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
-20. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
-21. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
-22. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
+11. ${ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION}
+12. Mandatory reviews on this provider must preserve \`delegated_subagent\` reviewer execution; same-agent self-review is invalid and stale fallback metadata cannot satisfy a fresh cycle.
+13. ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
+14. ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
+15. Do not launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle. Parallel reviewer fan-out is allowed only between independent review types with no dependency edge.
+16. ${REVIEW_LAUNCH_NAVIGATION_INSTRUCTION}
+17. Do not fan out known producer-consumer validation commands as raw shell sidecars. Flows such as \`npm run build:node-foundation\` -> direct \`node --test .node-build/...\` must use the guarded workflow path or run strictly sequentially, never in parallel.
+18. If any mandatory gate command fails, stop, keep the task blocked, run \`next-step\`, and report the exact command, cwd, CLI path, and stderr.
+19. Honest execution and strict workflow compliance outrank speed, autonomy, context preservation, and token economy.
+20. Mandatory gate failure means stop or \`BLOCKED\`; never workaround the gate, batch around it, or synthesize missing evidence.
+21. Agent-authored scripts may automate ordinary repository work, but they must not batch, loop over, or green-light orchestrator gates or write review, receipt, routing, telemetry, status, or commit-readiness evidence unless the task itself is to change orchestrator code.
+22. Fabricated review artifacts, receipts, routing metadata, telemetry, task statuses, or commit-readiness claims are critical workflow violations.
+23. If asked about workflow misconduct or integrity defects, disclose the full known set from the current run, not only the latest discovered issue.
 
 ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 
