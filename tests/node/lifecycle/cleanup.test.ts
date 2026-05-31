@@ -329,14 +329,14 @@ describe('buildDefaultRetentionPolicy', () => {
     it('returns sensible defaults', () => {
         const policy = buildDefaultRetentionPolicy();
         assert.equal(policy.maxAgeDays, 30);
-        assert.equal(policy.maxBackups, 20);
+        assert.equal(policy.maxBackups, 10);
         assert.equal(policy.maxTaskEvents, 50);
         assert.equal(policy.maxAggregateLines, 10000);
         assert.equal(policy.maxReviews, 100);
         assert.equal(policy.maxWorkingPlans, 100);
         assert.equal(policy.maxUpdateReports, 10);
-        assert.equal(policy.maxUpdateRollbacks, 5);
-        assert.equal(policy.maxBundleBackups, 5);
+        assert.equal(policy.maxUpdateRollbacks, 10);
+        assert.equal(policy.maxBundleBackups, 10);
         assert.equal(policy.maxMetricsLines, 2000);
     });
 });

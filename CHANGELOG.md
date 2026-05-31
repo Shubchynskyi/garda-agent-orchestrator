@@ -39,6 +39,7 @@
 
 ### Cleanup And Runtime Retention
 - `garda html` now handles large runtime histories more quickly by rendering lazy or bounded task details by default.
+- Backup inventory now has a backend model over existing rollback snapshots with date, reason, size, restore target, health, and latest-10 retention defaults.
 - Runtime cleanup now covers more generated zones, including temp, cache, report, update-temp, reviewer scratch, test scratch, metrics, and runtime tmp directories.
 - Clean successful compile and full-suite runs omit heavy raw logs while retaining compact hash/count evidence; warnings, failures, and non-clean runs still keep detailed output.
 - Retention and GC flows preserve active tasks and problem-task forensic evidence while allowing healthy DONE task artifacts to be compacted after ledger evidence exists.

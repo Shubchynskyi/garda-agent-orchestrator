@@ -1,4 +1,5 @@
 import * as checkUpdate from './check-update';
+import * as backups from './backups';
 import * as cleanup from './cleanup';
 import * as common from './common';
 import * as contractMigrations from './contract-migrations';
@@ -9,6 +10,7 @@ import * as updateGit from './update-git';
 import * as updateTrust from './update-trust';
 
 export {
+    backups,
     checkUpdate,
     cleanup,
     common,
