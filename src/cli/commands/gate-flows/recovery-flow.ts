@@ -8,7 +8,7 @@ import {
 import { matchAnyRegex } from '../../../gate-runtime/text-utils';
 import { writeReviewArtifactJson } from '../../../gate-runtime/review-artifacts';
 import { assertValidTaskId } from '../../../gate-runtime/task-events';
-import { selectRulePackFiles } from '../../../gates/build-review-context';
+import { selectRulePackFiles, type TokenEconomyConfig } from '../../../gates/review-context-token-economy';
 import { getClassificationConfig } from '../../../gates/classify-change';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../gates/build-scoped-diff';
 import { collectOrderedTimelineEvents, findLatestTimelineEvent } from '../../../gates/completion-evidence';
@@ -38,7 +38,6 @@ import {
     runShellSmokePreflightCommand
 } from './task-mode-flow';
 import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
-import type { TokenEconomyConfig } from '../../../gates/build-review-context';
 import { resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
 
 const TASK_ENTRY_RULE_FILES = Object.freeze([

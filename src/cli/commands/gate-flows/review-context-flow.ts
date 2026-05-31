@@ -72,7 +72,7 @@ import {
     buildKeyValueOutputLines,
     requireResolvedPath
 } from '../shared-command-utils';
-import type { TokenEconomyConfig } from '../../../gates/build-review-context';
+import type { TokenEconomyConfig } from '../../../gates/review-context-token-economy';
 import { REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION } from '../../../gate-runtime/reviewer-session-contract';
 
 interface ReviewReuseResult {

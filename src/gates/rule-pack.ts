@@ -5,7 +5,7 @@ import {
     formatGateChainLaunchDecision
 } from '../core/dependent-validation-chains';
 import { assertValidTaskId } from '../gate-runtime/task-events';
-import { selectRulePackFiles } from './build-review-context';
+import { selectRulePackFiles } from './review-context-token-economy';
 import { fileSha256, joinOrchestratorPath, normalizePath, resolvePathInsideRepo, stringSha256 } from './helpers';
 import { resolveGateExecutionPath } from './isolation-sandbox';
 import { validatePreflightForReview } from './required-reviews-check';

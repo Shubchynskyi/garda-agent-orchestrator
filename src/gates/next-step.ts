@@ -94,7 +94,7 @@ import {
 } from './workspace-snapshot-cache';
 import {
     selectRulePackFiles
-} from './build-review-context';
+} from './review-context-token-economy';
 import {
     readOptionalMarkdownWorkingPlan,
     type TaskModeMarkdownWorkingPlanMetadata

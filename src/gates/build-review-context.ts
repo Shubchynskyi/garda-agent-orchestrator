@@ -23,7 +23,6 @@ import {
     resolvePathInsideRepo,
     toStringArray
 } from './helpers';
-import { resolveGateExecutionPathPosix } from './isolation-sandbox';
 import { getCanonicalReviewContextPath } from './review-context-paths';
 import {
     buildGitDiffSummary,
@@ -65,50 +64,17 @@ import {
     writeReviewContextArtifactFiles,
     type ReviewSkillBinding
 } from './review-context-artifacts';
+import {
+    buildRuleContextSectionsCacheKey,
+    getRulePack,
+    resolveReviewContextTokenEconomyDecision,
+    selectRulePackFiles,
+    toNonNegativeInt,
+    type TokenEconomyConfig
+} from './review-context-token-economy';
 
-/**
- * Rule pack configuration by review type.
- * Matches Python get_rule_pack.
- */
-export function getRulePack(reviewType: string) {
-    if (reviewType === 'code') {
-        return {
-            full: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md'],
-            depth1: ['00-core.md', '80-task-workflow.md'],
-            depth2: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md']
-        };
-    }
-    if (reviewType === 'db' || reviewType === 'security') {
-        return {
-            full: ['00-core.md', '35-strict-coding-rules.md', '70-security.md', '80-task-workflow.md'],
-            depth1: ['00-core.md', '80-task-workflow.md'],
-            depth2: ['00-core.md', '35-strict-coding-rules.md', '70-security.md', '80-task-workflow.md']
-        };
-    }
-    if (reviewType === 'refactor') {
-        return {
-            full: ['00-core.md', '30-code-style.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '80-task-workflow.md'],
-            depth1: ['00-core.md', '80-task-workflow.md'],
-            depth2: ['00-core.md', '30-code-style.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '80-task-workflow.md']
-        };
-    }
-    return {
-        full: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md'],
-        depth1: ['00-core.md', '80-task-workflow.md'],
-        depth2: ['00-core.md', '35-strict-coding-rules.md', '50-structure-and-docs.md', '70-security.md', '80-task-workflow.md']
-    };
-}
-
-export function selectRulePackFiles(reviewType: string, depth: number): string[] {
-    const rulePack = getRulePack(reviewType);
-    if (depth >= 3) {
-        return [...rulePack.full];
-    }
-    if (depth <= 1) {
-        return [...rulePack.depth1];
-    }
-    return [...rulePack.depth2];
-}
+export { getRulePack, selectRulePackFiles, toNonNegativeInt };
+export type { TokenEconomyConfig };
 
 export function resolveReviewSkillId(reviewType: string, repoRoot: string): string {
     const rulesRoot = path.resolve(repoRoot);
@@ -165,18 +131,6 @@ export function resolveScopedDiffMetadataPath(explicitPath: string, preflightPat
     const preflightDir = path.dirname(preflightPath);
     const baseName = path.basename(preflightPath, path.extname(preflightPath)).replace(/-preflight$/, '');
     return path.resolve(preflightDir, `${baseName}-${reviewType}-scoped.json`);
-}
-
-/**
- * Convert a value to non-negative integer or null.
- */
-export function toNonNegativeInt(value: unknown): number | null {
-    if (value == null || typeof value === 'boolean') return null;
-    if (typeof value === 'number') return value >= 0 ? Math.floor(value) : null;
-    try {
-        const parsed = parseInt(String(value).trim(), 10);
-        return parsed >= 0 ? parsed : null;
-    } catch { return null; }
 }
 
 function summarizeBooleanRecord(record: unknown): string[] {
@@ -804,16 +758,6 @@ function asPlainRecord(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
-export interface TokenEconomyConfig {
-    enabled?: unknown;
-    enabled_depths?: unknown;
-    strip_examples?: unknown;
-    strip_code_blocks?: unknown;
-    scoped_diffs?: unknown;
-    compact_reviewer_output?: unknown;
-    fail_tail_lines?: unknown;
-}
-
 export interface ReviewContextFullSuiteValidationEvidence {
     review_type: string;
     required_for_review: boolean;
@@ -1287,18 +1231,6 @@ function assertArtifactRealpathInsideRepo(
     }
 }
 
-function buildRuleContextSectionsCacheKey(
-    selectedRulePaths: readonly string[],
-    stripExamples: boolean,
-    stripCodeBlocks: boolean
-): string {
-    return JSON.stringify({
-        selectedRulePaths,
-        stripExamples,
-        stripCodeBlocks
-    });
-}
-
 /**
  * Build review context for a specific review type and depth.
  * Builds the review-context artifact shape for the Node gate runtime.
@@ -1332,24 +1264,24 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         tokenConfig = JSON.parse(fs.readFileSync(tokenEconomyConfigPath, 'utf8')) as TokenEconomyConfig;
     }
 
-    const enabled = parseBool(tokenConfig.enabled);
-    const enabledDepths = [...new Set(
-        toStringArray(tokenConfig.enabled_depths).filter(s => /^\d+$/.test(String(s).trim())).map(s => parseInt(String(s).trim(), 10))
-    )].sort();
-    const tokenEconomyActive = enabled && enabledDepths.includes(depth);
-
-    const rulePack = getRulePack(reviewType);
-    const fullRuleFiles = [...rulePack.full];
-    const selectedRuleFiles = (!tokenEconomyActive || depth >= 3)
-        ? [...fullRuleFiles]
-        : selectRulePackFiles(reviewType, depth);
-
-    const omittedRuleFiles = fullRuleFiles.filter(f => !selectedRuleFiles.includes(f));
-    const ruleFilesBasePath = resolveGateExecutionPathPosix(repoRoot, 'live/docs/agent-rules');
-    const selectedRulePaths = selectedRuleFiles.map(f => `${ruleFilesBasePath}/${f}`);
-    const fullRulePaths = fullRuleFiles.map(f => `${ruleFilesBasePath}/${f}`);
-    const omittedRulePaths = omittedRuleFiles.map(f => `${ruleFilesBasePath}/${f}`);
-    const rulePackOmissionReason = omittedRulePaths.length > 0 ? 'deferred_by_depth' : 'none';
+    const tokenEconomyDecision = resolveReviewContextTokenEconomyDecision({
+        reviewType,
+        depth,
+        repoRoot,
+        tokenConfig
+    });
+    const {
+        tokenEconomyActive,
+        tokenEconomyFlags,
+        selectedRulePaths,
+        fullRulePaths,
+        omittedRulePaths,
+        rulePackOmissionReason,
+        stripExamplesApplied,
+        stripCodeBlocksApplied,
+        omittedSections,
+        tokenEconomyOmissionReason
+    } = tokenEconomyDecision;
 
     const requiredReviews = preflight.required_reviews || {};
     const requiredReview = parseBool(requiredReviews[reviewType]);
@@ -1413,13 +1345,6 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         actual_plan_sha256: taskCriteria.plan.actual_plan_sha256
     };
 
-    const stripExamplesFlag = parseBool(tokenConfig.strip_examples);
-    const stripCodeBlocksFlag = parseBool(tokenConfig.strip_code_blocks);
-    const scopedDiffsFlag = parseBool(tokenConfig.scoped_diffs);
-    const compactReviewerOutputFlag = parseBool(tokenConfig.compact_reviewer_output);
-    const failTailLines = toNonNegativeInt(tokenConfig.fail_tail_lines);
-    const stripExamplesApplied = tokenEconomyActive && stripExamplesFlag;
-    const stripCodeBlocksApplied = tokenEconomyActive && stripCodeBlocksFlag;
     const changedFiles = readReviewContextChangedFiles(preflight.changed_files);
     const diffExpectations = buildReviewContextPreflightDiffExpectations(preflight, reviewType);
     const scopedDiffExpected = diffExpectations.expectedScopedDiff;
@@ -1433,39 +1358,6 @@ export function buildReviewContext(options: BuildReviewContextOptions) {
         }
     }
 
-    const omittedSections = [];
-    if (tokenEconomyActive && depth === 1) {
-        omittedSections.push({
-            section: 'rule_pack',
-            reason: 'deferred_by_depth',
-            details: 'Only minimal reviewer rule context is selected at depth=1.'
-        });
-    }
-    if (tokenEconomyActive && stripExamplesFlag) {
-        omittedSections.push({
-            section: 'examples',
-            reason: 'token_economy_strip_examples',
-            details: 'Examples may be omitted from reviewer context.'
-        });
-    }
-    if (tokenEconomyActive && stripCodeBlocksFlag) {
-        omittedSections.push({
-            section: 'code_blocks',
-            reason: 'token_economy_strip_code_blocks',
-            details: 'Code blocks may be omitted from reviewer context.'
-        });
-    }
-
-    const tokenEconomyFlags = {
-        enabled: !!enabled,
-        enabled_depths: enabledDepths,
-        strip_examples: stripExamplesFlag,
-        strip_code_blocks: stripCodeBlocksFlag,
-        scoped_diffs: scopedDiffsFlag,
-        compact_reviewer_output: compactReviewerOutputFlag,
-        fail_tail_lines: failTailLines
-    };
-    const tokenEconomyOmissionReason = (omittedSections.length > 0 || omittedRulePaths.length > 0) ? 'token_economy_compaction' : 'none';
     const requiredReviewTypes = summarizeBooleanRecord(preflight.required_reviews);
     const activeTriggers = summarizeBooleanRecord(preflight.triggers);
     const preflightMetrics = asPlainRecord(preflight.metrics);
