@@ -746,6 +746,7 @@ function writeReviewEvidence(
             launch_prepared_at_utc: launchPreparedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
+            ...launchInputEvidenceFixture(taskId, reviewType),
             fork_context: false
         });
         reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
@@ -778,6 +779,9 @@ function writeReviewEvidence(
                 launch_prepared_at_utc: launchPreparedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
+                launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
+                launch_input_sha256: launchInputEvidenceFixture(taskId, reviewType).launch_input_sha256,
+                copy_paste_reviewer_launch_prompt_sha256: launchInputEvidenceFixture(taskId, reviewType).copy_paste_reviewer_launch_prompt_sha256,
                 invocation_attested_at_utc: invocationAttestedAtUtc
             }
             : {})
@@ -1043,6 +1047,18 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
     });
 }
 
+function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<string, unknown> {
+    const copyPastePrompt = `Delegated ${reviewType} reviewer launch prompt for ${taskId}.`;
+    const copyPastePromptSha256 = sha256Text(copyPastePrompt);
+    return {
+        copy_paste_reviewer_launch_prompt: copyPastePrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        launch_input_mode: 'copy_paste_prompt',
+        launch_input_sha256: copyPastePromptSha256,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
+    };
+}
+
 function seedCompletedReviewerLaunchAndInvocation(
     repoRoot: string,
     taskId: string,
@@ -1083,11 +1099,13 @@ function seedCompletedReviewerLaunchAndInvocation(
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
         launched_at_utc: '2026-04-28T00:00:00.000Z',
+        ...launchInputEvidenceFixture(taskId, reviewType),
         fork_context: false
     });
     if (options.includeInvocation === false) {
         return;
     }
+    const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
     appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
         task_id: taskId,
         review_type: reviewType,
@@ -1102,7 +1120,10 @@ function seedCompletedReviewerLaunchAndInvocation(
         reviewer_launch_attestation_source: 'test-subagent-spawn',
         reviewer_launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
-        launched_at_utc: '2026-04-28T00:00:00.000Z'
+        launched_at_utc: '2026-04-28T00:00:00.000Z',
+        launch_input_mode: launchArtifact.launch_input_mode,
+        launch_input_sha256: launchArtifact.launch_input_sha256,
+        copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
     });
 }
 
@@ -1414,7 +1435,8 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'complete-reviewer-launch');
         assert.ok(result.reason.includes('launch metadata'));
-        assert.ok(result.reason.includes('Launch the delegated reviewer with the prepared prompt path as an opaque handoff'));
+        assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath as an opaque handoff'));
+        assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));
         assert.ok(result.reason.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
@@ -1430,6 +1452,9 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
         assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        assert.ok(result.commands[0].command.includes('--launch-input-mode "launch_artifact_path"'));
+        assert.ok(result.commands[0].command.includes('--launch-input-artifact-path'));
+        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchArtifactPath)}"`));
         assert.ok(result.commands[0].command.includes('--record-invocation'));
         assert.ok(!result.commands[0].command.includes('--launched-at-utc'));
     });
@@ -1474,12 +1499,13 @@ describe('gates/next-step', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
+            ...launchInputEvidenceFixture(TASK_ID, 'code'),
             fork_context: false
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'record-review-invocation');
+        assert.equal(result.next_gate, 'record-review-invocation', result.reason);
         assert.ok(result.reason.includes('launch metadata'));
         assert.ok(result.reason.includes('already contains completed launch evidence'));
         assert.ok(!result.reason.includes('Launch the delegated reviewer with the prepared prompt'));
@@ -1491,6 +1517,36 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=missing current-cycle attestation'));
         assert.equal(result.commands[0].label, 'Record delegated reviewer launch attestation');
         assert.ok(result.commands[0].command.includes('gate record-review-invocation'));
+    });
+
+    it('does not route stripped completed launch metadata to record-review-invocation', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        seedCompletedReviewerLaunchAndInvocation(repoRoot, TASK_ID, 'code', reviewerIdentity, {
+            includeInvocation: false
+        });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const strippedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        for (const key of [
+            'copy_paste_reviewer_launch_prompt',
+            'copy_paste_reviewer_launch_prompt_sha256',
+            'launch_input_mode',
+            'launch_input_sha256',
+            'launch_input_copy_paste_reviewer_launch_prompt_sha256'
+        ]) {
+            delete strippedArtifact[key];
+        }
+        writeJson(launchArtifactPath, strippedArtifact);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'prepare-reviewer-launch');
+        assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
+        assert.ok(result.reason.includes('launch artifact=missing or stale'));
     });
 
     it('does not route stale completed launch metadata to record-review-invocation', () => {
@@ -1533,6 +1589,7 @@ describe('gates/next-step', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
+            ...launchInputEvidenceFixture(TASK_ID, 'code'),
             fork_context: false
         });
 
@@ -1583,8 +1640,10 @@ describe('gates/next-step', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
+            ...launchInputEvidenceFixture(TASK_ID, 'code'),
             fork_context: false
         });
+        const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
         appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
             task_id: TASK_ID,
             review_type: 'code',
@@ -1599,12 +1658,15 @@ describe('gates/next-step', () => {
             reviewer_launch_attestation_source: 'test-subagent-spawn',
             reviewer_launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
-            launched_at_utc: '2026-04-28T00:00:00.000Z'
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            launch_input_mode: launchArtifact.launch_input_mode,
+            launch_input_sha256: launchArtifact.launch_input_sha256,
+            copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'record-review-result');
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
         assert.ok(result.commands[0].command.includes('--review-output-stdin'));
         assert.ok(!result.commands[0].command.includes('--review-output-path'));
@@ -1713,7 +1775,7 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'record-review-result');
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
         assert.equal(result.review.next_review_type, 'code');
         assert.ok(result.reason.includes('fresh delegated-review launch evidence is missing, stale, or spoof-like'));
     });

@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import { buildReviewContext, getRulePack } from '../../../src/gates/build-review-context';
 import { getWorkspaceSnapshot } from '../../../src/gates/compile-gate';
@@ -151,6 +152,7 @@ async function prepareLaunch(repoRoot: string, taskId: string, launchArtifactPat
 }
 
 async function completeLaunch(repoRoot: string, taskId: string, launchArtifactPath: string): Promise<void> {
+    const launchArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
     await handleCompleteReviewerLaunch([
         '--task-id', taskId,
         '--review-type', 'code',
@@ -159,6 +161,9 @@ async function completeLaunch(repoRoot: string, taskId: string, launchArtifactPa
         '--reviewer-launch-artifact-path', launchArtifactPath,
         '--provider-invocation-id', REVIEWER_IDENTITY.slice('agent:'.length),
         '--attestation-source', 'codex_spawn_agent',
+        '--launch-input-mode', 'launch_artifact_path',
+        '--launch-input-artifact-path', launchArtifactPath,
+        '--launch-input-sha256', launchArtifactSha256,
         '--fork-context', 'false',
         '--repo-root', repoRoot
     ]);

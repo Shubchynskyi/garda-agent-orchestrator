@@ -2098,6 +2098,53 @@ function getArtifactStringField(artifact: Record<string, unknown>, ...fieldNames
     return '';
 }
 
+function hasReviewerLaunchInputEvidence(launchArtifact: Record<string, unknown>): boolean {
+    const copyPastePrompt = getArtifactStringField(
+        launchArtifact,
+        'copy_paste_reviewer_launch_prompt',
+        'copyPasteReviewerLaunchPrompt'
+    );
+    const copyPastePromptSha256 = getArtifactStringField(
+        launchArtifact,
+        'copy_paste_reviewer_launch_prompt_sha256',
+        'copyPasteReviewerLaunchPromptSha256'
+    ).toLowerCase();
+    const launchInputMode = getArtifactStringField(launchArtifact, 'launch_input_mode', 'launchInputMode').toLowerCase();
+    const launchInputSha256 = getArtifactStringField(launchArtifact, 'launch_input_sha256', 'launchInputSha256').toLowerCase();
+    const launchInputArtifactPath = getArtifactStringField(launchArtifact, 'launch_input_artifact_path', 'launchInputArtifactPath');
+    const launchInputArtifactSha256 = getArtifactStringField(
+        launchArtifact,
+        'launch_input_artifact_sha256',
+        'launchInputArtifactSha256'
+    ).toLowerCase();
+    const preparedLaunchArtifactSha256 = getArtifactStringField(
+        launchArtifact,
+        'prepared_reviewer_launch_artifact_sha256',
+        'preparedReviewerLaunchArtifactSha256'
+    ).toLowerCase();
+    if (
+        !copyPastePrompt
+        || !/^[0-9a-f]{64}$/.test(copyPastePromptSha256)
+        || copyPastePromptSha256 !== stringSha256(copyPastePrompt)
+        || !/^[0-9a-f]{64}$/.test(launchInputSha256)
+    ) {
+        return false;
+    }
+    if (launchInputMode === 'copy_paste_prompt') {
+        return launchInputSha256 === copyPastePromptSha256;
+    }
+    if (launchInputMode === 'launch_artifact_path') {
+        return Boolean(
+            launchInputArtifactPath
+            && /^[0-9a-f]{64}$/.test(launchInputArtifactSha256)
+            && /^[0-9a-f]{64}$/.test(preparedLaunchArtifactSha256)
+            && launchInputArtifactSha256 === preparedLaunchArtifactSha256
+            && launchInputSha256 === preparedLaunchArtifactSha256
+        );
+    }
+    return false;
+}
+
 function hasCompletedReviewerLaunchEvidence(launchArtifact: Record<string, unknown>): boolean {
     const providerInvocationId = getArtifactStringField(
         launchArtifact,
@@ -2117,6 +2164,7 @@ function hasCompletedReviewerLaunchEvidence(launchArtifact: Record<string, unkno
         && providerInvocationId
         && getArtifactStringField(launchArtifact, 'launched_at_utc', 'launchedAtUtc')
         && freshContext
+        && hasReviewerLaunchInputEvidence(launchArtifact)
     );
 }
 
@@ -7878,12 +7926,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 reviewType,
                 'reviewer-launch.json'
             );
-            const launchArtifactState = getCurrentReviewerLaunchArtifactStateForInvocation(
+            const launchArtifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 repoRoot,
                 eventsRoot,
                 taskId,
                 state
             );
+            const launchArtifactState = launchArtifactEvidence.state;
             if (launchArtifactState === 'missing_or_invalid') {
                 const launchPreparationChain = buildReviewGateChainStatusSummary({
                     repoRoot,
@@ -7937,7 +7986,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
                 reason:
                     `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the prepared prompt path as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, including its own launch timestamp, before invocation attestation. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
+                    `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, launch input hash evidence, and its own launch timestamp before invocation attestation. Do not reconstruct reviewer prompts from memory. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
                 commands: [
                     buildCommand(
                         'Complete delegated reviewer launch metadata',
@@ -7947,6 +7996,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         reviewType,
                         reviewerIdentity,
                         launchArtifactPath,
+                        launchInputArtifactSha256: launchArtifactEvidence.sha256,
                         recordInvocation: true
                     })
                     )

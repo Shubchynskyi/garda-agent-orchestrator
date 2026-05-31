@@ -400,6 +400,7 @@ async function seedRoutedReviewerLaunchFixture(options: {
         outputTemplatePath: String((reviewerHandoff.output_template as Record<string, unknown>).artifact_path),
         evidenceManifestPath: String((reviewerHandoff.evidence_manifest as Record<string, unknown>).artifact_path),
         reviewContextPath,
+        launchArtifactPath: path.join(options.repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', options.taskId, reviewType, 'reviewer-launch.json'),
         reviewContextSha256,
         reviewTreeStateSha256: reviewTreeState.tree_state_sha256,
         routingEventSha256: String(routingIntegrity.event_sha256)
@@ -512,6 +513,7 @@ async function prepareReviewerLaunchForTest(options: {
 
 function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void {
     const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+    const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
     fs.writeFileSync(launchArtifactPath, JSON.stringify({
         ...preparedArtifact,
         evidence_type: 'delegated_reviewer_launch',
@@ -519,9 +521,27 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
         attestation_source: 'test_provider_controller',
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: 'test-invocation-265',
+        launch_input_mode: 'launch_artifact_path',
+        launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+        launch_input_sha256: preparedLaunchArtifactSha256,
+        launch_input_artifact_sha256: preparedLaunchArtifactSha256,
+        prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedArtifact.copy_paste_reviewer_launch_prompt_sha256,
         launched_at_utc: '2026-04-28T00:00:00.000Z',
         fork_context: false
     }, null, 2) + '\n', 'utf8');
+}
+
+function fileSha256ForTest(filePath: string): string {
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function launchArtifactInputArgsForTest(launchArtifactPath: string): string[] {
+    return [
+        '--launch-input-mode', 'launch_artifact_path',
+        '--launch-input-artifact-path', launchArtifactPath,
+        '--launch-input-sha256', fileSha256ForTest(launchArtifactPath)
+    ];
 }
 
 describe('cli/commands/gates review launch routing', () => {
@@ -687,6 +707,7 @@ describe('cli/commands/gates review launch routing', () => {
             process.exitCode = previousPrepareExitCode;
         }
         const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             ...preparedLaunchArtifact,
             evidence_type: 'delegated_reviewer_launch',
@@ -694,6 +715,12 @@ describe('cli/commands/gates review launch routing', () => {
             attestation_source: 'test_provider_controller',
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+            launch_input_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
             launched_at_utc: '2026-04-28T00:00:00.000Z',
             fork_context: false
         }, null, 2) + '\n', 'utf8');
@@ -732,6 +759,8 @@ describe('cli/commands/gates review launch routing', () => {
         assert.equal(invocationDetails?.canonical_source_of_truth, 'Antigravity');
         assert.equal(invocationDetails?.reviewer_launch_tool, 'test-subagent-spawn');
         assert.equal(invocationDetails?.provider_invocation_id, 'test-invocation-123');
+        assert.equal(invocationDetails?.launch_input_mode, 'launch_artifact_path');
+        assert.equal(invocationDetails?.launch_input_sha256, preparedLaunchArtifactSha256);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -834,6 +863,9 @@ describe('cli/commands/gates review launch routing', () => {
         const promptTemplateSha256 = createHash('sha256').update(fs.readFileSync(fixture.promptTemplatePath)).digest('hex');
         const outputTemplateSha256 = createHash('sha256').update(fs.readFileSync(fixture.outputTemplatePath)).digest('hex');
         const evidenceManifestSha256 = createHash('sha256').update(fs.readFileSync(fixture.evidenceManifestPath)).digest('hex');
+        const copyPastePromptSha256 = createHash('sha256')
+            .update(String(launchArtifact.copy_paste_reviewer_launch_prompt), 'utf8')
+            .digest('hex');
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read RolePromptPath:'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(fixture.rolePromptPath.replace(/\\/g, '/')));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`RolePromptSha256: ${rolePromptSha256}`));
@@ -851,6 +883,7 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(`OutputTemplateSha256: ${outputTemplateSha256}`));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));
         assert.ok(String(launchArtifact.copy_paste_reviewer_launch_prompt).includes(reviewOutputPath.replace(/\\/g, '/')));
+        assert.equal(launchArtifact.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
         assert.equal(launchArtifact.role_prompt_sha256, rolePromptSha256);
         assert.equal(launchArtifact.prompt_template_sha256, promptTemplateSha256);
         assert.equal(launchArtifact.output_template_sha256, outputTemplateSha256);
@@ -877,6 +910,9 @@ describe('cli/commands/gates review launch routing', () => {
         assert.equal(launchArtifact.after_launch_required_updates.attestation_state, 'launched');
         assert.equal(launchArtifact.after_launch_required_updates.provider_invocation_id_or_controller_invocation_id, '<actual delegated reviewer invocation id>');
         assert.equal(launchArtifact.after_launch_required_updates.launch_completed_at_utc, '<gate-owned ISO-8601 completion timestamp>');
+        assert.equal(launchArtifact.after_launch_required_updates.launch_input_mode, 'launch_artifact_path or copy_paste_prompt');
+        assert.equal(launchArtifact.after_launch_required_updates.launch_input_sha256, '<prepared reviewer launch artifact sha256, or CopyPasteReviewerLaunchPromptSha256>');
+        assert.equal(launchArtifact.after_launch_required_updates.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
         assert.deepEqual(launchArtifact.preserve_prepared_fields, [
             'review_context_sha256',
             'routing_event_sha256',
@@ -885,6 +921,7 @@ describe('cli/commands/gates review launch routing', () => {
             'prompt_template_sha256',
             'output_template_sha256',
             'evidence_manifest_sha256',
+            'copy_paste_reviewer_launch_prompt_sha256',
             'review_tree_state_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
@@ -916,6 +953,7 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewOutputPath: ${reviewOutputPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ScopedDiffMetadataPath: ${path.join(getReviewsRoot(repoRoot), `${taskId}-code-scoped.json`).replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchArtifactPath: ${launchArtifactPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`CopyPasteReviewerLaunchPromptSha256: ${copyPastePromptSha256}`)));
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('PreparedLaunchEventSha256:')));
@@ -939,7 +977,7 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplateSha256: ${outputTemplateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
-        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with RolePromptPath, PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts')));
+        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
@@ -1759,6 +1797,7 @@ describe('cli/commands/gates review launch routing', () => {
         }
 
         const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
             ...preparedLaunchArtifact,
             evidence_type: 'delegated_reviewer_launch',
@@ -1766,6 +1805,12 @@ describe('cli/commands/gates review launch routing', () => {
             attestation_source: 'test_provider_controller',
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+            launch_input_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
             launched_at_utc: '2026-04-28T00:00:00.000Z',
             fork_context: false
         }, null, 2) + '\n', 'utf8');
@@ -1850,6 +1895,7 @@ describe('cli/commands/gates review launch routing', () => {
                 }
 
                 const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+                const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
                 fs.writeFileSync(launchArtifactPath, JSON.stringify({
                     ...preparedLaunchArtifact,
                     evidence_type: 'delegated_reviewer_launch',
@@ -1857,6 +1903,12 @@ describe('cli/commands/gates review launch routing', () => {
                     attestation_source: 'test_provider_controller',
                     launch_tool: 'test-subagent-spawn',
                     provider_invocation_id: 'test-invocation-123',
+                    launch_input_mode: 'launch_artifact_path',
+                    launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+                    launch_input_sha256: preparedLaunchArtifactSha256,
+                    launch_input_artifact_sha256: preparedLaunchArtifactSha256,
+                    prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+                    launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
                     launched_at_utc: '2026-04-28T00:00:00.000Z',
                     fork_context: false,
                     ...testCase.artifactUpdates
@@ -2005,6 +2057,7 @@ describe('cli/commands/gates review launch routing', () => {
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
                 '--attestation-source', 'claude_task_tool_launch',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
                 '--fork-context', 'false'
             ]);
             observedCompleteExitCode = process.exitCode ?? 0;
@@ -2029,6 +2082,14 @@ describe('cli/commands/gates review launch routing', () => {
         assert.equal(typeof completedArtifact.launch_completed_at_utc, 'string');
         assert.equal(Number.isNaN(Date.parse(completedArtifact.launch_completed_at_utc)), false);
         assert.equal(completedArtifact.fork_context, false, 'Fork context should be false');
+        assert.equal(completedArtifact.launch_input_mode, 'launch_artifact_path');
+        assert.equal(completedArtifact.launch_input_artifact_path, launchArtifactPath.replace(/\\/g, '/'));
+        assert.equal(completedArtifact.launch_input_sha256, completedArtifact.prepared_reviewer_launch_artifact_sha256);
+        assert.equal(completedArtifact.launch_input_artifact_sha256, completedArtifact.prepared_reviewer_launch_artifact_sha256);
+        assert.equal(typeof completedArtifact.copy_paste_reviewer_launch_prompt_sha256, 'string');
+        assert.equal(completedArtifact.launch_input_copy_paste_reviewer_launch_prompt_sha256, completedArtifact.copy_paste_reviewer_launch_prompt_sha256);
+        assert.ok(capturedLines.some((line) => line.includes('LaunchInputMode: launch_artifact_path')));
+        assert.ok(capturedLines.some((line) => line.includes(`LaunchInputArtifactPath: ${launchArtifactPath.replace(/\\/g, '/')}`)));
 
         const previousInvokeExitCode = process.exitCode;
         const previousInvokeCwd = process.cwd();
@@ -2059,8 +2120,156 @@ describe('cli/commands/gates review launch routing', () => {
         assert.equal(invocationDetails?.launch_prepared_at_utc, completedArtifact.launch_prepared_at_utc);
         assert.equal(invocationDetails?.launched_at_utc, completedArtifact.launched_at_utc);
         assert.equal(invocationDetails?.launch_completed_at_utc, completedArtifact.launch_completed_at_utc);
+        assert.equal(invocationDetails?.launch_input_mode, completedArtifact.launch_input_mode);
+        assert.equal(invocationDetails?.launch_input_sha256, completedArtifact.launch_input_sha256);
+        assert.equal(
+            invocationDetails?.copy_paste_reviewer_launch_prompt_sha256,
+            completedArtifact.copy_paste_reviewer_launch_prompt_sha256
+        );
         assert.equal(typeof invocationDetails?.invocation_attested_at_utc, 'string');
         assert.equal(Number.isNaN(Date.parse(String(invocationDetails?.invocation_attested_at_utc))), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch rejects missing launch input evidence for prepared prompts', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-677-launch-input-missing';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-677-missing',
+            '--attestation-source', 'codex_spawn_agent',
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(complete.exitCode, 0);
+        assert.ok(complete.errors.some((line) => line.includes('launch_input_mode is required')), complete.errors.join('\n'));
+        assert.ok(complete.errors.some((line) => line.includes('launch_input_sha256 is required')), complete.errors.join('\n'));
+        const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(artifact.attestation_state, 'prepared');
+        assert.equal(artifact.provider_invocation_id, undefined);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects completed launch artifacts stripped of launch input fidelity fields', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-677-launch-input-stripped';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-677-stripped',
+            '--attestation-source', 'codex_spawn_agent',
+            ...launchArtifactInputArgsForTest(launchArtifactPath),
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+        assert.equal(complete.exitCode, 0, complete.errors.join('\n'));
+
+        const strippedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        for (const key of [
+            'copy_paste_reviewer_launch_prompt',
+            'copy_paste_reviewer_launch_prompt_sha256',
+            'launch_input_mode',
+            'launch_input_sha256',
+            'launch_input_artifact_path',
+            'launch_input_artifact_sha256',
+            'prepared_reviewer_launch_artifact_sha256',
+            'launch_input_copy_paste_reviewer_launch_prompt_sha256'
+        ]) {
+            delete strippedArtifact[key];
+        }
+        fs.writeFileSync(launchArtifactPath, `${JSON.stringify(strippedArtifact, null, 2)}\n`, 'utf8');
+
+        const invocation = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(invocation.exitCode, 0);
+        assert.ok(
+            invocation.errors.some((line) => line.includes('copy_paste_reviewer_launch_prompt is required for launch input fidelity')),
+            invocation.errors.join('\n')
+        );
+        assert.ok(invocation.errors.some((line) => line.includes('launch_input_mode is required')), invocation.errors.join('\n'));
+        assert.ok(invocation.errors.some((line) => line.includes('launch_input_sha256 is required')), invocation.errors.join('\n'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch rejects mismatched launch artifact input hash', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-677-launch-input-stale';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-677-stale',
+            '--attestation-source', 'codex_spawn_agent',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', launchArtifactPath,
+            '--launch-input-sha256', '0'.repeat(64),
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(complete.exitCode, 0);
+        assert.ok(
+            complete.errors.some((line) => line.includes('launch_input_sha256 must match the current prepared reviewer launch artifact sha256')),
+            complete.errors.join('\n')
+        );
+        const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(artifact.attestation_state, 'prepared');
+        assert.equal(artifact.provider_invocation_id, undefined);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -2110,6 +2319,7 @@ describe('cli/commands/gates review launch routing', () => {
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-660',
                 '--attestation-source', 'copilot_task_tool_launch',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
                 '--fork-context', 'false',
                 '--record-invocation'
             ]);
@@ -2604,6 +2814,7 @@ describe('cli/commands/gates review launch routing', () => {
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--controller-invocation-id', 'ctrl-invocation-305',
                 '--attestation-source', 'claude_task_tool_launch',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
                 '--fork-context', 'false'
             ]);
             observedExitCode = process.exitCode ?? 0;
@@ -2663,6 +2874,7 @@ describe('cli/commands/gates review launch routing', () => {
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
                 '--attestation-source', 'claude_task_tool_launch',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
                 '--fresh-context',
                 '--isolated-context'
             ]);
@@ -2726,6 +2938,7 @@ describe('cli/commands/gates review launch routing', () => {
                 '--reviewer-launch-artifact-path', launchArtifactPath,
                 '--provider-invocation-id', 'test-invocation-305',
                 '--attestation-source', 'claude_task_tool_launch',
+                ...launchArtifactInputArgsForTest(launchArtifactPath),
                 '--fork-context', 'false'
             ]);
             observedExitCode = process.exitCode ?? 0;

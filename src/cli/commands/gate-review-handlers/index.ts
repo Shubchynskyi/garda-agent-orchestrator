@@ -125,6 +125,9 @@ interface ReviewerLaunchArtifactValidationResult {
     launchPreparedAtUtc: string | null;
     launchedAtUtc: string;
     launchCompletedAtUtc: string | null;
+    launchInputMode: ReviewerLaunchInputMode | null;
+    launchInputSha256: string | null;
+    copyPasteReviewerLaunchPromptSha256: string | null;
 }
 
 interface ReviewerHandoffBindings {
@@ -146,9 +149,25 @@ interface SupersededReviewerLaunchArtifactSnapshot {
     mismatches: string[];
 }
 
+type ReviewerLaunchInputMode = 'copy_paste_prompt' | 'launch_artifact_path';
+
+interface ReviewerLaunchInputAttestation {
+    mode: ReviewerLaunchInputMode;
+    sha256: string;
+    copyPasteReviewerLaunchPromptSha256: string;
+    artifactPath: string | null;
+    artifactSha256: string | null;
+}
+
 const PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch_preparation';
 const COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE = 'delegated_reviewer_launch';
 const PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE = 'garda_prepare_reviewer_launch';
+const REVIEWER_LAUNCH_INPUT_MODE_COPY_PASTE_PROMPT: ReviewerLaunchInputMode = 'copy_paste_prompt';
+const REVIEWER_LAUNCH_INPUT_MODE_LAUNCH_ARTIFACT_PATH: ReviewerLaunchInputMode = 'launch_artifact_path';
+const REVIEWER_LAUNCH_INPUT_MODES = new Set<ReviewerLaunchInputMode>([
+    REVIEWER_LAUNCH_INPUT_MODE_COPY_PASTE_PROMPT,
+    REVIEWER_LAUNCH_INPUT_MODE_LAUNCH_ARTIFACT_PATH
+]);
 const FORBIDDEN_COMPLETED_REVIEWER_LAUNCH_ATTESTATION_SOURCES = new Set([
     PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
     'orchestrator_mock',
@@ -166,6 +185,8 @@ const REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS = Object.freeze([
     'attestation_source=<provider/controller source, not garda_prepare_reviewer_launch/manual/mock>',
     'provider_invocation_id or controller_invocation_id=<actual delegated reviewer invocation id>',
     'launched_at_utc=<gate-owned UTC timestamp recorded by complete-reviewer-launch>',
+    'launch_input_mode=copy_paste_prompt or launch_artifact_path',
+    'launch_input_sha256=<sha256 of exact CopyPasteReviewerLaunchPrompt or prepared reviewer-launch artifact>',
     'fresh_context=true, isolated_context=true, or fork_context=false'
 ]);
 
@@ -342,10 +363,134 @@ function printCopyPasteReviewerLaunchPrompt(prompt: string): void {
     }
 }
 
+function normalizeReviewerLaunchInputMode(value: unknown): ReviewerLaunchInputMode | null {
+    const normalized = String(value || '').trim().toLowerCase();
+    return REVIEWER_LAUNCH_INPUT_MODES.has(normalized as ReviewerLaunchInputMode)
+        ? normalized as ReviewerLaunchInputMode
+        : null;
+}
+
+function normalizeSha256Hex(value: unknown): string {
+    return String(value || '').trim().toLowerCase();
+}
+
+function resolveCopyPasteReviewerLaunchPromptSha256(
+    artifact: Record<string, unknown>,
+    violations: string[]
+): string {
+    const copyPastePrompt = getStringField(
+        artifact,
+        'copy_paste_reviewer_launch_prompt',
+        'copyPasteReviewerLaunchPrompt'
+    );
+    const copyPastePromptSha256 = normalizeSha256Hex(
+        getStringField(
+            artifact,
+            'copy_paste_reviewer_launch_prompt_sha256',
+            'copyPasteReviewerLaunchPromptSha256'
+        )
+    );
+    if (!copyPastePrompt) {
+        violations.push('copy_paste_reviewer_launch_prompt is required for launch input fidelity');
+        return copyPastePromptSha256;
+    }
+    const expectedCopyPastePromptSha256 = stringSha256(copyPastePrompt);
+    if (!copyPastePromptSha256) {
+        violations.push('copy_paste_reviewer_launch_prompt_sha256 is required');
+        return expectedCopyPastePromptSha256;
+    }
+    if (!/^[0-9a-f]{64}$/.test(copyPastePromptSha256)) {
+        violations.push('copy_paste_reviewer_launch_prompt_sha256 must be a lowercase sha256 hex digest');
+        return copyPastePromptSha256;
+    }
+    if (copyPastePromptSha256 !== expectedCopyPastePromptSha256) {
+        violations.push('copy_paste_reviewer_launch_prompt_sha256 must match copy_paste_reviewer_launch_prompt');
+    }
+    return copyPastePromptSha256;
+}
+
+function resolveReviewerLaunchInputAttestation(options: {
+    repoRoot: string;
+    launchArtifactPath: string;
+    preparedArtifact: Record<string, unknown>;
+    preparedLaunchArtifactSha256: string;
+    rawMode: unknown;
+    rawSha256: unknown;
+    rawArtifactPath: unknown;
+}): ReviewerLaunchInputAttestation {
+    const violations: string[] = [];
+    const copyPasteReviewerLaunchPromptSha256 = resolveCopyPasteReviewerLaunchPromptSha256(
+        options.preparedArtifact,
+        violations
+    );
+    const mode = normalizeReviewerLaunchInputMode(options.rawMode);
+    if (!mode) {
+        violations.push(
+            `launch_input_mode is required and must be '${REVIEWER_LAUNCH_INPUT_MODE_COPY_PASTE_PROMPT}' ` +
+            `or '${REVIEWER_LAUNCH_INPUT_MODE_LAUNCH_ARTIFACT_PATH}'`
+        );
+    }
+    const launchInputSha256 = normalizeSha256Hex(options.rawSha256);
+    if (!launchInputSha256) {
+        violations.push('launch_input_sha256 is required');
+    } else if (!/^[0-9a-f]{64}$/.test(launchInputSha256)) {
+        violations.push('launch_input_sha256 must be a lowercase sha256 hex digest');
+    }
+
+    let launchInputArtifactPath: string | null = null;
+    let launchInputArtifactSha256: string | null = null;
+    if (mode === REVIEWER_LAUNCH_INPUT_MODE_COPY_PASTE_PROMPT) {
+        if (launchInputSha256 && copyPasteReviewerLaunchPromptSha256 && launchInputSha256 !== copyPasteReviewerLaunchPromptSha256) {
+            violations.push('launch_input_sha256 must match copy_paste_reviewer_launch_prompt_sha256 for copy_paste_prompt mode');
+        }
+    } else if (mode === REVIEWER_LAUNCH_INPUT_MODE_LAUNCH_ARTIFACT_PATH) {
+        const rawArtifactPath = String(options.rawArtifactPath || '').trim();
+        if (!rawArtifactPath) {
+            violations.push('launch_input_artifact_path is required for launch_artifact_path mode');
+        } else {
+            const resolvedArtifactPath = gateHelpers.resolvePathInsideRepo(rawArtifactPath, options.repoRoot, { allowMissing: true });
+            if (!resolvedArtifactPath) {
+                violations.push('launch_input_artifact_path could not be resolved inside the repository');
+            } else if (normalizePath(resolvedArtifactPath).toLowerCase() !== normalizePath(options.launchArtifactPath).toLowerCase()) {
+                violations.push('launch_input_artifact_path must match ReviewerLaunchArtifactPath');
+            } else {
+                launchInputArtifactPath = resolvedArtifactPath;
+            }
+        }
+        if (!options.preparedLaunchArtifactSha256) {
+            violations.push('prepared reviewer launch artifact could not be hashed before completion');
+        } else {
+            launchInputArtifactSha256 = options.preparedLaunchArtifactSha256;
+            if (launchInputSha256 && launchInputSha256 !== options.preparedLaunchArtifactSha256) {
+                violations.push('launch_input_sha256 must match the current prepared reviewer launch artifact sha256');
+            }
+        }
+    }
+
+    if (violations.length > 0) {
+        throw new Error(
+            'Reviewer launch input attestation failed validation:\n' +
+            violations.map((violation) => `- ${violation}`).join('\n') +
+            '\n\n' +
+            'Pass the exact CopyPasteReviewerLaunchPrompt or the generated ReviewerLaunchArtifactPath to the reviewer; ' +
+            'do not reconstruct reviewer launch prompts from memory.'
+        );
+    }
+
+    return {
+        mode: mode!,
+        sha256: launchInputSha256,
+        copyPasteReviewerLaunchPromptSha256,
+        artifactPath: launchInputArtifactPath,
+        artifactSha256: launchInputArtifactSha256
+    };
+}
+
 function buildReviewerLaunchCompletionHint(): string {
     return [
         'Completion hint:',
         '- Start from the prepared reviewer-launch artifact; do not search for or recompute its hashes.',
+        '- Attest the exact launch input: copy_paste_prompt uses CopyPasteReviewerLaunchPromptSha256; launch_artifact_path uses the prepared reviewer-launch artifact sha256.',
         `- Required completed-launch updates: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}.`,
         `- Trust boundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`
     ].join('\n');
@@ -408,6 +553,7 @@ function getReviewerLaunchArtifactMismatchReasons(
         evidenceManifestSha256?: string | null;
         reviewOutputPath?: string | null;
         copyPasteReviewerLaunchPrompt?: string | null;
+        copyPasteReviewerLaunchPromptSha256?: string | null;
         reviewTreeStateSha256: string | null;
         launchBindingSha256: string;
         preparedLaunchEventSha256: string;
@@ -477,6 +623,16 @@ function getReviewerLaunchArtifactMismatchReasons(
         && getStringField(artifact, 'copy_paste_reviewer_launch_prompt', 'copyPasteReviewerLaunchPrompt') !== options.copyPasteReviewerLaunchPrompt
     ) {
         mismatches.push('copy_paste_reviewer_launch_prompt mismatch');
+    }
+    if (
+        options.copyPasteReviewerLaunchPromptSha256
+        && getStringField(
+            artifact,
+            'copy_paste_reviewer_launch_prompt_sha256',
+            'copyPasteReviewerLaunchPromptSha256'
+        ).toLowerCase() !== options.copyPasteReviewerLaunchPromptSha256
+    ) {
+        mismatches.push('copy_paste_reviewer_launch_prompt_sha256 mismatch');
     }
     if (
         options.reviewTreeStateSha256
@@ -1719,6 +1875,7 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
     evidenceManifestSha256?: string | null;
     reviewOutputPath?: string | null;
     copyPasteReviewerLaunchPrompt?: string | null;
+    copyPasteReviewerLaunchPromptSha256?: string | null;
     reviewTreeStateSha256: string | null;
     launchBindingSha256: string;
     routingEventSequence: number;
@@ -1745,6 +1902,7 @@ function getCurrentPreparedReviewerLaunchMismatches(options: {
         evidenceManifestSha256: options.evidenceManifestSha256,
         reviewOutputPath: options.reviewOutputPath,
         copyPasteReviewerLaunchPrompt: options.copyPasteReviewerLaunchPrompt,
+        copyPasteReviewerLaunchPromptSha256: options.copyPasteReviewerLaunchPromptSha256,
         reviewTreeStateSha256: options.reviewTreeStateSha256,
         launchBindingSha256: options.launchBindingSha256,
         preparedLaunchEventSha256,
@@ -1842,6 +2000,7 @@ function assertPreparedReviewerLaunchArtifact(options: {
     evidenceManifestSha256?: string | null;
     reviewOutputPath?: string | null;
     copyPasteReviewerLaunchPrompt?: string | null;
+    copyPasteReviewerLaunchPromptSha256?: string | null;
     reviewTreeStateSha256?: string | null;
 }): void {
     const artifact = readJsonFile(options.artifactPath, 'Prepared reviewer launch artifact');
@@ -1933,6 +2092,38 @@ function assertPreparedReviewerLaunchArtifact(options: {
         );
         if (actualCopyPastePrompt !== options.copyPasteReviewerLaunchPrompt) {
             violations.push('copy_paste_reviewer_launch_prompt must match the prepared reviewer launch prompt');
+        }
+        const actualCopyPastePromptSha256 = getStringField(
+            artifact,
+            'copy_paste_reviewer_launch_prompt_sha256',
+            'copyPasteReviewerLaunchPromptSha256'
+        ).toLowerCase();
+        const expectedCopyPastePromptSha256 = options.copyPasteReviewerLaunchPromptSha256
+            || stringSha256(options.copyPasteReviewerLaunchPrompt);
+        if (!actualCopyPastePromptSha256) {
+            violations.push('copy_paste_reviewer_launch_prompt_sha256 is required');
+        } else if (actualCopyPastePromptSha256 !== expectedCopyPastePromptSha256) {
+            violations.push('copy_paste_reviewer_launch_prompt_sha256 must match the prepared reviewer launch prompt');
+        }
+    } else {
+        const actualCopyPastePrompt = getStringField(
+            artifact,
+            'copy_paste_reviewer_launch_prompt',
+            'copyPasteReviewerLaunchPrompt'
+        );
+        const actualCopyPastePromptSha256 = getStringField(
+            artifact,
+            'copy_paste_reviewer_launch_prompt_sha256',
+            'copyPasteReviewerLaunchPromptSha256'
+        ).toLowerCase();
+        if (actualCopyPastePrompt && !actualCopyPastePromptSha256) {
+            violations.push('copy_paste_reviewer_launch_prompt_sha256 is required when copy_paste_reviewer_launch_prompt is present');
+        } else if (
+            actualCopyPastePrompt
+            && actualCopyPastePromptSha256
+            && actualCopyPastePromptSha256 !== stringSha256(actualCopyPastePrompt)
+        ) {
+            violations.push('copy_paste_reviewer_launch_prompt_sha256 must match copy_paste_reviewer_launch_prompt');
         }
     }
     if (options.reviewTreeStateSha256) {
@@ -2040,6 +2231,26 @@ function validateReviewerLaunchArtifact(options: {
     const outputTemplateSha256 = getStringField(artifact, 'output_template_sha256', 'outputTemplateSha256').toLowerCase();
     const evidenceManifestSha256 = getStringField(artifact, 'evidence_manifest_sha256', 'evidenceManifestSha256').toLowerCase();
     const launchBindingSha256 = getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
+    const copyPastePrompt = getStringField(
+        artifact,
+        'copy_paste_reviewer_launch_prompt',
+        'copyPasteReviewerLaunchPrompt'
+    );
+    const copyPastePromptSha256 = getStringField(
+        artifact,
+        'copy_paste_reviewer_launch_prompt_sha256',
+        'copyPasteReviewerLaunchPromptSha256'
+    ).toLowerCase();
+    const launchInputMode = normalizeReviewerLaunchInputMode(getStringField(artifact, 'launch_input_mode', 'launchInputMode'));
+    const rawLaunchInputMode = getStringField(artifact, 'launch_input_mode', 'launchInputMode');
+    const launchInputSha256 = getStringField(artifact, 'launch_input_sha256', 'launchInputSha256').toLowerCase();
+    const launchInputArtifactPath = getStringField(artifact, 'launch_input_artifact_path', 'launchInputArtifactPath');
+    const launchInputArtifactSha256 = getStringField(artifact, 'launch_input_artifact_sha256', 'launchInputArtifactSha256').toLowerCase();
+    const preparedReviewerLaunchArtifactSha256 = getStringField(
+        artifact,
+        'prepared_reviewer_launch_artifact_sha256',
+        'preparedReviewerLaunchArtifactSha256'
+    ).toLowerCase();
     const reviewTreeStateSha256 = getStringField(
         artifact,
         'review_tree_state_sha256',
@@ -2108,6 +2319,84 @@ function validateReviewerLaunchArtifact(options: {
     }
     if (options.evidenceManifestSha256 && evidenceManifestSha256 !== options.evidenceManifestSha256) {
         violations.push('evidence_manifest_sha256 must match the current review context evidence manifest artifact');
+    }
+    const launchInputFidelityRequired = evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+        || attestationState === 'launched'
+        || Boolean(
+            copyPastePrompt
+            || copyPastePromptSha256
+            || rawLaunchInputMode
+            || launchInputSha256
+            || launchInputArtifactPath
+            || launchInputArtifactSha256
+            || preparedReviewerLaunchArtifactSha256
+        );
+    if (launchInputFidelityRequired) {
+        if (!copyPastePrompt) {
+            violations.push('copy_paste_reviewer_launch_prompt is required for launch input fidelity');
+        }
+        if (!copyPastePromptSha256) {
+            violations.push('copy_paste_reviewer_launch_prompt_sha256 is required');
+        } else if (!/^[0-9a-f]{64}$/.test(copyPastePromptSha256)) {
+            violations.push('copy_paste_reviewer_launch_prompt_sha256 must be a lowercase sha256 hex digest');
+        } else if (copyPastePrompt && copyPastePromptSha256 !== stringSha256(copyPastePrompt)) {
+            violations.push('copy_paste_reviewer_launch_prompt_sha256 must match copy_paste_reviewer_launch_prompt');
+        }
+        if (!rawLaunchInputMode) {
+            violations.push('launch_input_mode is required');
+        } else if (!launchInputMode) {
+            violations.push(
+                `launch_input_mode must be '${REVIEWER_LAUNCH_INPUT_MODE_COPY_PASTE_PROMPT}' ` +
+                `or '${REVIEWER_LAUNCH_INPUT_MODE_LAUNCH_ARTIFACT_PATH}'`
+            );
+        }
+        if (!launchInputSha256) {
+            violations.push('launch_input_sha256 is required');
+        } else if (!/^[0-9a-f]{64}$/.test(launchInputSha256)) {
+            violations.push('launch_input_sha256 must be a lowercase sha256 hex digest');
+        } else if (
+            launchInputMode === REVIEWER_LAUNCH_INPUT_MODE_COPY_PASTE_PROMPT
+            && copyPastePromptSha256
+            && launchInputSha256 !== copyPastePromptSha256
+        ) {
+            violations.push('launch_input_sha256 must match copy_paste_reviewer_launch_prompt_sha256 for copy_paste_prompt mode');
+        } else if (launchInputMode === REVIEWER_LAUNCH_INPUT_MODE_LAUNCH_ARTIFACT_PATH) {
+            if (!launchInputArtifactPath) {
+                violations.push('launch_input_artifact_path is required for launch_artifact_path mode');
+            } else {
+                const resolvedLaunchInputArtifactPath = gateHelpers.resolvePathInsideRepo(
+                    launchInputArtifactPath,
+                    options.repoRoot,
+                    { allowMissing: true }
+                );
+                if (
+                    !resolvedLaunchInputArtifactPath
+                    || normalizePath(resolvedLaunchInputArtifactPath).toLowerCase() !== normalizePath(artifactPath).toLowerCase()
+                ) {
+                    violations.push('launch_input_artifact_path must match ReviewerLaunchArtifactPath');
+                }
+            }
+            if (!launchInputArtifactSha256) {
+                violations.push('launch_input_artifact_sha256 is required for launch_artifact_path mode');
+            }
+            if (!preparedReviewerLaunchArtifactSha256) {
+                violations.push('prepared_reviewer_launch_artifact_sha256 is required for launch_artifact_path mode');
+            }
+            if (
+                launchInputArtifactSha256
+                && preparedReviewerLaunchArtifactSha256
+                && launchInputArtifactSha256 !== preparedReviewerLaunchArtifactSha256
+            ) {
+                violations.push('launch_input_artifact_sha256 must match prepared_reviewer_launch_artifact_sha256');
+            }
+            if (
+                launchInputSha256
+                && preparedReviewerLaunchArtifactSha256
+                && launchInputSha256 !== preparedReviewerLaunchArtifactSha256
+            ) {
+                violations.push('launch_input_sha256 must match prepared_reviewer_launch_artifact_sha256 for launch_artifact_path mode');
+            }
+        }
     }
     if (options.reviewTreeStateSha256 && reviewTreeStateSha256 !== options.reviewTreeStateSha256) {
         violations.push('review_tree_state_sha256 must match the current review context tree_state');
@@ -2178,7 +2467,10 @@ function validateReviewerLaunchArtifact(options: {
         providerInvocationId,
         launchPreparedAtUtc,
         launchedAtUtc,
-        launchCompletedAtUtc
+        launchCompletedAtUtc,
+        launchInputMode: launchInputMode || null,
+        launchInputSha256: launchInputSha256 || null,
+        copyPasteReviewerLaunchPromptSha256: copyPastePromptSha256 || null
     };
 }
 
@@ -2773,6 +3065,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
             reviewOutputPath,
             copyPasteReviewerLaunchPrompt,
+            copyPasteReviewerLaunchPromptSha256: stringSha256(copyPasteReviewerLaunchPrompt),
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
             launchBindingSha256,
             routingEventSequence: routingEvent.sequence,
@@ -2814,10 +3107,11 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             }
             console.log(`ReviewerLaunchArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchArtifactPath)}`);
             console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
+            console.log(`CopyPasteReviewerLaunchPromptSha256: ${stringSha256(copyPasteReviewerLaunchPrompt)}`);
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer, then run complete-reviewer-launch. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
+            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath, then run complete-reviewer-launch with launch_input evidence. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
             return;
         }
         if (
@@ -2879,6 +3173,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
     });
+    const copyPasteReviewerLaunchPromptSha256 = stringSha256(copyPasteReviewerLaunchPrompt);
     const launchPreparedAtUtc = new Date().toISOString();
     const preservePreparedFields = [
         'review_context_sha256',
@@ -2888,6 +3183,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         'prompt_template_sha256',
         'output_template_sha256',
         'evidence_manifest_sha256',
+        'copy_paste_reviewer_launch_prompt_sha256',
         'review_tree_state_sha256',
         'launch_binding_sha256',
         'prepared_launch_event_sha256',
@@ -2924,6 +3220,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
         review_output_path: normalizePath(reviewOutputPath),
         copy_paste_reviewer_launch_prompt: copyPasteReviewerLaunchPrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
         review_tree_state_sha256: reviewTreeStateSha256 || null,
         review_tree_state: reviewTreeStateSummary,
         launch_binding_sha256: launchBindingSha256,
@@ -2942,6 +3239,11 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             provider_invocation_id_or_controller_invocation_id: '<actual delegated reviewer invocation id>',
             launched_at_utc: '<gate-owned UTC timestamp recorded by complete-reviewer-launch>',
             launch_completed_at_utc: '<gate-owned ISO-8601 completion timestamp>',
+            launch_input_mode: 'launch_artifact_path or copy_paste_prompt',
+            launch_input_sha256: '<prepared reviewer launch artifact sha256, or CopyPasteReviewerLaunchPromptSha256>',
+            launch_input_artifact_path: '<ReviewerLaunchArtifactPath when launch_input_mode is launch_artifact_path>',
+            launch_input_artifact_sha256: '<prepared reviewer launch artifact sha256 when launch_input_mode is launch_artifact_path>',
+            copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
             fresh_context: true,
             isolated_context: true,
             fork_context: false
@@ -2987,6 +3289,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
                 output_template_sha256: handoffBindings.outputTemplateSha256,
                 evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
                 evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
+                copy_paste_reviewer_launch_prompt_sha256: copyPasteReviewerLaunchPromptSha256,
                 launch_tool: providerLaunch.launchTool,
                 launch_prepared_at_utc: launchPreparedAtUtc,
                 attestation_source: PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE
@@ -3023,6 +3326,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewOutputPath,
         copyPasteReviewerLaunchPrompt,
+        copyPasteReviewerLaunchPromptSha256,
         reviewTreeStateSha256
     });
     const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
@@ -3057,6 +3361,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     }
     console.log(`ReviewerLaunchArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchArtifactPath)}`);
     console.log(`ReviewerLaunchArtifactSha256: ${launchArtifactSha256}`);
+    console.log(`CopyPasteReviewerLaunchPromptSha256: ${copyPasteReviewerLaunchPromptSha256}`);
     console.log('AttestationState: prepared');
     if (supersededLaunchArtifact) {
         console.log(`SupersededLaunchArtifactSnapshotPath: ${toReviewerHandoffAbsolutePath(repoRoot, supersededLaunchArtifact.snapshot_path)}`);
@@ -3071,7 +3376,7 @@ export async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`PreservePreparedFields: ${preservePreparedFields.join(', ')}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-    console.log(`NextAction: launch the delegated reviewer with ${handoffBindings.rolePromptPath ? 'RolePromptPath, ' : ''}PromptTemplatePath, ReviewerPromptPath, OutputTemplatePath, and EvidenceManifestPath as opaque handoff artifacts. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Update after_launch_required_updates, then run RecordInvocationCommand.`);
+    console.log(`NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath; do not reconstruct reviewer prompts from memory. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Update after_launch_required_updates, then run complete-reviewer-launch with launch_input evidence or run RecordInvocationCommand after completion.`);
 }
 
 export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
@@ -3087,6 +3392,9 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         '--controller-invocation-id': { key: 'controllerInvocationId', type: 'string' },
         '--launched-at-utc': { key: 'launchedAtUtc', type: 'string' },
         '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--launch-input-mode': { key: 'launchInputMode', type: 'string' },
+        '--launch-input-sha256': { key: 'launchInputSha256', type: 'string' },
+        '--launch-input-artifact-path': { key: 'launchInputArtifactPath', type: 'string' },
         '--fresh-context': { key: 'freshContext', type: 'boolean' },
         '--isolated-context': { key: 'isolatedContext', type: 'boolean' },
         '--fork-context': { key: 'forkContext', type: 'boolean' },
@@ -3220,14 +3528,36 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     });
 
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const preparedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+    const launchInputAttestation = resolveReviewerLaunchInputAttestation({
+        repoRoot,
+        launchArtifactPath,
+        preparedArtifact,
+        preparedLaunchArtifactSha256,
+        rawMode: options.launchInputMode,
+        rawSha256: options.launchInputSha256,
+        rawArtifactPath: options.launchInputArtifactPath
+    });
     const launchCompletedAtUtc = new Date().toISOString();
     const completedArtifact: Record<string, unknown> = {
         ...preparedArtifact,
         evidence_type: COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
         attestation_state: 'launched',
         attestation_source: attestationSource,
+        launch_input_mode: launchInputAttestation.mode,
+        launch_input_sha256: launchInputAttestation.sha256,
+        launch_input_attestation_source: 'complete-reviewer-launch',
+        launch_input_verified_at_utc: launchCompletedAtUtc,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
         launch_completed_at_utc: launchCompletedAtUtc
     };
+    if (launchInputAttestation.artifactPath) {
+        completedArtifact.launch_input_artifact_path = normalizePath(launchInputAttestation.artifactPath);
+    }
+    if (launchInputAttestation.artifactSha256) {
+        completedArtifact.launch_input_artifact_sha256 = launchInputAttestation.artifactSha256;
+        completedArtifact.prepared_reviewer_launch_artifact_sha256 = launchInputAttestation.artifactSha256;
+    }
     if (providerInvocationId) {
         completedArtifact.provider_invocation_id = providerInvocationId;
     } else {
@@ -3254,6 +3584,15 @@ export async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
     console.log(`LaunchedAtUtc: ${launchedAtUtc}`);
     console.log(`LaunchCompletedAtUtc: ${launchCompletedAtUtc}`);
     console.log(`AttestationSource: ${attestationSource}`);
+    console.log(`LaunchInputMode: ${launchInputAttestation.mode}`);
+    console.log(`LaunchInputSha256: ${launchInputAttestation.sha256}`);
+    console.log(`CopyPasteReviewerLaunchPromptSha256: ${launchInputAttestation.copyPasteReviewerLaunchPromptSha256}`);
+    if (launchInputAttestation.artifactPath) {
+        console.log(`LaunchInputArtifactPath: ${normalizePath(launchInputAttestation.artifactPath)}`);
+    }
+    if (launchInputAttestation.artifactSha256) {
+        console.log(`LaunchInputArtifactSha256: ${launchInputAttestation.artifactSha256}`);
+    }
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
     const recordCommand = getStringField(preparedArtifact, 'record_invocation_command', 'recordInvocationCommand');
     if (recordCommand) {
@@ -3439,6 +3778,9 @@ export async function handleRecordReviewInvocation(gateArgv: string[]): Promise<
                 reviewer_launch_attestation_source: launchArtifact.attestationSource,
                 reviewer_launch_tool: launchArtifact.launchTool,
                 provider_invocation_id: launchArtifact.providerInvocationId,
+                launch_input_mode: launchArtifact.launchInputMode,
+                launch_input_sha256: launchArtifact.launchInputSha256,
+                copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copyPasteReviewerLaunchPromptSha256,
                 launch_prepared_at_utc: launchArtifact.launchPreparedAtUtc,
                 launched_at_utc: launchArtifact.launchedAtUtc,
                 launch_completed_at_utc: launchArtifact.launchCompletedAtUtc,

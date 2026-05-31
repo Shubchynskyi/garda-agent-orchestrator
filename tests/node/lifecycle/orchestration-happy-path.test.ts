@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { DEFAULT_BUNDLE_NAME } from '../../../src/core/constants';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
@@ -443,7 +444,9 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         ]);
 
         assertNextGate(workspaceRoot, 'complete-reviewer-launch');
-        const reviewerLaunchedAtUtc = new Date().toISOString();
+        const preparedReviewerLaunchArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(reviewerLaunchArtifactPath))
+            .digest('hex');
         await runReviewGateCommand(workspaceRoot, [
             'complete-reviewer-launch',
             '--task-id', TASK_ID,
@@ -454,6 +457,9 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
             '--provider-invocation-id', 'codex-e2e-test-reviewer-001',
             '--attestation-source', 'codex_agent_launch',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', reviewerLaunchArtifactPath,
+            '--launch-input-sha256', preparedReviewerLaunchArtifactSha256,
             '--fresh-context'
         ]);
 

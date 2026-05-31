@@ -746,6 +746,7 @@ function writeReviewEvidence(
             launch_prepared_at_utc: launchPreparedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
+            ...launchInputEvidenceFixture(taskId, reviewType),
             fork_context: false
         });
         reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
@@ -778,6 +779,9 @@ function writeReviewEvidence(
                 launch_prepared_at_utc: launchPreparedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
+                launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
+                launch_input_sha256: launchInputEvidenceFixture(taskId, reviewType).launch_input_sha256,
+                copy_paste_reviewer_launch_prompt_sha256: launchInputEvidenceFixture(taskId, reviewType).copy_paste_reviewer_launch_prompt_sha256,
                 invocation_attested_at_utc: invocationAttestedAtUtc
             }
             : {})
@@ -1043,6 +1047,18 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
     });
 }
 
+function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<string, unknown> {
+    const copyPastePrompt = `Delegated ${reviewType} reviewer launch prompt for ${taskId}.`;
+    const copyPastePromptSha256 = sha256Text(copyPastePrompt);
+    return {
+        copy_paste_reviewer_launch_prompt: copyPastePrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        launch_input_mode: 'copy_paste_prompt',
+        launch_input_sha256: copyPastePromptSha256,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
+    };
+}
+
 function seedCompletedReviewerLaunchAndInvocation(
     repoRoot: string,
     taskId: string,
@@ -1083,11 +1099,13 @@ function seedCompletedReviewerLaunchAndInvocation(
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
         launched_at_utc: '2026-04-28T00:00:00.000Z',
+        ...launchInputEvidenceFixture(taskId, reviewType),
         fork_context: false
     });
     if (options.includeInvocation === false) {
         return;
     }
+    const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
     appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
         task_id: taskId,
         review_type: reviewType,
@@ -1102,7 +1120,10 @@ function seedCompletedReviewerLaunchAndInvocation(
         reviewer_launch_attestation_source: 'test-subagent-spawn',
         reviewer_launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
-        launched_at_utc: '2026-04-28T00:00:00.000Z'
+        launched_at_utc: '2026-04-28T00:00:00.000Z',
+        launch_input_mode: launchArtifact.launch_input_mode,
+        launch_input_sha256: launchArtifact.launch_input_sha256,
+        copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256
     });
 }
 
