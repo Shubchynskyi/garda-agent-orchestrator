@@ -1,5 +1,8 @@
 import * as path from 'node:path';
-import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from './constants';
+import {
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
+    UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
+} from './constants';
 import { pathExists } from './filesystem';
 import { readJsonFile, writeJsonFile } from './json';
 import { cloneJsonValue, isPlainObject, mergeConfig } from './config-merge';
@@ -25,6 +28,11 @@ export interface FullSuiteValidationConfig {
     red_failure_chunk_lines: number;
     out_of_scope_failure_policy: string;
     placement: FullSuiteValidationPlacement;
+    [key: string]: unknown;
+}
+
+export interface CompileGateConfig {
+    command: string;
     [key: string]: unknown;
 }
 
@@ -100,6 +108,7 @@ export interface OrchestratorWorkPolicyConfig {
 }
 
 export interface WorkflowConfigData {
+    compile_gate: CompileGateConfig;
     full_suite_validation: FullSuiteValidationConfig;
     review_execution_policy: ReviewExecutionPolicyConfig;
     scope_budget_guard: ScopeBudgetGuardConfig;
@@ -130,6 +139,9 @@ function findOwnCaseInsensitiveKey(record: Record<string, unknown>, expectedKey:
 }
 
 const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
+    compile_gate: Object.freeze({
+        command: UNCONFIGURED_COMPILE_GATE_COMMAND
+    }),
     full_suite_validation: Object.freeze({
         enabled: false,
         command: UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
@@ -180,6 +192,19 @@ const LEGACY_REVIEW_CYCLE_GUARD_GENERATED_DEFAULT: ReviewCycleGuardConfig = Obje
 
 export function buildDefaultWorkflowConfig(): WorkflowConfigData {
     return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG);
+}
+
+export function normalizeCompileGateConfig(input: unknown): CompileGateConfig {
+    if (!isPlainObject(input)) {
+        return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.compile_gate);
+    }
+    const command = typeof input.command === 'string'
+        ? input.command.trim()
+        : DEFAULT_WORKFLOW_CONFIG.compile_gate.command;
+    return {
+        ...cloneJsonValue(input),
+        command: command || DEFAULT_WORKFLOW_CONFIG.compile_gate.command
+    };
 }
 
 export function normalizeOrchestratorWorkPolicyConfig(input: unknown): OrchestratorWorkPolicyConfig {

@@ -118,6 +118,7 @@ npm run build
 
 Rules:
 - First non-empty non-comment line from this block is the compile gate command.
+- If `garda-agent-orchestrator/live/config/workflow-config.json` has a non-unconfigured `compile_gate.command`, compile-gate uses that workflow-config command instead and treats this block as the legacy fallback.
 - Command must be non-interactive, must return non-zero exit code on compile failure, and must be a compile/build/type-check command.
 - Do not use full-suite test commands here (`npm test`, `mvn test`, `gradle test`, `go test`, `cargo test`, `dotnet test`, `pytest`, or equivalent). Put full repository tests in `full-suite-validation` instead.
 - Preferred examples: Node/TypeScript `npm run build` or `npx tsc --noEmit`; Maven `./mvnw compile`; Gradle `./gradlew assemble`; Go `go build ./...`; Rust `cargo check`; .NET `dotnet build`.

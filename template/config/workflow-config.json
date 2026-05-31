@@ -1,4 +1,7 @@
 {
+  "compile_gate": {
+    "command": "__COMPILE_GATE_COMMAND_UNCONFIGURED__"
+  },
   "full_suite_validation": {
     "enabled": false,
     "command": "__FULL_SUITE_COMMAND_UNCONFIGURED__",

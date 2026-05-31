@@ -2,7 +2,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
-    resolveBundleName
+    resolveBundleName,
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
+    UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
 } from '../../core/constants';
 import {
     parseOperatorConfirmationYes,
@@ -22,7 +24,9 @@ import {
     hasMaterializedWorkflowConfigBaseline,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES,
+    normalizeCompileGateConfig,
     normalizeFullSuiteValidationPlacement,
+    type CompileGateConfig,
     type FullSuiteValidationPlacement,
     type ProjectMemoryMaintenanceConfig,
     type ProjectMemoryMaintenanceMode,
@@ -48,6 +52,7 @@ import {
     OUT_OF_SCOPE_FAILURE_POLICIES,
     type OutOfScopeFailurePolicy
 } from '../../gates/full-suite-validation';
+import { validateCompileGateCommand } from '../../gates/compile-gate';
 import { writeProtectedControlPlaneManifest } from '../../gates/protected-control-plane';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
@@ -67,6 +72,7 @@ import {
 type ParsedOptionsRecord = Record<string, string | boolean | string[] | undefined>;
 
 type WorkflowFileConfigData = {
+    compile_gate?: WorkflowConfigData['compile_gate'];
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy?: WorkflowConfigData['review_execution_policy'];
     scope_budget_guard?: WorkflowConfigData['scope_budget_guard'];
@@ -109,6 +115,7 @@ interface WorkflowCommandResultBase {
     bundle_root: string;
     config_path: string;
     config_exists: boolean;
+    compile_gate: CompileGateConfig;
     full_suite_validation: WorkflowConfigData['full_suite_validation'];
     review_execution_policy: WorkflowReviewExecutionPolicyView;
     scope_budget_guard: ScopeBudgetGuardConfig;
@@ -117,6 +124,7 @@ interface WorkflowCommandResultBase {
     task_reset: TaskResetConfig;
     orchestrator_work_policy: OrchestratorWorkPolicyConfig;
     visible_summary_line: string;
+    compile_gate_summary_line: string;
     review_execution_policy_summary_line: string;
     scope_budget_guard_summary_line: string;
     review_cycle_guard_summary_line: string;
@@ -160,6 +168,7 @@ const WORKFLOW_SHARED_DEFINITIONS = {
 const WORKFLOW_SET_DEFINITIONS = {
     ...WORKFLOW_SHARED_DEFINITIONS,
     '--full-suite': { key: 'fullSuiteAlias', type: 'string' },
+    '--compile-gate-command': { key: 'compileGateCommand', type: 'string' },
     '--full-suite-enabled': { key: 'fullSuiteEnabled', type: 'string' },
     '--full-suite-command': { key: 'fullSuiteCommand', type: 'string' },
     '--full-suite-timeout-ms': { key: 'fullSuiteTimeoutMs', type: 'string' },
@@ -236,6 +245,7 @@ function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): WorkflowFi
     const defaultConfig = buildDefaultWorkflowConfig() as WorkflowConfigData;
     return {
         ...config,
+        compile_gate: normalizeCompileGateConfig(config.compile_gate ?? defaultConfig.compile_gate),
         full_suite_validation: config.full_suite_validation,
         scope_budget_guard: normalizeScopeBudgetGuardConfig(config.scope_budget_guard ?? defaultConfig.scope_budget_guard),
         review_cycle_guard: normalizeReviewCycleGuardConfig(config.review_cycle_guard ?? defaultConfig.review_cycle_guard),
@@ -255,6 +265,7 @@ function readWorkflowConfigState(configPath: string, bundleRoot: string): Workfl
         return {
             rawConfig: null,
             config: normalizeWorkflowFileConfig({
+                compile_gate: defaultConfig.compile_gate,
                 full_suite_validation: defaultConfig.full_suite_validation,
                 scope_budget_guard: defaultConfig.scope_budget_guard,
                 project_memory_maintenance: defaultConfig.project_memory_maintenance,
@@ -294,6 +305,18 @@ function readWorkflowConfigState(configPath: string, bundleRoot: string): Workfl
 
 function buildMandatoryFullSuiteLine(config: { full_suite_validation: WorkflowConfigData['full_suite_validation'] }): string {
     return `Mandatory full-suite: ${config.full_suite_validation.enabled ? 'true' : 'false'} placement=${config.full_suite_validation.placement}`;
+}
+
+function isConfiguredCompileGateCommand(command: unknown): command is string {
+    const value = typeof command === 'string' ? command.trim() : '';
+    return Boolean(value) && value !== UNCONFIGURED_COMPILE_GATE_COMMAND;
+}
+
+function buildCompileGateLine(config: { compile_gate?: CompileGateConfig }): string {
+    const command = config.compile_gate?.command || UNCONFIGURED_COMPILE_GATE_COMMAND;
+    return isConfiguredCompileGateCommand(command)
+        ? `Compile gate command: configured (${command})`
+        : 'Compile gate command: legacy 40-commands.md fallback';
 }
 
 function buildReviewExecutionPolicyView(state: WorkflowConfigState): WorkflowReviewExecutionPolicyView {
@@ -342,6 +365,9 @@ function buildWorkflowShowResult(
     roots: WorkflowCommandRoots,
     state: WorkflowConfigState
 ): WorkflowShowResult {
+    const compileGate = normalizeCompileGateConfig(
+        state.config.compile_gate ?? buildDefaultWorkflowConfig().compile_gate
+    );
     const reviewExecutionPolicy = buildReviewExecutionPolicyView(state);
     const scopeBudgetGuard = normalizeScopeBudgetGuardConfig(state.config.scope_budget_guard);
     const reviewCycleGuard = normalizeReviewCycleGuardConfig(state.config.review_cycle_guard);
@@ -363,6 +389,7 @@ function buildWorkflowShowResult(
         bundle_root: roots.bundleRoot,
         config_path: roots.configPath,
         config_exists: state.exists,
+        compile_gate: compileGate,
         full_suite_validation: state.config.full_suite_validation,
         review_execution_policy: reviewExecutionPolicy,
         scope_budget_guard: scopeBudgetGuard,
@@ -371,6 +398,7 @@ function buildWorkflowShowResult(
         task_reset: taskReset,
         orchestrator_work_policy: orchestratorWorkPolicy,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
+        compile_gate_summary_line: buildCompileGateLine({ compile_gate: compileGate }),
         review_execution_policy_summary_line: reviewExecutionPolicy.visible_summary_line,
         scope_budget_guard_summary_line: buildScopeBudgetGuardLine(scopeBudgetGuard),
         review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard),
@@ -417,6 +445,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
         return JSON.stringify(result, null, 2);
     }
 
+    const compileGate = result.compile_gate;
     const fullSuiteValidation = result.full_suite_validation;
     const reviewExecutionPolicy = result.review_execution_policy;
     const scopeBudgetGuard = result.scope_budget_guard;
@@ -436,6 +465,7 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(`ConfigExists: ${result.config_exists}`);
     lines.push('');
     lines.push('Settings summary');
+    lines.push(result.compile_gate_summary_line);
     lines.push(result.visible_summary_line);
     lines.push(result.review_execution_policy_summary_line);
     lines.push(result.scope_budget_guard_summary_line);
@@ -443,6 +473,10 @@ function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { action: 
     lines.push(result.project_memory_maintenance_summary_line);
     lines.push(result.task_reset_summary_line);
     lines.push(result.orchestrator_work_policy_summary_line);
+    lines.push('');
+    lines.push('Compile gate');
+    lines.push(`CompileGateCommand: ${compileGate.command}`);
+    lines.push(`CompileGateCommandSource: ${isConfiguredCompileGateCommand(compileGate.command) ? 'workflow-config' : 'legacy-40-commands-fallback'}`);
     lines.push('');
     lines.push('Full suite validation');
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
@@ -628,6 +662,20 @@ function parseFullSuitePlacement(value: string): FullSuiteValidationPlacement {
     });
 }
 
+function normalizeFullSuiteCommandForCompileGateValidation(command: unknown): string | null {
+    const value = typeof command === 'string' ? command.trim() : '';
+    if (!value || value === UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND) {
+        return null;
+    }
+    return value;
+}
+
+function validateWorkflowCompileGateCommand(command: string, fullSuiteCommand: unknown): void {
+    validateCompileGateCommand(command, '--compile-gate-command', {
+        fullSuiteCommand: normalizeFullSuiteCommandForCompileGateValidation(fullSuiteCommand)
+    });
+}
+
 function parseScopeBudgetAction(value: string): ScopeBudgetGuardConfig['action'] {
     const normalized = value.trim().toUpperCase().replace(/[\s-]+/g, '_');
     if (!SCOPE_BUDGET_GUARD_ACTIONS.includes(normalized as ScopeBudgetGuardConfig['action'])) {
@@ -768,6 +816,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const nextFullSuiteValidation = JSON.parse(
         JSON.stringify(state.config.full_suite_validation)
     ) as WorkflowConfigData['full_suite_validation'];
+    const nextCompileGate = normalizeCompileGateConfig(nextConfig.compile_gate);
     const changedFields: string[] = [];
     const fullSuiteEnabledSetting = resolveBooleanSettingOption({
         parsedOptions: options,
@@ -827,6 +876,15 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         nextFullSuiteValidation.command = command;
         changedFields.push('full_suite_validation.command');
     }
+    if (typeof options.compileGateCommand === 'string') {
+        const command = options.compileGateCommand.trim();
+        if (!command) {
+            throw new Error('--compile-gate-command must not be empty.');
+        }
+        validateWorkflowCompileGateCommand(command, nextFullSuiteValidation.command);
+        nextCompileGate.command = command;
+        changedFields.push('compile_gate.command');
+    }
     if (typeof options.fullSuiteTimeoutMs === 'string') {
         nextFullSuiteValidation.timeout_ms = parseIntegerText(
             options.fullSuiteTimeoutMs,
@@ -861,6 +919,10 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         nextFullSuiteValidation.placement = parseFullSuitePlacement(options.fullSuitePlacement);
         changedFields.push('full_suite_validation.placement');
     }
+    if (isConfiguredCompileGateCommand(nextCompileGate.command)) {
+        validateWorkflowCompileGateCommand(nextCompileGate.command, nextFullSuiteValidation.command);
+    }
+    nextConfig.compile_gate = nextCompileGate;
     nextConfig.full_suite_validation = nextFullSuiteValidation;
     if (typeof options.reviewExecutionPolicy === 'string') {
         nextConfig.review_execution_policy = {
@@ -1024,7 +1086,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     if (changedFields.length === 0) {
         throw new Error(
             "Workflow setting flags are required for 'workflow set'. "
-            + 'Use --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
+            + 'Use --compile-gate-command, --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
@@ -1033,6 +1095,7 @@ function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
 
     const currentValidated = normalizeWorkflowFileConfig(validateWorkflowConfig(state.rawConfig ?? {
+            compile_gate: state.config.compile_gate,
             full_suite_validation: state.config.full_suite_validation,
             scope_budget_guard: state.config.scope_budget_guard,
             review_cycle_guard: state.config.review_cycle_guard,
@@ -1110,6 +1173,7 @@ function handleValidate(options: ParsedOptionsRecord): WorkflowValidateResult {
             'Action: validate',
             'Status: PASS',
             `ConfigPath: ${roots.configPath}`,
+            result.compile_gate_summary_line,
             result.scope_budget_guard_summary_line,
             result.review_cycle_guard_summary_line,
             result.project_memory_maintenance_summary_line,
@@ -1127,6 +1191,8 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
         action: 'explain',
         topic: 'workflow-guards',
         explanation: [
+            'Compile gate command: workflow-config compile_gate.command is used when configured; otherwise compile-gate falls back to the legacy 40-commands.md Compile Gate block.',
+            'Compile gate command changes are validated as compile/build/type-check commands and must not match the configured full-suite validation command.',
             'Scope budget guard: stops large configured-profile tasks before compile/review loops.',
             'Scope budget guard compares changed file count, changed line count, required review lanes, and estimated review tokens against workflow-config.json limits.',
             'Required review lanes means the number of review types required by the current preflight, not the number of completed review attempts.',
@@ -1151,6 +1217,7 @@ function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResult {
         console.log('GARDA_WORKFLOW');
         console.log('Action: explain');
         console.log('Topic: workflow-guards');
+        console.log(result.compile_gate_summary_line);
         console.log(result.scope_budget_guard_summary_line);
         console.log(result.review_cycle_guard_summary_line);
         console.log(result.task_reset_summary_line);

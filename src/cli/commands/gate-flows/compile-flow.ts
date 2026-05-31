@@ -5,6 +5,7 @@ import {
     getBundleCliCommand,
     getSourceCliCommand,
     resolveBundleNameForTarget,
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
     UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
 } from '../../../core/constants';
 import {
@@ -61,7 +62,8 @@ import {
     getCompileCommands,
     getOutputStats,
     getPreflightContext,
-    getWorkspaceSnapshot
+    getWorkspaceSnapshot,
+    validateCompileGateCommand
 } from '../../../gates/compile-gate';
 import {
     getWorkspaceSnapshotCached
@@ -223,6 +225,26 @@ function readConfiguredFullSuiteCommandForCompileGate(repoRoot: string): string 
         return null;
     }
     return command;
+}
+
+function readConfiguredCompileGateCommandForCompileGate(repoRoot: string): {
+    command: string | null;
+    configPath: string;
+} {
+    const workflowConfigPath = resolveGateExecutionPath(repoRoot, path.join('live', 'config', 'workflow-config.json'));
+    const result = readWorkflowConfigForMerge(workflowConfigPath);
+    const config = result.config;
+    if (!config || typeof config.compile_gate !== 'object' || Array.isArray(config.compile_gate)) {
+        return { command: null, configPath: workflowConfigPath };
+    }
+    const compileGateConfig = config.compile_gate as Record<string, unknown>;
+    const command = typeof compileGateConfig.command === 'string'
+        ? compileGateConfig.command.trim()
+        : '';
+    if (!command || command === UNCONFIGURED_COMPILE_GATE_COMMAND) {
+        return { command: null, configPath: workflowConfigPath };
+    }
+    return { command, configPath: workflowConfigPath };
 }
 
 function hasArrayEntries(value: unknown): boolean {
@@ -1203,6 +1225,8 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
 
     let resolvedCommandsPath: string | null = null;
     let compileCommands: string[] = [];
+    let compileCommandSource: 'workflow_config' | 'commands_file' = 'commands_file';
+    let compileWorkflowConfigPath: string | null = null;
     let resolvedPreflightPath: string | null = null;
     let preflightHash: string | null = null;
     let preflightContext: PreflightContext | null = null;
@@ -1230,18 +1254,32 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     let workflowConfigBaselineForCompile: Record<string, string | null> | null = null;
 
     try {
+        const fullSuiteCommand = readConfiguredFullSuiteCommandForCompileGate(repoRoot);
+        const configuredCompileGateCommand = readConfiguredCompileGateCommandForCompileGate(repoRoot);
+        compileWorkflowConfigPath = configuredCompileGateCommand.configPath;
         const commandsPathValue = options.commandsPath
             ? options.commandsPath
             : resolveGateExecutionPath(repoRoot, path.join('live', 'docs', 'agent-rules', '40-commands.md'));
-        resolvedCommandsPath = requireResolvedPath(
-            gateHelpers.resolvePathInsideRepo(commandsPathValue, repoRoot),
-            'CommandsPath'
-        );
-        compileCommands = getCompileCommands(resolvedCommandsPath, {
-            fullSuiteCommand: readConfiguredFullSuiteCommandForCompileGate(repoRoot),
-            allowFullTestCompileCommand,
-            allowFullTestCompileCommandReason
-        });
+        if (configuredCompileGateCommand.command) {
+            compileCommandSource = 'workflow_config';
+            validateCompileGateCommand(configuredCompileGateCommand.command, configuredCompileGateCommand.configPath, {
+                fullSuiteCommand,
+                allowFullTestCompileCommand,
+                allowFullTestCompileCommandReason
+            });
+            compileCommands = [configuredCompileGateCommand.command];
+        } else {
+            resolvedCommandsPath = requireResolvedPath(
+                gateHelpers.resolvePathInsideRepo(commandsPathValue, repoRoot),
+                'CommandsPath'
+            );
+            compileCommands = getCompileCommands(resolvedCommandsPath, {
+                fullSuiteCommand,
+                allowFullTestCompileCommand,
+                allowFullTestCompileCommandReason
+            });
+            compileCommandSource = 'commands_file';
+        }
         resolvedPreflightPath = resolvePreflightPath(repoRoot, options.preflightPath || '', resolvedTaskId);
         preflightContext = getPreflightContext(resolvedPreflightPath, resolvedTaskId);
         rulePackEvidence = getRulePackEvidence(repoRoot, resolvedTaskId, 'POST_PREFLIGHT', {
@@ -1628,6 +1666,8 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
 
     const gateContext: Record<string, unknown> = {
         commands_path: normalizeOptionalPath(resolvedCommandsPath),
+        workflow_config_path: normalizeOptionalPath(compileWorkflowConfigPath),
+        compile_command_source: compileCommandSource,
         compile_commands: compileCommands,
         compile_command: compileCommands.length > 0 ? compileCommands[0] : null,
         preflight_path: normalizeOptionalPath(resolvedPreflightPath),

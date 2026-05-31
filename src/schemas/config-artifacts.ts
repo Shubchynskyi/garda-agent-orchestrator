@@ -728,7 +728,7 @@ export function validateRuntimeRetentionConfig(input: unknown): Record<string, u
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'orchestrator_work_policy'] as const;
+    const knownKeyList = ['compile_gate', 'full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'orchestrator_work_policy'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -803,6 +803,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     });
 
     normalized.full_suite_validation = normalizedSection;
+    if (raw.compile_gate !== undefined) {
+        normalized.compile_gate = validateCompileGateSection(raw.compile_gate);
+    }
     if (raw.review_execution_policy === undefined) {
         if (raw.scope_budget_guard !== undefined) {
             normalized.scope_budget_guard = validateScopeBudgetGuardSection(raw.scope_budget_guard);
@@ -858,6 +861,23 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
     }
     return normalized;
+}
+
+function validateCompileGateSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.compile_gate');
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        ['command'],
+        'workflow-config.compile_gate'
+    );
+    assertNoUnknownKeys(
+        section,
+        ['command'],
+        'workflow-config.compile_gate'
+    );
+    return {
+        command: normalizeNonEmptyString(section.command, 'workflow-config.compile_gate.command')
+    };
 }
 
 function validateOrchestratorWorkPolicySection(input: unknown): Record<string, unknown> {

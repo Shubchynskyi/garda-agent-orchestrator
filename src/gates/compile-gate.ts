@@ -277,6 +277,27 @@ function validateCompileCommandContract(
     );
 }
 
+export function validateCompileGateCommand(
+    command: string,
+    sourceLabel: string,
+    options: CompileCommandContractOptions = {}
+): void {
+    const trimmedCommand = String(command || '').trim();
+    if (!trimmedCommand) {
+        throw new Error(`Compile command is missing in ${sourceLabel}.`);
+    }
+    if (/^\s*<[^>]+>\s*$/.test(trimmedCommand)) {
+        throw new Error(`Compile command placeholder is unresolved in ${sourceLabel}: ${trimmedCommand}`);
+    }
+    if (/\borg\.apache\.maven\.wrapper\.mavenwrappermain\b/i.test(trimmedCommand)) {
+        throw new Error(
+            `Compile command anti-pattern detected in ${sourceLabel}: ` +
+            "use wrapper entrypoint script (for example './mvnw' or '.\\mvnw.cmd') instead of MavenWrapperMain class invocation."
+        );
+    }
+    validateCompileCommandContract(trimmedCommand, sourceLabel, options);
+}
+
 /**
  * Extract compile commands from a markdown rules file.
  * Matches Python get_compile_commands.
@@ -318,16 +339,7 @@ export function getCompileCommands(rulePath: string, options: CompileCommandCont
     }
 
     for (const command of commands) {
-        if (/^\s*<[^>]+>\s*$/.test(command)) {
-            throw new Error(`Compile command placeholder is unresolved in ${rulePath}: ${command}`);
-        }
-        if (/\borg\.apache\.maven\.wrapper\.mavenwrappermain\b/i.test(command)) {
-            throw new Error(
-                `Compile command anti-pattern detected in ${rulePath}: ` +
-                "use wrapper entrypoint script (for example './mvnw' or '.\\mvnw.cmd') instead of MavenWrapperMain class invocation."
-            );
-        }
-        validateCompileCommandContract(command, rulePath, options);
+        validateCompileGateCommand(command, rulePath, options);
     }
 
     return commands;

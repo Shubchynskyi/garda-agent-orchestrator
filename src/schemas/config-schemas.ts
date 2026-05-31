@@ -314,9 +314,18 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'garda-agent-orchestrator/workflow-config.schema.json',
     title: 'Workflow Configuration',
-    description: 'Optional workflow settings including post-task full-suite validation, project-memory maintenance, and guarded task reset.',
+    description: 'Optional workflow settings including compile-gate command selection, post-task full-suite validation, project-memory maintenance, and guarded task reset.',
     type: 'object',
     properties: {
+        compile_gate: {
+            type: 'object',
+            description: 'Compile-gate validation command. When unconfigured or omitted, compile-gate falls back to the legacy 40-commands.md command block.',
+            properties: {
+                command: { type: 'string', minLength: 1, description: 'Command to run for compile-gate validation.' }
+            },
+            required: ['command'],
+            additionalProperties: false
+        },
         full_suite_validation: {
             type: 'object',
             description: 'Full-suite validation (complete test run after task review).',

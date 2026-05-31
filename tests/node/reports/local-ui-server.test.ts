@@ -1038,8 +1038,26 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             settings: Array<{ id: string; key: string; current_value: unknown }>;
         };
         assert.equal(list.enabled, true);
+        assert.ok(list.settings.some((setting) => setting.id === 'compile-gate-command'));
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
+
+        const compilePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'compile-gate-command', mode: 'preview', value: 'npm run build' })
+        });
+        assert.equal(compilePreviewResponse.status, 200);
+        const compilePreview = await compilePreviewResponse.json() as {
+            key: string;
+            proposed_value: string;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(compilePreview.key, 'compile_gate.command');
+        assert.equal(compilePreview.proposed_value, 'npm run build');
+        assert.deepEqual(compilePreview.changed_keys, ['compile_gate.command']);
+        assert.match(compilePreview.command, /workflow set --compile-gate-command "npm run build"/u);
 
         const invalidResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',

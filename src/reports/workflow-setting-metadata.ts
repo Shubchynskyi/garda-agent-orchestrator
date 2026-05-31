@@ -174,6 +174,16 @@ const projectMemoryReadStrategyOptions: WorkflowSettingOption[] = PROJECT_MEMORY
 
 export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] = Object.freeze([
     {
+        id: 'compile-gate-command',
+        key: 'compile_gate.command',
+        label: 'Compile-gate command',
+        description: 'Command compile-gate runs for compile/build/type-check validation. When unconfigured, compile-gate falls back to the legacy 40-commands.md block.',
+        flag: '--compile-gate-command',
+        value_type: 'string',
+        options: [],
+        placeholder: 'npm run build'
+    },
+    {
         id: 'full-suite-enabled',
         key: 'full_suite_validation.enabled',
         label: 'Mandatory full-suite validation',

@@ -16,6 +16,8 @@ import {
 import { runCompletionGate } from '../../../../src/gates/completion';
 import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
 import { writeOptionalSkillSelectionArtifact } from '../../../../src/runtime/optional-skill-selection';
+import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../src/core/constants';
 
 import {
     createTempRepo,
@@ -40,6 +42,16 @@ import {
 
 function assertCompileFailureIncludesNextStepHint(outputLines: string[]): void {
     assert.ok(outputLines.some((line) => line.includes('NextStep: run') && line.includes('next-step')));
+}
+
+function writeWorkflowConfig(repoRoot: string, overrides: Record<string, unknown>): void {
+    const configPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'workflow-config.json');
+    const config = {
+        ...buildDefaultWorkflowConfig(),
+        ...overrides
+    };
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 }
 
 function seedNodeBackendOptionalSkillFixture(repoRoot: string, policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory') {
@@ -131,6 +143,161 @@ describe('cli/commands/gates compile and post-preflight', () => {
         assert.equal(typeof evidence.compile_output_retention.raw_output_sha256, 'string');
         assert.ok(result.outputLines.some((line) => line.includes('CompileOutputRetention: retained=false reason=SUCCESS_LOG_OMITTED')));
         assert.ok(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'IMPLEMENTATION_STARTED'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('uses workflow-config compile gate command before legacy commands file fallback', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-configured-compile-command';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        writeWorkflowConfig(repoRoot, {
+            compile_gate: {
+                command: 'node -e "console.log(\'workflow config build ok\')"'
+            }
+        });
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-configured-compile.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "process.exit(17)"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Use workflow config compile command'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(evidence.status, 'PASSED');
+        assert.equal(evidence.compile_command_source, 'workflow_config');
+        assert.equal(evidence.compile_commands[0], 'node -e "console.log(\'workflow config build ok\')"');
+        assert.equal(evidence.commands_path, null);
+        assert.match(evidence.workflow_config_path, /workflow-config\.json$/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('falls back to legacy commands file when workflow compile gate command is unconfigured', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-legacy-compile-fallback';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        writeWorkflowConfig(repoRoot, {
+            compile_gate: {
+                command: UNCONFIGURED_COMPILE_GATE_COMMAND
+            }
+        });
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-legacy-fallback.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'legacy fallback build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Use legacy compile fallback'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(evidence.status, 'PASSED');
+        assert.equal(evidence.compile_command_source, 'commands_file');
+        assert.equal(evidence.compile_commands[0], 'node -e "console.log(\'legacy fallback build ok\')"');
+        assert.match(evidence.commands_path, /commands-legacy-fallback\.md$/);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects workflow-config compile command when it matches full-suite validation', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-configured-compile-contract';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        writeWorkflowConfig(repoRoot, {
+            compile_gate: {
+                command: 'npm test'
+            },
+            full_suite_validation: {
+                ...buildDefaultWorkflowConfig().full_suite_validation,
+                enabled: true,
+                command: 'npm test'
+            }
+        });
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-configured-contract.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'should not run\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reject configured compile command overlap'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => /matches the configured full-suite validation command/i.test(line)));
+        assert.ok(result.outputLines.some((line) => /must not run the full test suite/i.test(line)));
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(evidence.status, 'FAILED');
+        assert.equal(evidence.compile_command_source, 'workflow_config');
+        assert.deepEqual(evidence.compile_commands, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -248,7 +248,7 @@ Notes:
 - By default the UI does not run shell commands, mutate task lifecycle state, edit workflow config, or write settings.
 - `--actions` exposes only allow-listed Garda commands from the Actions tab. Action requests support preview mode, require typed confirmation for mutating actions such as `html-report`, and append runtime audit JSONL entries under `garda-agent-orchestrator/runtime/ui-actions/`.
 - With `--actions`, the workflow tab also exposes a guarded settings editor for allow-listed safe integer workflow knobs such as full-suite output limits and project-memory retention/tuning values. The editor supports preview and execution modes, requires the exact confirmation phrase `APPLY GARDA SETTING`, and runs the existing audited `garda workflow set` command path with `--operator-confirmed yes`; it does not write `workflow-config.json` directly.
-- High-risk policy switches such as full-suite enablement, review policy, scope-budget policy, review-cycle policy, and task-reset enablement remain read-only in the UI and must be changed through the explicit workflow command surface.
+- High-risk policy switches such as full-suite enablement, review policy, scope-budget policy, review-cycle policy, and task-reset enablement remain read-only in the UI and must be changed through the explicit workflow command surface. The compile-gate command is editable through the same guarded settings editor and is validated as a compile/build/type-check command before workflow config is written.
 - Action execution requires the page's per-process request token, exact localhost `Origin`, and JSON content type; cross-origin localhost posts are rejected.
 - The Actions tab does not accept arbitrary shell text; each action maps to a fixed existing Garda command.
 
@@ -524,6 +524,7 @@ Show or change repo-local workflow configuration.
 ```text
 garda workflow --target-root "."
 garda workflow show --target-root "." --json
+garda workflow set --target-root "." --compile-gate-command "npm run build" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --full-suite-enabled true --full-suite-placement before_test_review --full-suite-command "npm test" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --review-execution-policy strict_sequential --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
@@ -537,7 +538,9 @@ garda workflow explain --target-root "."
 
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
-- The current surface manages repo-local `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, and `task_reset` settings in `live/config/workflow-config.json`.
+- The current surface manages repo-local `compile_gate`, `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, and `task_reset` settings in `live/config/workflow-config.json`.
+- `compile_gate.command` overrides the legacy `40-commands.md` Compile Gate block when it is configured. Missing or unconfigured values keep the legacy fallback for existing workspaces.
+- `--compile-gate-command` must stay a compile/build/type-check command and must not match the configured full-suite validation command.
 - `workflow set` requires explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
 - `--garda-self-guard on` maps to `orchestrator_work_policy.mode=deny_agent_entry`; `off` maps to `require_operator_confirmation` and requires explicit operator approval.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.

@@ -561,7 +561,13 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
 
     try {
         const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        const config = validateWorkflowConfig(parsed) as WorkflowConfigData;
+        const defaults = buildDefaultWorkflowConfig();
+        const validated = validateWorkflowConfig(parsed) as Partial<WorkflowConfigData>;
+        const config = {
+            ...defaults,
+            ...validated,
+            compile_gate: validated.compile_gate ?? defaults.compile_gate
+        } as WorkflowConfigData;
         return {
             config_path: toPosix(configPath),
             config_exists: true,

@@ -14,7 +14,10 @@ import {
     computeProtectedSnapshotDigest
 } from './helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
-import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../core/constants';
+import {
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
+    UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
+} from '../core/constants';
 import {
     buildDefaultWorkflowConfig,
     isExactLegacyProjectMemoryGeneratedDefault,
@@ -199,6 +202,7 @@ const SAFE_FULL_SUITE_COMPATIBILITY_COMMANDS = new Set([
     'npm test'
 ]);
 const COMPATIBILITY_TOP_LEVEL_KEYS = [
+    'compile_gate',
     'full_suite_validation',
     'orchestrator_work_policy',
     'project_memory_maintenance',
@@ -207,7 +211,12 @@ const COMPATIBILITY_TOP_LEVEL_KEYS = [
     'scope_budget_guard',
     'task_reset'
 ];
-const COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS = ['orchestrator_work_policy', 'review_execution_policy', 'task_reset'];
+const COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS = [
+    'compile_gate',
+    'orchestrator_work_policy',
+    'review_execution_policy',
+    'task_reset'
+];
 const COMPATIBILITY_ALLOWED_TOP_LEVEL_KEY_SETS = Array.from(
     { length: 1 << COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS.length },
     (_entry, mask) => COMPATIBILITY_TOP_LEVEL_KEYS.filter((key) => {
@@ -228,6 +237,7 @@ const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
     ...COMPATIBILITY_FULL_SUITE_VALIDATION_REQUIRED_KEYS,
     ...COMPATIBILITY_FULL_SUITE_VALIDATION_OPTIONAL_KEYS
 ];
+const COMPATIBILITY_COMPILE_GATE_KEYS = ['command'];
 const COMPATIBILITY_REVIEW_EXECUTION_POLICY_KEYS = ['mode'];
 const COMPATIBILITY_SCOPE_BUDGET_GUARD_KEYS = [
     'action',
@@ -362,6 +372,19 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
     }
     if (fullSuiteValidation.enabled === true && command !== 'npm test') {
         return false;
+    }
+
+    if (hasOwnKey(config, 'compile_gate')) {
+        const compileGate = toPlainRecord(config.compile_gate);
+        const defaultCompileGate = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.compile_gate as unknown as Record<string, unknown>;
+        if (
+            !compileGate
+            || !hasExactOwnKeys(defaultCompileGate, COMPATIBILITY_COMPILE_GATE_KEYS)
+            || !hasExactOwnKeys(compileGate, COMPATIBILITY_COMPILE_GATE_KEYS)
+            || String(compileGate.command || '').trim() !== UNCONFIGURED_COMPILE_GATE_COMMAND
+        ) {
+            return false;
+        }
     }
 
     if (hasOwnKey(config, 'review_execution_policy')) {

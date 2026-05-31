@@ -242,6 +242,32 @@ test('workflow-config schema accepts legacy full_suite_validation without placem
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('workflow-config schema accepts optional compile gate command section', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const result = validateAgainstSchema(data, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+    assert.deepEqual(data.compile_gate, {
+        command: '__COMPILE_GATE_COMMAND_UNCONFIGURED__'
+    });
+});
+
+test('workflow-config schema accepts legacy configs without compile_gate', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    delete clone.compile_gate;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config schema rejects unknown compile_gate keys', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (clone.compile_gate as Record<string, unknown>).extra = true;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.path.includes('compile_gate.extra')));
+});
+
 test('workflow-config template carries the full-suite placement default for generated configs', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     assert.equal(

@@ -224,6 +224,45 @@ test('validateWorkflowConfig defaults missing full-suite placement but rejects i
     );
 });
 
+test('validateWorkflowConfig accepts compile_gate command and legacy omission', () => {
+    const baseConfig = {
+        full_suite_validation: {
+            enabled: false,
+            command: 'npm test',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        }
+    };
+
+    const legacy = validateWorkflowConfig(baseConfig);
+    assert.equal(Object.prototype.hasOwnProperty.call(legacy, 'compile_gate'), false);
+
+    const configured = validateWorkflowConfig({
+        ...baseConfig,
+        compile_gate: {
+            command: ' npm run build '
+        }
+    });
+    assert.deepEqual(configured.compile_gate, {
+        command: 'npm run build'
+    });
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            compile_gate: {
+                command: ''
+            }
+        }),
+        /workflow-config\.compile_gate\.command/
+    );
+});
+
 test('validateWorkflowConfig rejects unknown task reset keys', () => {
     assert.throws(
         () => validateWorkflowConfig({
