@@ -975,6 +975,49 @@ test('releaseFilesystemLock does not remove replacement lock after stale reclaim
     }
 });
 
+test('releaseFilesystemLock restores replacement lock if owner changes during release claim', () => {
+    const tmp = mkTmpDir();
+    const lockPath = path.join(tmp, '.test-release-owner-window.lock');
+    const realFs = require('node:fs');
+    const originalRenameSync = realFs.renameSync;
+    let interceptedReleaseClaim = false;
+
+    try {
+        const { handle } = acquireFilesystemLock(lockPath);
+        const ownerPath = path.join(lockPath, 'owner.json');
+        const initialOwner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+        const replacementLockId = 'replacement-owner-during-release';
+        const replacementOwner = {
+            ...initialOwner,
+            lock_id: replacementLockId,
+            created_at_utc: new Date(Date.now() + 1000).toISOString(),
+            heartbeat_at_utc: new Date(Date.now() + 1000).toISOString()
+        };
+
+        realFs.renameSync = function (...args: unknown[]) {
+            const fromPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+            const toPath = typeof args[1] === 'string' ? path.resolve(args[1]) : '';
+            if (!interceptedReleaseClaim
+                && fromPath === path.resolve(lockPath)
+                && toPath.startsWith(path.resolve(`${lockPath}.releasing`))) {
+                interceptedReleaseClaim = true;
+                fs.writeFileSync(ownerPath, JSON.stringify(replacementOwner, null, 2) + '\n', 'utf8');
+            }
+            return originalRenameSync.apply(realFs, args as [fs.PathLike, fs.PathLike]);
+        };
+
+        releaseFilesystemLock(handle);
+
+        assert.equal(interceptedReleaseClaim, true, 'release claim race window should be exercised');
+        assert.ok(fs.existsSync(lockPath), 'replacement lock should be restored to the canonical lock path');
+        const restoredOwner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+        assert.equal(restoredOwner.lock_id, replacementLockId);
+    } finally {
+        realFs.renameSync = originalRenameSync;
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 
 test('scanTaskEventLocks reports empty when no locks exist', () => {
     const tmp = mkTmpDir();
@@ -1485,5 +1528,4 @@ test('acquireFilesystemLock cleans up lock directory when metadata write fails',
         fs.rmSync(tmp, { recursive: true, force: true });
     }
 });
-
 
