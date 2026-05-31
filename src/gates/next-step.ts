@@ -243,6 +243,10 @@ import {
     resolveStrictSequentialUpstreamReuseRoute
 } from './next-step-review-reuse-routing';
 import {
+    resolveCompletedCloseoutRoute,
+    resolvePostReviewCloseoutRoute
+} from './next-step-closeout-routing';
+import {
     buildCommand,
     buildBundleRelativePath,
     buildNavigatorCommand,
@@ -5714,63 +5718,33 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     if (isGatePassed(summary, 'completion-gate') && isLatestCompletionCurrent(eventsRoot, taskId)) {
         const hasFinalCloseoutArtifact = fs.existsSync(readinessArtifacts.paths.finalCloseoutJsonPath)
             || fs.existsSync(readinessArtifacts.paths.finalCloseoutMarkdownPath);
-        if (hasFinalCloseoutArtifact) {
-            const postDoneDrift = readPostDoneWorkspaceDriftDecision(
+        const postDoneDrift = hasFinalCloseoutArtifact
+            ? readPostDoneWorkspaceDriftDecision(
                 repoRoot,
                 preflight,
                 readinessArtifacts.paths.docImpactPath,
                 readinessArtifacts.paths.finalCloseoutJsonPath
-            );
-            if (postDoneDrift.blocked) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'post-done-drift',
-                    title: 'Resolve tracked post-DONE workspace drift.',
-                    reason: postDoneDrift.reason,
-                    commands: [],
-                    finalReport: null
-                });
-            }
-        }
-        if (summary.final_report_contract.status !== 'READY') {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'task-audit-summary',
-                title: 'Final report integrity attestation is not ready.',
-                reason:
-                    `${summary.final_report_contract.blocker || 'Final report contract is not ready.'} ` +
-                    'Do not deliver a task-complete final report until review integrity is independently attested or the scope requires no review.',
-                commands: [],
-                finalReport: null
-            });
-        }
+            )
+            : { blocked: false, reason: 'No materialized final closeout artifact exists yet.' };
         const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
-        if (finalReport) {
-            return buildResult({
-                ...resultBase,
-                status: 'DONE',
-                nextGate: null,
-                title: 'Task gate flow is complete.',
-                reason: 'Completion gate passed and the canonical final closeout is materialized. Deliver the final report in the required order below; do not auto-commit without explicit user approval.',
-                commands: [],
-                finalReport
-            });
-        }
+        const completedCloseoutRoute = resolveCompletedCloseoutRoute({
+            postDoneDrift,
+            finalReportContractReady: summary.final_report_contract.status === 'READY',
+            finalReportContractBlocker: summary.final_report_contract.blocker || '',
+            finalReport,
+            taskAuditCommand: buildCommand(
+                'Build final audit summary',
+                `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
+            )
+        });
         return buildResult({
             ...resultBase,
-            status: 'READY',
-            nextGate: 'task-audit-summary',
-            title: 'Materialize final closeout before stopping.',
-            reason: 'Completion gate passed, but the canonical final closeout artifacts are not materialized yet. Run task-audit-summary to materialize the final report order and commit guidance before stopping.',
-            commands: [
-                buildCommand(
-                    'Build final audit summary',
-                    `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
-                )
-            ],
-            finalReport: null
+            status: completedCloseoutRoute.status,
+            nextGate: completedCloseoutRoute.nextGate,
+            title: completedCloseoutRoute.title,
+            reason: completedCloseoutRoute.reason,
+            commands: completedCloseoutRoute.commands,
+            finalReport: completedCloseoutRoute.finalReport as NextStepFinalReportSummary | null
         });
     }
 
@@ -7364,140 +7338,71 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
     }
 
-    if (!isGatePassed(summary, 'required-reviews-check')) {
-        const zeroDiffNoReviewCloseout = hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes);
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'required-reviews-check',
-            title: zeroDiffNoReviewCloseout
-                ? 'Validate zero-diff no-review closeout.'
-                : 'Run required reviews check.',
-            reason: zeroDiffNoReviewCloseout
-                ? 'Profile-forced reviews were suppressed because the current preflight is BASELINE_ONLY with no reviewable diff; required-reviews-check must validate audited no-op evidence before closeout.'
-                : 'All required review artifacts appear present, but the review gate has not validated them.',
-            commands: [
-                buildCommand(
-                    'Run required reviews check',
-                    buildRequiredReviewsCheckCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
+    const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+    const postReviewCloseoutRoute = resolvePostReviewCloseoutRoute({
+        requiredReviews: {
+            requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
+            zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
+            command: buildCommand(
+                'Run required reviews check',
+                buildRequiredReviewsCheckCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
+            )
+        },
+        docImpact: {
+            docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
+            compatibilityHint: buildDocImpactCompatibilityHint(),
+            command: buildCommand(
+                'Run doc impact gate',
+                buildDocImpactCommand(
+                    cliPrefix,
+                    taskId,
+                    preflightCommandPath,
+                    preflight,
+                    repoRoot,
+                    effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
                 )
-            ]
-        });
-    }
-
-    if (!isGatePassed(summary, 'doc-impact-gate')) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'doc-impact-gate',
-            title: 'Record documentation impact.',
-            reason: `Completion requires an explicit docs decision. ${buildDocImpactCompatibilityHint()}`,
-            commands: [
-                buildCommand(
-                    'Run doc impact gate',
-                    buildDocImpactCommand(
-                        cliPrefix,
-                        taskId,
-                        preflightCommandPath,
-                        preflight,
-                        repoRoot,
-                        effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
-                    )
-                )
-            ]
-        });
-    }
-
-    if (fullSuiteConfig.enabled && !fullSuiteGatePassed) {
-        const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-        if (fullSuiteNotRequiredForDocsOnly) {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'full-suite-validation',
-                title: 'Record full-suite validation as not required.',
-                reason:
-                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path}, ` +
-                    'but the current scope is docs-only. Record a SKIPPED/NOT_REQUIRED artifact instead of running the configured full-suite command.',
-                commands: [
-                    buildCommand(
-                        'Record full-suite not required',
-                        fullSuiteCommand
-                    )
-                ]
-            });
-        }
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'full-suite-validation',
-            title: fullSuiteConfig.placement === 'before_completion'
-                ? 'Run full-suite validation before completion.'
-                : 'Run full-suite validation.',
-            reason:
-                `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path} with placement '${fullSuiteConfig.placement}'. ` +
-                `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
-            commands: [
-                buildCommand(
-                    'Run full-suite validation',
-                    fullSuiteCommand
-                )
-            ]
-        });
-    }
-
-    if (projectMemoryEvidence.required && projectMemoryEvidence.evidence_status !== 'CURRENT') {
-        const staleDetails = projectMemoryEvidence.violations.length > 0
-            ? ` Violations: ${projectMemoryEvidence.violations.join('; ')}`
-            : '';
-        const affectedFiles = projectMemoryEvidence.affected_memory_files.length > 0
-            ? ` Affected memory files: ${projectMemoryEvidence.affected_memory_files.join(', ')}.`
-            : '';
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'project-memory-impact',
-            title: 'Record project memory impact.',
-            reason:
-                `Project memory maintenance is enabled before final closeout (${projectMemoryEvidence.visible_summary_line}). ` +
-                `Record current project-memory impact evidence after upstream validation and before completion.${affectedFiles}${staleDetails}`,
-            commands: [
-                buildCommand(
-                    'Run project memory impact gate',
-                    buildProjectMemoryImpactCommand(cliPrefix, taskId, preflightCommandPath, projectMemorySummary)
-                )
-            ]
-        });
-    }
-
-    if (!isGatePassed(summary, 'completion-gate')) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'completion-gate',
-            title: 'Run completion gate.',
-            reason: 'All upstream gates appear ready; completion has not finalized the task.',
-            commands: [
-                buildCommand(
-                    'Run completion gate',
-                    buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
-                )
-            ]
-        });
-    }
-
-    return buildResult({
-        ...resultBase,
-        status: 'BLOCKED',
-        nextGate: 'completion-gate',
-        title: 'Rerun completion gate for the current task cycle.',
-        reason: 'A previous completion gate pass exists, but it is older than the latest task-mode entry. Continue the restarted task cycle before treating the task as DONE.',
-        commands: [
-            buildCommand(
+            )
+        },
+        fullSuite: {
+            enabled: fullSuiteConfig.enabled,
+            gatePassed: fullSuiteGatePassed,
+            notRequiredForDocsOnly: fullSuiteNotRequiredForDocsOnly,
+            placement: fullSuiteConfig.placement,
+            configPath: fullSuiteSummary.config_path,
+            commandText: fullSuiteConfig.command,
+            timeoutForecastLine: fullSuiteTimeoutForecastLine,
+            command: buildCommand(
+                fullSuiteNotRequiredForDocsOnly ? 'Record full-suite not required' : 'Run full-suite validation',
+                fullSuiteCommand
+            )
+        },
+        projectMemory: {
+            required: projectMemoryEvidence.required,
+            evidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
+            visibleSummaryLine: projectMemoryEvidence.visible_summary_line,
+            affectedMemoryFiles: projectMemoryEvidence.affected_memory_files,
+            violations: projectMemoryEvidence.violations,
+            command: buildCommand(
+                'Run project memory impact gate',
+                buildProjectMemoryImpactCommand(cliPrefix, taskId, preflightCommandPath, projectMemorySummary)
+            )
+        },
+        completion: {
+            completionGatePassed: isGatePassed(summary, 'completion-gate'),
+            command: buildCommand(
                 'Run completion gate',
                 buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
             )
-        ]
+        }
+    });
+
+    return buildResult({
+        ...resultBase,
+        status: postReviewCloseoutRoute.status,
+        nextGate: postReviewCloseoutRoute.nextGate,
+        title: postReviewCloseoutRoute.title,
+        reason: postReviewCloseoutRoute.reason,
+        commands: postReviewCloseoutRoute.commands
     });
 }
 
