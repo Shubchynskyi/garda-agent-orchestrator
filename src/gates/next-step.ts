@@ -1065,6 +1065,29 @@ function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
 }
 
+function fullSuiteFailedTimeoutRetryAvailable(
+    artifact: Record<string, unknown> | null,
+    forecast: { recommended_timeout_seconds?: unknown; configured_timeout_seconds?: unknown } | null
+): boolean {
+    if (!isPlainRecord(artifact) || artifact.status !== 'FAILED' || artifact.timed_out !== true || !forecast) {
+        return false;
+    }
+
+    const recommendedTimeoutSeconds = Number(forecast.recommended_timeout_seconds);
+    if (!Number.isFinite(recommendedTimeoutSeconds) || recommendedTimeoutSeconds <= 0) {
+        return false;
+    }
+
+    const artifactForecast = isPlainRecord(artifact.timeout_forecast) ? artifact.timeout_forecast : null;
+    const priorConfiguredTimeoutSeconds = Number(artifactForecast?.configured_timeout_seconds);
+    if (Number.isFinite(priorConfiguredTimeoutSeconds) && priorConfiguredTimeoutSeconds > 0) {
+        return recommendedTimeoutSeconds > priorConfiguredTimeoutSeconds;
+    }
+
+    const durationMs = Number(artifact.duration_ms);
+    return Number.isFinite(durationMs) && durationMs > 0 && recommendedTimeoutSeconds * 1000 > durationMs;
+}
+
 function buildCliPrefix(repoRoot: string): string {
     return fs.existsSync(path.join(path.resolve(repoRoot), 'bin', 'garda.js'))
         ? 'node bin/garda.js'
@@ -5421,6 +5444,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
     ));
     const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
+    const fullSuiteTimedOutRetryAvailable = fullSuiteFailedTimeoutRetryAvailable(
+        readinessArtifacts.fullSuiteValidation,
+        fullSuiteTimeoutForecast
+    );
     const reviewLaunchPlan = applyFullSuiteReadinessToReviewLaunchPlan(
         buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
@@ -6478,6 +6505,25 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         fullSuiteNotRequiredForCurrentScope
     )) {
         if (fullSuiteGateStatus === 'FAIL') {
+            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+            if (fullSuiteTimedOutRetryAvailable) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'full-suite-validation',
+                    title: 'Retry full-suite validation with updated timeout forecast.',
+                    reason:
+                        `Full-suite validation timed out for the current compiled scope, and duration history now recommends a longer timeout. ` +
+                        `Rerun the configured full-suite command before launching independent reviewers. ` +
+                        `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
+                    commands: [
+                        buildCommand(
+                            'Retry full-suite validation',
+                            fullSuiteCommand
+                        )
+                    ]
+                });
+            }
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',
@@ -6526,6 +6572,25 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         && reviewLaunchPlan.next_review_type === 'test'
     ) {
         if (fullSuiteGateStatus === 'FAIL') {
+            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+            if (fullSuiteTimedOutRetryAvailable) {
+                return buildResult({
+                    ...resultBase,
+                    status: 'BLOCKED',
+                    nextGate: 'full-suite-validation',
+                    title: 'Retry full-suite validation with updated timeout forecast.',
+                    reason:
+                        `Full-suite validation timed out for the current compiled scope, and duration history now recommends a longer timeout. ` +
+                        `Rerun it before launching the mandatory test reviewer. ` +
+                        `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
+                    commands: [
+                        buildCommand(
+                            'Retry full-suite validation',
+                            fullSuiteCommand
+                        )
+                    ]
+                });
+            }
             return buildResult({
                 ...resultBase,
                 status: 'BLOCKED',

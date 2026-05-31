@@ -1229,6 +1229,33 @@ function seedFullSuiteValidation(
     );
 }
 
+function seedTimedOutFullSuiteFailure(
+    repoRoot: string,
+    taskId: string,
+    config: FullSuiteValidationConfig,
+    durationMs = 400_000
+): void {
+    seedFullSuiteValidation(repoRoot, taskId, 'FAILED');
+    const fullSuitePath = path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-validation.json`);
+    const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
+    fullSuiteArtifact.timed_out = true;
+    fullSuiteArtifact.duration_ms = durationMs;
+    fullSuiteArtifact.timeout_forecast = {
+        configured_timeout_seconds: Math.ceil(config.timeout_ms / 1000),
+        recommended_timeout_seconds: Math.ceil(config.timeout_ms / 1000),
+        recommendation_source: 'config_timeout'
+    };
+    writeJson(fullSuitePath, fullSuiteArtifact);
+    recordFullSuiteValidationDuration(repoRoot, config, {
+        timestamp_utc: '2099-01-01T00:00:00.000Z',
+        task_id: taskId,
+        status: 'FAILED',
+        duration_ms: durationMs,
+        timed_out: true,
+        exit_code: 1
+    });
+}
+
 function materializeFinalCloseout(repoRoot: string, taskId: string): void {
     const summary = buildTaskAuditSummary({ taskId, repoRoot });
     synchronizeFinalCloseoutArtifacts(summary);
@@ -1351,6 +1378,39 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'implementation');
         assert.match(result.title, /Fix full-suite failures/);
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(!result.commands[0].command.includes('--review-type'));
+    });
+
+    it('retries after-compile full-suite timeout when duration history recommends a longer timeout', () => {
+        const repoRoot = makeTempRepo();
+        const fullSuiteConfig: FullSuiteValidationConfig = {
+            ...NEXT_STEP_FULL_SUITE_TEST_CONFIG,
+            placement: 'after_compile_before_reviews'
+        };
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: fullSuiteConfig,
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedTimedOutFullSuiteFailure(repoRoot, TASK_ID, fullSuiteConfig);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.match(result.title, /Retry full-suite validation/);
+        assert.match(result.reason, /timed out/);
+        assert.match(result.reason, /recommends a longer timeout/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('build-review-context'));
         assert.ok(!result.commands[0].command.includes('--review-type'));
     });
@@ -1539,6 +1599,32 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'implementation');
         assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.match(result.title, /Fix full-suite failures/);
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+    });
+
+    it('retries early full-suite timeout before mandatory test review when duration history recommends a longer timeout', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: NEXT_STEP_FULL_SUITE_TEST_CONFIG,
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedTimedOutFullSuiteFailure(repoRoot, TASK_ID, NEXT_STEP_FULL_SUITE_TEST_CONFIG);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.match(result.title, /Retry full-suite validation/);
+        assert.match(result.reason, /timed out/);
+        assert.match(result.reason, /recommends a longer timeout/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('build-review-context'));
     });
