@@ -29,8 +29,7 @@ import {
     getCanonicalReviewSectionHeading,
     getMarkdownMeaningfulEntries,
     getReviewArtifactFindingsEvidence,
-    isTrivialReview,
-    normalizeCanonicalReviewSectionHeadings
+    isTrivialReview
 } from '../../../gates/completion';
 import {
     isTaskOwnedReviewTempPath
@@ -39,14 +38,8 @@ import {
     type ParsedOptionsRecord
 } from '../shared-command-utils';
 import {
-    createReviewRoutingLaunchHandlers
-} from './review-routing-launch-handlers';
-import {
     createReviewInvocationHandlers
 } from './review-invocation-handlers';
-import {
-    createReviewResultHandlers
-} from './review-result-handlers';
 
 interface ResolvedCanonicalReviewPaths {
     preflightPath: string;
@@ -609,7 +602,7 @@ function getReviewerLaunchArtifactMismatchReasons(
     return mismatches;
 }
 
-function resolveCanonicalReviewPaths(
+export function resolveCanonicalReviewPaths(
     repoRoot: string,
     taskId: string,
     reviewType: string,
@@ -726,20 +719,6 @@ export function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequired
     };
 }
 
-export { handleRequiredReviewsCheck, handleDocImpactGate } from './simple-handlers';
-
-export let readReviewOutputFromStdin = async (): Promise<string> => {
-    if (!process.stdin || process.stdin.isTTY) {
-        throw new Error('ReviewOutputStdin requires piped stdin input.');
-    }
-    process.stdin.setEncoding('utf8');
-    let content = '';
-    for await (const chunk of process.stdin) {
-        content += String(chunk);
-    }
-    return content;
-};
-
 function getReviewHeading(reviewType: string): string {
     const normalized = String(reviewType || '').trim().toLowerCase();
     switch (normalized) {
@@ -765,7 +744,7 @@ function getReviewHeading(reviewType: string): string {
     }
 }
 
-function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerdict: string): string {
+export function buildMinimalPassReviewTemplateHint(reviewType: string, expectedPassVerdict: string): string {
     return [
         'Minimal compliant PASS review template for a no-findings review (structure only; substantive analysis is still required):',
         `Exact accepted PASS verdict token for '${reviewType}': ${expectedPassVerdict}`,
@@ -823,7 +802,7 @@ function getPassValidationNotesViolations(options: {
     return [];
 }
 
-function analyzeEarlyReviewMaterialization(options: {
+export function analyzeEarlyReviewMaterialization(options: {
     artifactPath: string;
     reviewContent: string;
     verdictToken: string;
@@ -875,7 +854,7 @@ function analyzeEarlyReviewMaterialization(options: {
     };
 }
 
-function reviewContextRequiresPassValidationNotes(contextPath: string, repoRoot: string): boolean {
+export function reviewContextRequiresPassValidationNotes(contextPath: string, repoRoot: string): boolean {
     const reviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
     const handoff = reviewContext.reviewer_handoff && typeof reviewContext.reviewer_handoff === 'object' && !Array.isArray(reviewContext.reviewer_handoff)
         ? reviewContext.reviewer_handoff as Record<string, unknown>
@@ -961,7 +940,7 @@ function buildNoFindingsPassReviewRecoveryHint(options: {
     ].join('\n');
 }
 
-function buildPassReviewTemplateHintMessage(options: {
+export function buildPassReviewTemplateHintMessage(options: {
     reviewType: string;
     verdictToken: string;
     expectedPassVerdict: string;
@@ -1144,7 +1123,7 @@ function filterGenericPassValidationBoundaryEntries(
     return filteredEntries;
 }
 
-function isLosslessPassNormalizationEligibleViolation(violation: string): boolean {
+export function isLosslessPassNormalizationEligibleViolation(violation: string): boolean {
     const normalizedViolation = String(violation || '').toLowerCase();
     return normalizedViolation.includes('still contains active ')
         || normalizedViolation.includes("deferred finding without usable 'justification:'");
@@ -1164,7 +1143,7 @@ function dedupeReviewFollowUpEntries(entries: readonly string[]): string[] {
     return deduped;
 }
 
-function buildLosslessPassReviewNormalization(options: {
+export function buildLosslessPassReviewNormalization(options: {
     reviewType: string;
     reviewContent: string;
     expectedPassVerdict: string;
@@ -1415,7 +1394,7 @@ export function assertExplicitReviewContextRuntimeIdentity(options: {
     return runtimeIdentity;
 }
 
-function assertReviewContextRuntimeIdentityMetadataPresent(options: {
+export function assertReviewContextRuntimeIdentityMetadataPresent(options: {
     reviewType: string;
     contextPath: string;
     reviewContext: Record<string, unknown> | null;
@@ -1569,7 +1548,7 @@ export function assertNoCurrentCycleReviewRecordedBeforeRouting(
     );
 }
 
-function findMatchingReviewerInvocationAttestationEvent(
+export function findMatchingReviewerInvocationAttestationEvent(
     timelineEvents: readonly ReviewDependencyTimelineEvent[],
     options: {
         taskId: string;
@@ -2126,7 +2105,7 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     }
 }
 
-const reviewInvocationHandlers = createReviewInvocationHandlers({
+const reviewerLaunchArtifactValidationHandlers = createReviewInvocationHandlers({
     assertExplicitReviewContextRuntimeIdentity,
     assertReviewContextContractOrThrow,
     assertRoutingCompatibility,
@@ -2148,77 +2127,6 @@ const reviewInvocationHandlers = createReviewInvocationHandlers({
 });
 
 export const {
-    handleRecordReviewInvocation,
     validateReviewerLaunchArtifact
-} = reviewInvocationHandlers;
+} = reviewerLaunchArtifactValidationHandlers;
 
-const reviewRoutingLaunchHandlers = createReviewRoutingLaunchHandlers({
-    assertExplicitReviewContextRuntimeIdentity,
-    assertNoCurrentCycleReviewRecordedBeforeRouting,
-    assertPreparedReviewerLaunchArtifact,
-    assertReviewContextContractOrThrow,
-    assertRoutingCompatibility,
-    buildCopyPasteReviewerLaunchPrompt,
-    buildRecordReviewInvocationCommand,
-    buildReviewerLaunchBindingSha256,
-    COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
-    findMatchingRoutingEvent,
-    getCurrentPreparedReviewerLaunchMismatches,
-    getReviewTreeStateLaunchSummary,
-    getReviewTreeStateSha256,
-    getReviewerScopedDiffHandoffPaths,
-    getStringField,
-    handleRecordReviewInvocation,
-    isCurrentCompletedReviewerLaunchArtifact,
-    isForbiddenReviewerLaunchAttestationSource,
-    LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY,
-    normalizeReviewerLaunchAttestationSource,
-    parseReviewerIdentity,
-    PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
-    PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
-    printCopyPasteReviewerLaunchPrompt,
-    readJsonFile,
-    readJsonObjectIfPresent,
-    resolveCanonicalPreflightArtifactPath,
-    resolveProviderLaunchMetadata,
-    resolveReviewerHandoffBindings,
-    resolveReviewerDraftOutputPath,
-    resolveReviewerLaunchArtifactPathForWrite,
-    resolveReviewerLaunchInputArtifactPath,
-    resolveReviewerLaunchInputAttestation,
-    REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS,
-    snapshotSupersededReviewerLaunchArtifact,
-    stringSha256,
-    toReviewerHandoffAbsolutePath
-});
-
-export const {
-    handleRecordReviewRouting,
-    handlePrepareReviewerLaunch,
-    handleCompleteReviewerLaunch
-} = reviewRoutingLaunchHandlers;
-
-const reviewResultHandlers = createReviewResultHandlers({
-    analyzeEarlyReviewMaterialization,
-    assertExplicitReviewContextRuntimeIdentity,
-    assertReviewContextContractOrThrow,
-    assertReviewContextRuntimeIdentityMetadataPresent,
-    assertRoutingCompatibility,
-    buildLosslessPassReviewNormalization,
-    buildMinimalPassReviewTemplateHint,
-    buildPassReviewTemplateHintMessage,
-    findMatchingReviewerInvocationAttestationEvent,
-    findMatchingRoutingEvent,
-    getReviewTreeStateSha256,
-    isLosslessPassNormalizationEligibleViolation,
-    normalizeReviewSectionHeadings: normalizeCanonicalReviewSectionHeadings,
-    parseReviewerIdentity,
-    readReviewOutputFromStdin: () => readReviewOutputFromStdin(),
-    resolveCanonicalReviewPaths,
-    reviewContextRequiresPassValidationNotes
-});
-
-export const {
-    handleRecordReviewResult,
-    handleRecordReviewReceipt
-} = reviewResultHandlers;
