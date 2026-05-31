@@ -1,14 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-    buildReviewContext,
-    resolveReviewSkillId
+    buildReviewContext
 } from '../../../gates/build-review-context';
-import {
-    appendMandatoryTaskEventAsync,
-    taskEventAppendHasBlockingFailure,
-    type TaskEventAppendResult
-} from '../../../gate-runtime/task-events';
 import {
     buildReviewVerdictTokenSet,
     extractReviewVerdictSectionTokenMatch,
@@ -16,17 +10,12 @@ import {
     normalizeReviewerExecutionMode,
     type ReviewReceipt
 } from '../../../gate-runtime/review-context';
-import {
-    emitSkillReferenceLoadedEventAsync,
-    emitSkillSelectedEventAsync
-} from '../../../runtime/skill-telemetry';
 import * as gateHelpers from '../../../gates/helpers';
 import { assertReviewLifecycleGuardFromEntries } from '../../../gates/review-lifecycle-guard';
 import {
     assertRequiredUpstreamReviewDependencies,
     type ReviewDependencyTimelineEvent
 } from '../../../gates/review-dependencies';
-import { resolveGateExecutionPath } from '../../../gates/isolation-sandbox';
 import {
     computeReviewReuseCodeScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
@@ -64,6 +53,11 @@ import {
     type BuildReviewContextCommandResult,
     type TimelineEventsSummaryResult
 } from './review-context-command-binding';
+import {
+    emitCurrentPassReviewContextReuseAccepted,
+    emitGeneratedReviewContextPreparationTelemetry,
+    serializeReviewContextTelemetry
+} from './review-context-telemetry';
 
 export {
     readTimelineEventsSummary,
@@ -89,103 +83,6 @@ interface CurrentPassReviewEvidenceResult {
     reviewerExecutionMode: string | null;
     reviewerIdentity: string | null;
     reusedExistingReview: boolean;
-}
-
-const REVIEW_CONTEXT_TELEMETRY_LOCK_TIMEOUT_MS = 30000;
-const REVIEW_CONTEXT_TELEMETRY_LOCK_RETRY_MS = 10;
-const reviewContextTelemetryQueues = new Map<string, Promise<void>>();
-
-function parsePositiveInteger(value: unknown, fallback: number): number {
-    const parsed = Number.parseInt(String(value ?? '').trim(), 10);
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function assertReviewPreparationTelemetryCommitted(result: TaskEventAppendResult | null, eventType: string): void {
-    if (result && !taskEventAppendHasBlockingFailure(result, false)) {
-        return;
-    }
-
-    const diagnostics = result
-        ? (
-            result.warnings.length > 0
-                ? result.warnings.join(' | ')
-                : `commit_status=${result.commit_status}`
-        )
-        : 'append returned null';
-    throw new Error(`Required review-context telemetry '${eventType}' append failed: ${diagnostics}`);
-}
-
-async function serializeReviewContextTelemetry<T>(
-    orchestratorRoot: string,
-    taskId: string,
-    work: () => Promise<T>
-): Promise<T> {
-    const queueKey = `${gateHelpers.normalizePath(orchestratorRoot)}::${taskId}`;
-    const previous = reviewContextTelemetryQueues.get(queueKey) || Promise.resolve();
-    let releaseQueue!: () => void;
-    const queued = previous.catch(() => undefined).then(() => new Promise<void>((resolve) => {
-        releaseQueue = resolve;
-    }));
-    reviewContextTelemetryQueues.set(queueKey, queued);
-
-    try {
-        await previous.catch(() => undefined);
-        return await work();
-    } finally {
-        releaseQueue();
-        if (reviewContextTelemetryQueues.get(queueKey) === queued) {
-            reviewContextTelemetryQueues.delete(queueKey);
-        }
-    }
-}
-
-async function emitCurrentPassReviewContextReuseAccepted(options: {
-    repoRoot: string;
-    taskId: string;
-    reviewType: string;
-    depth: number;
-    preflightPath: string;
-    reviewContextPath: string;
-    ruleContextArtifactPath: string | null;
-    currentPassReviewEvidence: CurrentPassReviewEvidenceResult;
-    telemetryLockTimeoutMs?: unknown;
-    telemetryLockRetryMs?: unknown;
-}): Promise<void> {
-    const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
-    const telemetryAppendOptions = {
-        passThru: true,
-        lockTimeoutMs: parsePositiveInteger(options.telemetryLockTimeoutMs, REVIEW_CONTEXT_TELEMETRY_LOCK_TIMEOUT_MS),
-        lockRetryMs: parsePositiveInteger(options.telemetryLockRetryMs, REVIEW_CONTEXT_TELEMETRY_LOCK_RETRY_MS)
-    };
-    await serializeReviewContextTelemetry(orchestratorRoot, options.taskId, async () => {
-        assertReviewPreparationTelemetryCommitted(
-            await appendMandatoryTaskEventAsync(
-                orchestratorRoot,
-                options.taskId,
-                'REVIEW_CONTEXT_REUSE_ACCEPTED',
-                'PASS',
-                'Current PASS review context reuse accepted.',
-                {
-                    review_type: options.reviewType,
-                    depth: options.depth,
-                    preflight_path: gateHelpers.normalizePath(options.preflightPath),
-                    output_path: gateHelpers.normalizePath(options.reviewContextPath),
-                    review_context_path: gateHelpers.normalizePath(options.reviewContextPath),
-                    review_context_artifact_path: options.ruleContextArtifactPath
-                        ? gateHelpers.normalizePath(options.ruleContextArtifactPath)
-                        : null,
-                    current_pass_review_evidence: true,
-                    review_reuse_evidence: options.currentPassReviewEvidence.reusedExistingReview ? 'REUSED' : 'FRESH',
-                    reused_existing_review: options.currentPassReviewEvidence.reusedExistingReview,
-                    receipt_path: options.currentPassReviewEvidence.receiptPath,
-                    reviewer_execution_mode: options.currentPassReviewEvidence.reviewerExecutionMode,
-                    reviewer_identity: options.currentPassReviewEvidence.reviewerIdentity
-                },
-                telemetryAppendOptions
-            ),
-            'REVIEW_CONTEXT_REUSE_ACCEPTED'
-        );
-    });
 }
 
 interface CompileEvidenceSummary {
@@ -989,36 +886,40 @@ async function tryReuseReviewEvidence(options: {
             continue;
         }
         const evidence = validation.evidence;
-        const materialized = await materializeReusedReviewEvidence({
-            repoRoot: options.repoRoot,
-            taskId: options.taskId,
-            reviewType: options.reviewType,
-            preflightPayload: options.preflightPayload,
-            reviewContextPath: options.reviewContextPath,
-            artifactPath,
-            receiptPath,
-            nonTestReviewScope,
-            codeScopeFingerprint,
-            reviewScopeFingerprint,
-            currentPreflightHash,
-            currentReviewContextSha256,
-            currentReviewTreeStateSha256,
-            currentContextReuseSha256,
-            candidate,
-            reusedFromReceiptPath: evidence.reusedFromReceiptPath,
-            reusedFromReceiptSha256: evidence.reusedFromReceiptSha256,
-            receipt: evidence.receipt,
-            reviewerExecutionMode: evidence.reviewerExecutionMode,
-            reviewerIdentity: evidence.reviewerIdentity,
-            historicalReviewerProvenance: evidence.historicalReviewerProvenance,
-            expectedContextSha256: evidence.expectedContextSha256,
-            expectedContextReuseSha256: evidence.expectedContextReuseSha256,
-            expectedReviewTreeStateSha256: evidence.expectedReviewTreeStateSha256,
-            expectedReviewScopeSha256: evidence.expectedReviewScopeSha256,
-            expectedCodeScopeSha256: evidence.expectedCodeScopeSha256,
-            historicalReviewArtifactSha256: evidence.historicalReviewArtifactSha256,
-            artifactText: evidence.artifactText
-        });
+        const materialized = await serializeReviewContextTelemetry(
+            gateHelpers.joinOrchestratorPath(options.repoRoot, ''),
+            options.taskId,
+            () => materializeReusedReviewEvidence({
+                repoRoot: options.repoRoot,
+                taskId: options.taskId,
+                reviewType: options.reviewType,
+                preflightPayload: options.preflightPayload,
+                reviewContextPath: options.reviewContextPath,
+                artifactPath,
+                receiptPath,
+                nonTestReviewScope,
+                codeScopeFingerprint,
+                reviewScopeFingerprint,
+                currentPreflightHash,
+                currentReviewContextSha256,
+                currentReviewTreeStateSha256,
+                currentContextReuseSha256,
+                candidate,
+                reusedFromReceiptPath: evidence.reusedFromReceiptPath,
+                reusedFromReceiptSha256: evidence.reusedFromReceiptSha256,
+                receipt: evidence.receipt,
+                reviewerExecutionMode: evidence.reviewerExecutionMode,
+                reviewerIdentity: evidence.reviewerIdentity,
+                historicalReviewerProvenance: evidence.historicalReviewerProvenance,
+                expectedContextSha256: evidence.expectedContextSha256,
+                expectedContextReuseSha256: evidence.expectedContextReuseSha256,
+                expectedReviewTreeStateSha256: evidence.expectedReviewTreeStateSha256,
+                expectedReviewScopeSha256: evidence.expectedReviewScopeSha256,
+                expectedCodeScopeSha256: evidence.expectedCodeScopeSha256,
+                historicalReviewArtifactSha256: evidence.historicalReviewArtifactSha256,
+                artifactText: evidence.artifactText
+            })
+        );
         if (!materialized.materialized) {
             candidateRejections.push(
                 `${candidate.sourceDescription}: ${materialized.reason || 'current-cycle review reuse evidence could not be materialized'}`
@@ -1169,59 +1070,16 @@ export async function runBuildReviewContextCommand(
     };
 
     if (taskId) {
-        const orchestratorRoot = gateHelpers.joinOrchestratorPath(repoRoot, '');
-        const skillId = resolveReviewSkillId(reviewType, repoRoot);
-        const skillPath = resolveGateExecutionPath(repoRoot, path.join('live', 'skills', skillId, 'SKILL.md'));
-        const telemetryAppendOptions = {
-            passThru: true,
-            lockTimeoutMs: parsePositiveInteger(options.telemetryLockTimeoutMs, REVIEW_CONTEXT_TELEMETRY_LOCK_TIMEOUT_MS),
-            lockRetryMs: parsePositiveInteger(options.telemetryLockRetryMs, REVIEW_CONTEXT_TELEMETRY_LOCK_RETRY_MS)
-        };
-
-        await serializeReviewContextTelemetry(orchestratorRoot, taskId, async () => {
-            await appendMandatoryTaskEventAsync(
-                orchestratorRoot,
-                taskId,
-                'REVIEW_PHASE_STARTED',
-                'INFO',
-                'Review phase started.',
-                {
-                    review_type: reviewType,
-                    depth,
-                    preflight_path: gateHelpers.normalizePath(preflightPath),
-                    output_path: result.output_path,
-                    review_context_artifact_path: result.rule_context.artifact_path
-                },
-                telemetryAppendOptions
-            );
-            assertReviewPreparationTelemetryCommitted(
-                await emitSkillSelectedEventAsync(orchestratorRoot, taskId, skillId, null, 'required_review', telemetryAppendOptions),
-                'SKILL_SELECTED'
-            );
-            if (fs.existsSync(skillPath) && fs.statSync(skillPath).isFile()) {
-                assertReviewPreparationTelemetryCommitted(
-                    await emitSkillReferenceLoadedEventAsync(
-                        orchestratorRoot,
-                        taskId,
-                        gateHelpers.normalizePath(skillPath),
-                        skillId,
-                        'review_skill',
-                        telemetryAppendOptions
-                    ),
-                    'SKILL_REFERENCE_LOADED'
-                );
-            }
-            assertReviewPreparationTelemetryCommitted(
-                await emitSkillReferenceLoadedEventAsync(
-                    orchestratorRoot,
-                    taskId,
-                    gateHelpers.normalizePath(result.rule_context.artifact_path),
-                    skillId,
-                    'review_context_artifact',
-                    telemetryAppendOptions
-                ),
-                'SKILL_REFERENCE_LOADED'
-            );
+        await emitGeneratedReviewContextPreparationTelemetry({
+            repoRoot,
+            taskId,
+            reviewType,
+            depth,
+            preflightPath,
+            outputPath: result.output_path,
+            ruleContextArtifactPath: result.rule_context.artifact_path,
+            telemetryLockTimeoutMs: options.telemetryLockTimeoutMs,
+            telemetryLockRetryMs: options.telemetryLockRetryMs
         });
 
         try {
