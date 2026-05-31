@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 
 import {
     assertValidTaskId,
@@ -23,6 +24,7 @@ import {
 } from '../../../src/gate-runtime/timeline-summary';
 import { stringSha256 } from '../../../src/gate-runtime/hash';
 
+const requireFromTest = createRequire(__filename);
 
 test('assertValidTaskId accepts valid IDs', () => {
     assert.equal(assertValidTaskId('T-001'), 'T-001');
@@ -576,6 +578,143 @@ test('appendMandatoryTaskEvent retry with emitOnce skips duplicate after derived
         assert.equal(lines.length, 1);
         const event = JSON.parse(lines[0]) as Record<string, unknown>;
         assert.equal(event.message, 'First attempt commits canonical event');
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent emitOnce avoids repeated full-file readFileSync duplicate scans', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-emit-once-cache-'));
+    const mutableFs = requireFromTest('node:fs') as { readFileSync: typeof fs.readFileSync };
+    const originalReadFileSync = mutableFs.readFileSync;
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        for (let i = 0; i < 200; i++) {
+            appendTaskEvent(
+                tempDir,
+                'T-CACHE',
+                `EVENT_${i}`,
+                'INFO',
+                `Event ${i}`,
+                { i },
+                { eventsRoot, passThru: true }
+            );
+        }
+
+        const eventFile = path.join(eventsRoot, 'T-CACHE.jsonl');
+        let taskFileReadFileSyncCalls = 0;
+        mutableFs.readFileSync = (function patchedReadFileSync(
+            this: unknown,
+            file: fs.PathOrFileDescriptor,
+            options?: Parameters<typeof fs.readFileSync>[1]
+        ): ReturnType<typeof fs.readFileSync> {
+            if (typeof file === 'string' && path.resolve(file) === path.resolve(eventFile)) {
+                taskFileReadFileSyncCalls++;
+            }
+            return originalReadFileSync.apply(this, [file, options] as Parameters<typeof fs.readFileSync>);
+        }) as typeof fs.readFileSync;
+
+        for (const eventType of ['CUSTOM_EMIT_ONCE_A', 'CUSTOM_EMIT_ONCE_B', 'CUSTOM_EMIT_ONCE_C']) {
+            const result = appendTaskEvent(
+                tempDir,
+                'T-CACHE',
+                eventType,
+                'INFO',
+                `Emit-once ${eventType}`,
+                { eventType },
+                { eventsRoot, emitOnce: true, passThru: true }
+            );
+            assert.equal(result?.commit_status, 'committed');
+        }
+
+        assert.equal(taskFileReadFileSyncCalls, 0);
+        assert.equal(readTaskEventAppendState(eventFile, 'T-CACHE').matching_events, 203);
+    } finally {
+        mutableFs.readFileSync = originalReadFileSync;
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent emitOnce cache invalidates after external task-file edits', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-emit-once-external-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const first = appendTaskEvent(
+            tempDir,
+            'T-EXT',
+            'PLAN_CREATED',
+            'INFO',
+            'Initial cached event',
+            {},
+            { eventsRoot, emitOnce: true, passThru: true }
+        );
+        assert.equal(first?.commit_status, 'committed');
+
+        const eventFile = path.join(eventsRoot, 'T-EXT.jsonl');
+        fs.appendFileSync(
+            eventFile,
+            `${JSON.stringify({ task_id: 'T-EXT', event_type: 'EXTERNAL_ONLY', message: 'manual edit' })}\n`,
+            'utf8'
+        );
+
+        const duplicate = appendTaskEvent(
+            tempDir,
+            'T-EXT',
+            'EXTERNAL_ONLY',
+            'INFO',
+            'Must not duplicate externally appended event type',
+            {},
+            { eventsRoot, emitOnce: true, passThru: true }
+        );
+
+        assert.equal(duplicate?.commit_status, 'skipped_duplicate');
+        assert.equal(duplicate?.skipped_reason, 'emit_once_duplicate');
+        const lines = fs.readFileSync(eventFile, 'utf8').split('\n').filter((line) => line.trim().length > 0);
+        assert.equal(lines.length, 2);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent emitOnce cache invalidates after same-size external rewrites', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-emit-once-same-size-'));
+    try {
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        const original = appendTaskEvent(
+            tempDir,
+            'T-SAME-SIZE',
+            'AAAA',
+            'INFO',
+            'Initial cached event',
+            {},
+            { eventsRoot, emitOnce: true, passThru: true }
+        );
+        assert.equal(original?.commit_status, 'committed');
+
+        const eventFile = path.join(eventsRoot, 'T-SAME-SIZE.jsonl');
+        const originalStat = fs.statSync(eventFile);
+        const originalContent = fs.readFileSync(eventFile, 'utf8');
+        const replacementContent = originalContent.replace('"event_type":"AAAA"', '"event_type":"BBBB"');
+        assert.equal(Buffer.byteLength(replacementContent), Buffer.byteLength(originalContent));
+        fs.writeFileSync(eventFile, replacementContent, 'utf8');
+        fs.utimesSync(eventFile, originalStat.atime, originalStat.mtime);
+
+        await new Promise((resolve) => setTimeout(resolve, 5));
+
+        const duplicate = appendTaskEvent(
+            tempDir,
+            'T-SAME-SIZE',
+            'BBBB',
+            'INFO',
+            'Must not duplicate same-size externally rewritten event type',
+            {},
+            { eventsRoot, emitOnce: true, passThru: true }
+        );
+
+        assert.equal(duplicate?.commit_status, 'skipped_duplicate');
+        assert.equal(duplicate?.skipped_reason, 'emit_once_duplicate');
+        const lines = fs.readFileSync(eventFile, 'utf8').split('\n').filter((line) => line.trim().length > 0);
+        assert.equal(lines.length, 1);
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

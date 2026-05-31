@@ -133,6 +133,24 @@ interface TaskEventPaths {
     aggregateLockPath: string;
 }
 
+interface TaskEventAppendIndex {
+    taskFilePath: string;
+    taskId: string;
+    size: number;
+    mtimeMs: number;
+    ctimeMs: number;
+    state: TaskEventAppendState;
+    eventTypes: Set<string>;
+}
+
+interface TaskEventAppendReadiness {
+    state: TaskEventAppendState;
+    duplicate: boolean;
+}
+
+const taskEventAppendIndexCache = new Map<string, TaskEventAppendIndex>();
+const TASK_EVENT_APPEND_INDEX_CACHE_MAX_ENTRIES = 128;
+
 function toPositiveInteger(value: unknown, fallback: number): number {
     const parsed = Number.parseInt(String(value), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -198,6 +216,165 @@ function readLastNonEmptyLine(filePath: string): string | null {
             try { fs.closeSync(fd); } catch { /* best-effort */ }
         }
     }
+}
+
+function getTaskEventAppendIndexCacheKey(taskFilePath: string, taskId: string): string {
+    return `${path.resolve(taskFilePath)}\0${taskId}`;
+}
+
+function getTaskEventFileStat(taskFilePath: string): { size: number; mtimeMs: number; ctimeMs: number } | null {
+    try {
+        const stat = fs.statSync(taskFilePath);
+        return stat.isFile()
+            ? { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs }
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function rememberTaskEventAppendIndex(cacheKey: string, index: TaskEventAppendIndex): TaskEventAppendIndex {
+    if (!taskEventAppendIndexCache.has(cacheKey) && taskEventAppendIndexCache.size >= TASK_EVENT_APPEND_INDEX_CACHE_MAX_ENTRIES) {
+        const oldestKey = taskEventAppendIndexCache.keys().next().value as string | undefined;
+        if (oldestKey) {
+            taskEventAppendIndexCache.delete(oldestKey);
+        }
+    }
+    taskEventAppendIndexCache.set(cacheKey, index);
+    return index;
+}
+
+function readTaskEventAppendIndex(taskFilePath: string, taskId: string): TaskEventAppendIndex {
+    const cacheKey = getTaskEventAppendIndexCacheKey(taskFilePath, taskId);
+    const stat = getTaskEventFileStat(taskFilePath);
+    const emptyState: TaskEventAppendState = {
+        matching_events: 0,
+        parse_errors: 0,
+        last_integrity_sequence: null,
+        last_event_sha256: null
+    };
+
+    if (!stat) {
+        return rememberTaskEventAppendIndex(cacheKey, {
+            taskFilePath,
+            taskId,
+            size: 0,
+            mtimeMs: 0,
+            ctimeMs: 0,
+            state: emptyState,
+            eventTypes: new Set<string>()
+        });
+    }
+
+    const cached = taskEventAppendIndexCache.get(cacheKey);
+    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs && cached.ctimeMs === stat.ctimeMs) {
+        return cached;
+    }
+
+    const state: TaskEventAppendState = {
+        matching_events: 0,
+        parse_errors: 0,
+        last_integrity_sequence: null,
+        last_event_sha256: null
+    };
+    const eventTypes = new Set<string>();
+
+    forEachJsonlLine(taskFilePath, (rawLine: string) => {
+        let event: Record<string, unknown>;
+        try {
+            event = JSON.parse(rawLine) as Record<string, unknown>;
+        } catch {
+            state.parse_errors++;
+            return;
+        }
+
+        const eventTaskId = toTrimmedString(event.task_id);
+        if (eventTaskId && eventTaskId !== taskId) {
+            return;
+        }
+
+        state.matching_events++;
+        const eventType = toTrimmedLowerCaseString(event.event_type);
+        if (eventType) {
+            eventTypes.add(eventType);
+        }
+
+        const integrity = event.integrity;
+        if (!integrity || typeof integrity !== 'object') {
+            return;
+        }
+
+        const integrityRecord = integrity as Record<string, unknown>;
+        const sequence = integrityRecord.task_sequence;
+        const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
+        if (typeof sequence === 'number' && sequence > 0 && eventSha256) {
+            state.last_integrity_sequence = sequence;
+            state.last_event_sha256 = eventSha256;
+        }
+    });
+
+    return rememberTaskEventAppendIndex(cacheKey, {
+        taskFilePath,
+        taskId,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs,
+        state,
+        eventTypes
+    });
+}
+
+function readTaskEventAppendReadiness(
+    taskFilePath: string,
+    taskId: string,
+    eventType: string,
+    emitOnce: boolean
+): TaskEventAppendReadiness {
+    if (!emitOnce) {
+        return {
+            state: readTaskEventAppendState(taskFilePath, taskId),
+            duplicate: false
+        };
+    }
+
+    const index = readTaskEventAppendIndex(taskFilePath, taskId);
+    const targetEventType = toTrimmedLowerCaseString(eventType);
+    return {
+        state: index.state,
+        duplicate: targetEventType ? index.eventTypes.has(targetEventType) : false
+    };
+}
+
+function refreshTaskEventAppendIndexAfterAppend(
+    taskFilePath: string,
+    taskId: string,
+    event: TaskEvent
+): void {
+    const cacheKey = getTaskEventAppendIndexCacheKey(taskFilePath, taskId);
+    const cached = taskEventAppendIndexCache.get(cacheKey);
+    if (!cached) {
+        return;
+    }
+
+    const stat = getTaskEventFileStat(taskFilePath);
+    if (!stat) {
+        taskEventAppendIndexCache.delete(cacheKey);
+        return;
+    }
+
+    const eventType = toTrimmedLowerCaseString(event.event_type);
+    if (eventType) {
+        cached.eventTypes.add(eventType);
+    }
+    cached.size = stat.size;
+    cached.mtimeMs = stat.mtimeMs;
+    cached.ctimeMs = stat.ctimeMs;
+    cached.state = {
+        matching_events: cached.state.matching_events + 1,
+        parse_errors: cached.state.parse_errors,
+        last_integrity_sequence: event.integrity?.task_sequence ?? cached.state.last_integrity_sequence,
+        last_event_sha256: event.integrity?.event_sha256 ?? cached.state.last_event_sha256
+    };
 }
 
 export function readTaskEventAppendStateFast(taskFilePath: string, taskId: string): TaskEventAppendState | null {
@@ -413,57 +590,18 @@ function refreshTimelineSummaryForCommittedEvent(
     }
 }
 
-function taskEventTypeExists(taskFilePath: string, taskId: string, eventType: string): boolean {
-    const targetEventType = toTrimmedLowerCaseString(eventType);
-    if (!targetEventType) {
-        return false;
-    }
-
-    try {
-        if (!fs.existsSync(taskFilePath) || !fs.statSync(taskFilePath).isFile()) {
-            return false;
-        }
-    } catch {
-        return false;
-    }
-
-    try {
-        const lines = fs.readFileSync(taskFilePath, 'utf8').split('\n');
-        for (const rawLine of lines) {
-            if (!rawLine.trim()) {
-                continue;
-            }
-            try {
-                const event = JSON.parse(rawLine) as Record<string, unknown>;
-                const eventTaskId = toTrimmedString(event.task_id);
-                if (eventTaskId && eventTaskId !== taskId) {
-                    continue;
-                }
-                if (toTrimmedLowerCaseString(event.event_type) === targetEventType) {
-                    return true;
-                }
-            } catch {
-                // integrity inspection handles malformed lines elsewhere
-            }
-        }
-    } catch {
-        return false;
-    }
-
-    return false;
-}
-
 function appendTaskEventLineSync(
     taskFilePath: string,
     taskId: string,
     event: TaskEvent,
     emitOnce: boolean
 ): string | null {
-    if (emitOnce && taskEventTypeExists(taskFilePath, taskId, event.event_type)) {
+    const readiness = readTaskEventAppendReadiness(taskFilePath, taskId, event.event_type, emitOnce);
+    if (readiness.duplicate) {
         return null;
     }
 
-    const appendState = readTaskEventAppendState(taskFilePath, taskId);
+    const appendState = readiness.state;
     const previousSequence = appendState.last_integrity_sequence;
     const previousHash = appendState.last_event_sha256;
     const nextSequence = typeof previousSequence === 'number'
@@ -484,6 +622,7 @@ function appendTaskEventLineSync(
     event.integrity.event_sha256 = eventSha256;
     const serializedLine = JSON.stringify(event);
     fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
+    refreshTaskEventAppendIndexAfterAppend(taskFilePath, taskId, event);
     return serializedLine;
 }
 
@@ -494,11 +633,12 @@ async function appendTaskEventLineAsync(
     preWriteDelayMs: number,
     emitOnce: boolean
 ): Promise<string | null> {
-    if (emitOnce && taskEventTypeExists(taskFilePath, taskId, event.event_type)) {
+    const readiness = readTaskEventAppendReadiness(taskFilePath, taskId, event.event_type, emitOnce);
+    if (readiness.duplicate) {
         return null;
     }
 
-    const appendState = readTaskEventAppendState(taskFilePath, taskId);
+    const appendState = readiness.state;
     const previousSequence = appendState.last_integrity_sequence;
     const previousHash = appendState.last_event_sha256;
     const nextSequence = typeof previousSequence === 'number'
@@ -522,6 +662,7 @@ async function appendTaskEventLineAsync(
         await sleepMsAsync(preWriteDelayMs);
     }
     fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
+    refreshTaskEventAppendIndexAfterAppend(taskFilePath, taskId, event);
     return serializedLine;
 }
 
