@@ -1417,6 +1417,7 @@ describe('gates/next-step', () => {
             launch_binding_sha256: launchBindingSha256
         });
         const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
         writeJson(launchArtifactPath, {
             schema_version: 1,
             evidence_type: 'delegated_reviewer_launch_preparation',
@@ -1428,14 +1429,16 @@ describe('gates/next-step', () => {
             review_context_sha256: fileSha256(reviewContextPath),
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
             prepared_launch_event_sha256: preparedIntegrity.event_sha256
         });
+        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'complete-reviewer-launch');
         assert.ok(result.reason.includes('launch metadata'));
-        assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath as an opaque handoff'));
+        assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff'));
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));
@@ -1453,8 +1456,9 @@ describe('gates/next-step', () => {
         assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
         assert.ok(result.commands[0].command.includes('--launch-input-mode "launch_artifact_path"'));
-        assert.ok(result.commands[0].command.includes('--launch-input-artifact-path'));
-        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchArtifactPath)}"`));
+        const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
+        assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
+        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchInputArtifactPath)}"`));
         assert.ok(result.commands[0].command.includes('--record-invocation'));
         assert.ok(!result.commands[0].command.includes('--launched-at-utc'));
     });

@@ -2177,6 +2177,8 @@ interface CurrentReviewerLaunchArtifactEvidence {
     state: CurrentReviewerLaunchArtifactState;
     path: string | null;
     sha256: string | null;
+    launchInputArtifactPath: string | null;
+    launchInputArtifactSha256: string | null;
 }
 
 function resolveReviewerLaunchArtifactPathFromTelemetry(repoRoot: string, rawPath: unknown): string | null {
@@ -2208,7 +2210,9 @@ function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
     const missing: CurrentReviewerLaunchArtifactEvidence = {
         state: 'missing_or_invalid',
         path: null,
-        sha256: null
+        sha256: null,
+        launchInputArtifactPath: null,
+        launchInputArtifactSha256: null
     };
     const reviewerIdentity = state.contextReviewerIdentity || '';
     if (!reviewerIdentity.startsWith('agent:') || !state.contextExists || !state.contextCurrent) {
@@ -2295,10 +2299,31 @@ function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 continue;
             }
             const launchArtifactSha256 = fileSha256(launchArtifactPath);
+            let launchInputArtifactPath: string | null = null;
+            let launchInputArtifactSha256: string | null = null;
+            if (artifactState === 'prepared') {
+                launchInputArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
+                    repoRoot,
+                    getArtifactStringField(
+                        launchArtifact,
+                        'reviewer_launch_input_artifact_path',
+                        'reviewerLaunchInputArtifactPath'
+                    )
+                );
+                if (!launchInputArtifactPath || !fileExists(launchInputArtifactPath)) {
+                    continue;
+                }
+                launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+                if (!launchInputArtifactSha256 || launchInputArtifactSha256 !== launchArtifactSha256) {
+                    continue;
+                }
+            }
             return {
                 state: artifactState,
                 path: launchArtifactPath,
-                sha256: launchArtifactSha256 || null
+                sha256: launchArtifactSha256 || null,
+                launchInputArtifactPath,
+                launchInputArtifactSha256
             };
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
@@ -8007,7 +8032,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 title: `Complete '${reviewType}' delegated reviewer launch metadata.`,
                 reason:
                     `Required review '${reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, launch input hash evidence, and its own launch timestamp before invocation attestation. Do not reconstruct reviewer prompts from memory. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
+                    `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, launch input hash evidence, and its own launch timestamp before invocation attestation. Do not reconstruct reviewer prompts from memory. ${providerLaunchTargetSummary} ${REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION} ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ${reviewerReadinessChain} ${launchCompletionChain}`,
                 commands: [
                     buildCommand(
                         'Complete delegated reviewer launch metadata',
@@ -8017,7 +8042,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         reviewType,
                         reviewerIdentity,
                         launchArtifactPath,
-                        launchInputArtifactSha256: launchArtifactEvidence.sha256,
+                        launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
+                        launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256,
                         recordInvocation: true
                     })
                     )

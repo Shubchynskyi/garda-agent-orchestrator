@@ -107,11 +107,14 @@ export function buildCompleteReviewerLaunchCommand(params: {
     reviewType: string;
     reviewerIdentity: string;
     launchArtifactPath: string;
+    launchInputArtifactPath?: string | null;
     launchInputArtifactSha256?: string | null;
     recordInvocation?: boolean;
 }): string {
     const launchInputArtifactSha256 = String(params.launchInputArtifactSha256 || '').trim()
         || '<prepared-launch-artifact-sha256>';
+    const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
+        || params.launchArtifactPath;
     return [
         `${params.cliPrefix} gate complete-reviewer-launch`,
         `--task-id "${params.taskId}"`,
@@ -122,7 +125,7 @@ export function buildCompleteReviewerLaunchCommand(params: {
         '--provider-invocation-id "<actual-invocation-id>"',
         '--attestation-source "<provider-source>"',
         '--launch-input-mode "launch_artifact_path"',
-        `--launch-input-artifact-path "${params.launchArtifactPath}"`,
+        `--launch-input-artifact-path "${launchInputArtifactPath}"`,
         `--launch-input-sha256 "${launchInputArtifactSha256}"`,
         '--fork-context false',
         ...(params.recordInvocation ? ['--record-invocation'] : []),

@@ -811,6 +811,7 @@ describe('cli/commands/gates review launch routing', () => {
         const taskId = 'T-266-prepare-launch';
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
         const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
         const reviewOutputPath = path.join(path.dirname(launchArtifactPath), 'review-output.md');
 
         const previousExitCode = process.exitCode;
@@ -859,6 +860,8 @@ describe('cli/commands/gates review launch routing', () => {
         assert.equal(launchArtifact.output_template_path, fixture.outputTemplatePath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.evidence_manifest_path, fixture.evidenceManifestPath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.review_output_path, reviewOutputPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.reviewer_launch_artifact_path, launchArtifactPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.reviewer_launch_input_artifact_path, launchInputArtifactPath.replace(/\\/g, '/'));
         const rolePromptSha256 = createHash('sha256').update(fs.readFileSync(fixture.rolePromptPath)).digest('hex');
         const promptTemplateSha256 = createHash('sha256').update(fs.readFileSync(fixture.promptTemplatePath)).digest('hex');
         const outputTemplateSha256 = createHash('sha256').update(fs.readFileSync(fixture.outputTemplatePath)).digest('hex');
@@ -912,7 +915,10 @@ describe('cli/commands/gates review launch routing', () => {
         assert.equal(launchArtifact.after_launch_required_updates.launch_completed_at_utc, '<gate-owned ISO-8601 completion timestamp>');
         assert.equal(launchArtifact.after_launch_required_updates.launch_input_mode, 'launch_artifact_path or copy_paste_prompt');
         assert.equal(launchArtifact.after_launch_required_updates.launch_input_sha256, '<prepared reviewer launch artifact sha256, or CopyPasteReviewerLaunchPromptSha256>');
+        assert.equal(launchArtifact.after_launch_required_updates.launch_input_artifact_path, '<ReviewerLaunchInputArtifactPath when launch_input_mode is launch_artifact_path>');
         assert.equal(launchArtifact.after_launch_required_updates.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
+        assert.equal(fs.existsSync(launchInputArtifactPath), true);
+        assert.equal(fileSha256ForTest(launchInputArtifactPath), fileSha256ForTest(launchArtifactPath));
         assert.deepEqual(launchArtifact.preserve_prepared_fields, [
             'review_context_sha256',
             'routing_event_sha256',
@@ -938,6 +944,7 @@ describe('cli/commands/gates review launch routing', () => {
         const launchPreparedDetails = launchPreparedEvent?.details as Record<string, unknown> | undefined;
         assert.equal(launchPreparedIntegrity?.event_sha256, launchArtifact.prepared_launch_event_sha256);
         assert.equal(launchPreparedDetails?.launch_prepared_at_utc, launchArtifact.launch_prepared_at_utc);
+        assert.equal(launchPreparedDetails?.reviewer_launch_input_artifact_path, launchInputArtifactPath.replace(/\\/g, '/'));
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 0);
         assert.ok(capturedLogs.some((line) => line.includes('REVIEWER_LAUNCH_PREPARED: code')));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewContextSha256: ${fixture.reviewContextSha256}`)));
@@ -953,6 +960,8 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewOutputPath: ${reviewOutputPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ScopedDiffMetadataPath: ${path.join(getReviewsRoot(repoRoot), `${taskId}-code-scoped.json`).replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchArtifactPath: ${launchArtifactPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchInputArtifactPath: ${launchInputArtifactPath.replace(/\\/g, '/')}`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchInputArtifactSha256: ${fileSha256ForTest(launchInputArtifactPath)}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`CopyPasteReviewerLaunchPromptSha256: ${copyPastePromptSha256}`)));
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
@@ -977,7 +986,7 @@ describe('cli/commands/gates review launch routing', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`OutputTemplateSha256: ${outputTemplateSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
-        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchArtifactPath')));
+        assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
@@ -2132,6 +2141,59 @@ describe('cli/commands/gates review launch routing', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('complete-reviewer-launch preserves immutable launch input artifact provenance', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-680-launch-input-artifact';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+
+        const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+        const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const launchInputArtifactPath = String(preparedArtifact.reviewer_launch_input_artifact_path);
+        assert.ok(launchInputArtifactPath.endsWith('/reviewer-launch-input.json'));
+        assert.equal(fileSha256ForTest(launchInputArtifactPath), preparedLaunchArtifactSha256);
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-680-input',
+            '--attestation-source', 'codex_spawn_agent',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', launchInputArtifactPath,
+            '--launch-input-sha256', preparedLaunchArtifactSha256,
+            '--fork-context', 'false',
+            '--record-invocation'
+        ], { cwd: repoRoot });
+
+        assert.equal(complete.exitCode, 0, complete.errors.join('\n'));
+        const completedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const completedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+        assert.notEqual(completedLaunchArtifactSha256, preparedLaunchArtifactSha256);
+        assert.equal(fileSha256ForTest(launchInputArtifactPath), preparedLaunchArtifactSha256);
+        assert.equal(completedArtifact.launch_input_artifact_path, launchInputArtifactPath);
+        assert.equal(completedArtifact.launch_input_artifact_sha256, preparedLaunchArtifactSha256);
+        assert.equal(completedArtifact.prepared_reviewer_launch_artifact_sha256, preparedLaunchArtifactSha256);
+        assert.ok(complete.logs.some((line) => line.includes(`LaunchArtifactSha256: ${completedLaunchArtifactSha256}`)));
+        assert.ok(complete.logs.some((line) => line.includes(`LaunchInputArtifactPath: ${launchInputArtifactPath}`)));
+        assert.ok(complete.logs.some((line) => line.includes(`LaunchInputArtifactSha256: ${preparedLaunchArtifactSha256}`)));
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('complete-reviewer-launch rejects missing launch input evidence for prepared prompts', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-677-launch-input-missing';
@@ -2264,7 +2326,7 @@ describe('cli/commands/gates review launch routing', () => {
 
         assert.notEqual(complete.exitCode, 0);
         assert.ok(
-            complete.errors.some((line) => line.includes('launch_input_sha256 must match the current prepared reviewer launch artifact sha256')),
+            complete.errors.some((line) => line.includes('launch_input_sha256 must match the current prepared reviewer launch input artifact sha256')),
             complete.errors.join('\n')
         );
         const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
