@@ -237,6 +237,12 @@ import {
     resolveDelegatedReviewReadinessRoute
 } from './next-step-review-readiness-routing';
 import {
+    resolveDownstreamDependencyRebindRoute,
+    resolveFailedReviewRemediationRoute,
+    resolveReviewGateStaleUpstreamRecoveryRoute,
+    resolveStrictSequentialUpstreamReuseRoute
+} from './next-step-review-reuse-routing';
+import {
     buildCommand,
     buildBundleRelativePath,
     buildNavigatorCommand,
@@ -6865,98 +6871,47 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     : undefined,
                 depth: reviewDepth
             });
-            if (!upstreamScopedDiffReadiness.ready) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'build-scoped-diff',
-                    title: `Prepare '${upstreamReviewType}' scoped diff metadata before downstream '${reviewType}'.`,
-                    reason:
-                        `${upstreamScopedDiffReadiness.reason} Configured review policy '${reviewPolicy.mode}' ` +
-                        `requires lane-domain-current '${upstreamReviewType}' PASS evidence to be rebound before ` +
-                        `continuing to downstream '${reviewType}' after a domain-limited remediation. ` +
-                        `${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
-                    commands: [
-                        buildCommand(
-                            'Build scoped diff',
-                            buildScopedDiffCommand({
-                                cliPrefix,
-                                reviewType: upstreamReviewType,
-                                preflightCommandPath,
-                                outputPath: toRepoDisplayPath(repoRoot, upstreamScopedDiffOutputPath),
-                                metadataPath: toRepoDisplayPath(repoRoot, upstreamScopedDiffMetadataPath)
-                            })
-                        )
-                    ]
-                });
-            }
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'build-review-context',
-                title: `Materialize '${upstreamReviewType}' review reuse before downstream '${reviewType}'.`,
-                reason:
-                    `Configured review policy '${reviewPolicy.mode}' requires current-cycle '${upstreamReviewType}' ` +
-                    `binding before downstream '${reviewType}' review-context preparation. The existing ` +
-                    `'${upstreamReviewType}' PASS evidence is lane-domain current after a domain-limited remediation, ` +
-                    `so rebuild '${upstreamReviewType}' review context to materialize reuse instead of launching a fresh ` +
-                    `'${upstreamReviewType}' reviewer. ${upstreamReviewerReadinessChain} ${upstreamReviewContextChain}`,
-                commands: [
-                    buildCommand(
+            const upstreamReuseRoute = resolveStrictSequentialUpstreamReuseRoute({
+                reviewPolicyMode: reviewPolicy.mode,
+                downstreamReviewType: reviewType,
+                upstreamReviewType,
+                upstreamScopedDiffReadiness,
+                upstreamReviewerReadinessChain,
+                upstreamReviewContextChain,
+                commands: {
+                    buildScopedDiff: buildCommand(
+                        'Build scoped diff',
+                        buildScopedDiffCommand({
+                            cliPrefix,
+                            reviewType: upstreamReviewType,
+                            preflightCommandPath,
+                            outputPath: toRepoDisplayPath(repoRoot, upstreamScopedDiffOutputPath),
+                            metadataPath: toRepoDisplayPath(repoRoot, upstreamScopedDiffMetadataPath)
+                        })
+                    ),
+                    buildReviewContext: buildCommand(
                         'Build upstream review context',
                         buildReviewContextCommand(repoRoot, cliPrefix, taskId, upstreamReviewType, reviewDepth, preflightCommandPath, taskModePath)
                     )
-                ]
+                }
             });
-        }
-        if (state?.failed && state.failureKind === 'launch-package' && currentReviewRecordedEvidenceCurrent) {
-            const taskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
             return buildResult({
                 ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'reviewer-launch-retry',
-                title: `Retry '${reviewType}' reviewer launch package.`,
-                reason:
-                    `Recorded '${reviewType}' review verdict is '${state.verdictToken || state.failToken || 'FAILED'}', ` +
-                    `but the failure matches reviewer launch package or binding evidence (${state.failureReason || 'launch package mismatch'}). ` +
-                    'Preserve the failed review artifact and receipt as audit evidence; do not edit them by hand and do not make fake implementation changes. ' +
-                    `Restart the review cycle to rebuild '${reviewType}' launch metadata and launch a fresh reviewer before downstream reviews.`,
-                commands: [
-                    buildCommand(
-                        'Restart review cycle for reviewer launch retry',
-                        buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, taskIntent, taskModePath)
-                    )
-                ]
+                status: upstreamReuseRoute.status,
+                nextGate: upstreamReuseRoute.nextGate,
+                title: upstreamReuseRoute.title,
+                reason: upstreamReuseRoute.reason,
+                commands: upstreamReuseRoute.commands
             });
         }
-        if (state?.failed && currentReviewRecordedEvidenceCurrent) {
+        if (state?.failed) {
+            const taskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
             const downstreamReviewTypes = getDownstreamReviewTypesFor(
                 reviewType,
                 requiredReviewTypes,
                 summary.required_reviews,
                 reviewPolicy.mode
             );
-            const downstreamText = downstreamReviewTypes.length > 0
-                ? ` Dependent reviews currently blocked by this failure: ${downstreamReviewTypes.join(', ')}.`
-                : '';
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'implementation',
-                title: `Fix failed '${reviewType}' review findings before continuing.`,
-                reason:
-                    `Recorded '${reviewType}' review verdict is '${state.verdictToken || state.failToken || 'FAILED'}'. ` +
-                    `Do not launch downstream reviewers or rerun '${reviewType}' before implementation changes are made. ` +
-                    `Fix the findings, rerun compile-gate, then rebuild and rerun '${reviewType}' review.${downstreamText}`,
-                commands: [
-                    buildCommand(
-                        'Rerun navigator after fixing implementation',
-                        navigatorCommand
-                    )
-                ]
-            });
-        }
-        if (state?.failed && !currentReviewRecordedEvidenceCurrent && !currentReviewContextPrepared) {
             const reviewContextChain = buildReviewGateChainStatusSummary({
                 repoRoot,
                 eventsRoot,
@@ -6968,46 +6923,52 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 reviewContextPath: state.contextPath ? toRepoDisplayPath(repoRoot, state.contextPath) : undefined,
                 depth: reviewDepth
             });
-            if (!scopedDiffReadiness.ready) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'build-scoped-diff',
-                    title: `Prepare '${reviewType}' scoped diff metadata.`,
-                    reason:
-                        `${scopedDiffReadiness.reason} A previous '${reviewType}' review recorded ` +
-                        `'${state.verdictToken || state.failToken || 'FAILED'}', but scoped diff metadata must be refreshed ` +
-                        `before rebuilding '${reviewType}' review context. ${reviewerReadinessChain} ${reviewContextChain}`,
-                    commands: [
-                        buildCommand(
-                            'Build scoped diff',
-                            buildScopedDiffCommand({
-                                cliPrefix,
-                                reviewType,
-                                preflightCommandPath,
-                                outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                                metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                            })
-                        )
-                    ]
-                });
-            }
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'build-review-context',
-                title: `Refresh '${reviewType}' review context after implementation changes.`,
-                reason:
-                    `A previous '${reviewType}' review recorded '${state.verdictToken || state.failToken || 'FAILED'}', ` +
-                    'but that failed-review routing is no longer current after the latest compile cycle. ' +
-                    `Rebuild '${reviewType}' review context and launch a fresh reviewer before any dependent reviews. ${reviewerReadinessChain} ${reviewContextChain}`,
-                commands: [
-                    buildCommand(
+            const failedReviewRoute = resolveFailedReviewRemediationRoute({
+                reviewType,
+                verdictToken: state.verdictToken || state.failToken || 'FAILED',
+                failureKind: state.failureKind,
+                failureReason: state.failureReason,
+                currentReviewRecordedEvidenceCurrent,
+                currentReviewContextPrepared,
+                scopedDiffReadiness,
+                reviewerReadinessChain,
+                reviewContextChain,
+                downstreamReviewTypes,
+                commands: {
+                    restartReviewCycle: buildCommand(
+                        'Restart review cycle for reviewer launch retry',
+                        buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, taskIntent, taskModePath)
+                    ),
+                    rerunNavigator: buildCommand(
+                        'Rerun navigator after fixing implementation',
+                        navigatorCommand
+                    ),
+                    buildScopedDiff: buildCommand(
+                        'Build scoped diff',
+                        buildScopedDiffCommand({
+                            cliPrefix,
+                            reviewType,
+                            preflightCommandPath,
+                            outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                            metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                        })
+                    ),
+                    buildReviewContext: buildCommand(
                         'Build review context',
                         buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
                     )
-                ]
+                }
             });
+            if (failedReviewRoute) {
+                return buildResult({
+                    ...resultBase,
+                    status: failedReviewRoute.status,
+                    nextGate: failedReviewRoute.nextGate,
+                    title: failedReviewRoute.title,
+                    reason: failedReviewRoute.reason,
+                    commands: failedReviewRoute.commands
+                });
+            }
         }
         if (!state || !state.contextExists || !state.contextCurrent) {
             const reviewContextChain = buildReviewGateChainStatusSummary({
@@ -7265,46 +7226,37 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 reviewType
             })
             : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
-        if (!scopedDiffReadiness.ready) {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'build-scoped-diff',
-                title: `Prepare '${reviewType}' scoped diff metadata.`,
-                reason:
-                    `${scopedDiffReadiness.reason} Rebinding '${reviewType}' after upstream ` +
-                    `'${downstreamDependencyRebind.upstreamReviewType}' review evidence requires current scoped diff metadata before rebuilding the review context. ` +
-                    `${reviewerReadinessChain} ${reviewContextChain}`,
-                commands: [
-                    buildCommand(
-                        'Build scoped diff',
-                        buildScopedDiffCommand({
-                            cliPrefix,
-                            reviewType,
-                            preflightCommandPath,
-                            outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                            metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                        })
-                    )
-                ]
-            });
-        }
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'build-review-context',
-            title: `Refresh '${reviewType}' review context after upstream review reuse.`,
-            reason:
-                `Configured review policy '${reviewPolicy.mode}' requires '${reviewType}' to start after upstream ` +
-                `'${downstreamDependencyRebind.upstreamReviewType}' evidence. Current '${reviewType}' evidence is otherwise present, ` +
-                `but its latest review phase predates the upstream review record, so rebind '${reviewType}' through build-review-context/reuse before required-reviews-check and completion. ` +
-                `${reviewerReadinessChain} ${reviewContextChain}`,
-            commands: [
-                buildCommand(
+        const downstreamRebindRoute = resolveDownstreamDependencyRebindRoute({
+            reviewPolicyMode: reviewPolicy.mode,
+            downstreamReviewType: reviewType,
+            upstreamReviewType: downstreamDependencyRebind.upstreamReviewType,
+            scopedDiffReadiness,
+            reviewerReadinessChain,
+            reviewContextChain,
+            commands: {
+                buildScopedDiff: buildCommand(
+                    'Build scoped diff',
+                    buildScopedDiffCommand({
+                        cliPrefix,
+                        reviewType,
+                        preflightCommandPath,
+                        outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                        metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                    })
+                ),
+                buildReviewContext: buildCommand(
                     'Build review context',
                     buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
                 )
-            ]
+            }
+        });
+        return buildResult({
+            ...resultBase,
+            status: downstreamRebindRoute.status,
+            nextGate: downstreamRebindRoute.nextGate,
+            title: downstreamRebindRoute.title,
+            reason: downstreamRebindRoute.reason,
+            commands: downstreamRebindRoute.commands
         });
     }
 
@@ -7359,46 +7311,35 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 reviewType
             })
             : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
-        if (!scopedDiffReadiness.ready) {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'build-scoped-diff',
-                title: `Prepare '${reviewType}' scoped diff metadata after review gate failure.`,
-                reason:
-                    `${scopedDiffReadiness.reason} The latest required-reviews-check failure indicates stale upstream ` +
-                    `'${reviewType}' context/routing evidence; rebuild scoped metadata before re-binding that upstream lane. ` +
-                    `${reviewerReadinessChain} ${reviewContextChain}`,
-                commands: [
-                    buildCommand(
-                        'Build scoped diff',
-                        buildScopedDiffCommand({
-                            cliPrefix,
-                            reviewType,
-                            preflightCommandPath,
-                            outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                            metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                        })
-                    )
-                ]
-            });
-        }
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'build-review-context',
-            title: `Recover stale upstream '${reviewType}' review evidence after review gate failure.`,
-            reason:
-                `The latest required-reviews-check failed after compile, and upstream '${reviewType}' is lane-domain current ` +
-                `but its review-context/routing binding is stale for the current preflight. Rebind '${reviewType}' through ` +
-                `build-review-context/reuse before rerunning required-reviews-check, preserving fail-closed review validation. ` +
-                `${reviewerReadinessChain} ${reviewContextChain}`,
-            commands: [
-                buildCommand(
+        const staleUpstreamRecoveryRoute = resolveReviewGateStaleUpstreamRecoveryRoute({
+            upstreamReviewType: reviewType,
+            scopedDiffReadiness,
+            reviewerReadinessChain,
+            reviewContextChain,
+            commands: {
+                buildScopedDiff: buildCommand(
+                    'Build scoped diff',
+                    buildScopedDiffCommand({
+                        cliPrefix,
+                        reviewType,
+                        preflightCommandPath,
+                        outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                        metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                    })
+                ),
+                buildReviewContext: buildCommand(
                     'Build upstream review context',
                     buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
                 )
-            ]
+            }
+        });
+        return buildResult({
+            ...resultBase,
+            status: staleUpstreamRecoveryRoute.status,
+            nextGate: staleUpstreamRecoveryRoute.nextGate,
+            title: staleUpstreamRecoveryRoute.title,
+            reason: staleUpstreamRecoveryRoute.reason,
+            commands: staleUpstreamRecoveryRoute.commands
         });
     }
 
