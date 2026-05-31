@@ -1034,16 +1034,20 @@ export interface TokenEconomyConfig {
 }
 
 export interface ReviewContextFullSuiteValidationEvidence {
+    review_type: string;
     required_for_review: boolean;
     placement: FullSuiteValidationPlacement | null;
     artifact_path: string | null;
     artifact_sha256: string | null;
+    artifact_freshness: string;
     available: boolean;
     status: FullSuiteValidationResult['status'] | null;
     enabled: boolean | null;
     command: string | null;
     exit_code: number | null;
     timed_out: boolean | null;
+    duration_ms: number | null;
+    duration_human: string | null;
     output_artifact_path: string | null;
     output_retention: Record<string, unknown> | null;
     compact_summary: string[];
@@ -1095,6 +1099,35 @@ function normalizeFullSuiteValidationStatus(value: unknown): FullSuiteValidation
 
 function normalizeNullableNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizePositiveDurationMs(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return null;
+    }
+    return Math.round(value);
+}
+
+function formatDurationMsForReviewContext(durationMs: number | null): string | null {
+    if (durationMs == null) {
+        return null;
+    }
+    if (durationMs < 1000) {
+        return `${durationMs} ms`;
+    }
+    const trimSeconds = (seconds: number): string => seconds.toFixed(1).replace(/\.0$/, '');
+    const totalSeconds = durationMs / 1000;
+    if (totalSeconds < 60) {
+        return `${trimSeconds(totalSeconds)}s`;
+    }
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const remainingSeconds = totalSeconds - totalMinutes * 60;
+    if (totalMinutes < 60) {
+        return `${totalMinutes}m ${trimSeconds(remainingSeconds)}s`;
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${minutes}m ${trimSeconds(remainingSeconds)}s`;
 }
 
 function normalizeNullableBoolean(value: unknown): boolean | null {
@@ -1172,14 +1205,18 @@ function buildFullSuiteValidationEvidence(options: {
     preflightPath: string;
     preflightSha256: string | null;
 }): ReviewContextFullSuiteValidationEvidence | null {
-    if (options.reviewType !== 'test') {
+    const fullSuiteValidationConfig = loadFullSuiteValidationConfig(options.repoRoot);
+    const shouldRenderEvidence = fullSuiteValidationConfig.enabled === true || options.reviewType === 'test';
+    if (!shouldRenderEvidence) {
         return null;
     }
-    const fullSuiteValidationConfig = loadFullSuiteValidationConfig(options.repoRoot);
     const requiredForReview = fullSuiteValidationConfig.enabled === true
         && (
-            fullSuiteValidationConfig.placement === 'before_test_review'
-            || fullSuiteValidationConfig.placement === 'after_compile_before_reviews'
+            fullSuiteValidationConfig.placement === 'after_compile_before_reviews'
+            || (
+                fullSuiteValidationConfig.placement === 'before_test_review'
+                && options.reviewType === 'test'
+            )
         );
 
     const compileGateEvidence = readCurrentCompileGateEvidence(options.repoRoot, options.taskId);
@@ -1188,16 +1225,20 @@ function buildFullSuiteValidationEvidence(options: {
         : null;
     if (!artifactPath) {
         return {
+            review_type: options.reviewType,
             required_for_review: requiredForReview,
             placement: fullSuiteValidationConfig.placement,
             artifact_path: null,
             artifact_sha256: null,
+            artifact_freshness: requiredForReview ? 'missing' : 'not_required_for_review',
             available: false,
             status: null,
             enabled: fullSuiteValidationConfig.enabled,
             command: fullSuiteValidationConfig.command,
             exit_code: null,
             timed_out: null,
+            duration_ms: null,
+            duration_human: null,
             output_artifact_path: null,
             output_retention: null,
             compact_summary: [],
@@ -1219,16 +1260,20 @@ function buildFullSuiteValidationEvidence(options: {
     const normalizedArtifactPath = normalizePath(artifactPath);
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
         return {
+            review_type: options.reviewType,
             required_for_review: requiredForReview,
             placement: fullSuiteValidationConfig.placement,
             artifact_path: normalizedArtifactPath,
             artifact_sha256: null,
+            artifact_freshness: requiredForReview ? 'missing' : 'not_required_for_review',
             available: false,
             status: null,
             enabled: fullSuiteValidationConfig.enabled,
             command: fullSuiteValidationConfig.command,
             exit_code: null,
             timed_out: null,
+            duration_ms: null,
+            duration_human: null,
             output_artifact_path: null,
             output_retention: null,
             compact_summary: [],
@@ -1298,17 +1343,27 @@ function buildFullSuiteValidationEvidence(options: {
             mismatchReason = 'Full-suite validation artifact is missing cycle_binding.';
         }
 
+        const artifactFreshness = cycleBindingValid === true
+            ? 'current'
+            : cycleBindingValid === false
+                ? 'stale'
+                : 'unknown';
+        const durationMs = normalizePositiveDurationMs(raw.duration_ms);
         return {
+            review_type: options.reviewType,
             required_for_review: requiredForReview,
             placement: fullSuiteValidationConfig.placement,
             artifact_path: normalizedArtifactPath,
             artifact_sha256: fileSha256(artifactPath),
+            artifact_freshness: artifactFreshness,
             available: true,
             status: normalizeFullSuiteValidationStatus(raw.status),
             enabled: normalizeNullableBoolean(raw.enabled),
             command: typeof raw.command === 'string' ? raw.command : null,
             exit_code: normalizeNullableNumber(raw.exit_code),
             timed_out: normalizeNullableBoolean(raw.timed_out),
+            duration_ms: durationMs,
+            duration_human: formatDurationMsForReviewContext(durationMs),
             output_artifact_path: normalizeNullablePath(raw.output_artifact_path),
             output_retention: asPlainRecord(raw.output_retention),
             compact_summary: toStringArray(raw.compact_summary, { trimValues: true }),
@@ -1325,16 +1380,20 @@ function buildFullSuiteValidationEvidence(options: {
         };
     } catch (error) {
         return {
+            review_type: options.reviewType,
             required_for_review: requiredForReview,
             placement: fullSuiteValidationConfig.placement,
             artifact_path: normalizedArtifactPath,
             artifact_sha256: fileSha256(artifactPath),
+            artifact_freshness: 'unavailable',
             available: false,
             status: null,
             enabled: null,
             command: null,
             exit_code: null,
             timed_out: null,
+            duration_ms: null,
+            duration_human: null,
             output_artifact_path: null,
             output_retention: null,
             compact_summary: [],
@@ -1362,11 +1421,13 @@ function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContextFullSui
         `- Placement: ${evidence.placement || 'unknown'}`,
         `- Evidence artifact: ${evidence.artifact_path || 'unavailable'}`,
         `- Evidence sha256: ${evidence.artifact_sha256 || 'unavailable'}`,
+        `- Artifact freshness: ${evidence.artifact_freshness}`,
         `- Status: ${evidence.status || 'unavailable'}`,
         `- Enabled: ${evidence.enabled == null ? 'unknown' : String(evidence.enabled)}`,
         `- Command: ${evidence.command || 'unavailable'}`,
         `- Exit code: ${evidence.exit_code == null ? 'unknown' : String(evidence.exit_code)}`,
         `- Timed out: ${evidence.timed_out == null ? 'unknown' : String(evidence.timed_out)}`,
+        `- Duration: ${evidence.duration_human || 'unavailable'}${evidence.duration_ms == null ? '' : ` (${evidence.duration_ms} ms)`}`,
         `- Output artifact: ${evidence.output_artifact_path
             || (evidence.output_retention?.raw_output_retained === false
                 ? 'intentionally omitted for clean success retention policy'
@@ -1379,11 +1440,25 @@ function buildFullSuiteValidationEvidenceMarkdown(evidence: ReviewContextFullSui
         `- Cycle binding valid: ${evidence.cycle_binding_valid == null ? 'unknown' : String(evidence.cycle_binding_valid)}`
     ];
     if (
+        evidence.required_for_review === true
+        && evidence.status === 'PASSED'
+        && evidence.cycle_binding_valid === true
+    ) {
+        lines.push('- Reviewer instruction: current PASS full-suite evidence already covers this review; do not rerun full tests unless investigating a concrete finding.');
+    }
+    if (
+        evidence.enabled === true
+        && evidence.required_for_review === false
+        && evidence.placement === 'before_test_review'
+    ) {
+        lines.push(`- Reviewer note: before_test_review placement reserves full-suite evidence for the test review; this ${evidence.review_type} review must not demand pre-review full-suite evidence.`);
+    }
+    if (
         evidence.enabled === true
         && evidence.required_for_review === false
         && evidence.placement === 'before_completion'
     ) {
-        lines.push('- Reviewer note: this placement does not require full-suite evidence before this review; completion still enforces full-suite validation later.');
+        lines.push('- Reviewer note: before_completion placement does not require pre-review full-suite evidence; do not demand a suite rerun for this review because completion still enforces full-suite validation later.');
     }
     if (evidence.mismatch_reason) {
         lines.push(`- Mismatch reason: ${evidence.mismatch_reason}`);
