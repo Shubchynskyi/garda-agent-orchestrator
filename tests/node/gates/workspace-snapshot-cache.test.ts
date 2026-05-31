@@ -9,6 +9,7 @@ import {
     computeSnapshotFingerprint,
     getWorkspaceSnapshotCached,
     invalidateSnapshotCache,
+    parseGitCachedRawDiffDeletedPaths,
     readHeadSha,
     readSnapshotCache,
     resolveSnapshotCachePath,
@@ -123,6 +124,84 @@ describe('gates/workspace-snapshot-cache', () => {
             assert.notEqual(fp1.fingerprint, fp2.fingerprint);
             assert.notEqual(fp1.fingerprint, fp3.fingerprint);
             assert.notEqual(fp1.fingerprint, fp4.fingerprint);
+        });
+
+        it('fingerprint changes when an explicit symlink target content changes inside the repo', (t) => {
+            const targetPath = path.join(repoRoot, 'target.ts');
+            const symlinkPath = path.join(repoRoot, 'link.ts');
+            fs.writeFileSync(targetPath, 'export const target = 1;\n', 'utf8');
+            try {
+                fs.symlinkSync(targetPath, symlinkPath, 'file');
+            } catch (error) {
+                t.skip(`file symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                return;
+            }
+
+            const fp1 = computeSnapshotFingerprint(repoRoot, 'explicit_changed_files', true, ['link.ts']);
+            fs.writeFileSync(targetPath, 'export const target = 2;\n', 'utf8');
+            const fp2 = computeSnapshotFingerprint(repoRoot, 'explicit_changed_files', true, ['link.ts']);
+
+            assert.notEqual(fp1.fingerprint, fp2.fingerprint);
+        });
+    });
+
+    describe('parseGitCachedRawDiffDeletedPaths', () => {
+        it('derives staged deletion paths from cached raw diff output', () => {
+            const rawDiff = [
+                ':100644 000000 1111111111111111111111111111111111111111 0000000000000000000000000000000000000000 D\tfile.ts',
+                ':100644 100644 2222222222222222222222222222222222222222 3333333333333333333333333333333333333333 M\tchanged.ts',
+                ':100644 100644 4444444444444444444444444444444444444444 5555555555555555555555555555555555555555 R100\told.ts\tnew.ts',
+                ':100644 000000 6666666666666666666666666666666666666666 0000000000000000000000000000000000000000 D\truntime/cache/workspace-snapshot.json'
+            ].join('\n');
+
+            assert.deepEqual(parseGitCachedRawDiffDeletedPaths(repoRoot, rawDiff), ['file.ts']);
+        });
+    });
+
+    describe('performance characterization', () => {
+        it('uses the cached raw diff as the only staged-only diff subprocess', () => {
+            const originalSpawnSync = (require('node:child_process') as typeof import('node:child_process')).spawnSync;
+            const diffCommands: string[][] = [];
+            const childProcessModule = require('node:child_process') as typeof import('node:child_process');
+            childProcessModule.spawnSync = ((command: string, args: string[], options: unknown) => {
+                if (command === 'git' && args.includes('diff')) {
+                    diffCommands.push([...args]);
+                }
+                return originalSpawnSync(command, args, options as never);
+            }) as typeof originalSpawnSync;
+            try {
+                execFileSync('git', ['-C', repoRoot, 'rm', 'file.ts'], { stdio: 'ignore' });
+
+                computeSnapshotFingerprint(repoRoot, 'git_staged_only', false, []);
+
+                assert.equal(diffCommands.length, 1);
+                assert.deepEqual(diffCommands[0].slice(0, 3), ['-C', repoRoot, 'diff']);
+                assert.ok(diffCommands[0].includes('--raw'));
+                assert.ok(!diffCommands[0].includes('--name-only'));
+            } finally {
+                childProcessModule.spawnSync = originalSpawnSync;
+            }
+        });
+
+        it('resolves repo realpath once when hashing multiple explicit paths', () => {
+            const extraPath = path.join(repoRoot, 'extra.ts');
+            fs.writeFileSync(extraPath, 'export const extra = 1;\n', 'utf8');
+            const fsModule = require('node:fs') as typeof import('node:fs');
+            const originalRealpathSync = fsModule.realpathSync;
+            let repoRealpathCalls = 0;
+            fsModule.realpathSync = ((targetPath: fs.PathLike, options?: BufferEncoding | null) => {
+                if (path.resolve(String(targetPath)) === path.resolve(repoRoot)) {
+                    repoRealpathCalls += 1;
+                }
+                return originalRealpathSync(targetPath, options as never);
+            }) as typeof fsModule.realpathSync;
+            try {
+                computeSnapshotFingerprint(repoRoot, 'explicit_changed_files', true, ['file.ts', 'extra.ts']);
+
+                assert.equal(repoRealpathCalls, 1);
+            } finally {
+                fsModule.realpathSync = originalRealpathSync;
+            }
         });
     });
 

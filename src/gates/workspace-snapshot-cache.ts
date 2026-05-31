@@ -178,10 +178,22 @@ function isInternalSnapshotCachePath(repoRoot: string, relativePath: string | nu
     return normalized === resolveSnapshotCacheRepoRelativePath(repoRoot);
 }
 
-function buildPathStateToken(repoRoot: string, relativePath: string): string {
+function readRepoRealPath(repoRoot: string): string | null {
+    try {
+        return fs.realpathSync(repoRoot);
+    } catch {
+        return null;
+    }
+}
+
+function buildPathStateToken(repoRoot: string, relativePath: string, repoRealPath: string | null): string {
     const normalized = normalizePath(relativePath);
     if (!normalized) return 'missing';
-    const state = getSafeWorktreePathState(repoRoot, normalized);
+    const state = getSafeWorktreePathState(
+        repoRoot,
+        normalized,
+        repoRealPath ? { repoRealPath } : undefined
+    );
     if (state.status === 'file') {
         return `file|${state.size ?? 0}|${state.sha256 || ''}`;
     }
@@ -257,38 +269,30 @@ function readGitCachedRawDiff(repoRoot: string): string {
     return String(result.stdout || '').trimEnd();
 }
 
-function readGitCachedDeletedPaths(repoRoot: string): string[] {
-    const args = [
-        '-C',
-        String(repoRoot),
-        'diff',
-        '--cached',
-        '--name-only',
-        '--diff-filter=D'
-    ];
-    const result = spawnSyncWithTimeout('git', args, {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
-        maxBuffer: 10 * 1024 * 1024
-    });
-    if (result.status !== 0 || result.timedOut || result.error) {
-        throw new Error(formatGitFingerprintProbeFailure(repoRoot, args, result));
+export function parseGitCachedRawDiffDeletedPaths(repoRoot: string, rawDiff: string): string[] {
+    const deletedPaths = new Set<string>();
+    for (const rawLine of String(rawDiff || '').split('\n')) {
+        const line = rawLine.trimEnd();
+        if (!line) continue;
+        const tabParts = line.split('\t');
+        if (tabParts.length < 2) continue;
+        const metadataFields = tabParts[0].trim().split(/\s+/);
+        const statusToken = metadataFields[metadataFields.length - 1] || '';
+        if (!statusToken.startsWith('D')) continue;
+        const deletedPath = normalizePath(tabParts[1]);
+        if (!deletedPath || isInternalSnapshotCachePath(repoRoot, deletedPath)) continue;
+        deletedPaths.add(deletedPath);
     }
-    return String(result.stdout || '')
-        .split('\n')
-        .map((line: string) => normalizePath(line))
-        .filter((line: string) => !!line && !isInternalSnapshotCachePath(repoRoot, line))
-        .sort();
+    return [...deletedPaths].sort();
 }
 
-function buildUntrackedFingerprintDescriptors(repoRoot: string): string[] {
+function buildUntrackedFingerprintDescriptors(repoRoot: string, repoRealPath: string | null): string[] {
     const descriptors: string[] = [];
     for (const line of readGitStatusLines(repoRoot, true)) {
         const entry = parseGitStatusLine(line);
         if (!entry || !entry.untracked) continue;
         if (isInternalSnapshotCachePath(repoRoot, entry.path)) continue;
-        descriptors.push(`U|${entry.path}|${buildPathStateToken(repoRoot, entry.path)}`);
+        descriptors.push(`U|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`);
     }
     return descriptors;
 }
@@ -300,14 +304,16 @@ function buildGitStatusFingerprintHash(
 ): string {
     const normalizedSource = (detectionSource || 'git_auto').trim().toLowerCase();
     const stagedOnly = normalizedSource === 'git_staged_only' || normalizedSource === 'git_staged_plus_untracked';
+    const repoRealPath = readRepoRealPath(repoRoot);
 
     if (stagedOnly) {
         const descriptors = includeUntracked
-            ? buildUntrackedFingerprintDescriptors(repoRoot)
+            ? buildUntrackedFingerprintDescriptors(repoRoot, repoRealPath)
             : [];
-        descriptors.unshift(readGitCachedRawDiff(repoRoot));
-        for (const deletedPath of readGitCachedDeletedPaths(repoRoot)) {
-            descriptors.push(`D|${deletedPath}|${buildPathStateToken(repoRoot, deletedPath)}`);
+        const cachedRawDiff = readGitCachedRawDiff(repoRoot);
+        descriptors.unshift(cachedRawDiff);
+        for (const deletedPath of parseGitCachedRawDiffDeletedPaths(repoRoot, cachedRawDiff)) {
+            descriptors.push(`D|${deletedPath}|${buildPathStateToken(repoRoot, deletedPath, repoRealPath)}`);
         }
         return stringSha256(descriptors.join('\n')) || '';
     }
@@ -323,7 +329,7 @@ function buildGitStatusFingerprintHash(
 
         if (entry.untracked) {
             if (!includeUntracked) continue;
-            descriptors.push(`U|${entry.path}|${buildPathStateToken(repoRoot, entry.path)}`);
+            descriptors.push(`U|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`);
             continue;
         }
 
@@ -332,7 +338,7 @@ function buildGitStatusFingerprintHash(
 
         if (indexStatus === ' ' && worktreeStatus === ' ') continue;
         descriptors.push(
-            `W|${entry.statusCode}|${entry.originalPath || ''}|${entry.path}|${buildPathStateToken(repoRoot, entry.path)}`
+            `W|${entry.statusCode}|${entry.originalPath || ''}|${entry.path}|${buildPathStateToken(repoRoot, entry.path, repoRealPath)}`
         );
     }
 
@@ -340,6 +346,7 @@ function buildGitStatusFingerprintHash(
 }
 
 function buildExplicitPathFingerprintHash(repoRoot: string, explicitChangedFiles: string[]): string {
+    const repoRealPath = readRepoRealPath(repoRoot);
     const normalizedExplicit = [...new Set(
         (explicitChangedFiles || []).map((filePath: string) => normalizePath(filePath)).filter(Boolean)
     )]
@@ -347,7 +354,7 @@ function buildExplicitPathFingerprintHash(repoRoot: string, explicitChangedFiles
         .sort();
 
     const descriptors = normalizedExplicit.map((relativePath: string) => (
-        `${relativePath}|${buildPathStateToken(repoRoot, relativePath)}`
+        `${relativePath}|${buildPathStateToken(repoRoot, relativePath, repoRealPath)}`
     ));
 
     return stringSha256(descriptors.join('\n')) || '';

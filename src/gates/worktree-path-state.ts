@@ -26,6 +26,10 @@ export interface SafeWorktreePathState {
     target_sha256?: string | null;
 }
 
+export interface SafeWorktreePathStateOptions {
+    repoRealPath?: string;
+}
+
 function resolveRepoRelativePath(repoRoot: string, relativeFile: string): string | null {
     const normalized = normalizePath(relativeFile);
     if (!normalized) {
@@ -39,14 +43,18 @@ function resolveRepoRelativePath(repoRoot: string, relativeFile: string): string
     return resolvedPath;
 }
 
-export function getSafeWorktreePathState(repoRoot: string, relativeFile: string): SafeWorktreePathState {
+export function getSafeWorktreePathState(
+    repoRoot: string,
+    relativeFile: string,
+    options: SafeWorktreePathStateOptions = {}
+): SafeWorktreePathState {
     const resolvedPath = resolveRepoRelativePath(repoRoot, relativeFile);
     if (!resolvedPath) {
         return normalizePath(relativeFile) ? { status: 'outside_repo' } : { status: 'missing' };
     }
     try {
         const stat = fs.lstatSync(resolvedPath);
-        const repoRealPath = fs.realpathSync(repoRoot);
+        const repoRealPath = options.repoRealPath || fs.realpathSync(repoRoot);
         if (stat.isSymbolicLink()) {
             const linkTarget = fs.readlinkSync(resolvedPath);
             const linkBase = {
