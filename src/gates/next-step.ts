@@ -247,6 +247,13 @@ import {
     resolvePostReviewCloseoutRoute
 } from './next-step-closeout-routing';
 import {
+    resolveDecomposedParentTerminalRoute,
+    resolveDoneTaskQueueTerminalRoute,
+    resolvePermanentSplitRequiredLatchRoute,
+    resolveSplitRequiredTaskQueueRoute,
+    resolveStrictDecompositionSplitTerminalRoute
+} from './next-step-terminal-status-routing';
+import {
     buildCommand,
     buildBundleRelativePath,
     buildNavigatorCommand,
@@ -5525,23 +5532,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskId,
             latchEvidence: permanentSplitRequiredLatchEvidence
         });
-        if (!isSuccessfulSplitRequiredStatusSync(restoreResult)) {
-            return buildResult({
-                ...resultBase,
-                status: 'SPLIT_REQUIRED',
-                nextGate: 'split-required-latch',
-                title: 'Split-required latch is active.',
-                reason:
-                    `A valid split-required latch already exists for ${formatNextStepInlineValue(taskId)}, ` +
-                    'but the gate could not restore TASK.md to SPLIT_REQUIRED after detecting later status/config/scope drift. ' +
-                    `Status sync outcome: ${formatNextStepInlineValue(restoreResult.outcome)}${restoreResult.error_message ? ` (${restoreResult.error_message})` : ''}. ` +
-                    'Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
-                commands: [],
-                missingArtifacts: [],
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
-        }
 
         const childRoute = resolveNextUnfinishedChildRoute(
             taskEntries,
@@ -5550,71 +5540,39 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             extractExplicitLinkedChildTaskIds
         );
         const hasChildren = hasLinkedChildTasks(taskEntries, taskId);
-        if (hasChildren) {
-            const syncResult = transitionSplitRequiredParentToDecomposed({ repoRoot, eventsRoot, taskId });
-            if (syncResult.outcome !== 'updated' && syncResult.outcome !== 'already_synced') {
-                return buildResult({
-                    ...resultBase,
-                    status: 'SPLIT_REQUIRED',
-                    nextGate: 'split-required-latch',
-                    title: 'Split-required latch is active.',
-                    reason:
-                        'A valid split-required latch is permanent for this task attempt, but the gate could not transition the parent to DECOMPOSED after detecting linked child tasks. ' +
-                        `Status sync outcome: ${formatNextStepInlineValue(syncResult.outcome)}${syncResult.error_message ? ` (${syncResult.error_message})` : ''}. ` +
-                        'Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
-                    commands: [],
-                    missingArtifacts: [],
-                    presentArtifacts: coreArtifacts.present,
-                    finalReport: null
-                });
-            }
-            if (childRoute) {
-                const chain = [taskId, ...childRoute.chain].join(' -> ');
-                return buildResult({
-                    ...resultBase,
-                    status: 'DECOMPOSED',
-                    nextGate: 'child-task',
-                    title: 'Split-required latch cleared; continue with the next child.',
-                    reason:
-                        'A valid split-required latch stayed permanent after later status/config/scope drift. Linked child tasks were detected, so the gate restored the parent latch and transitioned the parent to DECOMPOSED. ' +
-                        `Parent tasks in this state are not executable lifecycle scopes. Continue through child chain ${chain}; ` +
-                        `next unfinished child status is ${formatNextStepInlineValue(childRoute.status || 'unknown')}.`,
-                    commands: [
-                        buildCommand(
-                            'Continue child task',
-                            `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
-                        )
-                    ],
-                    missingArtifacts: [],
-                    presentArtifacts: coreArtifacts.present,
-                    finalReport: null
-                });
-            }
-            return buildResult({
-                ...resultBase,
-                status: 'DECOMPOSED',
-                nextGate: null,
-                title: 'Split-required latch cleared; no unfinished child remains.',
-                reason:
-                    'A valid split-required latch stayed permanent after later status/config/scope drift. Linked child tasks were detected, so the gate restored the parent latch and transitioned the parent to DECOMPOSED. ' +
-                    'No unfinished child task could be resolved from its notes. Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
-                commands: [],
-                missingArtifacts: [],
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
+        let syncResult: ReturnType<typeof transitionSplitRequiredParentToDecomposed> | null = null;
+        if (hasChildren && (restoreResult.outcome === 'updated' || restoreResult.outcome === 'already_synced')) {
+            syncResult = transitionSplitRequiredParentToDecomposed({ repoRoot, eventsRoot, taskId });
         }
 
+        const latchRoute = resolvePermanentSplitRequiredLatchRoute({
+            taskId,
+            restoreResult: {
+                outcome: restoreResult.outcome,
+                errorMessage: restoreResult.error_message
+            },
+            hasChildren,
+            transitionResult: syncResult
+                ? {
+                    outcome: syncResult.outcome,
+                    errorMessage: syncResult.error_message
+                }
+                : null,
+            childRoute,
+            continueChildCommand: childRoute
+                ? buildCommand(
+                    'Continue child task',
+                    `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
+                )
+                : null
+        });
         return buildResult({
             ...resultBase,
-            status: 'SPLIT_REQUIRED',
-            nextGate: 'split-required-latch',
-            title: 'Split-required latch is active.',
-            reason:
-                `A valid split-required latch already exists for ${formatNextStepInlineValue(taskId)}. ` +
-                'The latch is permanent for this task attempt, so later status/config/scope changes cannot make the parent executable again. ' +
-                'Create and link child tasks so the gate can transition the parent to DECOMPOSED, or use an explicit operator task-reset/discard command to clear the latch.',
-            commands: [],
+            status: latchRoute.status,
+            nextGate: latchRoute.nextGate,
+            title: latchRoute.title,
+            reason: latchRoute.reason,
+            commands: latchRoute.commands,
             missingArtifacts: [],
             presentArtifacts: coreArtifacts.present,
             finalReport: null
@@ -5623,21 +5581,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
 
     if (splitRequiredStatusInTaskQueue) {
         const latchEvidence = readSplitRequiredLatchEvidence({ reviewsRoot, eventsRoot, taskId });
-        if (!latchEvidence.valid) {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'split-required-latch',
-                title: 'Split-required latch evidence is invalid.',
-                reason:
-                    `TASK.md marks ${formatNextStepInlineValue(taskId)} as SPLIT_REQUIRED, but gate-owned latch evidence is invalid: ${latchEvidence.reason}. ` +
-                    'Do not clear the latch, route child tasks, or run parent classify, compile, review, full-suite, completion, or final closeout gates until an operator repairs or resets the task.',
-                commands: [],
-                missingArtifacts: [],
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
-        }
         const childRoute = resolveNextUnfinishedChildRoute(
             taskEntries,
             taskId,
@@ -5645,55 +5588,36 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             extractExplicitLinkedChildTaskIds
         );
         const hasChildren = hasLinkedChildTasks(taskEntries, taskId);
-        if (hasChildren) {
-            const syncResult = transitionSplitRequiredParentToDecomposed({ repoRoot, eventsRoot, taskId });
-            if (syncResult.outcome !== 'updated' && syncResult.outcome !== 'already_synced') {
-                return buildResult({
-                    ...resultBase,
-                    status: 'SPLIT_REQUIRED',
-                    nextGate: 'split-required-latch',
-                    title: 'Split-required latch is active.',
-                    reason:
-                        `TASK.md marks ${formatNextStepInlineValue(taskId)} as SPLIT_REQUIRED, but the gate could not transition the parent to DECOMPOSED after detecting linked child tasks. ` +
-                        `Status sync outcome: ${formatNextStepInlineValue(syncResult.outcome)}${syncResult.error_message ? ` (${syncResult.error_message})` : ''}. ` +
-                        'Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
-                    commands: [],
-                    missingArtifacts: [],
-                    presentArtifacts: coreArtifacts.present,
-                    finalReport: null
-                });
-            }
-            if (childRoute) {
-                const chain = [taskId, ...childRoute.chain].join(' -> ');
-                return buildResult({
-                    ...resultBase,
-                    status: 'DECOMPOSED',
-                    nextGate: 'child-task',
-                    title: 'Split-required latch cleared; continue with the next child.',
-                    reason:
-                        'Linked child tasks were detected, so the gate transitioned the parent from SPLIT_REQUIRED to DECOMPOSED. ' +
-                        `Parent tasks in this state are not executable lifecycle scopes. Continue through child chain ${chain}; ` +
-                        `next unfinished child status is ${formatNextStepInlineValue(childRoute.status || 'unknown')}.`,
-                    commands: [
-                        buildCommand(
-                            'Continue child task',
-                            `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
-                        )
-                    ],
-                    missingArtifacts: [],
-                    presentArtifacts: coreArtifacts.present,
-                    finalReport: null
-                });
-            }
+        const syncResult = latchEvidence.valid && hasChildren
+            ? transitionSplitRequiredParentToDecomposed({ repoRoot, eventsRoot, taskId })
+            : null;
+        const splitRoute = resolveSplitRequiredTaskQueueRoute({
+            taskId,
+            latchValid: latchEvidence.valid,
+            latchInvalidReason: latchEvidence.reason,
+            hasChildren,
+            transitionResult: syncResult
+                ? {
+                    outcome: syncResult.outcome,
+                    errorMessage: syncResult.error_message
+                }
+                : null,
+            childRoute,
+            continueChildCommand: childRoute
+                ? buildCommand(
+                    'Continue child task',
+                    `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
+                )
+                : null
+        });
+        if (!latchEvidence.valid) {
             return buildResult({
                 ...resultBase,
-                status: 'DECOMPOSED',
-                nextGate: null,
-                title: 'Split-required latch cleared; no unfinished child remains.',
-                reason:
-                    'Linked child tasks were detected, so the gate transitioned the parent from SPLIT_REQUIRED to DECOMPOSED. ' +
-                    'No unfinished child task could be resolved from its notes. Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
-                commands: [],
+                status: splitRoute.status,
+                nextGate: splitRoute.nextGate,
+                title: splitRoute.title,
+                reason: splitRoute.reason,
+                commands: splitRoute.commands,
                 missingArtifacts: [],
                 presentArtifacts: coreArtifacts.present,
                 finalReport: null
@@ -5701,14 +5625,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
         return buildResult({
             ...resultBase,
-            status: 'SPLIT_REQUIRED',
-            nextGate: 'split-required-latch',
-            title: 'Split-required latch is active.',
-            reason:
-                `TASK.md marks ${formatNextStepInlineValue(taskId)} as SPLIT_REQUIRED. ` +
-                'This parent task was blocked by an auto-split guard and cannot continue through classify, compile, review, full-suite, completion, or final closeout gates. ' +
-                'Create and link child tasks so the gate can transition the parent to DECOMPOSED, or use an explicit operator task-reset/discard command to clear the latch.',
-            commands: [],
+            status: splitRoute.status,
+            nextGate: splitRoute.nextGate,
+            title: splitRoute.title,
+            reason: splitRoute.reason,
+            commands: splitRoute.commands,
             missingArtifacts: [],
             presentArtifacts: coreArtifacts.present,
             finalReport: null
@@ -5760,42 +5681,23 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 `final-closeout: ${summary.final_report_contract.blocker || 'canonical final closeout is not ready'}`
             );
         }
-        if (doneConflictBlockers.length > 0 && !doneStatusHasCompletedClearedLatchEvidence) {
-            const blockerSummary = doneConflictBlockers.slice(0, 4).join('; ');
-            const extraBlockerCount = doneConflictBlockers.length > 4
-                ? ` (+${doneConflictBlockers.length - 4} more blocker(s))`
-                : '';
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'task-reset',
-                title: 'TASK.md DONE conflicts with lifecycle evidence.',
-                reason:
-                    `TASK.md marks ${formatNextStepInlineValue(taskId)} as DONE, but current lifecycle evidence is not terminal-clean: ` +
-                    `${blockerSummary}${extraBlockerCount}. ` +
-                    'Completion-gate remains the only normal owner of DONE. Do not hand-edit TASK.md or run stale lifecycle gates while this false-DONE conflict exists; use explicit operator task-reset/reopen recovery first.',
-                commands: [
-                    buildCommand(
-                        'Preview explicit operator reopen',
-                        `${cliPrefix} gate task-reset --task-id "${taskId}" --reopen --dry-run --repo-root "."`
-                    )
-                ],
-                missingArtifacts: coreArtifacts.missing,
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
-        }
+        const doneRoute = resolveDoneTaskQueueTerminalRoute({
+            taskId,
+            conflictBlockers: doneConflictBlockers,
+            allowCompletedClearedLatchEvidence: doneStatusHasCompletedClearedLatchEvidence,
+            reopenPreviewCommand: buildCommand(
+                'Preview explicit operator reopen',
+                `${cliPrefix} gate task-reset --task-id "${taskId}" --reopen --dry-run --repo-root "."`
+            )
+        });
         return buildResult({
             ...resultBase,
-            status: 'DONE',
-            nextGate: null,
-            title: 'Task is already marked DONE in TASK.md.',
-            reason:
-                `TASK.md marks ${formatNextStepInlineValue(taskId)} as DONE. ` +
-                'Treat this task as terminal and do not run stale lifecycle recovery, classify, compile, review, full-suite, or completion gates. ' +
-                'Use an explicit operator task-reset/reopen command before starting a new lifecycle cycle for this task; do not hand-edit active TASK.md lifecycle statuses.',
-            commands: [],
-            missingArtifacts: [],
+            status: doneRoute.status,
+            nextGate: doneRoute.nextGate,
+            title: doneRoute.title,
+            reason: doneRoute.reason,
+            commands: doneRoute.commands,
+            missingArtifacts: doneRoute.status === 'DONE' ? [] : coreArtifacts.missing,
             presentArtifacts: coreArtifacts.present,
             finalReport: null
         });
@@ -5819,93 +5721,45 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         const decomposedReason = isTaskQueueDecomposedStatus(taskEntry?.status || null)
             ? 'Task queue marks this parent as DECOMPOSED.'
             : 'Task queue marks this parent as a legacy BLOCKED split umbrella.';
-        if (childRoute) {
-            const chain = [taskId, ...childRoute.chain].join(' -> ');
-            return buildResult({
-                ...resultBase,
-                status: 'DECOMPOSED',
-                nextGate: 'child-task',
-                title: 'Parent task is decomposed; continue with the next child.',
-                reason:
-                    `${decomposedReason} Parent tasks in this state are not executable lifecycle scopes. ` +
-                    `Continue through child chain ${chain}; next unfinished child status is ${formatNextStepInlineValue(childRoute.status || 'unknown')}.`,
-                commands: [
-                    buildCommand(
-                        'Continue child task',
-                        `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
-                    )
-                ],
-                missingArtifacts: [],
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
-        }
-        if (completionState?.hasLinkedChildren && completionState.missingChildTaskIds.length > 0) {
-            return buildResult({
-                ...resultBase,
-                status: 'DECOMPOSED',
-                nextGate: null,
-                title: 'Parent task is decomposed but explicit child links are missing.',
-                reason:
-                    `${decomposedReason} Explicit child task link(s) could not be found in TASK.md: ` +
-                    `${completionState.missingChildTaskIds.map(formatNextStepInlineValue).join(', ')}. ` +
-                    'Do not mark the parent DONE or run stale parent gates until every explicit child task exists and reaches DONE, or the parent notes are corrected by an operator.',
-                commands: [],
-                missingArtifacts: [],
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
-        }
-        if (completionState?.hasLinkedChildren && completionState.complete) {
-            const tasksToComplete = [...new Set([...completionState.completedDecomposedTaskIds, taskId])];
-            const syncResult = transitionDecomposedParentsToDone({
+        const tasksToComplete = completionState?.hasLinkedChildren && completionState.complete
+            ? [...new Set([...completionState.completedDecomposedTaskIds, taskId])]
+            : [];
+        const syncResult = tasksToComplete.length > 0
+            ? transitionDecomposedParentsToDone({
                 repoRoot,
                 eventsRoot,
                 rootTaskId: taskId,
                 taskIds: tasksToComplete
-            });
-            if (syncResult.outcome !== 'updated' && syncResult.outcome !== 'already_synced') {
-                return buildResult({
-                    ...resultBase,
-                    status: 'DECOMPOSED',
-                    nextGate: 'task-status-sync',
-                    title: 'Decomposed parent completion status sync failed.',
-                    reason:
-                        `Every explicit child task under ${formatNextStepInlineValue(taskId)} appeared DONE, but the gate could not atomically transition ` +
-                        `the completed decomposed parent task set from DECOMPOSED to DONE after write-time revalidation. ` +
-                        `Status sync outcome: ${formatNextStepInlineValue(syncResult.outcome)}${syncResult.error_message ? ` (${syncResult.error_message})` : ''}. ` +
-                        'Do not hand-edit TASK.md status cells; repair the task queue or rerun next-step after resolving the sync failure.',
-                    commands: [],
-                    missingArtifacts: [],
-                    presentArtifacts: coreArtifacts.present,
-                    finalReport: null
-                });
-            }
-            const completedChain = syncResult.task_ids.join(', ');
-            return buildResult({
-                ...resultBase,
-                status: 'DONE',
-                nextGate: null,
-                title: 'Decomposed parent completed because all explicit children are DONE.',
-                reason:
-                    `${decomposedReason} Every explicit child task, including nested decomposed children, is DONE. ` +
-                    `The gate-owned status sync transitioned completed parent task(s) to DONE: ${completedChain}. ` +
-                    'Do not run stale parent classify, compile, review, full-suite, or completion gates unless an operator explicitly reopens the task.',
-                commands: [],
-                missingArtifacts: [],
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
-        }
+            })
+            : null;
+        const decomposedRoute = resolveDecomposedParentTerminalRoute({
+            taskId,
+            decomposedReason,
+            childRoute,
+            continueChildCommand: childRoute
+                ? buildCommand(
+                    'Continue child task',
+                    `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
+                )
+                : null,
+            hasLinkedChildren: completionState?.hasLinkedChildren || false,
+            missingChildTaskIds: completionState?.missingChildTaskIds || [],
+            complete: completionState?.complete || false,
+            statusSyncResult: syncResult
+                ? {
+                    outcome: syncResult.outcome,
+                    errorMessage: syncResult.error_message,
+                    taskIds: syncResult.task_ids
+                }
+                : null
+        });
         return buildResult({
             ...resultBase,
-            status: 'DECOMPOSED',
-            nextGate: null,
-            title: 'Parent task is decomposed and has no unfinished child.',
-            reason:
-                `${decomposedReason} No unfinished child task could be resolved from its notes. ` +
-                'Do not run classify, compile, review, full-suite, or completion gates on the parent; add or reopen a child task if the parent objective is not complete.',
-            commands: [],
+            status: decomposedRoute.status,
+            nextGate: decomposedRoute.nextGate,
+            title: decomposedRoute.title,
+            reason: decomposedRoute.reason,
+            commands: decomposedRoute.commands,
             missingArtifacts: [],
             presentArtifacts: coreArtifacts.present,
             finalReport: null
@@ -6108,56 +5962,27 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             }
 
             const syncResult = transitionStrictDecompositionParentToDecomposed({ repoRoot, eventsRoot, taskId });
-            if (syncResult.outcome !== 'updated' && syncResult.outcome !== 'already_synced') {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'strict-decomposition-split-routing',
-                    title: 'Strict decomposition child routing status sync failed.',
-                    reason:
-                        'A current strict decomposition decision says split-required and linked strict child tasks were detected, but the gate could not transition the parent to DECOMPOSED. ' +
-                        `Status sync outcome: ${formatNextStepInlineValue(syncResult.outcome)}${syncResult.error_message ? ` (${syncResult.error_message})` : ''}. ` +
-                        'Do not run parent classify, compile, review, full-suite, completion, or final closeout gates until status sync succeeds.',
-                    commands: [],
-                    missingArtifacts: [],
-                    presentArtifacts: [...coreArtifacts.present, strictDecompositionArtifactState],
-                    finalReport: null
-                });
-            }
-
-            if (splitRoutingState.childRoute) {
-                const chain = [taskId, ...splitRoutingState.childRoute.chain].join(' -> ');
-                return buildResult({
-                    ...resultBase,
-                    status: 'DECOMPOSED',
-                    nextGate: 'child-task',
-                    title: 'Strict decomposition split routed; continue with the next child.',
-                    reason:
-                        'A current strict decomposition decision says split-required, and linked parent-derived strict child tasks match the decision artifact. ' +
-                        'The gate transitioned the parent to DECOMPOSED, so it is no longer an executable lifecycle scope. ' +
-                        `Continue through child chain ${chain}; next unfinished child status is ${formatNextStepInlineValue(splitRoutingState.childRoute.status || 'unknown')}.`,
-                    commands: [
-                        buildCommand(
-                            'Continue child task',
-                            `${cliPrefix} next-step "${splitRoutingState.childRoute.taskId}" --repo-root "."`
-                        )
-                    ],
-                    missingArtifacts: [],
-                    presentArtifacts: [...coreArtifacts.present, strictDecompositionArtifactState],
-                    finalReport: null
-                });
-            }
-
+            const strictSplitRoute = resolveStrictDecompositionSplitTerminalRoute({
+                taskId,
+                transitionResult: {
+                    outcome: syncResult.outcome,
+                    errorMessage: syncResult.error_message
+                },
+                childRoute: splitRoutingState.childRoute,
+                continueChildCommand: splitRoutingState.childRoute
+                    ? buildCommand(
+                        'Continue child task',
+                        `${cliPrefix} next-step "${splitRoutingState.childRoute.taskId}" --repo-root "."`
+                    )
+                    : null
+            });
             return buildResult({
                 ...resultBase,
-                status: 'DECOMPOSED',
-                nextGate: null,
-                title: 'Strict decomposition split routed; no unfinished child remains.',
-                reason:
-                    'A current strict decomposition decision says split-required, and linked parent-derived strict child tasks match the decision artifact. ' +
-                    'The gate transitioned the parent to DECOMPOSED, but no unfinished child task could be resolved from its notes. ' +
-                    'Do not run classify, compile, review, full-suite, completion, or final closeout gates on the parent.',
-                commands: [],
+                status: strictSplitRoute.status,
+                nextGate: strictSplitRoute.nextGate,
+                title: strictSplitRoute.title,
+                reason: strictSplitRoute.reason,
+                commands: strictSplitRoute.commands,
                 missingArtifacts: [],
                 presentArtifacts: [...coreArtifacts.present, strictDecompositionArtifactState],
                 finalReport: null
