@@ -1357,6 +1357,39 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(!result.commands[0].command.includes('gate classify-change'));
     });
 
+    it('includes failed compile infra recovery hints in compile-gate recovery text', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'FAILED',
+            outcome: 'FAIL',
+            error: 'Compile command failed.',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_hash_sha256: fileSha256(preflightPath),
+            infra_recovery_hint: {
+                kind: 'docker_daemon_unavailable',
+                title: 'Docker daemon is unavailable to the compile command.',
+                hint:
+                    'Start Docker Desktop or the Docker service, verify "docker info" works in this shell, ' +
+                    'then rerun next-step before compile-gate.'
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_FAILED', 'FAIL');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.ok(result.reason.includes('InfraRecoveryHint:'), result.reason);
+        assert.ok(result.reason.includes('Docker daemon is unavailable'), result.reason);
+        assert.ok(text.includes('InfraRecoveryHint:'), text);
+        assert.ok(text.includes('docker info'), text);
+    });
+
     it('refreshes explicit preflight when later rework adds a source file after review evidence exists', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);

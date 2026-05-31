@@ -71,6 +71,9 @@ import {
     type FullSuiteValidationPlacement
 } from '../core/workflow-config';
 import {
+    formatCompileInfraRecoveryHintLine
+} from './compile-infra-recovery-hints';
+import {
     isOrchestratorSourceCheckout
 } from './protected-control-plane';
 import {
@@ -2906,9 +2909,15 @@ function readCompileReadiness(
                 recoveryGate: 'classify-change'
             };
         }
+        const infraRecoveryHintLine = formatCompileInfraRecoveryHintLine(evidence.infra_recovery_hint);
+        const infraRecoverySuffix = infraRecoveryHintLine
+            ? ` ${infraRecoveryHintLine}`
+            : '';
         return {
             ready: false,
-            reason: `Compile gate did not pass. Evidence status='${evidenceStatus || 'UNKNOWN'}', outcome='${evidenceOutcome || 'UNKNOWN'}'.`
+            reason:
+                `Compile gate did not pass. Evidence status='${evidenceStatus || 'UNKNOWN'}', ` +
+                `outcome='${evidenceOutcome || 'UNKNOWN'}'.${infraRecoverySuffix}`
         };
     }
     const evidencePreflightHash = String(evidence.preflight_hash_sha256 || '').trim().toLowerCase();

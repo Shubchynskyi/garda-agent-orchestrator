@@ -694,6 +694,167 @@ describe('cli/commands/gates compile and post-preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('surfaces infra recovery hints for Testcontainers Docker environment failures', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-compile-infra-hint';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-compile-infra-hint.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.error(\'org.testcontainers.containers.ContainerFetchException: Could not find a valid Docker environment\'); process.exit(2)"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Show infra compile recovery hints'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.startsWith('InfraRecoveryHint:')));
+        assert.ok(result.outputLines.some((line) => line.includes('Testcontainers') && line.includes('docker info')));
+        assert.equal(evidence.infra_recovery_hint.kind, 'testcontainers_no_environment');
+        assert.ok(String(evidence.infra_recovery_hint.hint).includes('docker info'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('classifies Docker daemon, container startup, and external service compile failures', async () => {
+        const cases = [
+            {
+                taskId: 'T-901-compile-docker-daemon-hint',
+                message: 'Cannot connect to the Docker daemon at npipe:////./pipe/docker_engine. Is the docker daemon running?',
+                expectedKind: 'docker_daemon_unavailable',
+                expectedText: 'Docker daemon is unavailable'
+            },
+            {
+                taskId: 'T-901-compile-container-startup-hint',
+                message: 'org.testcontainers.containers.ContainerLaunchException: Could not start container; Wait strategy timed out',
+                expectedKind: 'container_startup_failure',
+                expectedText: 'required container failed to start'
+            },
+            {
+                taskId: 'T-901-compile-external-service-hint',
+                message: 'connect ECONNREFUSED 127.0.0.1:5432',
+                expectedKind: 'external_service_unavailable',
+                expectedText: 'external service dependency was unreachable'
+            }
+        ] as const;
+
+        for (const testCase of cases) {
+            const repoRoot = createTempRepo();
+            try {
+                seedTaskQueue(repoRoot, testCase.taskId);
+                seedInitAnswers(repoRoot);
+                const preflightPath = writePreflight(repoRoot, testCase.taskId);
+                const commandsPath = path.join(repoRoot, `${testCase.taskId}-commands.md`);
+                const outputFiltersPath = path.resolve('live/config/output-filters.json');
+                fs.writeFileSync(commandsPath, [
+                    '### Compile Gate (Mandatory)',
+                    '```bash',
+                    `node -e "console.error('${testCase.message}'); process.exit(2)"`,
+                    '```'
+                ].join('\n'), 'utf8');
+
+                const taskModeResult = runEnterTaskMode({
+                    repoRoot,
+                    taskId: testCase.taskId,
+                    taskSummary: 'Classify infra compile failure'
+                });
+                assert.equal(taskModeResult.exitCode, 0);
+                assert.equal(loadTaskEntryRulePack(repoRoot, testCase.taskId).exitCode, 0);
+                runHandshakeForTask(repoRoot, testCase.taskId);
+                runShellSmokeForTask(repoRoot, testCase.taskId);
+                assert.equal(loadPostPreflightRulePack(repoRoot, testCase.taskId, preflightPath).exitCode, 0);
+
+                const result = await runCompileGateCommand({
+                    repoRoot,
+                    taskId: testCase.taskId,
+                    preflightPath,
+                    commandsPath,
+                    outputFiltersPath,
+                    emitMetrics: false
+                });
+
+                const evidencePath = path.join(getReviewsRoot(repoRoot), `${testCase.taskId}-compile-gate.json`);
+                const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+                assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+                assert.equal(evidence.infra_recovery_hint.kind, testCase.expectedKind);
+                assert.ok(result.outputLines.some((line) => line.startsWith('InfraRecoveryHint:') && line.includes(testCase.expectedText)));
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+            }
+        }
+    });
+
+    it('keeps generic compile failures without infra recovery hints', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-compile-generic-failure';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-compile-generic-failure.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.error(\'src/app.ts(1,1): error TS1005: expected\'); process.exit(2)"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Keep ordinary compile failures generic'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.equal(result.outputLines.some((line) => line.startsWith('InfraRecoveryHint:')), false);
+        assert.equal(evidence.infra_recovery_hint, null);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('explains planned explicit preflight refresh steps when compile gate detects scope drift in a clean workspace', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901scope-drift-guidance';

@@ -66,6 +66,10 @@ import {
     validateCompileGateCommand
 } from '../../../gates/compile-gate';
 import {
+    classifyCompileInfraRecoveryHint,
+    formatCompileInfraRecoveryHintLine
+} from '../../../gates/compile-infra-recovery-hints';
+import {
     getWorkspaceSnapshotCached
 } from '../../../gates/workspace-snapshot-cache';
 import {
@@ -1615,6 +1619,12 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     if (exceptionMessage) {
         exceptionMessage = appendNextStepRecoveryHint(exceptionMessage, repoRoot, resolvedTaskId);
     }
+    const infraRecoveryHint = exceptionMessage
+        ? classifyCompileInfraRecoveryHint({
+            outputLines: compileOutputLines,
+            errorMessage: exceptionMessage
+        })
+        : null;
 
     const durationMs = Math.max(0, Date.now() - startedAt);
     const fallbackProfile = compileCommands.length > 0
@@ -1716,6 +1726,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         compile_output_lines: compileOutputLines.length,
         compile_output_warning_lines: warningCount,
         compile_output_error_lines: errorCount,
+        infra_recovery_hint: infraRecoveryHint,
         duration_ms: durationMs,
         exit_code: exceptionMessage ? exitCode : 0,
         command_policy_audits: compileCommandAudits,
@@ -1770,6 +1781,10 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         }
         if (visibleSavingsLine) {
             outputLines.push(visibleSavingsLine);
+        }
+        const infraRecoveryHintLine = formatCompileInfraRecoveryHintLine(infraRecoveryHint);
+        if (infraRecoveryHintLine) {
+            outputLines.push(infraRecoveryHintLine);
         }
         outputLines.push(`Reason: ${failureReason}`);
         return { outputLines, exitCode: EXIT_GATE_FAILURE };
