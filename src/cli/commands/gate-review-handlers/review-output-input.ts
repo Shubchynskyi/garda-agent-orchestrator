@@ -118,11 +118,11 @@ export async function resolveReviewOutputInput(
         reviewContent = fs.readFileSync(resolvedReviewOutputPath, 'utf8');
     }
 
-    // Persist raw reviewer input before verdict extraction so direct ingest cannot bypass the audited file path.
-    writeReviewArtifactText(reviewOutputArtifactPath, reviewContent);
     if (!reviewContent.trim()) {
         throw new Error(`Review output is empty: ${normalizePath(reviewOutputArtifactPath)}.`);
     }
+    // Persist raw reviewer input before verdict extraction so direct ingest cannot bypass the audited file path.
+    writeReviewArtifactText(reviewOutputArtifactPath, reviewContent);
 
     return {
         reviewContent,

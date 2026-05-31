@@ -2260,6 +2260,71 @@ describe('gates command review result', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result keeps existing raw output when stdin is empty', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-result-empty-stdin-preserves-raw';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId);
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        fs.mkdirSync(reviewsRoot, { recursive: true });
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const existingRawOutput = [
+            '# Previous Review Output',
+            '',
+            'This existing reviewer output must not be destroyed by a later empty stdin attempt.',
+            '',
+            '## Verdict',
+            'REVIEW PASSED',
+            ''
+        ].join('\n');
+        fs.writeFileSync(rawReviewOutputPath, existingRawOutput, 'utf8');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        fs.writeFileSync(reviewContextPath, JSON.stringify({
+            ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
+            task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
+            scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
+            reviewer_routing: createReviewerRoutingFixture('Codex')
+        }, null, 2) + '\n', 'utf8');
+
+        const mutableGateReviewHandlers = gateReviewHandlers as typeof gateReviewHandlers & {
+            readReviewOutputFromStdin: typeof gateReviewHandlers.readReviewOutputFromStdin;
+        };
+        const originalReadReviewOutputFromStdin = mutableGateReviewHandlers.readReviewOutputFromStdin;
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        mutableGateReviewHandlers.readReviewOutputFromStdin = async () => '   \n';
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', preflightPath,
+                '--review-output-stdin',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', 'agent:code-reviewer'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            mutableGateReviewHandlers.readReviewOutputFromStdin = originalReadReviewOutputFromStdin;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.equal(fs.readFileSync(rawReviewOutputPath, 'utf8'), existingRawOutput);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code.md`)), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`)), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result rejects dual review-output sources to avoid a weaker ingestion path', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-dual-input';

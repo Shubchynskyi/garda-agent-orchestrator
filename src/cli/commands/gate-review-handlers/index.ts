@@ -2,66 +2,26 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
-    applyReviewerRoutingMetadata,
-    buildReviewReceipt,
-    buildReviewReceiptReviewerInvocationProvenance,
-    buildReviewReceiptReviewerProvenance,
-    buildReviewVerdictTokenSet,
-    extractReviewVerdictToken,
-    formatAcceptedReviewVerdictTokens,
     normalizeCompatibilityReviewerExecutionMode,
-    restoreReviewerRoutingMetadata
 } from '../../../gate-runtime/review-context';
-import {
-    REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
-} from '../../../gate-runtime/reviewer-session-contract';
-import {
-    assertValidTaskId,
-    taskEventAppendHasBlockingFailure
-} from '../../../gate-runtime/task-events';
 import { fileSha256 } from '../../../gate-runtime/hash';
-import {
-    emitReviewRecordedEventAsync
-} from '../../../gate-runtime/lifecycle-events';
-import {
-    captureReviewArtifactRollbackState,
-    restoreReviewArtifactFromRollbackState,
-    writeReviewArtifactText,
-    writeReviewArtifactsWithRollback
-} from '../../../gate-runtime/review-artifacts';
 import * as gateHelpers from '../../../gates/helpers';
 import { normalizePath } from '../../../gates/helpers';
-import { REVIEW_CONTRACTS } from '../../../gates/required-reviews-check';
 import {
-    assertRequiredUpstreamReviewDependencies,
     type ReviewDependencyTimelineEvent
 } from '../../../gates/review-dependencies';
-import {
-    computeReviewReuseCodeScopeFingerprint,
-    computeReviewRelevantScopeFingerprint,
-    computeReviewContextReuseHash,
-    isNonTestReviewScope
-} from '../../../gates/review-reuse';
-import {
-    buildDomainScopeFingerprints
-} from '../../../gates/domain-scope-fingerprints';
 import { resolveCanonicalReviewContextPath } from '../../../gates/review-context-paths';
 import {
     buildReviewContextPreflightDiffExpectations,
     getReviewContextContractViolations
 } from '../../../gates/review-context-contract';
 import {
-    assertReviewTreeStateFresh
-} from '../../../gates/review-tree-state';
-import {
     resolveReviewerHandoffArtifactBinding,
-    resolveReviewerPromptArtifactBinding
 } from '../../../gates/review-prompt-artifact';
 import {
     resolveDefaultReviewScratchPath
 } from '../../../gates/review-scratch-paths';
 import { resolveReviewContextRoutingIdentity } from '../../../gates/review-context-routing';
-import { assertReviewLifecycleGuard } from '../../../gates/review-lifecycle-guard';
 import { normalizeRuntimeIdentitySource, resolveRuntimeReviewerIdentity } from '../../../gates/reviewer-routing';
 import { getProviderEntryById } from '../../../core/provider-registry';
 import {
@@ -73,34 +33,20 @@ import {
     normalizeCanonicalReviewSectionHeadings
 } from '../../../gates/completion';
 import {
-    cleanupReviewTempSourceArtifact,
     isTaskOwnedReviewTempPath
 } from '../gates-artifacts';
 import {
-    parseOptions,
-    normalizePathValue
-} from '../cli-helpers';
-import {
     type ParsedOptionsRecord
 } from '../shared-command-utils';
-import {
-    readDependencyTimelineEvents
-} from './review-dependency-timeline';
-import {
-    resolveReviewOutputInput
-} from './review-output-input';
-import {
-    materializeReviewContent
-} from './review-artifact-materialization';
-import {
-    assertReviewReceiptRoutingMatchesContext
-} from './review-receipt-validation';
 import {
     createReviewRoutingLaunchHandlers
 } from './review-routing-launch-handlers';
 import {
     createReviewInvocationHandlers
 } from './review-invocation-handlers';
+import {
+    createReviewResultHandlers
+} from './review-result-handlers';
 
 interface ResolvedCanonicalReviewPaths {
     preflightPath: string;
@@ -2180,239 +2126,6 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     }
 }
 
-async function recordReviewReceiptFromArtifacts(options: {
-    repoRoot: string;
-    taskId: string;
-    reviewType: string;
-    preflightPath: string;
-    artifactPath: string;
-    contextPath: string;
-    rawReviewOutputPath?: string | null;
-    rawReviewOutputSha256?: string | null;
-    rawReviewOutputSourceMtimeUtc?: string | null;
-    reviewMaterializationFidelity?: string | null;
-    taskModePath?: string | null;
-    reviewerExecutionMode: NonNullable<ParsedReviewerIdentity['reviewerExecutionMode']>;
-    reviewerIdentity: string;
-    reviewerFallbackReason: string | null;
-    requireStrictBindingMetadata?: boolean;
-}): Promise<string> {
-    if (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile()) {
-        throw new Error(`Review artifact not found: ${options.artifactPath}`);
-    }
-
-    const preflight = JSON.parse(fs.readFileSync(options.preflightPath, 'utf8'));
-    const preflightSha256 = fileSha256(options.preflightPath);
-    const artifactSha256 = fileSha256(options.artifactPath);
-    const parsedReviewContext = JSON.parse(fs.readFileSync(options.contextPath, 'utf8')) as Record<string, unknown>;
-    assertReviewContextContractOrThrow({
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        contextPath: options.contextPath,
-        reviewContext: parsedReviewContext,
-        preflightPath: options.preflightPath,
-        preflightSha256,
-        preflightPayload: preflight as Record<string, unknown>,
-        requireStrictBindingMetadata: options.requireStrictBindingMetadata
-    });
-    assertReviewTreeStateFresh({
-        repoRoot: options.repoRoot,
-        reviewContext: parsedReviewContext,
-        contextPath: options.contextPath,
-        gateName: 'record-review-receipt'
-    });
-    resolveReviewerPromptArtifactBinding({
-        repoRoot: options.repoRoot,
-        contextPath: options.contextPath,
-        reviewContext: parsedReviewContext,
-        gateName: 'record-review-receipt'
-    });
-    const currentRouting = parsedReviewContext.reviewer_routing
-        && typeof parsedReviewContext.reviewer_routing === 'object'
-        && !Array.isArray(parsedReviewContext.reviewer_routing)
-        ? parsedReviewContext.reviewer_routing as Record<string, unknown>
-        : null;
-    const runtimeIdentity = assertExplicitReviewContextRuntimeIdentity({
-        repoRoot: options.repoRoot,
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        contextPath: options.contextPath,
-        reviewerRouting: currentRouting,
-        taskModePath: String(options.taskModePath || '').trim()
-    });
-    assertRoutingCompatibility({
-        reviewType: options.reviewType,
-        runtimeIdentity,
-        currentRouting,
-        reviewerExecutionMode: options.reviewerExecutionMode,
-        reviewerFallbackReason: options.reviewerFallbackReason
-    });
-    assertReviewReceiptRoutingMatchesContext({
-        reviewType: options.reviewType,
-        contextPath: options.contextPath,
-        currentRouting,
-        reviewerExecutionMode: options.reviewerExecutionMode,
-        reviewerIdentity: options.reviewerIdentity,
-        reviewerFallbackReason: options.reviewerFallbackReason
-    });
-
-    const timelinePath = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'task-events', `${options.taskId}.jsonl`));
-    const timelineEvents = readDependencyTimelineEvents(timelinePath);
-    const routingEvent = findMatchingRoutingEvent(
-        timelineEvents,
-        options.reviewType,
-        options.reviewerExecutionMode,
-        options.reviewerIdentity,
-        options.reviewerFallbackReason
-    );
-    if (!routingEvent) {
-        throw new Error(
-            `Review receipts require pre-recorded REVIEWER_DELEGATION_ROUTED telemetry for '${options.reviewType}' ` +
-            'in the current cycle ' +
-            `with reviewer '${options.reviewerIdentity}' and execution mode '${options.reviewerExecutionMode}'.`
-        );
-    }
-    const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
-    if (!routingEventProvenance) {
-        throw new Error(
-            `Review receipts require controller-attested reviewer_provenance for delegated_subagent '${options.reviewType}' reviews. ` +
-            'Matching routing telemetry is missing event integrity.'
-        );
-    }
-
-    const contextSha256 = fileSha256(options.contextPath);
-    if (!contextSha256) {
-        throw new Error(`Review receipts require a hashable review-context artifact: ${normalizePath(options.contextPath)}.`);
-    }
-    const invocationEvent = findMatchingReviewerInvocationAttestationEvent(timelineEvents, {
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        reviewerExecutionMode: options.reviewerExecutionMode,
-        reviewerIdentity: options.reviewerIdentity,
-        reviewContextSha256: contextSha256,
-        reviewTreeStateSha256: getReviewTreeStateSha256(parsedReviewContext) || null,
-        routingEventSha256: routingEventProvenance.event_sha256
-    });
-    const reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
-        invocationEvent?.event_type || '',
-        invocationEvent?.integrity,
-        invocationEvent?.details
-    );
-    if (options.reviewerExecutionMode === 'delegated_subagent' && !reviewerProvenance) {
-        throw new Error(
-            `Review receipts require REVIEWER_INVOCATION_ATTESTED launch provenance for delegated_subagent '${options.reviewType}' reviews. ` +
-            'Run the real delegated reviewer launch path before recording reviewer output; local routing telemetry alone is not enough.'
-        );
-    }
-    const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight as Record<string, unknown>, options.repoRoot);
-    const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint(
-        options.reviewType,
-        preflight as Record<string, unknown>,
-        options.repoRoot
-    );
-    const receipt = buildReviewReceipt({
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        preflightSha256,
-        scopeSha256: preflight.metrics?.scope_sha256 || preflight.metrics?.changed_files_sha256 || null,
-        reviewScopeSha256: reviewScopeFingerprint.review_scope_sha256,
-        codeScopeSha256: isNonTestReviewScope(options.reviewType)
-            ? codeScopeFingerprint.code_scope_sha256
-            : null,
-        domainScopeFingerprints: buildDomainScopeFingerprints({
-            repoRoot: options.repoRoot,
-            detectionSource: String(preflight.detection_source || 'git_auto'),
-            includeUntracked: preflight.include_untracked !== false,
-            changedFiles: Array.isArray(preflight.changed_files) ? preflight.changed_files as string[] : []
-        }),
-        reviewContextSha256: contextSha256,
-        reviewTreeStateSha256: getReviewTreeStateSha256(parsedReviewContext) || null,
-        reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),
-        reviewArtifactSha256: artifactSha256,
-        reviewerExecutionMode: options.reviewerExecutionMode,
-        reviewerIdentity: options.reviewerIdentity,
-        reviewerFallbackReason: options.reviewerFallbackReason,
-        reviewerProvenance,
-        trustLevel: 'INDEPENDENT_AUDITED'
-    });
-    (receipt as unknown as Record<string, unknown>).review_result_recorded_at_utc =
-        (receipt as unknown as Record<string, unknown>).recorded_at_utc ?? new Date().toISOString();
-    (receipt as unknown as Record<string, unknown>).review_output_path = options.rawReviewOutputPath
-        ? normalizePath(options.rawReviewOutputPath)
-        : null;
-    (receipt as unknown as Record<string, unknown>).review_output_sha256 = options.rawReviewOutputSha256 || null;
-    (receipt as unknown as Record<string, unknown>).review_output_source_mtime_utc =
-        options.rawReviewOutputSourceMtimeUtc || null;
-    (receipt as unknown as Record<string, unknown>).review_materialization_fidelity = options.reviewMaterializationFidelity || 'exact';
-
-    const receiptPayloadSha256 = createHash('sha256')
-        .update(`${JSON.stringify(receipt, null, 2)}\n`)
-        .digest('hex');
-    return writeReviewReceiptSnapshotsAndTelemetry({
-        repoRoot: options.repoRoot,
-        taskId: options.taskId,
-        reviewType: options.reviewType,
-        artifactPath: options.artifactPath,
-        contextPath: options.contextPath,
-        receipt: receipt as unknown as Record<string, unknown>,
-        receiptPayloadSha256,
-        artifactSha256
-    });
-}
-
-async function writeReviewReceiptSnapshotsAndTelemetry(options: {
-    repoRoot: string;
-    taskId: string;
-    reviewType: string;
-    artifactPath: string;
-    contextPath: string;
-    receipt: Record<string, unknown>;
-    receiptPayloadSha256: string;
-    artifactSha256: string | null;
-}): Promise<string> {
-    const receiptPath = options.artifactPath.replace(/\.md$/, '-receipt.json');
-    const receiptSnapshotPath = options.artifactPath.replace(/\.md$/, `-receipt-${options.receiptPayloadSha256}.json`);
-    const artifactSnapshotPath = options.artifactPath.replace(/\.md$/, `-artifact-${options.artifactSha256}.md`);
-
-    const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
-    await writeReviewArtifactsWithRollback([
-        {
-            artifactPath: receiptPath,
-            contentType: 'json',
-            payload: options.receipt
-        },
-        {
-            artifactPath: receiptSnapshotPath,
-            contentType: 'json',
-            payload: options.receipt
-        },
-        {
-            artifactPath: artifactSnapshotPath,
-            contentType: 'text',
-            content: fs.readFileSync(options.artifactPath, 'utf8')
-        }
-    ], async () => {
-        const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
-            ...options.receipt,
-            receipt_path: normalizePath(receiptPath),
-            receipt_sha256: options.receiptPayloadSha256,
-            receipt_snapshot_path: normalizePath(receiptSnapshotPath),
-            receipt_snapshot_sha256: options.receiptPayloadSha256,
-            review_artifact_path: normalizePath(options.artifactPath),
-            review_artifact_snapshot_path: normalizePath(artifactSnapshotPath),
-            review_artifact_snapshot_sha256: options.artifactSha256,
-            review_context_path: normalizePath(options.contextPath)
-        });
-        if (!recordedEvent || taskEventAppendHasBlockingFailure(recordedEvent, false)) {
-            throw new Error(
-                `Review receipts require REVIEW_RECORDED telemetry for '${options.reviewType}'. ` +
-                'The lifecycle event could not be persisted.'
-            );
-        }
-    });
-    return receiptPath;
-}
-
 const reviewInvocationHandlers = createReviewInvocationHandlers({
     assertExplicitReviewContextRuntimeIdentity,
     assertReviewContextContractOrThrow,
@@ -2485,296 +2198,27 @@ export const {
     handleCompleteReviewerLaunch
 } = reviewRoutingLaunchHandlers;
 
-export async function handleRecordReviewResult(gateArgv: string[]): Promise<void> {
-    const defs = {
-        '--task-id': { key: 'taskId', type: 'string' },
-        '--review-type': { key: 'reviewType', type: 'string' },
-        '--preflight-path': { key: 'preflightPath', type: 'string' },
-        '--task-mode-path': { key: 'taskModePath', type: 'string' },
-        '--review-output-path': { key: 'reviewOutputPath', type: 'string' },
-        '--review-output-stdin': { key: 'reviewOutputStdin', type: 'boolean' },
-        '--review-context-path': { key: 'reviewContextPath', type: 'string' },
-        '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
-        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
-        '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
-        '--repo-root': { key: 'repoRoot', type: 'string' }
-    };
-    const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
-    const options = rawOptions as ParsedOptionsRecord;
-    const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
+const reviewResultHandlers = createReviewResultHandlers({
+    analyzeEarlyReviewMaterialization,
+    assertExplicitReviewContextRuntimeIdentity,
+    assertReviewContextContractOrThrow,
+    assertReviewContextRuntimeIdentityMetadataPresent,
+    assertRoutingCompatibility,
+    buildLosslessPassReviewNormalization,
+    buildMinimalPassReviewTemplateHint,
+    buildPassReviewTemplateHintMessage,
+    findMatchingReviewerInvocationAttestationEvent,
+    findMatchingRoutingEvent,
+    getReviewTreeStateSha256,
+    isLosslessPassNormalizationEligibleViolation,
+    normalizeReviewSectionHeadings: normalizeCanonicalReviewSectionHeadings,
+    parseReviewerIdentity,
+    readReviewOutputFromStdin: () => readReviewOutputFromStdin(),
+    resolveCanonicalReviewPaths,
+    reviewContextRequiresPassValidationNotes
+});
 
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-result', 'review_phase');
-    const { preflightPath, artifactPath, contextPath } = resolveCanonicalReviewPaths(
-        repoRoot,
-        taskId,
-        reviewType,
-        options.preflightPath,
-        options.reviewContextPath
-    );
-    const reviewOutput = await resolveReviewOutputInput(
-        options,
-        repoRoot,
-        path.dirname(preflightPath),
-        taskId,
-        reviewType,
-        readReviewOutputFromStdin
-    );
-    const rawReviewOutputSha256 = fileSha256(reviewOutput.reviewOutputPath);
-    let reviewContent = reviewOutput.reviewContent;
-    let reviewMaterializationFidelity = 'exact';
-    const expectedPassVerdict = REVIEW_CONTRACTS.find(([candidate]) => candidate === reviewType)?.[1] || null;
-    if (!expectedPassVerdict) {
-        throw new Error(`Unsupported review type '${reviewType}' for record-review-result.`);
-    }
-    const expectedFailVerdict = expectedPassVerdict.replace(/\bPASSED\b/, 'FAILED');
-    const verdictTokenSet = buildReviewVerdictTokenSet(reviewType, expectedPassVerdict, expectedFailVerdict);
-    const verdictToken = extractReviewVerdictToken(reviewContent, expectedPassVerdict, expectedFailVerdict, reviewType);
-    if (!verdictToken) {
-        const passExample = verdictTokenSet.canonicalPassToken || expectedPassVerdict;
-        const failExample = verdictTokenSet.canonicalFailToken || expectedFailVerdict;
-        throw new Error(
-            `Review output must contain a recognized verdict token for '${reviewType}'. ` +
-            formatAcceptedReviewVerdictTokens(verdictTokenSet) +
-            ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. ` +
-            `Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. ` +
-            `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.\n\n` +
-            buildMinimalPassReviewTemplateHint(reviewType, passExample)
-        );
-    }
-    const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
-        options,
-        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
-    );
-    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-    const preflightSha256 = fileSha256(preflightPath);
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
-    const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
-    assertReviewContextContractOrThrow({
-        taskId,
-        reviewType,
-        contextPath,
-        reviewContext: parsedReviewContext,
-        preflightPath,
-        preflightSha256,
-        preflightPayload,
-        requireStrictBindingMetadata: !!options.reviewContextPath
-    });
-    const currentRouting = parsedReviewContext.reviewer_routing
-        && typeof parsedReviewContext.reviewer_routing === 'object'
-        && !Array.isArray(parsedReviewContext.reviewer_routing)
-        ? parsedReviewContext.reviewer_routing as Record<string, unknown>
-        : null;
-    assertReviewContextRuntimeIdentityMetadataPresent({
-        reviewType,
-        contextPath,
-        reviewContext: parsedReviewContext,
-        reviewerRouting: currentRouting
-    });
-    if (reviewType === 'test') {
-        assertRequiredUpstreamReviewDependencies({
-            taskId,
-            preflightPath,
-            preflightPayload,
-            reviewType,
-            timelineEvents: readDependencyTimelineEvents(timelinePath),
-            taskModePath: String(options.taskModePath || '').trim()
-        });
-    }
-    if (parsedReviewContext.tree_state != null) {
-        assertReviewTreeStateFresh({
-            repoRoot,
-            reviewContext: parsedReviewContext,
-            contextPath,
-            gateName: 'record-review-result'
-        });
-    }
-
-    const materializedReview = materializeReviewContent({
-        artifactPath,
-        reviewType,
-        reviewContent,
-        verdictToken,
-        expectedPassVerdict,
-        requirePassValidationNotes: reviewContextRequiresPassValidationNotes(contextPath, repoRoot),
-        analyze: analyzeEarlyReviewMaterialization,
-        normalizeHeadings: normalizeCanonicalReviewSectionHeadings,
-        buildLosslessPassReviewNormalization,
-        isLosslessPassNormalizationEligibleViolation,
-        buildPassReviewTemplateHintMessage
-    });
-    reviewContent = materializedReview.reviewContent;
-    reviewMaterializationFidelity = materializedReview.reviewMaterializationFidelity;
-    if (reviewType !== 'test') {
-        assertRequiredUpstreamReviewDependencies({
-            taskId,
-            preflightPath,
-            preflightPayload,
-            reviewType,
-            timelineEvents: readDependencyTimelineEvents(timelinePath),
-            taskModePath: String(options.taskModePath || '').trim()
-        });
-    }
-    assertReviewTreeStateFresh({
-        repoRoot,
-        reviewContext: parsedReviewContext,
-        contextPath,
-        gateName: 'record-review-result'
-    });
-    resolveReviewerPromptArtifactBinding({
-        repoRoot,
-        contextPath,
-        reviewContext: parsedReviewContext,
-        gateName: 'record-review-result'
-    });
-    const runtimeIdentity = assertExplicitReviewContextRuntimeIdentity({
-        repoRoot,
-        taskId,
-        reviewType,
-        contextPath,
-        reviewerRouting: currentRouting,
-        taskModePath: String(options.taskModePath || '').trim()
-    });
-    assertRoutingCompatibility({
-        reviewType,
-        runtimeIdentity,
-        currentRouting,
-        reviewerExecutionMode,
-        reviewerFallbackReason
-    });
-
-    const artifactRollbackState = captureReviewArtifactRollbackState(artifactPath);
-    const previousRoutingUpdate = {
-        actualExecutionMode: currentRouting?.actual_execution_mode != null
-            ? String(currentRouting.actual_execution_mode).trim() || null
-            : null,
-        reviewerSessionId: currentRouting?.reviewer_session_id != null
-            ? String(currentRouting.reviewer_session_id).trim() || null
-            : null,
-        fallbackReason: currentRouting?.fallback_reason != null
-            ? String(currentRouting.fallback_reason).trim() || null
-            : null
-    };
-    writeReviewArtifactText(artifactPath, reviewContent.endsWith('\n') ? reviewContent : `${reviewContent}\n`);
-    const routingUpdate = applyReviewerRoutingMetadata(contextPath, {
-        actualExecutionMode: reviewerExecutionMode,
-        reviewerSessionId: reviewerIdentity,
-        fallbackReason: reviewerFallbackReason
-    });
-
-    try {
-        const receiptPath = await recordReviewReceiptFromArtifacts({
-            repoRoot,
-            taskId,
-            reviewType,
-            preflightPath,
-            artifactPath,
-            contextPath,
-            rawReviewOutputPath: reviewOutput.reviewOutputPath,
-            rawReviewOutputSha256,
-            rawReviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
-            reviewMaterializationFidelity,
-            taskModePath: String(options.taskModePath || '').trim(),
-            reviewerExecutionMode,
-            reviewerIdentity,
-            reviewerFallbackReason,
-            requireStrictBindingMetadata: !!options.reviewContextPath
-        });
-        cleanupReviewTempSourceArtifact(repoRoot, taskId, reviewOutput.reviewOutputSourcePath);
-
-        console.log(`REVIEW_RESULT_RECORDED: ${reviewType}`);
-        console.log(`ArtifactPath: ${normalizePath(artifactPath)}`);
-        console.log(`ContextPath: ${normalizePath(contextPath)}`);
-        console.log(`ReceiptPath: ${normalizePath(receiptPath)}`);
-        console.log(`ReviewerExecutionMode: ${reviewerExecutionMode}`);
-        console.log(`ReviewerIdentity: ${reviewerIdentity}`);
-        console.log(`ReviewOutputMode: ${reviewOutput.reviewOutputMode}`);
-        console.log(`ReviewOutputPath: ${normalizePath(reviewOutput.reviewOutputPath)}`);
-        console.log(`ReviewOutputSha256: ${rawReviewOutputSha256 || 'n/a'}`);
-        console.log(`ReviewMaterializationFidelity: ${reviewMaterializationFidelity}`);
-        if (reviewOutput.reviewOutputSourcePath) {
-            console.log(`ReviewOutputSourcePath: ${normalizePath(reviewOutput.reviewOutputSourcePath)}`);
-        }
-        console.log(`ContextSha256: ${routingUpdate.contextSha256 || 'n/a'}`);
-        if (reviewerFallbackReason) {
-            console.log(`ReviewerFallbackReason: ${reviewerFallbackReason}`);
-        }
-        console.log(`VerdictToken: ${verdictToken}`);
-        console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
-    } catch (error: unknown) {
-        try {
-            restoreReviewerRoutingMetadata(contextPath, previousRoutingUpdate);
-        } catch {
-            // Best-effort rollback only.
-        }
-        try {
-            restoreReviewArtifactFromRollbackState(artifactPath, artifactRollbackState, { ensureTrailingNewline: true });
-        } catch {
-            // Best-effort rollback only.
-        }
-        throw error;
-    }
-}
-
-export async function handleRecordReviewReceipt(gateArgv: string[]): Promise<void> {
-    const defs = {
-        '--task-id': { key: 'taskId', type: 'string' },
-        '--review-type': { key: 'reviewType', type: 'string' },
-        '--preflight-path': { key: 'preflightPath', type: 'string' },
-        '--review-context-path': { key: 'reviewContextPath', type: 'string' },
-        '--task-mode-path': { key: 'taskModePath', type: 'string' },
-        '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
-        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
-        '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
-        '--repo-root': { key: 'repoRoot', type: 'string' }
-    };
-    const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
-    const options = rawOptions as ParsedOptionsRecord;
-    const taskId = assertValidTaskId(options.taskId);
-    const reviewType = String(options.reviewType || '').trim().toLowerCase();
-    if (!reviewType) throw new Error('ReviewType is required.');
-
-    const repoRoot = normalizePathValue(options.repoRoot || '.');
-    assertReviewLifecycleGuard(repoRoot, taskId, 'record-review-receipt', 'review_phase');
-    const { preflightPath, artifactPath, contextPath } = resolveCanonicalReviewPaths(
-        repoRoot,
-        taskId,
-        reviewType,
-        options.preflightPath,
-        options.reviewContextPath
-    );
-    const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
-        options,
-        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
-    );
-    const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
-    assertRequiredUpstreamReviewDependencies({
-        taskId,
-        preflightPath,
-        preflightPayload,
-        reviewType,
-        timelineEvents: readDependencyTimelineEvents(timelinePath),
-        taskModePath: String(options.taskModePath || '').trim()
-    });
-    const receiptPath = await recordReviewReceiptFromArtifacts({
-        repoRoot,
-        taskId,
-        reviewType,
-        preflightPath,
-        artifactPath,
-        contextPath,
-        rawReviewOutputPath: artifactPath,
-        rawReviewOutputSha256: fileSha256(artifactPath),
-        rawReviewOutputSourceMtimeUtc: fs.statSync(artifactPath).mtime.toISOString(),
-        taskModePath: String(options.taskModePath || '').trim(),
-        reviewerExecutionMode,
-        reviewerIdentity,
-        reviewerFallbackReason,
-        requireStrictBindingMetadata: !!options.reviewContextPath
-    });
-    console.log(`REVIEW_RECORDED: ${reviewType} (Receipt: ${normalizePath(receiptPath)})`);
-    console.log(`ReviewerCleanup: ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}`);
-}
+export const {
+    handleRecordReviewResult,
+    handleRecordReviewReceipt
+} = reviewResultHandlers;
