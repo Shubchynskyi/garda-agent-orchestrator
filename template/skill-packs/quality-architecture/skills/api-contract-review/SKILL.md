@@ -42,6 +42,15 @@ metadata:
 |---|---|---|
 | Contract review checklist | `references/checklist.md` | Any API contract change or review |
 
+## Mandatory Output Format
+
+Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed API contract files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking API findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable API follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open API compatibility risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `API REVIEW PASSED` or `API REVIEW FAILED`.
+
 ## Breaking Change Heuristics
 
 A change is breaking if any existing correct consumer would fail or behave incorrectly after deployment. Common patterns:

@@ -40,6 +40,15 @@ metadata:
 |---|---|---|
 | Strategy checklist | `references/checklist.md` | Any test-strategy decision or review |
 
+## Mandatory Output Format
+
+When this skill is selected for a mandatory `test` review, return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed test files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking test findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable test follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open testing risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `TEST REVIEW PASSED` or `TEST REVIEW FAILED`.
+
 ## Anti-Patterns
 
 - **Coverage target as strategy**: treating line coverage percentage as the goal instead of asking which failures actually matter.

@@ -505,3 +505,81 @@ test('reviewer session contract stays synced across rule-pack guidance files', (
         }
     }
 });
+
+test('reviewer skill templates require canonical output-template sections and typed verdicts', () => {
+    const reviewerSkillContracts = [
+        {
+            relativePath: 'template/skills/code-review/SKILL.md',
+            passToken: 'REVIEW PASSED',
+            failToken: 'REVIEW FAILED',
+            compatibilityAlias: 'CODE REVIEW PASSED'
+        },
+        {
+            relativePath: 'template/skills/db-review/SKILL.md',
+            passToken: 'DB REVIEW PASSED',
+            failToken: 'DB REVIEW FAILED'
+        },
+        {
+            relativePath: 'template/skills/security-review/SKILL.md',
+            passToken: 'SECURITY REVIEW PASSED',
+            failToken: 'SECURITY REVIEW FAILED'
+        },
+        {
+            relativePath: 'template/skills/refactor-review/SKILL.md',
+            passToken: 'REFACTOR REVIEW PASSED',
+            failToken: 'REFACTOR REVIEW FAILED'
+        },
+        {
+            relativePath: 'template/skill-packs/quality-architecture/skills/api-contract-review/SKILL.md',
+            passToken: 'API REVIEW PASSED',
+            failToken: 'API REVIEW FAILED'
+        },
+        {
+            relativePath: 'template/skill-packs/quality-architecture/skills/testing-strategy/SKILL.md',
+            passToken: 'TEST REVIEW PASSED',
+            failToken: 'TEST REVIEW FAILED'
+        },
+        {
+            relativePath: 'template/skill-packs/quality-architecture/skills/performance-review/SKILL.md',
+            passToken: 'PERFORMANCE REVIEW PASSED',
+            failToken: 'PERFORMANCE REVIEW FAILED'
+        },
+        {
+            relativePath: 'template/skill-packs/devops-k8s/skills/devops-k8s/SKILL.md',
+            passToken: 'INFRA REVIEW PASSED',
+            failToken: 'INFRA REVIEW FAILED'
+        },
+        {
+            relativePath: 'template/skills/dependency-review/SKILL.md',
+            passToken: 'DEPENDENCY REVIEW PASSED',
+            failToken: 'DEPENDENCY REVIEW FAILED'
+        }
+    ] as const;
+
+    const requiredSnippets = [
+        'generated output template, not a free-form summary',
+        'Preserve these headings exactly and in this order',
+        '`## Validation Notes`',
+        '`## Findings by Severity`',
+        '`## Deferred Findings`',
+        '`## Residual Risks`',
+        '`## Verdict`',
+        'required for PASS',
+        'Justification:'
+    ] as const;
+
+    for (const contract of reviewerSkillContracts) {
+        assertRepoFileTrackedAndNotIgnored(contract.relativePath);
+        const content = readRepoFile(contract.relativePath);
+        for (const snippet of requiredSnippets) {
+            assert.ok(content.includes(snippet), `${contract.relativePath} must include canonical output contract snippet: ${snippet}`);
+        }
+        assert.ok(content.includes(contract.passToken), `${contract.relativePath} must name typed PASS token ${contract.passToken}`);
+        assert.ok(content.includes(contract.failToken), `${contract.relativePath} must name typed FAIL token ${contract.failToken}`);
+        if ('compatibilityAlias' in contract) {
+            assert.ok(content.includes(contract.compatibilityAlias), `${contract.relativePath} must preserve code-review alias wording`);
+        } else {
+            assert.equal(content.includes('CODE REVIEW PASSED'), false, `${contract.relativePath} must not advertise code-review aliases`);
+        }
+    }
+});

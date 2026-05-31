@@ -57,10 +57,12 @@ Prioritize exploitability, authorization integrity, and payment safety.
 7. Produce final security verdict.
 
 ## Mandatory Output Format
-1. Findings by severity with file references.
-2. Security checklist rows with `rule_id`, `status` (`PASS` or `FAIL`), `evidence`.
-3. Residual risks and follow-up mitigations.
-4. Explicit verdict: `SECURITY REVIEW PASSED` or `SECURITY REVIEW FAILED`.
+Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed security files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking security findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable security follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open security risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `SECURITY REVIEW PASSED` or `SECURITY REVIEW FAILED`.
 
 ## Hard Fail Conditions
 Return `SECURITY REVIEW FAILED` when any item is true:

@@ -111,6 +111,15 @@ function resolveReviewVerdictTokens(reviewType: string, artifactLabel: string): 
     };
 }
 
+function buildVerdictCompatibilityLines(reviewType: string): string[] {
+    if (reviewType !== 'code') {
+        return [];
+    }
+    return [
+        '- Code review compatibility: `CODE REVIEW PASSED` and `CODE REVIEW FAILED` remain accepted legacy aliases for ingestion, but generated templates should use `REVIEW PASSED` or `REVIEW FAILED`.'
+    ];
+}
+
 export function buildReviewerOutputContractMarkdown(options: {
     reviewType: string;
     rolePromptArtifactPath: string;
@@ -155,6 +164,7 @@ export function buildReviewerOutputContractMarkdown(options: {
         '```',
         `- PASS verdict line must be exactly: \`${passVerdictToken}\`.`,
         `- FAIL verdict line must be exactly: \`${failVerdictToken}\`.`,
+        ...buildVerdictCompatibilityLines(reviewType),
         '- A no-findings PASS must fill `Validation Notes` with 1-3 concise sentences naming the reviewed files and behavior checked.',
         '- Do not return only headings, `none`, and a PASS verdict; record-review-result rejects missing, empty, trivial, or obviously synthetic PASS reports.',
         '- Keep PASS analysis compact and concrete; put accepted non-blocking follow-ups only in Deferred Findings with `Justification:`.',
@@ -203,6 +213,7 @@ function buildReviewerRolePromptMarkdown(options: {
         `- Review type: ${reviewType}`,
         `- PASS verdict token: ${passVerdictToken}`,
         `- FAIL verdict token: ${failVerdictToken}`,
+        ...buildVerdictCompatibilityLines(reviewType),
         `- Selected skill id: ${options.selectedSkill.skill_id}`,
         `- Selected skill path: ${options.selectedSkill.skill_path}`,
         `- Selected skill sha256: ${options.selectedSkill.skill_sha256 || 'unavailable'}`,
@@ -283,6 +294,7 @@ function buildReviewerPromptTemplateMarkdown(options: {
         `- Review type: ${reviewType}`,
         `- PASS verdict token: ${passVerdictToken}`,
         `- FAIL verdict token: ${failVerdictToken}`,
+        ...buildVerdictCompatibilityLines(reviewType),
         '- Read the role prompt artifact first; it binds the selected reviewer skill id/path/hash for this launch.',
         '- Fill the output template artifact exactly; preserve headings, heading order, and verdict tokens.',
         '- Do not replace, rename, remove, or reorder mandatory output sections.',

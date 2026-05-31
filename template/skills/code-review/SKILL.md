@@ -59,11 +59,14 @@ Review for defects and risks first. Keep summary secondary.
 9. Produce final verdict.
 
 ## Mandatory Output Format
-1. Findings by severity with file references.
-2. Rule checklist rows with `rule_id`, `status` (`PASS` or `FAIL`), `evidence`.
-3. Rule coverage declaration with `applicable_rule_ids`, `not_applicable_rule_ids`, and reason for each skipped rule id.
-4. Residual risks and testing gaps.
-5. Explicit verdict: `REVIEW PASSED` or `REVIEW FAILED`.
+Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open risks or testing gaps that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `REVIEW PASSED` or `REVIEW FAILED`.
+
+`CODE REVIEW PASSED` and `CODE REVIEW FAILED` remain accepted legacy code-review aliases where the orchestrator supports them, but generated templates should use `REVIEW PASSED` or `REVIEW FAILED`.
 
 ## Hard Fail Conditions
 Return `REVIEW FAILED` when any item is true:

@@ -59,10 +59,12 @@ Primary goal is behavior preservation with lower maintenance risk.
 8. Produce final refactor verdict.
 
 ## Mandatory Output Format
-1. Findings by severity with file references.
-2. Refactor checklist rows with `rule_id`, `status` (`PASS` or `FAIL`), `evidence`.
-3. Residual risks and potential rollback points.
-4. Explicit verdict: `REFACTOR REVIEW PASSED` or `REFACTOR REVIEW FAILED`.
+Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed refactor files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking refactor findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable refactor follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open behavior-preservation or rollback risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `REFACTOR REVIEW PASSED` or `REFACTOR REVIEW FAILED`.
 
 ## Hard Fail Conditions
 Return `REFACTOR REVIEW FAILED` when any item is true:

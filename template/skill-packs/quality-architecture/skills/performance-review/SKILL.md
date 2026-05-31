@@ -47,6 +47,15 @@ metadata:
 |---|---|---|
 | Performance review checklist | `references/checklist.md` | Any performance-sensitive change or review |
 
+## Mandatory Output Format
+
+Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed performance-sensitive files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking performance findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable performance follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open latency, capacity, or measurement risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `PERFORMANCE REVIEW PASSED` or `PERFORMANCE REVIEW FAILED`.
+
 ## Anti-Patterns
 
 - **Microbenchmark theater**: claiming improvement from isolated benchmarks while ignoring p95 or p99 latency, queue depth, or system-level saturation behavior.

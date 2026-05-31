@@ -44,6 +44,15 @@ metadata:
 |---|---|---|
 | Delivery checklist | `references/checklist.md` | Any infra or deployment feature/review |
 
+## Mandatory Output Format
+
+When this skill is selected for a mandatory `infra` review, return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed infrastructure files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking infra findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable infra follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open rollout or operations risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `INFRA REVIEW PASSED` or `INFRA REVIEW FAILED`.
+
 ## Scope Map
 
 - **Build & supply chain** — base image pinning, artifact provenance, SBOM/signing, and deterministic CI inputs.

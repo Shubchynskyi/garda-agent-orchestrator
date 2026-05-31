@@ -56,10 +56,12 @@ Prioritize correctness, performance, and data safety.
 7. Produce final DB verdict.
 
 ## Mandatory Output Format
-1. Findings by severity with file references.
-2. DB checklist rows with `rule_id`, `status` (`PASS` or `FAIL`), `evidence`.
-3. Residual DB risks and required follow-up checks.
-4. Explicit verdict: `DB REVIEW PASSED` or `DB REVIEW FAILED`.
+Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed DB files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking DB findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable DB follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open DB risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `DB REVIEW PASSED` or `DB REVIEW FAILED`.
 
 ## Hard Fail Conditions
 Return `DB REVIEW FAILED` when any item is true:

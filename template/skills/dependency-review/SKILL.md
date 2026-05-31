@@ -48,10 +48,12 @@ Prioritize supply-chain integrity, runtime compatibility, and operational blast 
 8. Produce final dependency verdict.
 
 ## Mandatory Output Format
-1. Findings by severity with file references.
-2. Dependency checklist rows with `rule_id`, `status` (`PASS` or `FAIL`), `evidence`.
-3. Residual risks and rollout caveats.
-4. Explicit verdict: `DEPENDENCY REVIEW PASSED` or `DEPENDENCY REVIEW FAILED`.
+Return the generated output template, not a free-form summary. Preserve these headings exactly and in this order:
+1. `## Validation Notes` - concrete reviewed dependency files, behavior, boundaries, and verification evidence; required for PASS.
+2. `## Findings by Severity` - active blocking dependency findings with file references, or `none`.
+3. `## Deferred Findings` - accepted actionable dependency follow-ups with a concrete next step and `Justification:`, or `none`.
+4. `## Residual Risks` - active open dependency or rollout risks that remain after review, or `none`.
+5. `## Verdict` - exact verdict token: `DEPENDENCY REVIEW PASSED` or `DEPENDENCY REVIEW FAILED`.
 
 ## Hard Fail Conditions
 Return `DEPENDENCY REVIEW FAILED` when any item is true:
