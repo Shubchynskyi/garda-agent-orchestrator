@@ -24,6 +24,8 @@ export function getTaskModeRuleSectionMigrations(): readonly RuleContractSection
         heading: '### Compile Gate (Mandatory)',
         requiredSnippets: Object.freeze([
             '### Compile Gate (Mandatory)',
+            'must be a compile/build/type-check command',
+            'Do not use full-suite test commands here',
             `${getBundleCliCommand(bn)} gate compile-gate`
         ])
     }),

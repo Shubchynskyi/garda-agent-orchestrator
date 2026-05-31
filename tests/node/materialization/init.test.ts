@@ -568,6 +568,9 @@ describe('runInit', () => {
             assert.ok(discovery.includes('Java or JVM'));
             assert.ok(discovery.includes('`build.gradle.kts`'));
             assert.ok(discovery.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat test' : './gradlew test') + '`'));
+            assert.ok(discovery.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat assemble' : './gradlew assemble') + '`'));
+            assert.ok(commands.includes(process.platform === 'win32' ? '.\\gradlew.bat assemble' : './gradlew assemble'));
+            assert.equal(/### Compile Gate \(Mandatory\)\r?\n```bash\r?\nnpm run build\r?\n```/.test(commands), false);
             assert.ok(commands.includes('Use the command detected in `garda-agent-orchestrator/live/project-discovery.md`'));
             assert.ok(!commands.includes('### Test\r\n```bash\r\nnpm test'));
         } finally {

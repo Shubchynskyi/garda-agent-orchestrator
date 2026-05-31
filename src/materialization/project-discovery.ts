@@ -27,6 +27,7 @@ export interface ProjectDiscovery {
     rootFiles: string[];
     runtimePathHints: string[];
     suggestedCommands: string[];
+    suggestedCompileGateCommands: string[];
     suggestedFullSuiteValidationCommand: string | null;
     relativeFiles: string[];
     sampleFiles: string[];
@@ -99,6 +100,28 @@ function detectNodePackageManager(targetRoot: string, packageJson: Record<string
     return 'npm';
 }
 
+function getPackageJsonScripts(packageJson: Record<string, unknown> | null): Record<string, unknown> {
+    if (!packageJson || typeof packageJson.scripts !== 'object' || Array.isArray(packageJson.scripts) || packageJson.scripts === null) {
+        return {};
+    }
+    return packageJson.scripts as Record<string, unknown>;
+}
+
+function resolveNodeCompileGateCommands(targetRoot: string): string[] {
+    if (!pathExists(path.join(targetRoot, 'package.json'))) {
+        return [];
+    }
+
+    const packageJson = readRootPackageJsonSafe(targetRoot);
+    const runner = detectNodePackageManager(targetRoot, packageJson);
+    const scripts = getPackageJsonScripts(packageJson);
+    const preferredScripts = ['build', 'compile', 'typecheck', 'type-check', 'check'];
+    const commands = preferredScripts
+        .filter((scriptName) => typeof scripts[scriptName] === 'string')
+        .map((scriptName) => `${runner} run ${scriptName}`);
+    return commands.length > 0 ? commands : [`${runner} run build`];
+}
+
 function resolveNodeFullSuiteValidationCommand(targetRoot: string): string | null {
     if (!pathExists(path.join(targetRoot, 'package.json'))) {
         return null;
@@ -125,6 +148,35 @@ function hasAnyRootFileByExtension(targetRoot: string, extensions: readonly stri
     }
 }
 
+function resolveJvmWrapperCommand(options: {
+    targetRoot: string;
+    wrapperName: string;
+    windowsWrapperName: string;
+    fallbackCommand: string;
+    runtimePlatform: NodeJS.Platform;
+    taskName: string;
+}): string {
+    const { targetRoot, wrapperName, windowsWrapperName, fallbackCommand, runtimePlatform, taskName } = options;
+    const posixWrapperExists = pathExists(path.join(targetRoot, wrapperName));
+    const windowsWrapperExists = pathExists(path.join(targetRoot, windowsWrapperName));
+
+    if (runtimePlatform === 'win32') {
+        if (windowsWrapperExists) {
+            return `.\\${windowsWrapperName} ${taskName}`;
+        }
+        if (posixWrapperExists) {
+            return `./${wrapperName} ${taskName}`;
+        }
+        return fallbackCommand;
+    }
+
+    if (posixWrapperExists) {
+        return `./${wrapperName} ${taskName}`;
+    }
+
+    return fallbackCommand;
+}
+
 function resolveJvmWrapperTestCommand(options: {
     targetRoot: string;
     wrapperName: string;
@@ -132,25 +184,61 @@ function resolveJvmWrapperTestCommand(options: {
     fallbackCommand: string;
     runtimePlatform: NodeJS.Platform;
 }): string {
-    const { targetRoot, wrapperName, windowsWrapperName, fallbackCommand, runtimePlatform } = options;
-    const posixWrapperExists = pathExists(path.join(targetRoot, wrapperName));
-    const windowsWrapperExists = pathExists(path.join(targetRoot, windowsWrapperName));
+    return resolveJvmWrapperCommand({ ...options, taskName: 'test' });
+}
 
-    if (runtimePlatform === 'win32') {
-        if (windowsWrapperExists) {
-            return `.\\${windowsWrapperName} test`;
-        }
-        if (posixWrapperExists) {
-            return `./${wrapperName} test`;
-        }
-        return fallbackCommand;
+export function resolveSuggestedCompileGateCommands(
+    targetRoot: string,
+    runtimePlatform: NodeJS.Platform = process.platform
+): string[] {
+    const normalizedTargetRoot = path.resolve(targetRoot);
+    const commands: string[] = [];
+
+    commands.push(...resolveNodeCompileGateCommands(normalizedTargetRoot));
+
+    if (hasAnyRootFile(normalizedTargetRoot, ['tsconfig.json'])) {
+        commands.push('npx tsc --noEmit');
     }
 
-    if (posixWrapperExists) {
-        return `./${wrapperName} test`;
+    if (hasAnyRootFile(normalizedTargetRoot, ['pyproject.toml', 'requirements.txt', 'requirements-dev.txt'])) {
+        commands.push('python -m compileall .');
     }
 
-    return fallbackCommand;
+    if (pathExists(path.join(normalizedTargetRoot, 'pom.xml'))) {
+        commands.push(resolveJvmWrapperCommand({
+            targetRoot: normalizedTargetRoot,
+            wrapperName: 'mvnw',
+            windowsWrapperName: 'mvnw.cmd',
+            fallbackCommand: 'mvn compile',
+            runtimePlatform,
+            taskName: 'compile'
+        }));
+    }
+
+    if (hasAnyRootFile(normalizedTargetRoot, ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'])) {
+        commands.push(resolveJvmWrapperCommand({
+            targetRoot: normalizedTargetRoot,
+            wrapperName: 'gradlew',
+            windowsWrapperName: 'gradlew.bat',
+            fallbackCommand: 'gradle assemble',
+            runtimePlatform,
+            taskName: 'assemble'
+        }));
+    }
+
+    if (pathExists(path.join(normalizedTargetRoot, 'go.mod'))) {
+        commands.push('go build ./...');
+    }
+
+    if (pathExists(path.join(normalizedTargetRoot, 'Cargo.toml'))) {
+        commands.push('cargo check');
+    }
+
+    if (hasAnyRootFileByExtension(normalizedTargetRoot, ['.sln', '.csproj', '.fsproj'])) {
+        commands.push('dotnet build');
+    }
+
+    return [...new Set(commands)].sort();
 }
 
 export function resolveSuggestedFullSuiteValidationCommand(
@@ -295,6 +383,7 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
 
     const rootFiles = uniqueFiles.filter((filePath: string) => !filePath.includes('/')).slice(0, 20);
     const runtimePathHints = collectRuntimePathHints(uniqueFiles);
+    const suggestedCompileGateCommands = resolveSuggestedCompileGateCommands(targetRoot);
     const suggestedFullSuiteValidationCommand = resolveSuggestedFullSuiteValidationCommand(targetRoot);
 
     return {
@@ -306,6 +395,7 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
         rootFiles,
         runtimePathHints,
         suggestedCommands: [...new Set(suggestedCommands)].sort(),
+        suggestedCompileGateCommands,
         suggestedFullSuiteValidationCommand,
         relativeFiles: uniqueFiles,
         sampleFiles: uniqueFiles.slice(0, 40)
@@ -425,6 +515,16 @@ export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestam
         }
     }
 
+    lines.push('', '## Suggested Compile Gate Commands (Heuristic)');
+    if (!Array.isArray(discovery.suggestedCompileGateCommands) || discovery.suggestedCompileGateCommands.length === 0) {
+        lines.push('- No compile-gate command suggestions from discovery. Populate `40-commands.md` with a compile/build/type-check command manually; do not use the full test suite here.');
+    } else {
+        lines.push('- Use these only for `### Compile Gate (Mandatory)` in `40-commands.md`; full test suites belong in full-suite validation.');
+        for (const cmd of discovery.suggestedCompileGateCommands) {
+            lines.push(`- ${tick}${cmd}${tick}`);
+        }
+    }
+
     lines.push('', '## Suggested Local Commands (Heuristic)');
     if (discovery.suggestedCommands.length === 0) {
         lines.push('- No command suggestions from discovery. Populate `40-commands.md` manually.');
@@ -464,6 +564,10 @@ export function buildDiscoveryOverlaySection(discovery: ProjectDiscovery): strin
         && discovery.suggestedFullSuiteValidationCommand !== UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
         ? `\`${discovery.suggestedFullSuiteValidationCommand}\``
         : 'none detected; keep workflow-config unconfigured until an operator sets a project-specific command';
+    const compileGateCommandText = Array.isArray(discovery.suggestedCompileGateCommands)
+        && discovery.suggestedCompileGateCommands.length > 0
+        ? `\`${discovery.suggestedCompileGateCommands[0]}\``
+        : 'none detected; choose a compile/build/type-check command manually and do not use the full test suite';
 
     return [
         '## Project Discovery Snapshot',
@@ -471,6 +575,7 @@ export function buildDiscoveryOverlaySection(discovery: ProjectDiscovery): strin
         `- Files considered: ${discovery.fileCount}`,
         `- Detected stacks: ${stacksText}`,
         `- Top-level directories: ${dirsText}`,
+        `- Suggested compile-gate command: ${compileGateCommandText}`,
         `- Suggested full-suite validation command: ${fullSuiteCommandText}`,
         `- Full report: \`${resolveBundleName()}/live/project-discovery.md\``
     ].join('\r\n');

@@ -8,6 +8,7 @@ import {
     getProjectDiscovery,
     buildProjectDiscoveryLines,
     buildDiscoveryOverlaySection,
+    resolveSuggestedCompileGateCommands,
     resolveSuggestedFullSuiteValidationCommand,
     STACK_SIGNALS,
     ProjectDiscovery
@@ -41,6 +42,8 @@ describe('getProjectDiscovery', () => {
             assert.ok(result.detectedStacks.includes('Node.js or JavaScript'));
             assert.ok(result.detectedStacks.includes('Go'));
             assert.ok(result.suggestedCommands.length > 0);
+            assert.ok(result.suggestedCompileGateCommands.includes('npm run build'));
+            assert.ok(result.suggestedCompileGateCommands.includes('go build ./...'));
             assert.equal(result.suggestedFullSuiteValidationCommand, 'npm test');
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -159,6 +162,42 @@ describe('resolveSuggestedFullSuiteValidationCommand', () => {
     });
 });
 
+describe('resolveSuggestedCompileGateCommands', () => {
+    it('prefers package-manager build and typecheck scripts for Node workspaces', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-node-compile-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
+                packageManager: 'pnpm@9.0.0',
+                scripts: { build: 'vite build', typecheck: 'tsc --noEmit', test: 'vitest run' }
+            }), 'utf8');
+
+            const result = resolveSuggestedCompileGateCommands(tmpDir);
+            assert.ok(result.includes('pnpm run build'));
+            assert.ok(result.includes('pnpm run typecheck'));
+            assert.ok(!result.includes('pnpm test'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('uses compile-only JVM suggestions instead of test tasks', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-jvm-compile-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'pom.xml'), '<project />', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'mvnw'), '#!/bin/sh\n', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'build.gradle.kts'), 'plugins {}\n', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'gradlew.bat'), '@echo off\r\n', 'utf8');
+
+            const result = resolveSuggestedCompileGateCommands(tmpDir, 'win32');
+            assert.ok(result.includes('./mvnw compile'));
+            assert.ok(result.includes('.\\gradlew.bat assemble'));
+            assert.ok(!result.some((command) => /\btest\b/.test(command)));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+});
+
 describe('buildProjectDiscoveryLines', () => {
     it('produces markdown with expected sections', () => {
         const discovery = {
@@ -170,6 +209,7 @@ describe('buildProjectDiscoveryLines', () => {
             rootFiles: ['package.json', 'README.md'],
             runtimePathHints: ['src/'],
             suggestedCommands: ['npm run test'],
+            suggestedCompileGateCommands: ['pnpm run build'],
             suggestedFullSuiteValidationCommand: 'pnpm test',
             sampleFiles: ['package.json', 'src/index.js']
         };
@@ -182,6 +222,8 @@ describe('buildProjectDiscoveryLines', () => {
         assert.ok(text.includes('## Stack Evidence'));
         assert.ok(text.includes('## Root Files'));
         assert.ok(text.includes('## Runtime Path Hints'));
+        assert.ok(text.includes('## Suggested Compile Gate Commands'));
+        assert.ok(text.includes('pnpm run build'));
         assert.ok(text.includes('## Suggested Local Commands'));
         assert.ok(text.includes('## Suggested Full-Suite Validation Command'));
         assert.ok(text.includes('pnpm test'));
@@ -195,12 +237,14 @@ describe('buildDiscoveryOverlaySection', () => {
             source: 'git_index_and_worktree',
             fileCount: 100,
             detectedStacks: ['Python', 'Go'],
-            topLevelDirectories: ['src', 'cmd']
+            topLevelDirectories: ['src', 'cmd'],
+            suggestedCompileGateCommands: ['go build ./...']
         };
         const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);
         assert.ok(result.includes('## Project Discovery Snapshot'));
         assert.ok(result.includes('Python, Go'));
         assert.ok(result.includes('src, cmd'));
+        assert.ok(result.includes('Suggested compile-gate command: `go build ./...`'));
     });
 
     it('shows none detected for empty stacks', () => {
@@ -208,7 +252,8 @@ describe('buildDiscoveryOverlaySection', () => {
             source: 'filesystem_scan',
             fileCount: 0,
             detectedStacks: [],
-            topLevelDirectories: []
+            topLevelDirectories: [],
+            suggestedCompileGateCommands: []
         };
         const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);
         assert.ok(result.includes('none detected'));
@@ -220,6 +265,7 @@ describe('buildDiscoveryOverlaySection', () => {
             fileCount: 2,
             detectedStacks: ['Java or JVM'],
             topLevelDirectories: ['src'],
+            suggestedCompileGateCommands: ['./gradlew assemble'],
             suggestedFullSuiteValidationCommand: './gradlew test'
         };
         const result = buildDiscoveryOverlaySection(discovery as unknown as ProjectDiscovery);

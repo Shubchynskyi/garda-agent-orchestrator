@@ -101,6 +101,7 @@ node garda-agent-orchestrator/bin/garda.js skills validate --target-root "."
 Rules:
 - Use the command detected in `garda-agent-orchestrator/live/project-discovery.md` or explicitly configured in `garda-agent-orchestrator/live/config/workflow-config.json`.
 - If no deterministic command is detected, keep full-suite validation unconfigured until the operator sets a project-specific command.
+- Test commands from this section must not be copied into `### Compile Gate (Mandatory)`; compile-gate is for compile/build/type-check only.
 - Direct generated-artifact test consumers are producer-consumer flows: refresh the generated artifacts first with the owning producer command, then run the consumer.
 - Do not launch the producer and direct generated-artifact consumer as parallel raw shell commands; that bypasses the guarded validation-chain path.
 
@@ -117,7 +118,10 @@ npm run build
 
 Rules:
 - First non-empty non-comment line from this block is the compile gate command.
-- Command must be non-interactive and must return non-zero exit code on compile failure.
+- Command must be non-interactive, must return non-zero exit code on compile failure, and must be a compile/build/type-check command.
+- Do not use full-suite test commands here (`npm test`, `mvn test`, `gradle test`, `go test`, `cargo test`, `dotnet test`, `pytest`, or equivalent). Put full repository tests in `full-suite-validation` instead.
+- Preferred examples: Node/TypeScript `npm run build` or `npx tsc --noEmit`; Maven `./mvnw compile`; Gradle `./gradlew assemble`; Go `go build ./...`; Rust `cargo check`; .NET `dotnet build`.
+- If the repository truly has no separate compile/build/type-check command, stop for operator approval before using the compile-gate override flags.
 - This command is executed by `node garda-agent-orchestrator/bin/garda.js gate compile-gate` before review phase.
 
 ### Build and Package

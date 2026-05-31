@@ -135,6 +135,50 @@ describe('cli/commands/gates compile and post-preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('fails compile gate before execution when command is a full-suite test command', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-compile-contract';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands.md');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'npm test',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Update app flow'
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => /must not run the full test suite/i.test(line)));
+        const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
+        const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+        assert.equal(evidence.status, 'FAILED');
+        assert.deepEqual(evidence.compile_commands, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails compile gate when strict optional-skill selection evidence is missing for the current task cycle', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-optional-skill';

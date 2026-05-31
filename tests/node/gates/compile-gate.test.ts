@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import {
     getCompileCommandProfile,
     getCompileCommands,
+    getCompileCommandContractViolations,
     getOutputStats,
     getWorkspaceSnapshot,
     extractNewPathFromNumstat
@@ -76,6 +77,11 @@ describe('gates/compile-gate', () => {
 
         it('detects mvn test as test', () => {
             const result = getCompileCommandProfile('mvn test');
+            assert.equal(result.kind, 'test');
+        });
+
+        it('detects Windows wrapper test commands as test', () => {
+            const result = getCompileCommandProfile('.\\gradlew.bat test');
             assert.equal(result.kind, 'test');
         });
 
@@ -159,6 +165,70 @@ describe('gates/compile-gate', () => {
 
             assert.throws(() => getCompileCommands(filePath), /placeholder.*unresolved/i);
             fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('rejects full-suite test commands in compile gate section', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
+            const filePath = path.join(tmpDir, 'commands.md');
+            fs.writeFileSync(filePath, [
+                '### Compile Gate (Mandatory)',
+                '```',
+                'npm test',
+                '```',
+            ].join('\n'), 'utf8');
+
+            assert.throws(() => getCompileCommands(filePath), /must not run the full test suite/i);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('rejects commands matching configured full-suite validation command', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
+            const filePath = path.join(tmpDir, 'commands.md');
+            fs.writeFileSync(filePath, [
+                '### Compile Gate (Mandatory)',
+                '```',
+                'npm run verify',
+                '```',
+            ].join('\n'), 'utf8');
+
+            assert.throws(
+                () => getCompileCommands(filePath, { fullSuiteCommand: 'npm run verify' }),
+                /matches the configured full-suite validation command/i
+            );
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('allows approved full-test compile command override with reason', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
+            const filePath = path.join(tmpDir, 'commands.md');
+            fs.writeFileSync(filePath, [
+                '### Compile Gate (Mandatory)',
+                '```',
+                'npm test',
+                '```',
+            ].join('\n'), 'utf8');
+
+            const commands = getCompileCommands(filePath, {
+                allowFullTestCompileCommand: true,
+                allowFullTestCompileCommandReason: 'operator-approved legacy repository has no separate build command'
+            });
+
+            assert.deepEqual(commands, ['npm test']);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+    });
+
+    describe('getCompileCommandContractViolations', () => {
+        it('flags Maven and Gradle test-bound lifecycle commands', () => {
+            assert.ok(getCompileCommandContractViolations('mvn package').some((item) => item.includes('Maven phase')));
+            assert.ok(getCompileCommandContractViolations('./gradlew build').some((item) => item.includes("Gradle task 'build'")));
+            assert.deepEqual(getCompileCommandContractViolations('./mvnw compile'), []);
+            assert.deepEqual(getCompileCommandContractViolations('./gradlew assemble'), []);
+            assert.deepEqual(getCompileCommandContractViolations('./gradlew build -x test'), []);
+            assert.deepEqual(getCompileCommandContractViolations('./gradlew :app:build --exclude-task :app:test'), []);
+            assert.deepEqual(getCompileCommandContractViolations('./gradlew :app:build -x :app:test'), []);
+            assert.ok(getCompileCommandContractViolations('./gradlew :app:build --exclude-task :other:test').some((item) => item.includes("Gradle task 'build'")));
+            assert.ok(getCompileCommandContractViolations('./gradlew build --exclude-task :app:test').some((item) => item.includes("Gradle task 'build'")));
         });
     });
 

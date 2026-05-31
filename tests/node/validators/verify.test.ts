@@ -175,6 +175,43 @@ test('detectCommandsViolations returns empty for missing file', () => {
     }
 });
 
+test('detectCommandsViolations rejects test command in compile gate section', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    const rulesDir = path.join(
+        tmpDir,
+        'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'
+    );
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, '40-commands.md'), [
+        '# Commands',
+        '',
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        'npm test',
+        '```',
+        '',
+        'node garda-agent-orchestrator/bin/garda.js gate enter-task-mode',
+        'node garda-agent-orchestrator/bin/garda.js gate load-rule-pack',
+        'node garda-agent-orchestrator/bin/garda.js gate classify-change',
+        'node garda-agent-orchestrator/bin/garda.js gate compile-gate',
+        'node garda-agent-orchestrator/bin/garda.js gate required-reviews-check',
+        'node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate',
+        'node garda-agent-orchestrator/bin/garda.js gate completion-gate',
+        'node garda-agent-orchestrator/bin/garda.js gate log-task-event',
+        'node garda-agent-orchestrator/bin/garda.js gate task-events-summary',
+        'node garda-agent-orchestrator/bin/garda.js gate build-scoped-diff',
+        'node garda-agent-orchestrator/bin/garda.js gate build-review-context',
+        'node garda-agent-orchestrator/bin/garda.js gate validate-manifest'
+    ].join('\n'), 'utf8');
+
+    try {
+        const violations = detectCommandsViolations(tmpDir);
+        assert.ok(violations.some((violation) => /must not run the full test suite/i.test(violation)));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('detectTaskModeRuleContractViolations reports stale task-mode rule snippets', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
     const rulesDir = path.join(
@@ -317,6 +354,8 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         '# Commands',
         '',
         '### Compile Gate (Mandatory)',
+        'Compile gate command must be a compile/build/type-check command.',
+        'Do not use full-suite test commands here.',
         'node garda-agent-orchestrator/bin/garda.js gate compile-gate',
         '',
         '## Agent Gates',

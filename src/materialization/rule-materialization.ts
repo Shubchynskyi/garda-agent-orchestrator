@@ -302,6 +302,31 @@ export function applyContextDefaults(content: string, ruleFile: string, discover
     return updated + '\r\n\r\n' + discoveryOverlay + '\r\n';
 }
 
+export function applyCompileGateCommandDefaults(content: string, ruleFile: string, suggestedCompileGateCommands: readonly string[]): string {
+    if (ruleFile !== '40-commands.md' || suggestedCompileGateCommands.length === 0) {
+        return content;
+    }
+
+    const command = String(suggestedCompileGateCommands[0] || '').trim();
+    if (!command) {
+        return content;
+    }
+
+    const sectionPattern = /(^### Compile Gate \(Mandatory\)[\s\S]*?```[^\r\n]*(?:\r?\n))([\s\S]*?)(\r?\n```)/m;
+    const match = sectionPattern.exec(content);
+    if (!match) {
+        return content;
+    }
+
+    const bodyLines = match[2].split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const firstCommand = bodyLines.find((line) => !line.startsWith('#')) || '';
+    if (firstCommand && firstCommand !== 'npm run build' && !/^<[^>]+>$/.test(firstCommand)) {
+        return content;
+    }
+
+    return content.replace(sectionPattern, `$1${command}$3`);
+}
+
 export function applyAssistantDefaults(content: string, ruleFile: string, assistantLanguage: string, assistantBrevity: string): string {
     if (ruleFile !== '00-core.md') return content;
 

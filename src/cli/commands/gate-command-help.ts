@@ -262,9 +262,10 @@ function buildPreflightGateHelpEntries(
             )
         },
         'compile-gate': {
-            ...createGateHelpEntry('Run the mandatory build/typecheck/test commands selected by the guarded compile flow.', [
+            ...createGateHelpEntry('Run the mandatory compile/build/type-check commands selected by the guarded compile flow; full test suites belong to full-suite-validation.', [
                 `${cliPrefix} gate compile-gate --task-id "${TASK_ID_PLACEHOLDER}" --commands-path "${buildBundleRelativePath(bundleName, 'live/docs/agent-rules/40-commands.md')}" --repo-root "."`,
-                `${cliPrefix} gate compile-gate --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`
+                `${cliPrefix} gate compile-gate --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --task-id "${TASK_ID_PLACEHOLDER}" --repo-root "."`,
+                `${cliPrefix} gate compile-gate --task-id "${TASK_ID_PLACEHOLDER}" --allow-full-test-compile-command --allow-full-test-compile-command-reason "<operator-approved reason>" --repo-root "."`
             ], true)
         },
         'build-scoped-diff': {

@@ -13,6 +13,7 @@ import { isPathInsideRoot } from '../core/paths';
 import { getManagedGitignoreEntries } from '../materialization/common';
 import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';
 import { getTaskModeRuleSectionMigrations } from '../materialization/rule-contracts';
+import { getCompileCommands } from '../gates/compile-gate';
 import {
     PROJECT_COMMAND_PLACEHOLDERS,
     RULE_FILES,
@@ -280,6 +281,11 @@ export function detectCommandsViolations(targetRoot: string): string[] {
         if (!present) violations.push("40-commands.md must include gate contract snippet '"+req[i]+"'.");
     }
     for (var j=0;j<PROJECT_COMMAND_PLACEHOLDERS.length;j++) { if (content.includes(PROJECT_COMMAND_PLACEHOLDERS[j])) violations.push('40-commands.md contains unresolved command placeholder: '+PROJECT_COMMAND_PLACEHOLDERS[j]); }
+    try {
+        getCompileCommands(cp);
+    } catch (error) {
+        violations.push('40-commands.md compile gate command contract violation: ' + (error instanceof Error ? error.message : String(error)));
+    }
     return violations;
 }
 

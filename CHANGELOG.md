@@ -32,6 +32,7 @@
 - Review reuse is stricter and more useful: PASS reviews can be reused only when receipt, provenance, tree state, scope fingerprints, and current-cycle bindings prove they are still valid.
 - Strict-profile reviews are more evidence-aware, so DB/API/performance/infra/dependency lanes are not forced without matching domain surface evidence.
 - Reviewer contexts now show current full-suite artifact freshness and duration, and tell reviewers when a current PASS suite already covers their lane without rerunning full tests.
+- Compile-gate now rejects full-suite/test commands in its command block, while init and project discovery suggest stack-specific compile/build/type-check commands separately from full-suite validation commands.
 - Full-suite validation, docs-only scopes, ordinary docs, and test-only deltas now have clearer routing so unnecessary expensive review/test cycles are avoided without weakening freshness checks.
 - Full-suite timeout guidance now accounts for recent high-watermark runtime instead of relying only on averages, and external timeout cleanup now terminates child process trees more reliably.
 

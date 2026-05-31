@@ -51,6 +51,7 @@ import {
     isBootstrapOnlyLegacyCodeStyleRule,
     selectRuleSource,
     applyContextDefaults,
+    applyCompileGateCommandDefaults,
     applyAssistantDefaults,
     generateProjectMemorySummary
 } from './rule-materialization';
@@ -300,6 +301,7 @@ export function runInit(options: RunInitOptions) {
         // Apply template-specific context overlay
         if (source.origin === 'template') {
             content = applyContextDefaults(content, ruleFile, discoveryOverlay);
+            content = applyCompileGateCommandDefaults(content, ruleFile, discovery.suggestedCompileGateCommands);
         }
 
         // Apply assistant defaults (language/brevity) to 00-core.md

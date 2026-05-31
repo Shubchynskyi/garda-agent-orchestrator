@@ -21,11 +21,11 @@ export function getCompileCommandProfile(command: string) {
         /(^|\s)(jest|vitest|ava|mocha)(\s|$)/,
         /(^|\s)(playwright\s+test|cypress\s+run)(\s|$)/,
         /(^|\s)(go\s+test|cargo\s+test|dotnet\s+test)(\s|$)/,
-        /(^|\s)(\.\/)?mvnw(\.cmd)?(\s+.*)?\s+test(\s|$)/,
+        /(^|\s)(?:\.\/|\.\\)?mvnw(\.cmd)?(\s+.*)?\s+test(\s|$)/,
         /(^|\s)mvn(\s+.*)?\s+test(\s|$)/,
-        /(^|\s)(\.\/)?gradlew(\.bat)?(\s+.*)?\s+test(\s|$)/,
+        /(^|\s)(?:\.\/|\.\\)?gradlew(\.bat)?(\s+.*)?\s+test(\s|$)/,
         /(^|\s)gradle(\s+.*)?\s+test(\s|$)/,
-        /(^|\s)(npm|pnpm|yarn|bun)(\s+run)?\s+(test|test:ci|test:unit|test:integration)(\s|$)/
+        /(^|\s)(npm|pnpm|yarn|bun)(\s+run)?\s+(test(?::[\w:-]+)?|e2e|coverage)(\s|$)/
     ];
     const lintPatterns = [
         /(^|\s)(eslint|stylelint|ruff(\s+check)?|flake8|mypy|pyright|shellcheck|hadolint|ktlint|golangci-lint|phpstan|psalm)(\s|$)/,
@@ -37,9 +37,9 @@ export function getCompileCommandProfile(command: string) {
         kind = 'test'; strategy = 'test'; label = 'test';
     } else if (lintPatterns.some(p => p.test(normalized))) {
         kind = 'lint'; strategy = 'lint'; label = 'lint';
-    } else if (/(^|\s)(\.\/)?mvnw(\.cmd)?(\s|$)/.test(normalized) || /(^|\s)mvn(\s|$)/.test(normalized)) {
+    } else if (/(^|\s)(?:\.\/|\.\\)?mvnw(\.cmd)?(\s|$)/.test(normalized) || /(^|\s)mvn(\s|$)/.test(normalized)) {
         strategy = 'maven'; label = 'maven';
-    } else if (/(^|\s)(\.\/)?gradlew(\.bat)?(\s|$)/.test(normalized) || /(^|\s)gradle(\s|$)/.test(normalized)) {
+    } else if (/(^|\s)(?:\.\/|\.\\)?gradlew(\.bat)?(\s|$)/.test(normalized) || /(^|\s)gradle(\s|$)/.test(normalized)) {
         strategy = 'gradle'; label = 'gradle';
     } else if (/(^|\s)(npm|pnpm|yarn|bun|npx|vite|webpack|turbo|nx)(\s|$)/.test(normalized)) {
         strategy = 'node'; label = 'node-build';
@@ -66,11 +66,222 @@ export function getCompileCommandProfile(command: string) {
     return { kind, strategy, label, failure_profile: failureProfile, success_profile: successProfile };
 }
 
+export interface CompileCommandContractOptions {
+    fullSuiteCommand?: string | null;
+    allowFullTestCompileCommand?: boolean;
+    allowFullTestCompileCommandReason?: string | null;
+}
+
+function normalizeCompileCommandForContract(command: string): string {
+    return String(command || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+}
+
+function commandTokensForContract(command: string): string[] {
+    return normalizeCompileCommandForContract(command)
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter(Boolean);
+}
+
+function isMavenExecutableToken(token: string): boolean {
+    const normalized = token.replace(/^\.?\//, '');
+    return normalized === 'mvn' || normalized === 'mvnw' || normalized === 'mvnw.cmd';
+}
+
+function isGradleExecutableToken(token: string): boolean {
+    const normalized = token.replace(/^\.?\//, '');
+    return normalized === 'gradle' || normalized === 'gradlew' || normalized === 'gradlew.bat';
+}
+
+function hasMavenSkipTestsFlag(tokens: readonly string[]): boolean {
+    return tokens.some((token) => (
+        token === '-dskiptests'
+        || token === '-dskiptests=true'
+        || token === '-dmaven.test.skip=true'
+    ));
+}
+
+function getMavenLifecycleViolation(command: string): string | null {
+    const tokens = commandTokensForContract(command);
+    const executableIndex = tokens.findIndex(isMavenExecutableToken);
+    if (executableIndex < 0) {
+        return null;
+    }
+    const testBoundPhases = new Set(['test', 'package', 'verify', 'install', 'deploy']);
+    const goals = tokens.slice(executableIndex + 1).filter((token) => !token.startsWith('-'));
+    const violatingGoal = goals.find((goal) => testBoundPhases.has(goal));
+    if (!violatingGoal) {
+        return null;
+    }
+    if (violatingGoal !== 'test' && hasMavenSkipTestsFlag(tokens)) {
+        return null;
+    }
+    return `Maven phase '${violatingGoal}' is test-bound; use 'compile' or 'test-compile' for compile-gate, or move this command to full-suite validation.`;
+}
+
+function hasGradleExcludedTestTask(tokens: readonly string[]): boolean {
+    return getGradleExcludedTestTasks(tokens).length > 0;
+}
+
+function getGradleTaskName(token: string): string {
+    return token.split(':').filter(Boolean).pop() || token;
+}
+
+function getGradleProjectPath(token: string): string {
+    const normalized = String(token || '').trim();
+    if (!normalized.includes(':')) {
+        return '';
+    }
+    const lastColonIndex = normalized.lastIndexOf(':');
+    return lastColonIndex > 0 ? normalized.slice(0, lastColonIndex) : '';
+}
+
+function getGradleExcludedTestTasks(tokens: readonly string[]): string[] {
+    const excludedTasks: string[] = [];
+    for (let index = 0; index < tokens.length; index += 1) {
+        const token = tokens[index];
+        let excludedTask: string | null = null;
+        if (token === '-x' || token === '--exclude-task') {
+            excludedTask = tokens[index + 1] || null;
+        } else if (token.startsWith('--exclude-task=')) {
+            excludedTask = token.slice('--exclude-task='.length);
+        }
+        if (excludedTask && getGradleTaskName(excludedTask) === 'test') {
+            excludedTasks.push(excludedTask);
+        }
+    }
+    return excludedTasks;
+}
+
+function isGradleBuildTaskTestExcluded(buildTask: string, excludedTestTasks: readonly string[]): boolean {
+    if (excludedTestTasks.includes('test')) {
+        return true;
+    }
+    const projectPath = getGradleProjectPath(buildTask);
+    return projectPath !== '' && excludedTestTasks.some((excludedTask) => (
+        getGradleTaskName(excludedTask) === 'test'
+        && getGradleProjectPath(excludedTask) === projectPath
+    ));
+}
+
+function getGradleTaskTokensForContract(tokens: readonly string[], executableIndex: number): string[] {
+    const tasks: string[] = [];
+    const rawTokens = tokens.slice(executableIndex + 1);
+    for (let index = 0; index < rawTokens.length; index += 1) {
+        const token = rawTokens[index];
+        if (token === '-x' || token === '--exclude-task') {
+            index += 1;
+            continue;
+        }
+        if (token.startsWith('--exclude-task=')) {
+            continue;
+        }
+        if (token.startsWith('-')) {
+            continue;
+        }
+        tasks.push(token);
+    }
+    return tasks;
+}
+
+function isGradleTestTokenOnlyExcluded(command: string): boolean {
+    const tokens = commandTokensForContract(command);
+    const executableIndex = tokens.findIndex(isGradleExecutableToken);
+    if (executableIndex < 0 || !hasGradleExcludedTestTask(tokens)) {
+        return false;
+    }
+    return !getGradleTaskTokensForContract(tokens, executableIndex)
+        .map(getGradleTaskName)
+        .includes('test');
+}
+
+function getGradleLifecycleViolation(command: string): string | null {
+    const tokens = commandTokensForContract(command);
+    const executableIndex = tokens.findIndex(isGradleExecutableToken);
+    if (executableIndex < 0) {
+        return null;
+    }
+    const taskTokens = getGradleTaskTokensForContract(tokens, executableIndex);
+    const taskNames = taskTokens.map(getGradleTaskName);
+    if (taskNames.includes('test')) {
+        return "Gradle task 'test' runs tests; use 'assemble', 'classes', or 'testClasses' for compile-gate, or move this command to full-suite validation.";
+    }
+    if (taskNames.includes('check')) {
+        return "Gradle task 'check' is a verification lifecycle task; use 'assemble', 'classes', or 'testClasses' for compile-gate, or move this command to full-suite validation.";
+    }
+    const excludedTestTasks = getGradleExcludedTestTasks(tokens);
+    const buildTasks = taskTokens.filter((task) => getGradleTaskName(task) === 'build');
+    const hasUnexcludedBuildTask = buildTasks.some((task) => !isGradleBuildTaskTestExcluded(task, excludedTestTasks));
+    if (hasUnexcludedBuildTask) {
+        return "Gradle task 'build' normally depends on test/check tasks; use 'assemble', 'classes', or 'build -x test' for compile-gate, or move this command to full-suite validation.";
+    }
+    return null;
+}
+
+export function getCompileCommandContractViolations(
+    command: string,
+    options: CompileCommandContractOptions = {}
+): string[] {
+    const trimmedCommand = String(command || '').trim();
+    const violations: string[] = [];
+    if (!trimmedCommand) {
+        return violations;
+    }
+
+    const configuredFullSuiteCommand = normalizeCompileCommandForContract(options.fullSuiteCommand || '');
+    if (
+        configuredFullSuiteCommand
+        && normalizeCompileCommandForContract(trimmedCommand) === configuredFullSuiteCommand
+    ) {
+        violations.push('matches the configured full-suite validation command');
+    }
+
+    const profile = getCompileCommandProfile(trimmedCommand);
+    if (profile.kind === 'test' && !isGradleTestTokenOnlyExcluded(trimmedCommand)) {
+        violations.push('is classified as a test command');
+    }
+
+    const mavenViolation = getMavenLifecycleViolation(trimmedCommand);
+    if (mavenViolation) {
+        violations.push(mavenViolation);
+    }
+    const gradleViolation = getGradleLifecycleViolation(trimmedCommand);
+    if (gradleViolation) {
+        violations.push(gradleViolation);
+    }
+
+    return [...new Set(violations)];
+}
+
+function validateCompileCommandContract(
+    command: string,
+    rulePath: string,
+    options: CompileCommandContractOptions
+): void {
+    const violations = getCompileCommandContractViolations(command, options);
+    if (violations.length === 0) {
+        return;
+    }
+    if (options.allowFullTestCompileCommand === true && String(options.allowFullTestCompileCommandReason || '').trim()) {
+        return;
+    }
+    throw new Error(
+        `Compile command must not run the full test suite in ${rulePath}: ${command}. `
+        + `Reason: ${violations.join(' ')}. `
+        + 'Use a compile/build/type-check command for compile-gate and keep test suites under full-suite-validation. '
+        + 'If this repository has no separate compile command, rerun with --allow-full-test-compile-command and --allow-full-test-compile-command-reason after explicit operator approval.'
+    );
+}
+
 /**
  * Extract compile commands from a markdown rules file.
  * Matches Python get_compile_commands.
  */
-export function getCompileCommands(rulePath: string): string[] {
+export function getCompileCommands(rulePath: string, options: CompileCommandContractOptions = {}): string[] {
     const content = fs.readFileSync(rulePath, 'utf8');
     const lines = content.split(/\r?\n/);
     if (!lines.length) throw new Error(`Commands file is empty: ${rulePath}`);
@@ -116,6 +327,7 @@ export function getCompileCommands(rulePath: string): string[] {
                 "use wrapper entrypoint script (for example './mvnw' or '.\\mvnw.cmd') instead of MavenWrapperMain class invocation."
             );
         }
+        validateCompileCommandContract(command, rulePath, options);
     }
 
     return commands;

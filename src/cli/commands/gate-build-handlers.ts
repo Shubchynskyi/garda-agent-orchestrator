@@ -81,6 +81,8 @@ export async function handleCompileGate(gateArgv: string[]): Promise<void> {
         '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
         '--allow-plan-drift': { key: 'allowPlanDrift', type: 'boolean' },
         '--allow-plan-drift-reason': { key: 'allowPlanDriftReason', type: 'string' },
+        '--allow-full-test-compile-command': { key: 'allowFullTestCompileCommand', type: 'boolean' },
+        '--allow-full-test-compile-command-reason': { key: 'allowFullTestCompileCommandReason', type: 'string' },
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
     const { options } = parseOptions(gateArgv, defs);
