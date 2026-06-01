@@ -29,7 +29,7 @@ import {
     resolveBundleName
 } from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
-import { writeProtectedControlPlaneManifest } from '../gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
     getActiveAgentEntrypointFiles,

@@ -14,7 +14,7 @@ import {
 import {
     scanCompletionGateFinalizationLocks,
     type CompletionGateFinalizationLockScanResult
-} from '../gates/finalization-lock';
+} from '../gates/locks/finalization-lock';
 
 export interface LockHealthEvidence {
     lockHealth: TaskEventLockScanResult;

@@ -1,14 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as gateHelpers from '../../gates/helpers';
+import * as gateHelpers from '../../gates/shared/helpers';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
 import { resolveActiveTaskIds } from '../../core/active-task-state';
-import { resolveCanonicalReviewContextPath } from '../../gates/review-context-paths';
+import { resolveCanonicalReviewContextPath } from '../../gates/review-context/review-context-paths';
 import {
     resolveLegacyReviewTempRoot,
     resolveReviewScratchRoot,
     resolveReviewScratchRoots
-} from '../../gates/review-scratch-paths';
+} from '../../gates/review/review-scratch-paths';
 import { writeReviewArtifactJson, writeReviewArtifactText } from '../../gate-runtime/review-artifacts';
 
 export interface TerminalLogCleanupResult {

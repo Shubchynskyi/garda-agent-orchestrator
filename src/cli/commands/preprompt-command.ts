@@ -11,7 +11,7 @@ import {
     resolveProjectMemoryBootstrapReportPath
 } from '../../core/project-memory';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../core/project-memory-rollout';
-import { getWorkspaceSnapshot } from '../../gates/compile-gate';
+import { getWorkspaceSnapshot } from '../../gates/compile/compile-gate';
 import { readAgentInitStateSafe } from '../../runtime/agent-init-state';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 import {

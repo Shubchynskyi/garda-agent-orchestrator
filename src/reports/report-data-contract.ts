@@ -5,14 +5,14 @@ import { readTaskQueueStatusToken } from '../core/active-task-state';
 import { buildDefaultWorkflowConfig, type WorkflowConfigData } from '../core/workflow-config';
 import { parseTaskMdTableRow } from '../core/task-md-table';
 import { buildTaskStats, type TaskStatsResult } from '../cli/commands/stats';
-import { joinOrchestratorPath, toPosix } from '../gates/helpers';
+import { joinOrchestratorPath, toPosix } from '../gates/shared/helpers';
 import {
     buildCompactLatestCycleTaskEventsSummary,
     buildTaskEventsSummary,
     type CompactLatestCycleTaskEventsSummary,
     type TaskEventsSummaryResult
 } from '../gates/task-events-summary';
-import { buildTaskAuditSummary, type TaskAuditSummaryResult } from '../gates/task-audit-summary';
+import { buildTaskAuditSummary, type TaskAuditSummaryResult } from '../gates/task-audit/task-audit-summary';
 import {
     buildFullSuiteTimeoutForecast,
     formatFullSuiteTimeoutForecast,
@@ -20,7 +20,7 @@ import {
     loadFullSuiteValidationConfig,
     type FullSuiteTimeoutForecast,
     type FullSuiteValidationResult
-} from '../gates/full-suite-validation';
+} from '../gates/full-suite/full-suite-validation';
 import { getTaskModeEvidence, readOptionalMarkdownWorkingPlan } from '../gates/task-mode';
 import { validateWorkflowConfig } from '../schemas/config-artifacts';
 import {

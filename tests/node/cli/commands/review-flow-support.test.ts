@@ -6,7 +6,7 @@ import * as path from 'node:path';
 
 import {
     testReviewArtifacts
-} from '../../../../src/cli/commands/gate-flows/review-flow-support';
+} from '../../../../src/cli/commands/gate-flows/review/review-flow-support';
 
 describe('cli/commands/gate-flows/review-flow-support', () => {
     it('rejects required-review artifacts from reviews roots that escape through symlinked directories', (t) => {

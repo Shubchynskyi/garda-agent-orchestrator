@@ -41,7 +41,7 @@ import {
 import { INSTALL_BACKUP_CANDIDATE_PATHS } from '../../../src/materialization/content-builders';
 import {
     resolveReviewerRoutingPolicy
-} from '../../../src/gates/reviewer-routing';
+} from '../../../src/gates/review/reviewer-routing';
 import { getUpdateRollbackItems } from '../../../src/lifecycle/update';
 import { PROVIDER_AGENT_FILES } from '../../../src/lifecycle/uninstall-helpers';
 

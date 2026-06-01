@@ -1,9 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import type { TaskAuditSummaryResult } from '../gates/task-audit-summary';
-import type { EvidenceArtifact } from '../gates/task-audit-summary-collectors';
-import { fileSha256, toPosix } from '../gates/helpers';
+import type { TaskAuditSummaryResult } from '../gates/task-audit/task-audit-summary';
+import type { EvidenceArtifact } from '../gates/task-audit/task-audit-summary-collectors';
+import { fileSha256, toPosix } from '../gates/shared/helpers';
 import {
     buildRuntimeRetentionPreview,
     type RuntimeRetentionHealthState,

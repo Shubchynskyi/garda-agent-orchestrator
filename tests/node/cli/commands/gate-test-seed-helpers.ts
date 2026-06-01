@@ -18,21 +18,21 @@ import {
     runEnterTaskModeCommand,
     runLoadRulePackCommand
 } from '../../../../src/cli/commands/gates';
-import { buildReviewContext } from '../../../../src/gates/build-review-context';
-import { getWorkspaceSnapshot } from '../../../../src/gates/compile-gate';
-import { buildScopedDiff } from '../../../../src/gates/build-scoped-diff';
-import { buildReviewContextPreflightDiffExpectations } from '../../../../src/gates/review-context-contract';
+import { buildReviewContext } from '../../../../src/gates/review-context/build-review-context';
+import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
+import { buildScopedDiff } from '../../../../src/gates/preflight/build-scoped-diff';
+import { buildReviewContextPreflightDiffExpectations } from '../../../../src/gates/review-context/review-context-contract';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewRelevantScopeFingerprint,
     computeReviewContextReuseHash
 } from '../../../../src/gates/review-reuse';
-import { buildReviewTreeState } from '../../../../src/gates/review-tree-state';
-import { writeProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
-import { getWorkflowConfigPreTaskBaselineState } from '../../../../src/gates/workflow-config-work';
+import { buildReviewTreeState } from '../../../../src/gates/review/review-tree-state';
+import { writeProtectedControlPlaneManifest } from '../../../../src/gates/shared/helpers';
+import { getWorkflowConfigPreTaskBaselineState } from '../../../../src/gates/workflow-config/workflow-config-work';
 import {
     resolveReviewerRoutingPolicy
-} from '../../../../src/gates/reviewer-routing';
+} from '../../../../src/gates/review/reviewer-routing';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,

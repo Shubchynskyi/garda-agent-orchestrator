@@ -13,7 +13,7 @@ import { isPathInsideRoot } from '../core/paths';
 import { getManagedGitignoreEntries } from '../materialization/common';
 import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';
 import { getTaskModeRuleSectionMigrations } from '../materialization/rule-contracts';
-import { getCompileCommands } from '../gates/compile-gate';
+import { getCompileCommands } from '../gates/compile/compile-gate';
 import {
     PROJECT_COMMAND_PLACEHOLDERS,
     RULE_FILES,

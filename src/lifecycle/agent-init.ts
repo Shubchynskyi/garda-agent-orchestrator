@@ -21,7 +21,7 @@ import { generateProjectMemorySummary } from '../materialization/rule-materializ
 import { runVerify } from '../validators/verify';
 import { validateManifest } from '../validators/validate-manifest';
 import { createAgentInitState, readAgentInitStateSafe, writeAgentInitState } from '../runtime/agent-init-state';
-import { writeProtectedControlPlaneManifest } from '../gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import {
     PROJECT_MEMORY_READ_FIRST_FILE_NAMES,
     PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,

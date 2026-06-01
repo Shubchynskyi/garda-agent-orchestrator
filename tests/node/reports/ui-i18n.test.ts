@@ -6,8 +6,8 @@ import {
     assertLocalUiLanguagePacksComplete,
     getLocalUiText,
     normalizeLocalUiLanguage
-} from '../../../src/reports/ui-i18n';
-import { renderLocalUiHtml } from '../../../src/reports/ui-dashboard-html';
+} from '../../../src/reports/ui/ui-i18n';
+import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 
 test('local UI language packs are complete and extensible by metadata', () => {
     assert.doesNotThrow(() => assertLocalUiLanguagePacksComplete());

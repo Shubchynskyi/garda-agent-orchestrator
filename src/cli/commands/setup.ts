@@ -67,7 +67,7 @@ import { runInit } from '../../materialization/init';
 import { hasMaterializedWorkflowConfigBaseline } from '../../core/workflow-config';
 import { validateManifest } from '../../validators/validate-manifest';
 import { runVerify } from '../../validators/verify';
-import { writeProtectedControlPlaneManifest } from '../../gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../../gates/shared/helpers';
 
 export const SETUP_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },

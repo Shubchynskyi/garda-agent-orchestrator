@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import { stringSha256 } from './hash';
 import { withReviewArtifactLock, writeArtifactFileAtomically } from './review-artifacts';
 import { estimateTokenCount, DEFAULT_TOKEN_ESTIMATOR, LEGACY_TOKEN_ESTIMATOR } from './token-telemetry';
-import type { DomainScopeFingerprints } from '../gates/domain-scope-fingerprints';
+import type { DomainScopeFingerprints } from '../gates/scope/domain-scope-fingerprints';
 
 interface CompactMarkdownOptions {
     stripExamples?: boolean;

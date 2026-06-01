@@ -1,0 +1,571 @@
+import {
+    isTaskQueueBlockedStatus,
+    isTaskQueueDecomposedStatus,
+    isTaskQueueDoneStatus
+} from '../../core/active-task-state';
+import {
+    buildExactTaskIdReferencePattern,
+    isCanonicalTaskId,
+    isTaskIdReferenceBoundary,
+    TASK_ID_ALLOWED_PATTERN
+} from '../../core/task-ids';
+import {
+    parseTaskMdTableRow
+} from '../../core/task-md-table';
+
+export interface TaskQueueEntry {
+    taskId: string;
+    status: string | null;
+    area: string | null;
+    title: string | null;
+    profile: string | null;
+    notes: string | null;
+}
+
+export interface DecomposedChildRoute {
+    taskId: string;
+    status: string | null;
+    chain: string[];
+}
+
+export interface DecomposedParentCompletionState {
+    hasLinkedChildren: boolean;
+    complete: boolean;
+    unfinishedRoute: DecomposedChildRoute | null;
+    completedDecomposedTaskIds: string[];
+    missingChildTaskIds: string[];
+}
+
+interface ChildTaskIdMention {
+    taskId: string;
+    index: number;
+}
+
+interface NumericTaskIdRangeEndpoint {
+    taskId: string;
+    prefix: string;
+    rawNumber: string;
+    value: number;
+}
+
+export interface StrictDecompositionSplitRoutingState {
+    ready: boolean;
+    linkedChildTaskIds: string[];
+    missingLinkedChildTaskIds: string[];
+    missingChildTaskIds: string[];
+    nonParentDerivedChildTaskIds: string[];
+    unexpectedLinkedChildTaskIds: string[];
+    nonStrictChildTaskIds: string[];
+    childRoute: DecomposedChildRoute | null;
+}
+
+const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+into|continue\s+via\s+child\s+tasks)\b/i;
+const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
+    /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:/igu;
+const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
+export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
+
+export function parseTaskQueueEntriesFromContent(content: string): Map<string, TaskQueueEntry> {
+    const entries = new Map<string, TaskQueueEntry>();
+    for (const line of content.split('\n')) {
+        if (!line.trim().startsWith('|')) {
+            continue;
+        }
+        const cells = parseTaskMdTableRow(line);
+        const rawTaskId = cells[0]?.trimmed || '';
+        if (
+            cells.length < 9
+            || cells.every((cell) => /^:?-{3,}:?$/u.test(cell.trimmed))
+            || rawTaskId.toUpperCase() === 'ID'
+            || !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)
+        ) {
+            continue;
+        }
+        const taskId = rawTaskId;
+        entries.set(taskId, {
+            taskId,
+            status: cells[1]?.trimmed || null,
+            area: cells[3]?.trimmed || null,
+            title: cells[4]?.trimmed || null,
+            profile: cells[7]?.trimmed || null,
+            notes: cells[8]?.trimmed || null
+        });
+    }
+    return entries;
+}
+
+function isLegacySplitParentTask(entry: TaskQueueEntry | null): boolean {
+    if (!entry) {
+        return false;
+    }
+    if (!isTaskQueueBlockedStatus(entry.status)) {
+        return false;
+    }
+    return TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN.test(String(entry.notes || ''));
+}
+
+export function isDecomposedParentTask(entry: TaskQueueEntry | null): boolean {
+    return Boolean(entry && (isTaskQueueDecomposedStatus(entry.status) || isLegacySplitParentTask(entry)));
+}
+
+function appendTaskMentionIfMissing(taskMentions: ChildTaskIdMention[], taskId: string, index: number): void {
+    if (!taskMentions.some((mention) => mention.taskId === taskId)) {
+        taskMentions.push({ taskId, index });
+    }
+}
+
+function isExplicitChildListMentionPosition(text: string, index: number): boolean {
+    const introPattern = /\b(?:child(?:ren)?|leaf)\s+tasks?\b\s*:*/igu;
+    let introMatch: RegExpExecArray | null;
+    let introEnd: number | null = null;
+    while ((introMatch = introPattern.exec(text)) !== null) {
+        if (introMatch.index > index) {
+            break;
+        }
+        introEnd = introMatch.index + introMatch[0].length;
+    }
+    if (introEnd == null) {
+        return false;
+    }
+    const listPrefix = text.slice(introEnd, index)
+        .replace(/`[A-Za-z0-9._-]+`/gu, ' ')
+        .replace(/(^|[^A-Za-z0-9._-])([Tt]-\d+)(?=$|[^A-Za-z0-9._-])/gu, '$1 ');
+    return /^[\s,:()[\]\-–—]*(?:(?:and|or|through|to)[\s,:()[\]\-–—]*)*$/iu.test(listPrefix);
+}
+
+function parseNumericTaskIdRangeEndpoint(taskId: string): NumericTaskIdRangeEndpoint | null {
+    if (!TASK_QUEUE_TASK_ID_PATTERN.test(taskId)) {
+        return null;
+    }
+    const match = /^(.*?)(\d+)$/u.exec(taskId);
+    if (!match) {
+        return null;
+    }
+    const prefix = match[1];
+    const rawNumber = match[2];
+    const value = Number(rawNumber);
+    if (!prefix || !Number.isInteger(value)) {
+        return null;
+    }
+    return {
+        taskId,
+        prefix,
+        rawNumber,
+        value
+    };
+}
+
+function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<string>): ChildTaskIdMention[] {
+    const text = String(notes || '');
+    const taskMentions: ChildTaskIdMention[] = [];
+    const rangePattern =
+        /(^|[^A-Za-z0-9._-])([A-Za-z0-9._-]*\d)(?=$|[^A-Za-z0-9._-])[\s`*_]*(?:through|to|-|–|—)[\s`*_]*([A-Za-z0-9._-]*\d)(?=$|[^A-Za-z0-9._-])/gu;
+    let rangeMatch: RegExpExecArray | null;
+    while ((rangeMatch = rangePattern.exec(text)) !== null) {
+        const leadingBoundary = rangeMatch[1] || '';
+        const startEndpoint = parseNumericTaskIdRangeEndpoint(rangeMatch[2] || '');
+        const endEndpoint = parseNumericTaskIdRangeEndpoint(rangeMatch[3] || '');
+        if (!startEndpoint || !endEndpoint || startEndpoint.prefix !== endEndpoint.prefix) {
+            continue;
+        }
+        const start = startEndpoint.value;
+        const end = endEndpoint.value;
+        if (!Number.isInteger(start) || !Number.isInteger(end) || Math.abs(end - start) > 100) {
+            continue;
+        }
+        const step = start <= end ? 1 : -1;
+        const width = startEndpoint.rawNumber.length === endEndpoint.rawNumber.length
+            ? startEndpoint.rawNumber.length
+            : 0;
+        let offset = 0;
+        for (let value = start; step > 0 ? value <= end : value >= end; value += step) {
+            const valueText = width > 0 ? String(Math.abs(value)).padStart(width, '0') : String(Math.abs(value));
+            const signedValueText = value < 0 ? `-${valueText}` : valueText;
+            appendTaskMentionIfMissing(
+                taskMentions,
+                `${startEndpoint.prefix}${signedValueText}`,
+                rangeMatch.index + leadingBoundary.length + offset
+            );
+            offset += 1;
+        }
+    }
+
+    const backtickedTaskIdPattern = /`([^`]+)`/gu;
+    let backtickedTaskIdMatch: RegExpExecArray | null;
+    while ((backtickedTaskIdMatch = backtickedTaskIdPattern.exec(text)) !== null) {
+        const taskId = String(backtickedTaskIdMatch[1] || '').trim();
+        if (isCanonicalTaskId(taskId)
+            && isExplicitChildListMentionPosition(text, backtickedTaskIdMatch.index)) {
+            appendTaskMentionIfMissing(taskMentions, taskId, backtickedTaskIdMatch.index + 1);
+        }
+    }
+
+    const conventionalTaskIdPattern = /(^|[^A-Za-z0-9._-])([Tt]-\d+)(?=$|[^A-Za-z0-9._-])/gu;
+    let conventionalTaskIdMatch: RegExpExecArray | null;
+    while ((conventionalTaskIdMatch = conventionalTaskIdPattern.exec(text)) !== null) {
+        const taskId = conventionalTaskIdMatch[2];
+        const mentionIndex = conventionalTaskIdMatch.index + conventionalTaskIdMatch[1].length;
+        appendTaskMentionIfMissing(taskMentions, taskId, mentionIndex);
+    }
+
+    for (const taskId of knownTaskIds) {
+        const taskIdPattern = buildExactTaskIdReferencePattern(taskId);
+        const taskIdMatch = taskIdPattern.exec(text);
+        if (taskIdMatch) {
+            const mentionIndex = taskIdMatch.index + taskIdMatch[1].length;
+            const isConventionalTaskId = /^[Tt]-\d+$/u.test(taskId);
+            if (!isConventionalTaskId && !isExplicitChildListMentionPosition(text, mentionIndex)) {
+                continue;
+            }
+            appendTaskMentionIfMissing(taskMentions, taskId, taskIdMatch.index + taskIdMatch[1].length);
+        }
+    }
+    return taskMentions
+        .sort((left, right) => left.index - right.index);
+}
+
+function isTaskIdCharacter(value: string): boolean {
+    return !isTaskIdReferenceBoundary(value);
+}
+
+function isExplicitChildContinuationBoundary(text: string, index: number): boolean {
+    return /^(?:,\s*)?then\s+continue\b/iu.test(text.slice(index));
+}
+
+function findExplicitChildSegmentEnd(text: string, startIndex: number): number {
+    for (let index = startIndex; index < text.length; index += 1) {
+        if (isExplicitChildContinuationBoundary(text, index)) {
+            return index;
+        }
+        const current = text[index];
+        if (current === ';' || current === '\n' || current === '|') {
+            return index;
+        }
+        if (current === '.') {
+            const previous = text[index - 1] || '';
+            const next = text[index + 1] || '';
+            if (!(isTaskIdCharacter(previous) && isTaskIdCharacter(next))) {
+                return index;
+            }
+        }
+    }
+    return text.length;
+}
+
+export function extractExplicitLinkedChildTaskIds(notes: string | null, knownTaskIds: Iterable<string>): string[] {
+    const text = String(notes || '');
+    const childTaskIds: ChildTaskIdMention[] = [];
+    const knownTaskIdList = [...knownTaskIds];
+    let markerMatch: RegExpExecArray | null;
+    TASK_QUEUE_CHILD_LINK_MARKER_PATTERN.lastIndex = 0;
+    while ((markerMatch = TASK_QUEUE_CHILD_LINK_MARKER_PATTERN.exec(text)) !== null) {
+        const absoluteSegmentEnd = findExplicitChildSegmentEnd(text, markerMatch.index);
+        const segment = text.slice(markerMatch.index, absoluteSegmentEnd);
+        for (const childMention of extractChildTaskMentions(segment, knownTaskIdList)) {
+            appendTaskMentionIfMissing(childTaskIds, childMention.taskId, markerMatch.index + childMention.index);
+        }
+    }
+    return childTaskIds
+        .sort((left, right) => left.index - right.index)
+        .map((mention) => mention.taskId);
+}
+
+export function resolveNextUnfinishedChildRoute(
+    taskEntries: Map<string, TaskQueueEntry>,
+    parentTaskId: string,
+    visited = new Set<string>(),
+    childTaskIdExtractor: (notes: string | null, knownTaskIds: Iterable<string>) => string[] = extractExplicitLinkedChildTaskIds
+): DecomposedChildRoute | null {
+    if (visited.has(parentTaskId)) {
+        return null;
+    }
+    visited.add(parentTaskId);
+    const parentEntry = taskEntries.get(parentTaskId);
+    const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys())
+        .filter((childTaskId) => childTaskId !== parentTaskId);
+
+    for (const childTaskId of childTaskIds) {
+        const childEntry = taskEntries.get(childTaskId);
+        if (!childEntry) {
+            continue;
+        }
+        if (isTaskQueueDoneStatus(childEntry.status)) {
+            continue;
+        }
+        if (isDecomposedParentTask(childEntry)) {
+            const nestedRoute = resolveNextUnfinishedChildRoute(taskEntries, childTaskId, visited, childTaskIdExtractor);
+            if (nestedRoute) {
+                return {
+                    ...nestedRoute,
+                    chain: [childTaskId, ...nestedRoute.chain]
+                };
+            }
+            continue;
+        }
+        return {
+            taskId: childTaskId,
+            status: childEntry.status,
+            chain: [childTaskId]
+        };
+    }
+    return null;
+}
+
+function mergeNestedDecomposedCompletionState(params: {
+    childTaskId: string;
+    nestedState: DecomposedParentCompletionState;
+    completedDecomposedTaskIds: string[];
+    missingChildTaskIds: string[];
+    allowComplete: boolean;
+}): DecomposedParentCompletionState | null {
+    if (params.nestedState.unfinishedRoute) {
+        return {
+            hasLinkedChildren: true,
+            complete: false,
+            unfinishedRoute: {
+                ...params.nestedState.unfinishedRoute,
+                chain: [params.childTaskId, ...params.nestedState.unfinishedRoute.chain]
+            },
+            completedDecomposedTaskIds: params.completedDecomposedTaskIds,
+            missingChildTaskIds: params.missingChildTaskIds
+        };
+    }
+    if (params.nestedState.missingChildTaskIds.length > 0) {
+        return {
+            hasLinkedChildren: true,
+            complete: false,
+            unfinishedRoute: null,
+            completedDecomposedTaskIds: params.completedDecomposedTaskIds,
+            missingChildTaskIds: [...params.missingChildTaskIds, ...params.nestedState.missingChildTaskIds]
+        };
+    }
+    if (params.allowComplete && params.nestedState.complete) {
+        params.completedDecomposedTaskIds.push(...params.nestedState.completedDecomposedTaskIds, params.childTaskId);
+        return null;
+    }
+    return {
+        hasLinkedChildren: true,
+        complete: false,
+        unfinishedRoute: null,
+        completedDecomposedTaskIds: params.completedDecomposedTaskIds,
+        missingChildTaskIds: params.missingChildTaskIds
+    };
+}
+
+export function resolveDecomposedParentCompletionState(
+    taskEntries: Map<string, TaskQueueEntry>,
+    parentTaskId: string,
+    visited = new Set<string>(),
+    childTaskIdExtractor: (notes: string | null, knownTaskIds: Iterable<string>) => string[] = extractExplicitLinkedChildTaskIds
+): DecomposedParentCompletionState {
+    if (visited.has(parentTaskId)) {
+        return {
+            hasLinkedChildren: false,
+            complete: false,
+            unfinishedRoute: null,
+            completedDecomposedTaskIds: [],
+            missingChildTaskIds: []
+        };
+    }
+    visited.add(parentTaskId);
+    const parentEntry = taskEntries.get(parentTaskId);
+    const childTaskIds = childTaskIdExtractor(parentEntry?.notes || null, taskEntries.keys())
+        .filter((childTaskId) => childTaskId !== parentTaskId);
+
+    if (childTaskIds.length === 0) {
+        return {
+            hasLinkedChildren: false,
+            complete: false,
+            unfinishedRoute: null,
+            completedDecomposedTaskIds: [],
+            missingChildTaskIds: []
+        };
+    }
+
+    const completedDecomposedTaskIds: string[] = [];
+    const missingChildTaskIds: string[] = [];
+    for (const childTaskId of childTaskIds) {
+        const childEntry = taskEntries.get(childTaskId);
+        if (!childEntry) {
+            missingChildTaskIds.push(childTaskId);
+            continue;
+        }
+        const childLinkedTaskIds = childTaskIdExtractor(childEntry.notes || null, taskEntries.keys())
+            .filter((nestedChildTaskId) => nestedChildTaskId !== childTaskId);
+        if (childLinkedTaskIds.length > 0 && (
+            isTaskQueueDoneStatus(childEntry.status)
+            || isTaskQueueDecomposedStatus(childEntry.status)
+        )) {
+            const nestedState = resolveDecomposedParentCompletionState(
+                taskEntries,
+                childTaskId,
+                visited,
+                childTaskIdExtractor
+            );
+            const mergedState = mergeNestedDecomposedCompletionState({
+                childTaskId,
+                nestedState,
+                completedDecomposedTaskIds,
+                missingChildTaskIds,
+                allowComplete: true
+            });
+            if (!mergedState) {
+                continue;
+            }
+            return mergedState;
+        }
+        if (isTaskQueueDoneStatus(childEntry.status)) {
+            continue;
+        }
+        if (isTaskQueueDecomposedStatus(childEntry.status)) {
+            const nestedState = resolveDecomposedParentCompletionState(
+                taskEntries,
+                childTaskId,
+                visited,
+                childTaskIdExtractor
+            );
+            const mergedState = mergeNestedDecomposedCompletionState({
+                childTaskId,
+                nestedState,
+                completedDecomposedTaskIds,
+                missingChildTaskIds,
+                allowComplete: true
+            });
+            if (!mergedState) {
+                continue;
+            }
+            return mergedState;
+        }
+        if (isLegacySplitParentTask(childEntry)) {
+            const nestedState = resolveDecomposedParentCompletionState(
+                taskEntries,
+                childTaskId,
+                visited,
+                childTaskIdExtractor
+            );
+            const mergedState = mergeNestedDecomposedCompletionState({
+                childTaskId,
+                nestedState,
+                completedDecomposedTaskIds,
+                missingChildTaskIds,
+                allowComplete: false
+            });
+            return mergedState || {
+                hasLinkedChildren: true,
+                complete: false,
+                unfinishedRoute: null,
+                completedDecomposedTaskIds,
+                missingChildTaskIds
+            };
+        }
+        return {
+            hasLinkedChildren: true,
+            complete: false,
+            unfinishedRoute: {
+                taskId: childTaskId,
+                status: childEntry.status,
+                chain: [childTaskId]
+            },
+            completedDecomposedTaskIds,
+            missingChildTaskIds
+        };
+    }
+
+    if (missingChildTaskIds.length > 0) {
+        return {
+            hasLinkedChildren: true,
+            complete: false,
+            unfinishedRoute: null,
+            completedDecomposedTaskIds,
+            missingChildTaskIds
+        };
+    }
+
+    return {
+        hasLinkedChildren: true,
+        complete: true,
+        unfinishedRoute: null,
+        completedDecomposedTaskIds,
+        missingChildTaskIds: []
+    };
+}
+
+export function hasLinkedChildTasks(taskEntries: Map<string, TaskQueueEntry>, parentTaskId: string): boolean {
+    const parentEntry = taskEntries.get(parentTaskId);
+    return extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
+        .some((childTaskId) => childTaskId !== parentTaskId && taskEntries.has(childTaskId));
+}
+
+function isParentDerivedChildTaskId(parentTaskId: string, childTaskId: string): boolean {
+    const normalizedParent = parentTaskId.toLowerCase();
+    const normalizedChild = childTaskId.toLowerCase();
+    return normalizedChild !== normalizedParent && normalizedChild.startsWith(`${normalizedParent}-`);
+}
+
+export function resolveStrictDecompositionSplitRoutingState(
+    taskEntries: Map<string, TaskQueueEntry>,
+    parentTaskId: string,
+    proposedChildTaskIds: string[]
+): StrictDecompositionSplitRoutingState {
+    const parentEntry = taskEntries.get(parentTaskId);
+    const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(parentEntry?.notes || null, taskEntries.keys())
+        .filter((childTaskId) => childTaskId !== parentTaskId);
+    const linkedChildTaskIdSet = new Set(linkedChildTaskIds);
+    const proposedChildTaskIdSet = new Set(proposedChildTaskIds);
+    const nonParentDerivedChildTaskIds = [...new Set([...proposedChildTaskIds, ...linkedChildTaskIds])]
+        .filter((childTaskId) => !isParentDerivedChildTaskId(parentTaskId, childTaskId));
+    const unexpectedLinkedChildTaskIds = linkedChildTaskIds
+        .filter((childTaskId) => isParentDerivedChildTaskId(parentTaskId, childTaskId) && !proposedChildTaskIdSet.has(childTaskId));
+    const missingLinkedChildTaskIds = proposedChildTaskIds
+        .filter((childTaskId) => !linkedChildTaskIdSet.has(childTaskId));
+    const missingChildTaskIds = proposedChildTaskIds
+        .filter((childTaskId) => !taskEntries.has(childTaskId));
+    const nonStrictChildTaskIds = proposedChildTaskIds
+        .filter((childTaskId) => {
+            const childEntry = taskEntries.get(childTaskId);
+            return childEntry && String(childEntry.profile || '').trim().toLowerCase() !== 'strict';
+        });
+
+    const ready = proposedChildTaskIds.length > 0
+        && missingLinkedChildTaskIds.length === 0
+        && missingChildTaskIds.length === 0
+        && nonParentDerivedChildTaskIds.length === 0
+        && unexpectedLinkedChildTaskIds.length === 0
+        && nonStrictChildTaskIds.length === 0;
+
+    return {
+        ready,
+        linkedChildTaskIds,
+        missingLinkedChildTaskIds,
+        missingChildTaskIds,
+        nonParentDerivedChildTaskIds,
+        unexpectedLinkedChildTaskIds,
+        nonStrictChildTaskIds,
+        childRoute: ready
+            ? resolveNextUnfinishedChildRoute(taskEntries, parentTaskId, new Set<string>(), extractExplicitLinkedChildTaskIds)
+            : null
+    };
+}
+
+export function formatStrictDecompositionSplitRoutingViolations(state: StrictDecompositionSplitRoutingState): string {
+    const violations: string[] = [];
+    if (state.missingLinkedChildTaskIds.length > 0) {
+        violations.push(`missing linked proposed child tasks: ${state.missingLinkedChildTaskIds.join(', ')}`);
+    }
+    if (state.missingChildTaskIds.length > 0) {
+        violations.push(`missing TASK.md child rows: ${state.missingChildTaskIds.join(', ')}`);
+    }
+    if (state.nonParentDerivedChildTaskIds.length > 0) {
+        violations.push(`non-parent-derived child task ids: ${state.nonParentDerivedChildTaskIds.join(', ')}`);
+    }
+    if (state.unexpectedLinkedChildTaskIds.length > 0) {
+        violations.push(`linked child tasks not declared in the decision artifact: ${state.unexpectedLinkedChildTaskIds.join(', ')}`);
+    }
+    if (state.nonStrictChildTaskIds.length > 0) {
+        violations.push(`child tasks without strict profile: ${state.nonStrictChildTaskIds.join(', ')}`);
+    }
+    if (violations.length === 0) {
+        return 'child routing is not ready';
+    }
+    return violations.join('; ');
+}

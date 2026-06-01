@@ -1,7 +1,7 @@
 ﻿import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parseTaskMdTableRow } from '../../core/task-md-table';
-import { buildScopedDiff, resolveMetadataPath, resolveOutputPath } from '../../gates/build-scoped-diff';
+import { buildScopedDiff, resolveMetadataPath, resolveOutputPath } from '../../gates/preflight/build-scoped-diff';
 import {
     emitSkillSelectedEventAsync
 } from '../../runtime/skill-telemetry';
@@ -12,18 +12,18 @@ import {
     readOptionalSkillSelectionArtifact,
     readOptionalSkillSelectionPolicyConfig
 } from '../../runtime/optional-skill-selection';
-import * as gateHelpers from '../../gates/helpers';
-import { resolveGateExecutionPath } from '../../gates/isolation-sandbox';
+import * as gateHelpers from '../../gates/shared/helpers';
+import { resolveGateExecutionPath } from '../../gates/isolation/isolation-sandbox';
 import {
     runClassifyChangeCommand,
     runCompileGateCommand
-} from './gate-flows/compile-flow';
+} from './gate-flows/compile/compile-flow';
 import {
     readTimelineEventsSummary,
     runBuildReviewContextCommand,
     type BuildReviewContextCommandOptions,
     type BuildReviewContextCommandResult
-} from './gate-flows/review-context-flow';
+} from './gate-flows/review-context/review-context-flow';
 import {
     parseOptions,
     normalizePathValue,

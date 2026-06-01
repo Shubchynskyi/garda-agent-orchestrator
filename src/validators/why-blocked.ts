@@ -11,9 +11,9 @@ import {
 } from '../gate-runtime/lifecycle-event-types';
 import { scanTaskEventLocks, type TaskEventLockHealth } from '../gate-runtime/task-events';
 import { scanReviewArtifactLocks, type ReviewArtifactLockHealth } from '../gate-runtime/review-artifacts';
-import { scanCompletionGateFinalizationLocks, type FinalizationLockInspection } from '../gates/finalization-lock';
-import { loadFullSuiteValidationConfig } from '../gates/full-suite-validation';
-import { detectCodeChanged } from '../gates/preflight-code-change';
+import { scanCompletionGateFinalizationLocks, type FinalizationLockInspection } from '../gates/locks/finalization-lock';
+import { loadFullSuiteValidationConfig } from '../gates/full-suite/full-suite-validation';
+import { detectCodeChanged } from '../gates/preflight/preflight-code-change';
 
 export interface TaskStatus {
     id: string;

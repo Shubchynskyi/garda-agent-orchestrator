@@ -6,7 +6,7 @@ import {
 import { REVIEW_EXECUTION_POLICY_MODES, describeReviewExecutionPolicy } from '../core/review-execution-policy';
 import { SCOPE_BUDGET_GUARD_ACTIONS } from '../core/scope-budget-guard';
 import { REVIEW_CYCLE_GUARD_ACTIONS } from '../core/review-cycle-guard';
-import { OUT_OF_SCOPE_FAILURE_POLICIES } from '../gates/full-suite-validation';
+import { OUT_OF_SCOPE_FAILURE_POLICIES } from '../gates/full-suite/full-suite-validation';
 
 export type WorkflowSettingValueType = 'boolean' | 'enum' | 'enum_list' | 'integer' | 'string' | 'string_list';
 

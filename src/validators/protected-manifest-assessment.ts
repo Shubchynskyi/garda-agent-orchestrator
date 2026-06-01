@@ -1,4 +1,4 @@
-import type { ProtectedControlPlaneManifestEvidence } from '../gates/helpers';
+import type { ProtectedControlPlaneManifestEvidence } from '../gates/shared/helpers';
 import type { SourceBundleParityResult } from './workspace-layout';
 
 export type ProtectedManifestAssessmentCode =

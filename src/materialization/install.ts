@@ -6,7 +6,7 @@ import { ensureDirectory, pathExists, readTextFile } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { normalizeLineEndings } from '../core/line-endings';
 import { resolvePathInsideRoot } from '../core/paths';
-import { writeProtectedControlPlaneManifest } from '../gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import { validateInitAnswers } from '../schemas/init-answers';
 import {
     getCanonicalEntrypointFile,

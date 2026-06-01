@@ -11,7 +11,7 @@ import {
     resolveInitAnswersPath
 } from '../../../src/validators';
 import { buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
-import { writeProtectedControlPlaneManifest } from '../../../src/gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../../../src/gates/shared/helpers';
 
 const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';

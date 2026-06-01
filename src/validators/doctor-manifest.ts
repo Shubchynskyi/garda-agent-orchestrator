@@ -3,7 +3,7 @@ import { validateManifest } from './validate-manifest';
 import {
     evaluateProtectedControlPlaneManifest,
     type ProtectedControlPlaneManifestEvidence
-} from '../gates/helpers';
+} from '../gates/shared/helpers';
 
 export interface ManifestEvidence {
     manifestResult: ReturnType<typeof validateManifest> | null;

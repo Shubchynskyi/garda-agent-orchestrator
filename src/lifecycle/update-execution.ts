@@ -4,7 +4,7 @@ import { pathExists } from '../core/filesystem';
 import { readJsonFile } from '../core/json';
 import { runInstall } from '../materialization/install';
 import { runInit } from '../materialization/init';
-import { writeProtectedControlPlaneManifest } from '../gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import {
     buildRefreshAgentInitState,

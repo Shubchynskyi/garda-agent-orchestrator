@@ -12,7 +12,7 @@ import {
     writeArtifact,
     writeWorkflowConfig,
     makeTempDir
-} from '../gates/task-audit-summary-fixtures';
+} from '../gates/task-audit/task-audit-summary-fixtures';
 import {
     buildTaskHistoryLedger,
     readTaskHistoryLedgerScanStatus,

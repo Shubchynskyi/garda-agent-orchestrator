@@ -2,10 +2,10 @@ import * as path from 'node:path';
 import {
     emitMandatoryCompletionGateEventAsync
 } from '../../gate-runtime/lifecycle-events';
-import * as gateHelpers from '../../gates/helpers';
-import { formatCompletionGateResult, runCompletionGate } from '../../gates/completion';
-import { formatNextStepText, resolveNextStepFromCliOptions } from '../../gates/next-step';
-import { withCompletionGateFinalizationLockAsync } from '../../gates/finalization-lock';
+import * as gateHelpers from '../../gates/shared/helpers';
+import { formatCompletionGateResult, runCompletionGate } from '../../gates/completion/completion';
+import { formatNextStepText, resolveNextStepFromCliOptions } from '../../gates/next-step/next-step';
+import { withCompletionGateFinalizationLockAsync } from '../../gates/locks/finalization-lock';
 import {
     runBindRulePackToPreflightCommand,
     runEnterTaskModeCommand,
@@ -31,10 +31,10 @@ import {
     parseRequiredText
 } from './cli-helpers';
 import type { ParsedOptionsRecord } from './shared-command-utils';
-import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion-finalization';
-import { runFullSuiteValidationCommand } from './gate-flows/full-suite-validation-flow';
-import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task-summary-flow';
-import { runTaskResetCommand } from './gate-flows/task-reset-flow';
+import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion/completion-finalization';
+import { runFullSuiteValidationCommand } from './gate-flows/full-suite/full-suite-validation-flow';
+import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task/task-summary-flow';
+import { runTaskResetCommand } from './gate-flows/task/task-reset-flow';
 import { buildTaskResetMissingTaskIdMessage } from './task-reset-alias';
 import { colorizeTaskAuditSummaryText } from './task-audit-human-format';
 import { colorizeTaskEventsSummaryText } from './task-events-human-format';

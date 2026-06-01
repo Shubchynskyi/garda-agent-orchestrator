@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { ALL_AGENT_ENTRYPOINT_FILES, resolveBundleNameForTarget } from '../core/constants';
 import { ensureDirectory, pathExists, readTextFile } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
-import { writeProtectedControlPlaneManifest } from '../gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import { validateInitAnswers } from '../schemas/init-answers';
 import {
     getActiveAgentEntrypointFiles,

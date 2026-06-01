@@ -8,8 +8,8 @@ import type { ParsedOptionsRecord } from './shared-command-utils';
 import {
     formatLocalUiServerOutput,
     startLocalUiServer
-} from '../../reports/local-ui-server';
-import { normalizeLocalUiLanguage } from '../../reports/ui-i18n';
+} from '../../reports/ui/local-ui-server';
+import { normalizeLocalUiLanguage } from '../../reports/ui/ui-i18n';
 
 const UI_COMMAND_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },

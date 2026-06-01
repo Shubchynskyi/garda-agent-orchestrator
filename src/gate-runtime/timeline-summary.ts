@@ -8,8 +8,8 @@ import {
 } from './lifecycle-events';
 import { inspectTaskEventFile } from './task-events';
 import { withFilesystemLock } from './task-events-locking';
-import { detectCodeChanged } from '../gates/preflight-code-change';
-import { loadFullSuiteValidationConfig } from '../gates/full-suite-validation';
+import { detectCodeChanged } from '../gates/preflight/preflight-code-change';
+import { loadFullSuiteValidationConfig } from '../gates/full-suite/full-suite-validation';
 
 const SUMMARY_VERSION = 2;
 const SUMMARY_FILE_NAME = '.timeline-summary.json';

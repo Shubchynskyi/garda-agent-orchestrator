@@ -23,52 +23,52 @@ export {
     runHandshakeDiagnosticsCommand,
     runShellSmokePreflightCommand,
     runCommandTimeoutDiagnosticsCommand
-} from './gate-flows/task-mode-flow';
+} from './gate-flows/task-mode/task-mode-flow';
 
 export {
     runIntermediateCommandCommand
-} from './gate-flows/command-run-flow';
+} from './gate-flows/command-run/command-run-flow';
 
 export {
     runClassifyChangeCommand,
     runCompileGateCommand
-} from './gate-flows/compile-flow';
+} from './gate-flows/compile/compile-flow';
 
 export {
     runRestartCoherentCycleCommand,
     runRestartReviewCycleCommand
-} from './gate-flows/recovery-flow';
+} from './gate-flows/recovery/recovery-flow';
 
 export {
     runDocImpactGateCommand,
     runRequiredReviewsCheckCommand
-} from './gate-flows/review-flow';
+} from './gate-flows/review/review-flow';
 
 export {
     runLogTaskEventCommand,
     runHumanCommitCommand
-} from './gate-flows/completion-flow';
+} from './gate-flows/completion/completion-flow';
 
 export {
     runFullSuiteValidationCommand
-} from './gate-flows/full-suite-validation-flow';
+} from './gate-flows/full-suite/full-suite-validation-flow';
 
 export {
     runBuildReviewContextCommand
-} from './gate-flows/review-context-flow';
+} from './gate-flows/review-context/review-context-flow';
 
 export {
     runTaskEventsSummaryCommand,
     runTaskAuditSummaryCommand
-} from './gate-flows/task-summary-flow';
+} from './gate-flows/task/task-summary-flow';
 
 export {
     runTaskResetCommand
-} from './gate-flows/task-reset-flow';
+} from './gate-flows/task/task-reset-flow';
 
 export {
     runProjectMemoryImpactCommand
-} from './gate-flows/project-memory-flow';
+} from './gate-flows/completion/project-memory-flow';
 
 export {
     executeCommand,

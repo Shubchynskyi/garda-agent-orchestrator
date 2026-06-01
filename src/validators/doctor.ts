@@ -41,7 +41,7 @@ import {
 import {
     collectComplianceEvidence
 } from './doctor-compliance';
-import type { ProtectedControlPlaneManifestEvidence } from '../gates/helpers';
+import type { ProtectedControlPlaneManifestEvidence } from '../gates/shared/helpers';
 import type { ProviderComplianceResult } from './provider-compliance';
 import type { NestedBundleDuplicationResult } from './workspace-layout';
 import {

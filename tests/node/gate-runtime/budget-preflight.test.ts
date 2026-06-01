@@ -621,7 +621,7 @@ test('resolveRiskAwareDepth budget forecast uses promoted effective depth', () =
 
 // Integration: classifyChange triggers → RiskTriggers mapping contract
 
-import { classifyChange, getDefaultClassificationConfig } from '../../../src/gates/classify-change';
+import { classifyChange, getDefaultClassificationConfig } from '../../../src/gates/preflight/classify-change';
 
 function makeTestConfig() {
     const defaults = getDefaultClassificationConfig('/repo');

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { writeProtectedControlPlaneManifest } from '../../gates/protected-control-plane';
+import { writeProtectedControlPlaneManifest } from '../../gates/protected-control-plane/protected-control-plane';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import type { WorkflowFileConfigData } from './workflow-command-types';
 

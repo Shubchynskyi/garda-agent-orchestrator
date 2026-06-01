@@ -25,8 +25,8 @@ import {
 import {
     OUT_OF_SCOPE_FAILURE_POLICIES,
     type OutOfScopeFailurePolicy
-} from '../../gates/full-suite-validation';
-import { validateCompileGateCommand } from '../../gates/compile-gate';
+} from '../../gates/full-suite/full-suite-validation';
+import { validateCompileGateCommand } from '../../gates/compile/compile-gate';
 import type {
     ParsedOptionsRecord,
     ResolvedWorkflowBooleanSetting

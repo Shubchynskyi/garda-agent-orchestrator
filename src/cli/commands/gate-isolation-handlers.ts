@@ -1,17 +1,17 @@
 import * as path from 'node:path';
 import { appendTaskEventAsync } from '../../gate-runtime/task-events';
-import * as gateHelpers from '../../gates/helpers';
-import { normalizePath } from '../../gates/helpers';
+import * as gateHelpers from '../../gates/shared/helpers';
+import { normalizePath } from '../../gates/shared/helpers';
 import {
     evaluateIsolationModePreTask,
     loadIsolationModeConfig
-} from '../../gates/isolation-mode';
+} from '../../gates/isolation/isolation-mode';
 import {
     compareSandboxToLive,
     prepareSandbox,
     resolveIsolatedOrchestratorRoot,
     validateSandbox
-} from '../../gates/isolation-sandbox';
+} from '../../gates/isolation/isolation-sandbox';
 import { parseOptions } from './cli-helpers';
 import { EXIT_GATE_FAILURE } from '../exit-codes';
 

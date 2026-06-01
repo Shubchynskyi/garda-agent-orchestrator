@@ -1,0 +1,326 @@
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as childProcess from 'node:child_process';
+
+import {
+    assessProjectMemoryImpact,
+    getProjectMemoryImpactLifecycleEvidence,
+    routeProjectMemoryImpact
+} from '../../../../src/gates/project-memory-impact';
+import {
+    PROJECT_MEMORY_REQUIRED_FILE_NAMES
+} from '../../../../src/core/project-memory';
+import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+
+function withTempRepo(callback: (repoRoot: string) => void): void {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-pm-impact-'));
+    try {
+        seedProjectMemory(repoRoot);
+        callback(repoRoot);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+}
+
+function seedProjectMemory(repoRoot: string): void {
+    const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+    fs.mkdirSync(memoryRoot, { recursive: true });
+    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
+        fs.writeFileSync(
+            path.join(memoryRoot, fileName),
+            `# ${fileName}\n\nDurable Garda project memory content for ${fileName}.\n`,
+            'utf8'
+        );
+    }
+}
+
+function initializeGitRepo(repoRoot: string): void {
+    childProcess.execFileSync('git', ['init'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['config', 'user.email', 'garda-tests@example.com'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['config', 'user.name', 'Garda Tests'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['add', '.'], { cwd: repoRoot, stdio: 'ignore' });
+    childProcess.execFileSync('git', ['commit', '-m', 'seed'], { cwd: repoRoot, stdio: 'ignore' });
+}
+
+function writeProjectMemoryWorkflowConfig(repoRoot: string): void {
+    const config = buildDefaultWorkflowConfig();
+    config.project_memory_maintenance.enabled = true;
+    config.project_memory_maintenance.mode = 'check';
+    config.project_memory_maintenance.run_before_final_closeout = true;
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify(config, null, 2), 'utf8');
+}
+
+function writeRawWorkflowConfig(repoRoot: string, config: Record<string, unknown>): void {
+    const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify(config, null, 2), 'utf8');
+}
+
+describe('routeProjectMemoryImpact', () => {
+    it('maps durable workflow changes to focused memory files', () => {
+        const routed = routeProjectMemoryImpact(['src/gates/next-step.ts']);
+
+        assert.deepEqual(routed.affectedFileNames, [
+            'commands.md',
+            'compact.md',
+            'decisions.md',
+            'risks.md'
+        ]);
+        assert.equal(routed.reasons[0].changed_file, 'src/gates/next-step.ts');
+    });
+
+    it('does not recommend project memory updates for localized test-only changes', () => {
+        const routed = routeProjectMemoryImpact(['tests/node/gates/project-memory-impact.test.ts']);
+
+        assert.deepEqual(routed.affectedFileNames, []);
+        assert.deepEqual(routed.reasons, []);
+    });
+});
+
+describe('assessProjectMemoryImpact', () => {
+    it('returns OFF when maintenance mode is off', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-100',
+                modeOverride: 'off',
+                changedFiles: ['src/gates/next-step.ts']
+            });
+
+            assert.equal(result.artifact.status, 'OFF');
+            assert.equal(result.artifact.update_needed, false);
+            assert.deepEqual(result.artifact.violations, []);
+        });
+    });
+
+    it('returns NO_UPDATE_NEEDED for test-only changes in check mode', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-101',
+                modeOverride: 'check',
+                changedFiles: ['tests/node/gates/project-memory-impact.test.ts']
+            });
+
+            assert.equal(result.artifact.status, 'NO_UPDATE_NEEDED');
+            assert.equal(result.artifact.update_needed, false);
+            assert.deepEqual(result.artifact.affected_memory_files, []);
+        });
+    });
+
+    it('blocks when neither explicit changed files nor readable preflight evidence exists', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-105',
+                modeOverride: 'check',
+                preflightPath: 'missing-preflight.json'
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.equal(result.artifact.outcome, 'FAIL');
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('Preflight artifact')));
+        });
+    });
+
+    it('allows explicit empty changed files without preflight evidence', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-106',
+                modeOverride: 'strict',
+                preflightPath: 'missing-preflight.json',
+                changedFiles: []
+            });
+
+            assert.equal(result.artifact.status, 'NO_UPDATE_NEEDED');
+            assert.equal(result.artifact.outcome, 'PASS');
+        });
+    });
+
+    it('returns UPDATE_NEEDED with suggested memory files for workflow gate changes', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-102',
+                modeOverride: 'check',
+                changedFiles: ['src/gates/project-memory-impact.ts']
+            });
+
+            assert.equal(result.artifact.status, 'UPDATE_NEEDED');
+            assert.equal(result.artifact.update_needed, true);
+            assert.ok(result.artifact.affected_memory_files.some((file) => file.endsWith('/risks.md')));
+            assert.ok(result.artifact.affected_memory_files.some((file) => file.endsWith('/compact.md')));
+        });
+    });
+
+    it('blocks strict mode when update evidence is missing', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-103',
+                modeOverride: 'strict',
+                changedFiles: ['src/lifecycle/update.ts']
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.equal(result.artifact.outcome, 'FAIL');
+            assert.ok(result.artifact.update_evidence.invalid_reasons.length > 0);
+        });
+    });
+
+    it('blocks update mode when update evidence is missing', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-107',
+                modeOverride: 'update',
+                changedFiles: ['src/gates/project-memory-impact.ts']
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.equal(result.artifact.outcome, 'FAIL');
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('Update evidence')));
+        });
+    });
+
+    it('infers updated memory files from the current workspace diff when it exactly matches the affected set', () => {
+        withTempRepo((repoRoot) => {
+            initializeGitRepo(repoRoot);
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            for (const fileName of ['commands.md', 'compact.md', 'decisions.md', 'risks.md']) {
+                fs.appendFileSync(path.join(memoryRoot, fileName), '\nUpdated for T-583.\n', 'utf8');
+            }
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-111',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true
+            });
+
+            assert.equal(result.artifact.status, 'UPDATED');
+            assert.deepEqual(result.artifact.update_evidence.updated_memory_files, [
+                'garda-agent-orchestrator/live/docs/project-memory/commands.md',
+                'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+                'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+                'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+            ]);
+            assert.ok(result.updateEvidenceToWrite);
+        });
+    });
+
+    it('rejects bare confirm-updated when changed project-memory files do not exactly match the affected set', () => {
+        withTempRepo((repoRoot) => {
+            initializeGitRepo(repoRoot);
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.appendFileSync(path.join(memoryRoot, 'commands.md'), '\nUpdated for T-583.\n', 'utf8');
+            fs.appendFileSync(path.join(memoryRoot, 'compact.md'), '\nUpdated for T-583.\n', 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('do not exactly match the affected list')));
+            assert.equal(result.updateEvidenceToWrite, null);
+        });
+    });
+
+    it('keeps compact overflow advisory when no durable update is affected', () => {
+        withTempRepo((repoRoot) => {
+            const compactPath = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'live',
+                'docs',
+                'project-memory',
+                'compact.md'
+            );
+            fs.writeFileSync(compactPath, 'x'.repeat(13000), 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-104',
+                modeOverride: 'strict',
+                changedFiles: []
+            });
+
+            assert.equal(result.artifact.status, 'NO_UPDATE_NEEDED');
+            assert.equal(result.artifact.outcome, 'PASS');
+            assert.equal(result.artifact.compact.status, 'OVERFLOW');
+            assert.ok(result.artifact.validation.issues.some((issue) => issue.message.includes('compact.md')));
+        });
+    });
+
+    it('reports malformed lifecycle impact artifacts as INVALID instead of throwing', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-108';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({ changed_files: [] }), 'utf8');
+            const runtimeMemoryDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'project-memory');
+            fs.mkdirSync(runtimeMemoryDir, { recursive: true });
+            fs.writeFileSync(path.join(runtimeMemoryDir, `${taskId}-impact.json`), JSON.stringify({ schema_version: 1 }), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+
+            assert.equal(evidence.evidence_status, 'INVALID');
+            assert.ok(evidence.violations.some((violation) => violation.includes("field 'update_evidence'")));
+            assert.ok(evidence.visible_summary_line.includes('evidence=INVALID'));
+        });
+    });
+
+    it('fails closed on case-mismatched project memory workflow config keys', () => {
+        withTempRepo((repoRoot) => {
+            writeRawWorkflowConfig(repoRoot, {
+                Project_Memory_Maintenance: {
+                    enabled: true,
+                    mode: 'check'
+                }
+            });
+
+            assert.throws(
+                () => getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId: 'T-109', preflightPath: null }),
+                /must use the exact key 'project_memory_maintenance'/
+            );
+        });
+    });
+
+    it('keeps project memory config isolated from unrelated invalid workflow sections', () => {
+        withTempRepo((repoRoot) => {
+            writeRawWorkflowConfig(repoRoot, {
+                project_memory_maintenance: {
+                    enabled: true,
+                    mode: 'check',
+                    run_before_final_closeout: true
+                },
+                scope_budget_guard: {
+                    enabled: true,
+                    action: 'BLOCK_SOMEHOW'
+                }
+            });
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({
+                repoRoot,
+                taskId: 'T-110',
+                preflightPath: null
+            });
+
+            assert.equal(evidence.required, true);
+            assert.notEqual(evidence.evidence_status, 'NOT_REQUIRED');
+        });
+    });
+});

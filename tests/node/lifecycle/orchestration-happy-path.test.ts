@@ -24,7 +24,7 @@ import {
     runShellSmokePreflightCommand,
     runTaskAuditSummaryCommand
 } from '../../../src/cli/commands/gates';
-import { runBuildReviewContextCommand } from '../../../src/cli/commands/gate-flows/review-context-flow';
+import { runBuildReviewContextCommand } from '../../../src/cli/commands/gate-flows/review-context/review-context-flow';
 import { handleCompletionGate } from '../../../src/cli/commands/gate-task-handlers';
 import {
     initializeGitRepo,

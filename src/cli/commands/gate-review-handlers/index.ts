@@ -1,15 +1,15 @@
 import {
     normalizeCanonicalReviewSectionHeadings
-} from '../../../gates/completion';
+} from '../../../gates/completion/completion';
 import {
     createReviewInvocationHandlers
-} from './review-invocation-handlers';
+} from './launch/review-invocation-handlers';
 import {
     createReviewResultHandlers
-} from './review-result-handlers';
+} from './result/review-result-handlers';
 import {
     createReviewRoutingLaunchHandlers
-} from './review-routing-launch-handlers';
+} from './launch/review-routing-launch-handlers';
 import {
     analyzeEarlyReviewMaterialization,
     assertExplicitReviewContextRuntimeIdentity,
@@ -56,9 +56,9 @@ import {
     snapshotSupersededReviewerLaunchArtifact,
     stringSha256,
     toReviewerHandoffAbsolutePath
-} from './review-handler-public-support';
+} from './support/review-handler-public-support';
 
-export { handleRequiredReviewsCheck, handleDocImpactGate } from './simple-handlers';
+export { handleRequiredReviewsCheck, handleDocImpactGate } from './support/simple-handlers';
 export {
     assertExplicitReviewContextRuntimeIdentity,
     assertNoCurrentCycleReviewRecordedBeforeRouting,
@@ -99,7 +99,7 @@ export {
     stringSha256,
     toReviewerHandoffAbsolutePath,
     type SupersededReviewerLaunchArtifactSnapshot
-} from './review-handler-public-support';
+} from './support/review-handler-public-support';
 
 export let readReviewOutputFromStdin = async (): Promise<string> => {
     if (!process.stdin || process.stdin.isTTY) {

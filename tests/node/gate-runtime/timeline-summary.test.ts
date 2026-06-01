@@ -144,7 +144,7 @@ describe('gate-runtime/timeline-summary', () => {
 
     it('uses the lightweight preflight code-change helper instead of importing completion.ts', () => {
         const source = fs.readFileSync(path.resolve(process.cwd(), 'src/gate-runtime/timeline-summary.ts'), 'utf8');
-        assert.match(source, /from\s+['"]\.\.\/gates\/preflight-code-change['"]/);
+        assert.match(source, /from\s+['"]\.\.\/gates\/preflight\/preflight-code-change['"]/);
         assert.doesNotMatch(source, /from\s+['"]\.\.\/gates\/completion['"]/);
     });
 

@@ -10,7 +10,7 @@ import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import {
     DEFAULT_UI_HOST,
     startLocalUiServer
-} from '../../../src/reports/local-ui-server';
+} from '../../../src/reports/ui/local-ui-server';
 
 type FakeListener = () => void | Promise<void>;
 

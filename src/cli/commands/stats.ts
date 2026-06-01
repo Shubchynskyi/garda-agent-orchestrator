@@ -10,13 +10,13 @@ import { assertValidTaskId, forEachJsonlLine } from '../../gate-runtime/task-eve
 import { parseTaskIdJsonlFileName } from '../../core/task-ids';
 import { coerceIntLike } from '../../gate-runtime/token-telemetry';
 import { buildBudgetComparison, type BudgetForecast, type BudgetComparisonResult } from '../../gate-runtime/budget-preflight';
-import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/helpers';
+import { joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../../gates/shared/helpers';
 import {
     buildReviewAttemptSummary,
     type ReviewAttemptSummary,
     type ReviewAttemptTypeSummary
-} from '../../gates/task-audit-summary-collectors';
-import type { ReviewReuseTelemetryEventLike } from '../../gates/review-reuse-telemetry';
+} from '../../gates/task-audit/task-audit-summary-collectors';
+import type { ReviewReuseTelemetryEventLike } from '../../gates/review-reuse/review-reuse-telemetry';
 import { bold, cyan, dim, green, red, yellow } from './cli-format-output';
 import {
     parseTimestamp,
@@ -26,7 +26,7 @@ import {
     getCurrentCycleReviewContextPaths,
     resolveTaskCycleBindingSnapshot,
     shouldIncludeTelemetryForCurrentCycle
-} from '../../gates/task-events-summary';
+} from '../../gates/task-events-summary/task-events-summary';
 
 interface TokenContribution extends OutputCompactionContributionLike {}
 

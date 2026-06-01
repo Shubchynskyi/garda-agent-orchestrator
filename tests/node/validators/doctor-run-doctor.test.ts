@@ -10,7 +10,7 @@ import {
 } from '../../../src/validators/doctor';
 import {
     writeProtectedControlPlaneManifest
-} from '../../../src/gates/helpers';
+} from '../../../src/gates/shared/helpers';
 import { createDoctorWorkspace, seedStaleLock } from './doctor-workspace-builder';
 
 function writeDoctorFixtureFile(filePath: string, content: string) {

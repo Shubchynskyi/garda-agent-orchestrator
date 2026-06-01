@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import {
     evaluateProtectedControlPlaneManifest,
     writeProtectedControlPlaneManifest
-} from '../../gates/helpers';
+} from '../../gates/shared/helpers';
 import {
     reconcileTimelineSummaryForTask,
     readTimelineSummaryIndex

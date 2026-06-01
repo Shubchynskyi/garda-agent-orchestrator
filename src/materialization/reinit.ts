@@ -13,7 +13,7 @@ import { getCanonicalEntrypointFile, convertActiveAgentEntrypointFilesToString }
 import { applyAssistantDefaults } from './rule-materialization';
 import { generateProjectMemorySummary } from './rule-materialization';
 import { runInstall } from './install';
-import { writeProtectedControlPlaneManifest } from '../gates/helpers';
+import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import { getExpectedBundleInvariantPaths, validateBundleInvariants } from '../validators/workspace-layout';
 import { resolveBundleName } from '../core/constants';
 import { cleanupStaleTaskEventLocks } from '../gate-runtime/task-events';

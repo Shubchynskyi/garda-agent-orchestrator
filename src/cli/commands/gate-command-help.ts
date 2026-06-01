@@ -5,7 +5,7 @@ import {
     isBundleRootLike,
     resolveBundleNameForTarget
 } from '../../core/constants';
-import { isOrchestratorSourceCheckout } from '../../gates/helpers';
+import { isOrchestratorSourceCheckout } from '../../gates/shared/helpers';
 import { bold, cyan, dim, green, styleHelpCommandLine } from './cli-format-output';
 
 interface GateHelpEntry {

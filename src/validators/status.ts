@@ -27,7 +27,7 @@ import {
 import {
     evaluateProtectedControlPlaneManifest,
     type ProtectedControlPlaneManifestEvidence
-} from '../gates/helpers';
+} from '../gates/shared/helpers';
 import {
     collectToxinSnapshot,
     buildToxinStatusSummary,

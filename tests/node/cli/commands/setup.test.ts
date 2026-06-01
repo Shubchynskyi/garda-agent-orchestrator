@@ -11,7 +11,7 @@ import {
     buildSetupStepsText,
     handleSetup
 } from '../../../../src/cli/commands/setup';
-import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/helpers';
+import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/shared/helpers';
 import { runVerify } from '../../../../src/validators/verify';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
