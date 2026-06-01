@@ -141,6 +141,7 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     changeColumn: 'Change',
     noFixedOptions: 'No fixed options',
     freeValueHelp: 'Enter a value that matches the description.',
+    reviewCycleAutoSplitDependency: 'Auto-split only affects blocking mode: review_cycle_guard.action must be BLOCK_FOR_OPERATOR_DECISION. When the action is WARN_ONLY, this setting is informational.',
     minutesLabel: 'Minutes',
     secondsLabel: 'Seconds',
     durationStoredAsMs: 'Saved as milliseconds for Garda.',
@@ -357,6 +358,7 @@ const RUSSIAN_LOCAL_UI_TEXT: Record<LocalUiTextKey, string> = Object.freeze({
     changeColumn: 'Изменить',
     noFixedOptions: 'Фиксированных опций нет',
     freeValueHelp: 'Введите значение по смыслу описания.',
+    reviewCycleAutoSplitDependency: 'Auto-split влияет только на blocking mode: review_cycle_guard.action должен быть BLOCK_FOR_OPERATOR_DECISION. При WARN_ONLY эта настройка информационная.',
     minutesLabel: 'Минуты',
     secondsLabel: 'Секунды',
     durationStoredAsMs: 'Для Garda сохраняется в миллисекундах.',
@@ -545,7 +547,7 @@ export const LOCAL_UI_SETTING_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Re
         },
         'scope-budget-profiles': {
             label: 'Профили для scope budget',
-            description: 'Список task profiles через запятую, для которых действует контроль размера.'
+            description: 'Task profiles, для которых действует контроль размера. Unknown legacy values показываются явно и не удаляются молча.'
         },
         'scope-budget-max-files': {
             label: 'Лимит файлов',
@@ -591,11 +593,11 @@ export const LOCAL_UI_SETTING_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Re
         },
         'review-cycle-excluded-review-types': {
             label: 'Исключённые review types',
-            description: 'Review lanes через запятую, которые review-cycle guard игнорирует.'
+            description: 'Review lanes, которые review-cycle guard игнорирует. Значения выбираются из известных review contract keys и текущего capability config.'
         },
         'review-cycle-auto-split-enabled': {
             label: 'Авто-предложение split',
-            description: 'Разрешает при давлении review-cycle выдавать auto-split prompt вместо ожидания оператора.'
+            description: 'Разрешает auto-split prompt только когда review-cycle action блокирует до решения оператора.'
         },
         'project-memory-enabled': {
             label: 'Проверка project memory',

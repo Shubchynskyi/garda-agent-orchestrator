@@ -248,11 +248,15 @@ export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition
     const settings = buildWorkflowConfigTab(repoRoot).settings;
     return WORKFLOW_SETTING_DEFINITIONS
         .filter((definition) => definition.editable !== false)
-        .map((definition) => ({
-            ...definition,
-            current_value: settings.find((setting) => setting.key === definition.key)?.value,
-            confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE
-        }));
+        .map((definition) => {
+            const reportSetting = settings.find((setting) => setting.key === definition.key);
+            return {
+                ...definition,
+                options: reportSetting?.options ?? definition.options,
+                current_value: reportSetting?.value,
+                confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE
+            };
+        });
 }
 
 export function findSetting(settings: UiSettingDefinition[], settingId: unknown): UiSettingDefinition | null {
@@ -265,6 +269,19 @@ export function findSetting(settings: UiSettingDefinition[], settingId: unknown)
 export interface ParsedUiSettingValue {
     command_value: string;
     proposed_value: unknown;
+}
+
+function normalizeEnumListValue(value: unknown): string[] {
+    const rawValues = Array.isArray(value)
+        ? value
+        : typeof value === 'number'
+            ? [String(value)]
+            : typeof value === 'string'
+                ? value.split(',')
+                : [];
+    return [...new Set(rawValues
+        .map((entry) => typeof entry === 'string' ? entry.trim() : '')
+        .filter(Boolean))];
 }
 
 export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown): ParsedUiSettingValue {
@@ -303,6 +320,21 @@ export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown
         return {
             command_value: option.value,
             proposed_value: option.value
+        };
+    }
+    if (setting.value_type === 'enum_list') {
+        const values = normalizeEnumListValue(value);
+        if (values.length === 0) {
+            throw new Error(`${setting.label} must contain at least one value.`);
+        }
+        const allowedValues = new Set(setting.options.map((candidate) => candidate.value));
+        const invalidValues = values.filter((entry) => !allowedValues.has(entry));
+        if (invalidValues.length > 0) {
+            throw new Error(`${setting.label} contains unsupported value(s): ${invalidValues.join(', ')}. Allowed values: ${setting.options.map((candidate) => candidate.value).join(', ')}.`);
+        }
+        return {
+            command_value: values.join(','),
+            proposed_value: values
         };
     }
     if (setting.value_type === 'string_list') {

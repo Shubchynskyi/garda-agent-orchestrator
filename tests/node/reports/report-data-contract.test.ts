@@ -39,6 +39,40 @@ function writeWorkflowConfig(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
+function writeProfilesConfig(repoRoot: string): void {
+    const profilesPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json');
+    fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
+    fs.writeFileSync(profilesPath, JSON.stringify({
+        version: 1,
+        active_profile: 'balanced',
+        built_in_profiles: {
+            balanced: {},
+            fast: {},
+            strict: {},
+            'docs-only': {}
+        },
+        user_profiles: {
+            'custom-review': {}
+        }
+    }, null, 2));
+}
+
+function writeReviewCapabilities(repoRoot: string): void {
+    const capabilitiesPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'review-capabilities.json');
+    fs.mkdirSync(path.dirname(capabilitiesPath), { recursive: true });
+    fs.writeFileSync(capabilitiesPath, JSON.stringify({
+        code: true,
+        db: true,
+        security: true,
+        refactor: true,
+        api: true,
+        test: true,
+        performance: false,
+        infra: false,
+        dependency: true
+    }, null, 2));
+}
+
 function sha256Text(value: string): string {
     return createHash('sha256').update(value).digest('hex');
 }
@@ -191,6 +225,8 @@ test('readCanonicalActiveQueueRows reads only the canonical upper Active Queue t
 test('buildWorkflowConfigTab exposes read-only settings with commands and descriptions', () => {
     const repoRoot = makeTempRepo();
     writeWorkflowConfig(repoRoot);
+    writeProfilesConfig(repoRoot);
+    writeReviewCapabilities(repoRoot);
 
     const tab = buildWorkflowConfigTab(repoRoot);
 
@@ -216,6 +252,39 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(selfGuard);
     assert.match(selfGuard.command, /garda workflow set --garda-self-guard <on\|off>/);
     assert.doesNotMatch(selfGuard.command, /deny_agent_entry\|require_operator_confirmation/);
+    const scopeProfiles = tab.settings.find((setting) => setting.key === 'scope_budget_guard.profiles');
+    assert.ok(scopeProfiles);
+    assert.equal(scopeProfiles.value_type, 'enum_list');
+    assert.ok(scopeProfiles.options.some((option) => option.value === 'strict'));
+    assert.ok(scopeProfiles.options.some((option) => option.value === 'custom-review'));
+    assert.match(scopeProfiles.command, /--scope-budget-profiles <comma-separated: /u);
+    const excludedReviewTypes = tab.settings.find((setting) => setting.key === 'review_cycle_guard.excluded_review_types');
+    assert.ok(excludedReviewTypes);
+    assert.equal(excludedReviewTypes.value_type, 'enum_list');
+    assert.ok(excludedReviewTypes.options.some((option) => option.value === 'test'));
+    assert.ok(excludedReviewTypes.options.some((option) => option.value === 'performance' && option.description.includes('disabled')));
+    assert.match(excludedReviewTypes.command, /--review-cycle-excluded-review-types <comma-separated: /u);
+});
+
+test('buildWorkflowConfigTab preserves unknown legacy enum-list values with diagnostics', () => {
+    const repoRoot = makeTempRepo();
+    writeWorkflowConfig(repoRoot);
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    config.scope_budget_guard.profiles = ['strict', 'Old-Profile'];
+    config.review_cycle_guard.excluded_review_types = ['test', 'Legacy-Review'];
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+    const tab = buildWorkflowConfigTab(repoRoot);
+
+    const scopeProfiles = tab.settings.find((setting) => setting.key === 'scope_budget_guard.profiles');
+    assert.ok(scopeProfiles);
+    assert.ok(scopeProfiles.options.some((option) => option.value === 'Old-Profile' && option.description.includes('legacy')));
+    assert.ok(!scopeProfiles.options.some((option) => option.value === 'old-profile'));
+    const excludedReviewTypes = tab.settings.find((setting) => setting.key === 'review_cycle_guard.excluded_review_types');
+    assert.ok(excludedReviewTypes);
+    assert.ok(excludedReviewTypes.options.some((option) => option.value === 'Legacy-Review' && option.description.includes('legacy')));
+    assert.ok(!excludedReviewTypes.options.some((option) => option.value === 'legacy-review'));
 });
 
 test('buildReportDataContract exposes tasks, workflow config, and instruction tabs', () => {

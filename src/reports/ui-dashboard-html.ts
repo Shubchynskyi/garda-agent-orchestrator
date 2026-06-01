@@ -140,6 +140,9 @@ tr.selected { background: #eef8f6; }
 .option-item code { color: var(--blue); }
 .current-value { display: inline-block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .setting-control { display: grid; gap: 6px; min-width: 150px; }
+.enum-list-control { display: grid; gap: 5px; max-height: 180px; overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.enum-list-control label { display: grid; grid-template-columns: 18px 1fr; gap: 6px; align-items: start; font-size: 12px; line-height: 1.35; }
+.setting-note { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .setting-parameter { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
 .setting-options { margin: 8px 0; }
 .setting-options li { margin-bottom: 5px; }
@@ -639,6 +642,13 @@ function settingInputValue(setting) {
   }
   return setting.current_value === null || setting.current_value === undefined ? '' : String(setting.current_value);
 }
+function settingValueList(setting) {
+  if (Array.isArray(setting.current_value)) {
+    return setting.current_value.map(value => String(value));
+  }
+  const inputValue = settingInputValue(setting);
+  return inputValue.split(',').map(value => value.trim()).filter(Boolean);
+}
 function renderSettingOptions(setting) {
   if (!setting.options || setting.options.length === 0) {
     return '<div class="option-item"><strong>' + safe(t('noFixedOptions')) + '</strong><span>' + safe(t('freeValueHelp')) + '</span></div>';
@@ -652,6 +662,10 @@ function renderSettingControl(setting, disabled) {
   if (isDurationMsSetting(setting)) {
     const parts = durationPartsFromMs(setting.current_value);
     return '<div class="duration-control" data-setting-id="' + safe(setting.id) + '"><label>' + safe(t('minutesLabel')) + '<input id="' + controlId + '-minutes" type="number" min="0" value="' + safe(parts.minutes) + '"' + disabledAttr + '></label><label>' + safe(t('secondsLabel')) + '<input id="' + controlId + '-seconds" type="number" min="0" max="59" value="' + safe(parts.seconds) + '"' + disabledAttr + '></label></div><span class="duration-help">' + safe(t('durationStoredAsMs')) + '</span>';
+  }
+  if (setting.value_type === 'enum_list' && setting.options && setting.options.length > 0) {
+    const selected = new Set(settingValueList(setting));
+    return '<div id="' + controlId + '" class="enum-list-control" role="group">' + setting.options.map(option => '<label><input type="checkbox" value="' + safe(option.value) + '"' + (selected.has(String(option.value)) ? ' checked' : '') + disabledAttr + '><span>' + safe(localizedOption(settingTextPacks, setting.id, option, 'label', option.label)) + ' <code>' + safe(option.value) + '</code></span></label>').join('') + '</div>';
   }
   if (setting.options && setting.options.length > 0) {
     return '<select id="' + controlId + '"' + disabledAttr + '>' + setting.options.map(option => '<option value="' + safe(option.value) + '"' + (String(option.value) === inputValue ? ' selected' : '') + '>' + safe(localizedOption(settingTextPacks, setting.id, option, 'label', option.label)) + ' (' + safe(option.value) + ')</option>').join('') + '</select>';
@@ -679,9 +693,12 @@ function settingGroupLabel(groupId) {
 function renderSettingRow(setting, disabled) {
   const label = localizedField(settingTextPacks, setting.id, 'label', setting.label);
   const description = localizedField(settingTextPacks, setting.id, 'description', setting.description);
+  const dependencyNote = setting.id === 'review-cycle-auto-split-enabled'
+    ? '<div class="setting-note">' + safe(t('reviewCycleAutoSplitDependency')) + '</div>'
+    : '';
   return '<tr>'
     + '<td><div class="setting-title"><strong>' + safe(label) + '</strong><code>(' + safe(setting.key) + ')</code><span class="setting-parameter"><code>' + safe(setting.flag) + '</code></span></div></td>'
-    + '<td class="description-cell">' + inlineText(description) + '</td>'
+    + '<td class="description-cell">' + inlineText(description) + dependencyNote + '</td>'
     + '<td><code class="current-value">' + safe(isDurationMsSetting(setting) ? formatDurationMs(setting.current_value) : JSON.stringify(setting.current_value)) + '</code></td>'
     + '<td>' + renderSettingOptions(setting) + '</td>'
     + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-mode="preview"' + (disabled ? ' disabled' : '') + '>' + safe(t('previewCommand')) + '</button><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'
@@ -734,6 +751,9 @@ function settingSubmitValue(setting, fallbackInput) {
     const minutes = Math.max(0, Math.trunc(Number(minutesInput ? minutesInput.value : 0) || 0));
     const seconds = Math.max(0, Math.min(59, Math.trunc(Number(secondsInput ? secondsInput.value : 0) || 0)));
     return String((minutes * 60 + seconds) * 1000);
+  }
+  if (setting && setting.value_type === 'enum_list') {
+    return Array.from((fallbackInput || document).querySelectorAll('input[type="checkbox"]:checked')).map(input => input.value);
   }
   return fallbackInput ? fallbackInput.value : '';
 }

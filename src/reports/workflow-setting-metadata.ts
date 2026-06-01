@@ -8,7 +8,7 @@ import { SCOPE_BUDGET_GUARD_ACTIONS } from '../core/scope-budget-guard';
 import { REVIEW_CYCLE_GUARD_ACTIONS } from '../core/review-cycle-guard';
 import { OUT_OF_SCOPE_FAILURE_POLICIES } from '../gates/full-suite-validation';
 
-export type WorkflowSettingValueType = 'boolean' | 'enum' | 'integer' | 'string' | 'string_list';
+export type WorkflowSettingValueType = 'boolean' | 'enum' | 'enum_list' | 'integer' | 'string' | 'string_list';
 
 export interface WorkflowSettingOption {
     value: string;
@@ -284,9 +284,9 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'scope-budget-profiles',
         key: 'scope_budget_guard.profiles',
         label: 'Scope budget profiles',
-        description: 'Comma-separated task profiles where the scope budget guard applies.',
+        description: 'Task profiles where the scope budget guard applies. Unknown legacy values are shown explicitly instead of being dropped.',
         flag: '--scope-budget-profiles',
-        value_type: 'string_list',
+        value_type: 'enum_list',
         options: [],
         placeholder: 'strict,balanced'
     },
@@ -378,9 +378,9 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'review-cycle-excluded-review-types',
         key: 'review_cycle_guard.excluded_review_types',
         label: 'Excluded review types',
-        description: 'Comma-separated review lanes ignored by the review-cycle guard.',
+        description: 'Review lanes ignored by the review-cycle guard. Values are selected from known review contract keys and current capability config.',
         flag: '--review-cycle-excluded-review-types',
-        value_type: 'string_list',
+        value_type: 'enum_list',
         options: [],
         placeholder: 'test'
     },
@@ -388,7 +388,7 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'review-cycle-auto-split-enabled',
         key: 'review_cycle_guard.auto_split_enabled',
         label: 'Automatic review-cycle split prompt',
-        description: 'Allows review-cycle pressure to emit an auto-split prompt instead of waiting for operator direction.',
+        description: 'Allows review-cycle pressure to emit an auto-split prompt when the action is BLOCK_FOR_OPERATOR_DECISION. It has no blocking effect while action is WARN_ONLY.',
         flag: '--review-cycle-auto-split-enabled',
         value_type: 'boolean',
         options: BOOLEAN_OPTIONS

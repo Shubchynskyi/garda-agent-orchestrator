@@ -1074,12 +1074,22 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(listResponse.status, 200);
         const list = await listResponse.json() as {
             enabled: boolean;
-            settings: Array<{ id: string; key: string; current_value: unknown }>;
+            settings: Array<{
+                id: string;
+                key: string;
+                current_value: unknown;
+                value_type: string;
+                options: Array<{ value: string }>;
+            }>;
         };
         assert.equal(list.enabled, true);
         assert.ok(list.settings.some((setting) => setting.id === 'compile-gate-command'));
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
+        const scopeProfiles = list.settings.find((setting) => setting.id === 'scope-budget-profiles');
+        assert.ok(scopeProfiles);
+        assert.equal(scopeProfiles.value_type, 'enum_list');
+        assert.ok(scopeProfiles.options.some((option) => option.value === 'strict'));
 
         const compilePreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
@@ -1097,6 +1107,29 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(compilePreview.proposed_value, 'npm run build');
         assert.deepEqual(compilePreview.changed_keys, ['compile_gate.command']);
         assert.match(compilePreview.command, /workflow set --compile-gate-command "npm run build"/u);
+
+        const enumListPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'scope-budget-profiles', mode: 'preview', value: ['strict', 'balanced'] })
+        });
+        assert.equal(enumListPreviewResponse.status, 200);
+        const enumListPreview = await enumListPreviewResponse.json() as {
+            proposed_value: string[];
+            command: string;
+            changed_keys: string[];
+        };
+        assert.deepEqual(enumListPreview.proposed_value, ['strict', 'balanced']);
+        assert.deepEqual(enumListPreview.changed_keys, ['scope_budget_guard.profiles']);
+        assert.match(enumListPreview.command, /workflow set --scope-budget-profiles strict,balanced/u);
+
+        const invalidEnumListResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'scope-budget-profiles', mode: 'preview', value: ['strict', 'made-up'] })
+        });
+        assert.equal(invalidEnumListResponse.status, 400);
+        assert.equal((await invalidEnumListResponse.json() as { code: string }).code, 'invalid_setting_value');
 
         const invalidResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
