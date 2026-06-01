@@ -506,6 +506,41 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 status: 'PASS',
                 gates: []
             },
+            full_suite_validation: {
+                state: 'passed',
+                freshness: 'current',
+                enabled: true,
+                required: true,
+                status: 'PASSED',
+                command: 'npm test',
+                placement: 'after_compile_before_reviews',
+                duration_ms: 123456,
+                duration_human: '2m 3.5s',
+                timed_out: false,
+                exit_code: 0,
+                artifact_path: 'runtime/reviews/T-100-full-suite-validation.json',
+                artifact_exists: true,
+                artifact_sha256: 'abc123',
+                output_artifact_path: 'runtime/reviews/T-100-full-suite-output.log',
+                updated_at_utc: '2026-05-19T00:01:00.000Z',
+                compact_summary: ['# tests 10', '# pass 10'],
+                violations: [],
+                warnings: [],
+                skip_reason: null,
+                mismatch_reason: null,
+                timeout_forecast: {
+                    history_path: 'runtime/full-suite-duration-history.json',
+                    sample_count: 0,
+                    average_duration_seconds: null,
+                    high_watermark_duration_seconds: null,
+                    recommended_timeout_seconds: 600,
+                    safety_margin_seconds: null,
+                    recommendation_source: 'config_timeout',
+                    configured_timeout_seconds: 600,
+                    warning: null
+                },
+                timeout_forecast_label: 'Recommended full-suite command timeout: 600s (configured timeout; no matching successful duration history yet).'
+            },
             audit: {
                 status: 'BLOCKED',
                 blockers: [
@@ -686,6 +721,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await flushPromises();
         assert.match(fakeDocument.elements.detail.innerHTML, /Gate Timeline/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Runtime diagnostics/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Full-suite validation/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /2m 3\.5s/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-full-suite-validation\.json/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /post-done-drift: blocked item/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Audit status/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /blocked item/u);
@@ -705,6 +743,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await fakeDocument.elements['language-select'].dispatch('change');
         assert.deepEqual(storedLanguageCalls.at(-1), ['garda.ui.language', 'ru']);
         assert.match(fakeDocument.elements.detail.innerHTML, /События/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Статус full-suite/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
     } finally {
         await server.close();

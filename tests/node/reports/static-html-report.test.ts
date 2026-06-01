@@ -46,6 +46,24 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
         exists: true,
         sha256: 'abc123'
     }];
+    report.tasks_tab.rows[0].detail.full_suite_validation = {
+        ...report.tasks_tab.rows[0].detail.full_suite_validation,
+        state: 'passed',
+        freshness: 'current',
+        enabled: true,
+        required: true,
+        status: 'PASSED',
+        command: 'npm test',
+        duration_ms: 123456,
+        duration_human: '2m 3.5s',
+        timed_out: false,
+        exit_code: 0,
+        artifact_path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-full-suite-validation.json',
+        artifact_exists: true,
+        output_artifact_path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-full-suite-output.log',
+        compact_summary: ['# tests 10'],
+        timeout_forecast_label: 'Recommended full-suite command timeout: 600s'
+    };
     const html = renderStaticHtmlReport(report);
 
     assert.ok(html.includes('data-tab="tasks"'));
@@ -55,6 +73,9 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('toArtifactHref(item.path)'));
     assert.ok(html.includes('<a href="'));
     assert.ok(html.includes('C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-compile-output.log'));
+    assert.ok(html.includes('Full-suite Validation'));
+    assert.ok(html.includes('T-100-full-suite-validation.json'));
+    assert.ok(html.includes('2m 3.5s'));
     assert.ok(html.includes('"task_id":"T-100"'));
     assert.ok(!html.includes('Must stay out of the upper queue'));
 });

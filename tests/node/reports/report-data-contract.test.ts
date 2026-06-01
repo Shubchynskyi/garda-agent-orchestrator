@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import {
     buildReportDataContract,
+    buildReportTaskDetail,
     buildWorkflowConfigTab,
     readCanonicalActiveQueueRows
 } from '../../../src/reports/report-data-contract';
@@ -35,6 +37,88 @@ function writeWorkflowConfig(repoRoot: string): void {
     config.full_suite_validation.enabled = true;
     config.full_suite_validation.command = 'npm test';
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
+function sha256Text(value: string): string {
+    return createHash('sha256').update(value).digest('hex');
+}
+
+function writePreflight(repoRoot: string, taskId = 'T-100'): string {
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    fs.writeFileSync(preflightPath, JSON.stringify({
+        task_id: taskId,
+        mode: 'FULL_PATH',
+        changed_files: ['src/reports/report-data-contract.ts'],
+        metrics: {
+            changed_lines_total: 12,
+            changed_files_sha256: sha256Text('src/reports/report-data-contract.ts'),
+            scope_sha256: sha256Text('scope'),
+            scope_content_sha256: sha256Text('content')
+        },
+        required_reviews: { code: true }
+    }, null, 2));
+    return preflightPath;
+}
+
+function writeCompileEvent(repoRoot: string, taskId = 'T-100', timestamp = '2026-05-16T00:01:00.000Z'): string {
+    const eventsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
+    fs.mkdirSync(eventsRoot, { recursive: true });
+    fs.writeFileSync(path.join(eventsRoot, `${taskId}.jsonl`), `${JSON.stringify({
+        schema_version: 2,
+        task_id: taskId,
+        timestamp_utc: timestamp,
+        event_type: 'COMPILE_GATE_PASSED',
+        outcome: 'PASS',
+        actor: 'orchestrator',
+        message: 'compile passed',
+        details: {}
+    })}\n`);
+    return timestamp;
+}
+
+function writeFullSuiteArtifact(repoRoot: string, options: {
+    taskId?: string;
+    status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED';
+    durationMs?: number | null;
+    timedOut?: boolean;
+    exitCode?: number | null;
+    compileTimestamp: string;
+    preflightPath: string;
+}): void {
+    const taskId = options.taskId || 'T-100';
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    const artifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
+    const outputPath = path.join(reviewsRoot, `${taskId}-full-suite-output.log`);
+    fs.writeFileSync(outputPath, '# tests 10\n# pass 10\n', 'utf8');
+    fs.writeFileSync(artifactPath, JSON.stringify({
+        status: options.status,
+        enabled: true,
+        command: 'npm test',
+        exit_code: options.exitCode ?? (options.status === 'PASSED' ? 0 : 1),
+        timed_out: options.timedOut === true,
+        output_artifact_path: outputPath,
+        compact_summary: ['# tests 10', '# pass 10'],
+        failure_chunks: options.status === 'FAILED' ? [['not ok timed out']] : [],
+        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+        out_of_scope_failure_detected: false,
+        out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+        violations: [],
+        warnings: [],
+        duration_ms: options.durationMs,
+        cycle_binding: {
+            task_id: taskId,
+            preflight_path: options.preflightPath,
+            preflight_sha256: createHash('sha256').update(fs.readFileSync(options.preflightPath)).digest('hex'),
+            compile_gate_timestamp: options.compileTimestamp,
+            scope_binding: {
+                changed_files_sha256: sha256Text('src/reports/report-data-contract.ts'),
+                scope_sha256: sha256Text('scope'),
+                scope_content_sha256: sha256Text('content')
+            }
+        }
+    }, null, 2));
 }
 
 function writeInitAndProjectMemory(repoRoot: string): void {
@@ -184,4 +268,69 @@ test('buildReportDataContract bounds deep task detail collection', () => {
         return entry.scope === 'task:T-101:detail'
             && entry.reason.includes('detail collection is limited');
     }));
+});
+
+test('buildReportTaskDetail exposes current full-suite pass duration and forecast', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const preflightPath = writePreflight(repoRoot);
+    const compileTimestamp = writeCompileEvent(repoRoot);
+    writeFullSuiteArtifact(repoRoot, {
+        status: 'PASSED',
+        durationMs: 123456,
+        compileTimestamp,
+        preflightPath
+    });
+
+    const detail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(detail.full_suite_validation.state, 'passed');
+    assert.equal(detail.full_suite_validation.freshness, 'current');
+    assert.equal(detail.full_suite_validation.duration_ms, 123456);
+    assert.equal(detail.full_suite_validation.duration_human, '2m 3.5s');
+    assert.equal(detail.full_suite_validation.command, 'npm test');
+    assert.equal(detail.full_suite_validation.timeout_forecast.recommendation_source, 'config_timeout');
+    assert.match(detail.full_suite_validation.artifact_path, /T-100-full-suite-validation\.json$/);
+});
+
+test('buildReportTaskDetail marks required full-suite evidence as not run when artifact is missing', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writePreflight(repoRoot);
+    writeCompileEvent(repoRoot);
+
+    const detail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(detail.full_suite_validation.state, 'not_run');
+    assert.equal(detail.full_suite_validation.freshness, 'missing');
+    assert.equal(detail.full_suite_validation.required, true);
+    assert.equal(detail.full_suite_validation.duration_ms, null);
+    assert.match(detail.full_suite_validation.mismatch_reason || '', /artifact is missing/);
+});
+
+test('buildReportTaskDetail surfaces timed-out full-suite failures without inventing duration', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const preflightPath = writePreflight(repoRoot);
+    const compileTimestamp = writeCompileEvent(repoRoot);
+    writeFullSuiteArtifact(repoRoot, {
+        status: 'FAILED',
+        durationMs: null,
+        timedOut: true,
+        exitCode: null,
+        compileTimestamp,
+        preflightPath
+    });
+
+    const detail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(detail.full_suite_validation.state, 'timed_out');
+    assert.equal(detail.full_suite_validation.status, 'FAILED');
+    assert.equal(detail.full_suite_validation.timed_out, true);
+    assert.equal(detail.full_suite_validation.duration_ms, null);
+    assert.equal(detail.full_suite_validation.duration_human, null);
+    assert.deepEqual(detail.full_suite_validation.compact_summary, ['# tests 10', '# pass 10']);
 });

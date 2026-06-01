@@ -399,6 +399,33 @@ function badge(value, prefix, extraClass) {
 function metric(label, value) {
   return '<div class="metric"><span>' + safe(label) + '</span><strong>' + safe(value ?? '-') + '</strong></div>';
 }
+function fullSuiteValue(value) {
+  return value === null || value === undefined || value === '' ? '-' : value;
+}
+function fullSuiteSummary(fullSuite) {
+  if (!fullSuite) {
+    return '<p class="empty">-</p>';
+  }
+  const rows = [
+    [t('fullSuiteCommand'), fullSuite.command],
+    [t('fullSuitePlacement'), fullSuite.placement],
+    [t('fullSuiteFreshness'), fullSuite.freshness],
+    [t('fullSuiteTimeoutForecast'), fullSuite.timeout_forecast_label],
+    [t('fullSuiteArtifact'), fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (' + t('missing') + ')')],
+    [t('fullSuiteOutput'), fullSuite.output_artifact_path]
+  ];
+  const newline = String.fromCharCode(10);
+  const summary = (fullSuite.compact_summary || []).length > 0
+    ? '<h4>' + safe(t('fullSuiteSummary')) + '</h4><pre>' + safe(fullSuite.compact_summary.join(newline)) + '</pre>'
+    : '';
+  const diagnostics = [fullSuite.mismatch_reason, ...(fullSuite.violations || []), ...(fullSuite.warnings || [])]
+    .filter(Boolean);
+  return '<div class="detail-table"><table><tbody>'
+    + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(fullSuiteValue(value)) + '</td></tr>').join('')
+    + '</tbody></table></div>'
+    + summary
+    + (diagnostics.length > 0 ? '<ul class="list">' + diagnostics.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>' : '');
+}
 function workflowStatusText(status) {
   if (status === 'present') return t('workflowStatusPresent');
   if (status === 'missing') return t('workflowStatusMissing');
@@ -1107,6 +1134,7 @@ function renderTaskDetail(detail) {
   const task = findReportTask(detail.task_id);
   const stats = detail.stats || {};
   const audit = detail.audit || {};
+  const fullSuite = detail.full_suite_validation || {};
   const blockers = audit.blockers || [];
   const queueStatus = task ? (task.status_token || task.status) : '';
   const queueBlocked = queueStatus === 'BLOCKED';
@@ -1119,10 +1147,13 @@ function renderTaskDetail(detail) {
     + metric(t('events'), stats.events_count)
     + metric(t('gatePass'), stats.gate_pass_count)
     + metric(t('gateFail'), stats.gate_fail_count)
+    + metric(t('fullSuiteState'), fullSuite.state)
+    + metric(t('fullSuiteDuration'), fullSuite.duration_human)
     + metric(t('changedLines'), stats.changed_lines_total)
     + metric(t('dataColumn'), t('dataFull'))
     + '</div>'
     + '<h3 class="task-section-title">' + safe(t('taskActionsTitle')) + '</h3><p class="empty">' + safe(t('taskActionsHelp')) + '</p><div class="task-command-buttons">' + planButton(detail) + '</div><div id="task-action-status" class="task-action-status"></div>' + taskCommandList(detail.task_id)
+    + '<h3 class="task-section-title">' + safe(t('fullSuiteTitle')) + '</h3>' + fullSuiteSummary(fullSuite)
     + '<h3 class="task-section-title">' + safe(t('gateTimeline')) + '</h3><p class="empty">' + safe(t('gateTimelineHelp')) + '</p><pre>' + safe(JSON.stringify(detail.latest_cycle_events || {}, null, 2)) + '</pre>'
     + (blockers.length > 0 ? '<h3 class="task-section-title">' + safe(t('runtimeDiagnosticsTitle')) + '</h3>' + auditDiagnosticsList(blockers) : '')
     + '<h3 class="task-section-title">' + safe(t('reviews')) + '</h3>' + reviewSummary(audit)

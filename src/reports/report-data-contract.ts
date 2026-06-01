@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { readTaskQueueStatusToken } from '../core/active-task-state';
 import { buildDefaultWorkflowConfig, type WorkflowConfigData } from '../core/workflow-config';
 import { parseTaskMdTableRow } from '../core/task-md-table';
@@ -12,6 +13,14 @@ import {
     type TaskEventsSummaryResult
 } from '../gates/task-events-summary';
 import { buildTaskAuditSummary, type TaskAuditSummaryResult } from '../gates/task-audit-summary';
+import {
+    buildFullSuiteTimeoutForecast,
+    formatFullSuiteTimeoutForecast,
+    isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
+    loadFullSuiteValidationConfig,
+    type FullSuiteTimeoutForecast,
+    type FullSuiteValidationResult
+} from '../gates/full-suite-validation';
 import { getTaskModeEvidence, readOptionalMarkdownWorkingPlan } from '../gates/task-mode';
 import { validateWorkflowConfig } from '../schemas/config-artifacts';
 import {
@@ -56,11 +65,57 @@ export interface ReportArtifactLink {
     sha256: string | null;
 }
 
+export type ReportFullSuiteState =
+    | 'not_required'
+    | 'not_run'
+    | 'passed'
+    | 'warned'
+    | 'failed'
+    | 'timed_out'
+    | 'skipped'
+    | 'stale'
+    | 'unavailable';
+
+export type ReportFullSuiteFreshness =
+    | 'not_required'
+    | 'missing'
+    | 'current'
+    | 'reused_current_scope'
+    | 'stale'
+    | 'unavailable';
+
+export interface ReportFullSuiteSummary {
+    state: ReportFullSuiteState;
+    freshness: ReportFullSuiteFreshness;
+    enabled: boolean;
+    required: boolean;
+    status: FullSuiteValidationResult['status'] | null;
+    command: string;
+    placement: WorkflowConfigData['full_suite_validation']['placement'];
+    duration_ms: number | null;
+    duration_human: string | null;
+    timed_out: boolean | null;
+    exit_code: number | null;
+    artifact_path: string;
+    artifact_exists: boolean;
+    artifact_sha256: string | null;
+    output_artifact_path: string | null;
+    updated_at_utc: string | null;
+    compact_summary: string[];
+    violations: string[];
+    warnings: string[];
+    skip_reason: string | null;
+    mismatch_reason: string | null;
+    timeout_forecast: FullSuiteTimeoutForecast;
+    timeout_forecast_label: string;
+}
+
 export interface ReportTaskDetail {
     task_id: string;
     detail_status: 'loaded' | 'skipped';
     stats: TaskStatsResult | null;
     latest_cycle_events: CompactLatestCycleTaskEventsSummary | null;
+    full_suite_validation: ReportFullSuiteSummary;
     audit: {
         status: TaskAuditSummaryResult['status'];
         gates: TaskAuditSummaryResult['gates'];
@@ -343,6 +398,245 @@ function summarizeTaskAudit(audit: TaskAuditSummaryResult): ReportTaskDetail['au
     };
 }
 
+function fileSha256(filePath: string): string | null {
+    try {
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+            return null;
+        }
+        return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    } catch {
+        return null;
+    }
+}
+
+function safeReadJsonRecord(filePath: string): Record<string, unknown> | null {
+    try {
+        if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+            return null;
+        }
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+function toStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value.map((entry) => String(entry || '').trim()).filter(Boolean);
+}
+
+function normalizeStatus(value: unknown): FullSuiteValidationResult['status'] | null {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (normalized === 'PASSED' || normalized === 'FAILED' || normalized === 'WARNED' || normalized === 'SKIPPED') {
+        return normalized;
+    }
+    return null;
+}
+
+function normalizeDurationMs(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.round(value)
+        : null;
+}
+
+function formatDurationMs(durationMs: number | null): string | null {
+    if (durationMs == null) {
+        return null;
+    }
+    if (durationMs < 1000) {
+        return `${durationMs} ms`;
+    }
+    const secondsText = (seconds: number): string => seconds.toFixed(1).replace(/\.0$/, '');
+    const totalSeconds = durationMs / 1000;
+    if (totalSeconds < 60) {
+        return `${secondsText(totalSeconds)}s`;
+    }
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const remainingSeconds = totalSeconds - totalMinutes * 60;
+    if (totalMinutes < 60) {
+        return `${totalMinutes}m ${secondsText(remainingSeconds)}s`;
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours}h ${minutes}m ${secondsText(remainingSeconds)}s`;
+}
+
+function readLatestCompileGateTimestamp(eventsRoot: string, taskId: string): string | null {
+    const eventFile = path.join(eventsRoot, `${taskId}.jsonl`);
+    if (!fs.existsSync(eventFile) || !fs.statSync(eventFile).isFile()) {
+        return null;
+    }
+    let latest: string | null = null;
+    const lines = fs.readFileSync(eventFile, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+        if (!line.trim()) {
+            continue;
+        }
+        try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (event.event_type === 'COMPILE_GATE_PASSED') {
+                latest = String(event.timestamp_utc || '').trim() || latest;
+            }
+        } catch {
+            // Ignore malformed event lines; the timeline summary reports them separately.
+        }
+    }
+    return latest;
+}
+
+function normalizePathText(value: unknown): string | null {
+    const text = String(value || '').trim();
+    return text ? toPosix(text) : null;
+}
+
+function summarizeFullSuiteFreshness(options: {
+    required: boolean;
+    artifactExists: boolean;
+    preflightPath: string;
+    preflightSha256: string | null;
+    latestCompileGateTimestamp: string | null;
+    cycleBinding: Record<string, unknown> | null;
+}): { freshness: ReportFullSuiteFreshness; mismatchReason: string | null } {
+    if (!options.required) {
+        return { freshness: 'not_required', mismatchReason: null };
+    }
+    if (!options.artifactExists) {
+        return { freshness: 'missing', mismatchReason: 'Full-suite validation evidence artifact is missing.' };
+    }
+    if (!options.cycleBinding) {
+        return { freshness: 'stale', mismatchReason: 'Full-suite validation artifact is missing cycle_binding.' };
+    }
+    const preflightPathMatches = normalizePathText(options.cycleBinding.preflight_path) === toPosix(options.preflightPath);
+    const preflightShaMatches = !!options.preflightSha256
+        && String(options.cycleBinding.preflight_sha256 || '').trim().toLowerCase() === options.preflightSha256;
+    const compileTimestamp = options.cycleBinding.compile_gate_timestamp == null
+        ? null
+        : String(options.cycleBinding.compile_gate_timestamp || '').trim() || null;
+    const compileMatches = !!options.latestCompileGateTimestamp
+        && compileTimestamp === options.latestCompileGateTimestamp;
+    if (preflightPathMatches && preflightShaMatches && compileMatches) {
+        return { freshness: 'current', mismatchReason: null };
+    }
+    if (preflightPathMatches && preflightShaMatches && options.cycleBinding.scope_binding) {
+        return {
+            freshness: 'reused_current_scope',
+            mismatchReason: 'Full-suite validation artifact is reused for the current preflight scope.'
+        };
+    }
+    const mismatches: string[] = [];
+    if (!preflightPathMatches || !preflightShaMatches) {
+        mismatches.push('preflight artifact');
+    }
+    if (!compileMatches) {
+        mismatches.push('compile gate cycle');
+    }
+    return {
+        freshness: 'stale',
+        mismatchReason: `Full-suite validation cycle binding does not match the current ${mismatches.join(', ')}.`
+    };
+}
+
+function resolveFullSuiteState(options: {
+    required: boolean;
+    artifactExists: boolean;
+    freshness: ReportFullSuiteFreshness;
+    status: FullSuiteValidationResult['status'] | null;
+    timedOut: boolean | null;
+}): ReportFullSuiteState {
+    if (!options.required) {
+        return 'not_required';
+    }
+    if (!options.artifactExists) {
+        return 'not_run';
+    }
+    if (options.freshness === 'stale') {
+        return 'stale';
+    }
+    if (options.timedOut === true) {
+        return 'timed_out';
+    }
+    if (options.status === 'PASSED') {
+        return 'passed';
+    }
+    if (options.status === 'WARNED') {
+        return 'warned';
+    }
+    if (options.status === 'FAILED') {
+        return 'failed';
+    }
+    if (options.status === 'SKIPPED') {
+        return 'skipped';
+    }
+    return 'unavailable';
+}
+
+function buildFullSuiteSummary(
+    taskId: string,
+    repoRoot: string,
+    eventsRoot: string,
+    reviewsRoot: string
+): ReportFullSuiteSummary {
+    const config = loadFullSuiteValidationConfig(repoRoot);
+    const timeoutForecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+    const preflight = safeReadJsonRecord(preflightPath);
+    const fullSuiteRequired = config.enabled && !(preflight && isFullSuiteNotRequiredForZeroDiffNoReviewableScope(preflight));
+    const artifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
+    const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
+    const artifact = artifactExists ? safeReadJsonRecord(artifactPath) : null;
+    const status = normalizeStatus(artifact?.status);
+    const durationMs = normalizeDurationMs(artifact?.duration_ms);
+    const timedOut = typeof artifact?.timed_out === 'boolean' ? artifact.timed_out : null;
+    const cycleBinding = artifact && artifact.cycle_binding && typeof artifact.cycle_binding === 'object' && !Array.isArray(artifact.cycle_binding)
+        ? artifact.cycle_binding as Record<string, unknown>
+        : null;
+    const freshness = summarizeFullSuiteFreshness({
+        required: fullSuiteRequired,
+        artifactExists,
+        preflightPath,
+        preflightSha256: fileSha256(preflightPath),
+        latestCompileGateTimestamp: readLatestCompileGateTimestamp(eventsRoot, taskId),
+        cycleBinding
+    });
+    const stat = artifactExists ? fs.statSync(artifactPath) : null;
+    return {
+        state: resolveFullSuiteState({
+            required: fullSuiteRequired,
+            artifactExists,
+            freshness: freshness.freshness,
+            status,
+            timedOut
+        }),
+        freshness: freshness.freshness,
+        enabled: config.enabled,
+        required: fullSuiteRequired,
+        status,
+        command: typeof artifact?.command === 'string' && artifact.command.trim() ? artifact.command : config.command,
+        placement: config.placement,
+        duration_ms: durationMs,
+        duration_human: formatDurationMs(durationMs),
+        timed_out: timedOut,
+        exit_code: typeof artifact?.exit_code === 'number' && Number.isFinite(artifact.exit_code) ? artifact.exit_code : null,
+        artifact_path: toPosix(artifactPath),
+        artifact_exists: artifactExists,
+        artifact_sha256: fileSha256(artifactPath),
+        output_artifact_path: normalizePathText(artifact?.output_artifact_path),
+        updated_at_utc: stat ? stat.mtime.toISOString() : null,
+        compact_summary: toStringArray(artifact?.compact_summary),
+        violations: toStringArray(artifact?.violations),
+        warnings: toStringArray(artifact?.warnings),
+        skip_reason: typeof artifact?.skip_reason === 'string' && artifact.skip_reason.trim() ? artifact.skip_reason : null,
+        mismatch_reason: freshness.mismatchReason,
+        timeout_forecast: timeoutForecast,
+        timeout_forecast_label: formatFullSuiteTimeoutForecast(timeoutForecast)
+    };
+}
+
 function buildArtifactLinksFromAudit(audit: TaskAuditSummaryResult | null): ReportArtifactLink[] {
     if (!audit) {
         return [];
@@ -416,6 +710,7 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
         detail_status: 'loaded',
         stats,
         latest_cycle_events: readLatestCycleEvents(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable),
+        full_suite_validation: buildFullSuiteSummary(taskId, repoRoot, eventsRoot, reviewsRoot),
         audit: audit ? summarizeTaskAudit(audit) : null,
         plan: buildTaskPlanDetail(repoRoot, taskId, queueRow),
         artifact_links: buildArtifactLinksFromAudit(audit),
@@ -440,6 +735,41 @@ function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number): Repor
         detail_status: 'skipped',
         stats: null,
         latest_cycle_events: null,
+        full_suite_validation: {
+            state: 'not_required',
+            freshness: 'not_required',
+            enabled: false,
+            required: false,
+            status: null,
+            command: '',
+            placement: 'after_compile_before_reviews',
+            duration_ms: null,
+            duration_human: null,
+            timed_out: null,
+            exit_code: null,
+            artifact_path: '',
+            artifact_exists: false,
+            artifact_sha256: null,
+            output_artifact_path: null,
+            updated_at_utc: null,
+            compact_summary: [],
+            violations: [],
+            warnings: [],
+            skip_reason: null,
+            mismatch_reason: null,
+            timeout_forecast: {
+                history_path: '',
+                sample_count: 0,
+                average_duration_seconds: null,
+                high_watermark_duration_seconds: null,
+                recommended_timeout_seconds: 0,
+                safety_margin_seconds: null,
+                recommendation_source: 'config_timeout',
+                configured_timeout_seconds: 0,
+                warning: null
+            },
+            timeout_forecast_label: ''
+        },
         audit: null,
         plan: {
             available: false,

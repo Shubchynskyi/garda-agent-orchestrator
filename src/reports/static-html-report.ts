@@ -118,8 +118,14 @@ function renderTaskDetailTemplate(): string {
         '<div data-metric="reviews"></div>',
         '<div data-metric="changed"></div>',
         '<div data-metric="duration"></div>',
+        '<div data-metric="full-suite-state"></div>',
+        '<div data-metric="full-suite-duration"></div>',
         '</div>',
         '<div class="detail-grid">',
+        '<section>',
+        '<h3>Full-suite Validation</h3>',
+        '<div data-field="full-suite"></div>',
+        '</section>',
         '<section>',
         '<h3>Latest Cycle</h3>',
         '<pre data-field="latest-cycle"></pre>',
@@ -267,6 +273,22 @@ function duration(seconds) {
 function safe(value) {
   return text(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
+function fullSuiteRows(fullSuite) {
+  if (!fullSuite) return '<p class="empty">-</p>';
+  const rows = [
+    ['Command', fullSuite.command],
+    ['Placement', fullSuite.placement],
+    ['Freshness', fullSuite.freshness],
+    ['Timeout forecast', fullSuite.timeout_forecast_label],
+    ['Evidence artifact', fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (missing)')],
+    ['Output artifact', fullSuite.output_artifact_path]
+  ];
+  const newline = String.fromCharCode(10);
+  const summary = (fullSuite.compact_summary || []).length > 0
+    ? '<h4>Summary</h4><pre>' + safe(fullSuite.compact_summary.join(newline)) + '</pre>'
+    : '';
+  return '<table><tbody>' + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(value) + '</td></tr>').join('') + '</tbody></table>' + summary;
+}
 function renderList(items, formatter) {
   if (!items || items.length === 0) return '<li>none</li>';
   return items.map(formatter).join('');
@@ -285,6 +307,9 @@ function showTask(index) {
   node.querySelector('[data-metric="reviews"]').innerHTML = metric('Reviews', (stats.required_reviews || []).join(', ') || '-');
   node.querySelector('[data-metric="changed"]').innerHTML = metric('Changed Lines', stats.changed_lines_total);
   node.querySelector('[data-metric="duration"]').innerHTML = metric('Wall Time', duration(stats.wall_clock_seconds));
+  node.querySelector('[data-metric="full-suite-state"]').innerHTML = metric('Full-suite', task.detail.full_suite_validation && task.detail.full_suite_validation.state);
+  node.querySelector('[data-metric="full-suite-duration"]').innerHTML = metric('Full-suite Duration', task.detail.full_suite_validation && task.detail.full_suite_validation.duration_human);
+  node.querySelector('[data-field="full-suite"]').innerHTML = fullSuiteRows(task.detail.full_suite_validation);
   node.querySelector('[data-field="latest-cycle"]').textContent = JSON.stringify(task.detail.latest_cycle_events || {}, null, 2);
   node.querySelector('[data-field="artifacts"]').innerHTML = renderList((task.detail.artifact_links || []).filter(item => item.exists).slice(0, 12), item => {
     const href = toArtifactHref(item.path);
