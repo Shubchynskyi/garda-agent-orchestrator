@@ -289,6 +289,13 @@ function writeRepo(repoRoot: string): void {
     }
 }
 
+function setTaskResetEnabled(repoRoot: string, enabled: boolean): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    parsed.task_reset.enabled = enabled;
+    fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2));
+}
+
 function writeTaskQueue(repoRoot: string, taskId: string, title: string): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
         '# TASK.md',
@@ -481,6 +488,13 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         value: true,
                         command: 'garda workflow show',
                         description: 'Run full suite',
+                        readonly: true
+                    },
+                    {
+                        key: 'task_reset.enabled',
+                        value: false,
+                        command: 'garda workflow show',
+                        description: 'Task reset disabled',
                         readonly: true
                     }
                 ]
@@ -730,6 +744,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /\[object Object\]/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-code\.md/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-next-step"/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-reopen"/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Task reset is disabled/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-stats"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Show plan/u);
         const taskActionButton = fakeDocument.elements.detail.querySelectorAll('button[data-task-action-id]')
@@ -1331,6 +1347,60 @@ test('local UI task actions support preview confirmation execution and audit', a
         assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
         assert.deepEqual(executedCommands, []);
 
+        const disabledResetResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'preview' })
+        });
+        assert.equal(disabledResetResponse.status, 409);
+        const disabledReset = await disabledResetResponse.json() as {
+            status: string;
+            unavailable_reason: string;
+            command: string;
+        };
+        assert.equal(disabledReset.status, 'unavailable');
+        assert.match(disabledReset.unavailable_reason, /task_reset\.enabled/u);
+        assert.match(disabledReset.command, /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+        assert.deepEqual(executedCommands, []);
+
+        setTaskResetEnabled(repoRoot, true);
+        const resetPreviewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'preview' })
+        });
+        assert.equal(resetPreviewResponse.status, 200);
+        const resetPreview = await resetPreviewResponse.json() as {
+            status: string;
+            command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
+        };
+        assert.equal(resetPreview.status, 'previewed');
+        assert.match(resetPreview.command, /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+        assert.equal(resetPreview.requires_confirmation, true);
+        assert.equal(resetPreview.confirmation_phrase, 'RESET TASK');
+
+        const resetBlockedResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'execute', confirmation: 'wrong' })
+        });
+        assert.equal(resetBlockedResponse.status, 409);
+        assert.equal((await resetBlockedResponse.json() as { status: string }).status, 'confirmation_required');
+
+        const resetExecuteResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'execute', confirmation: 'RESET TASK' })
+        });
+        assert.equal(resetExecuteResponse.status, 200);
+        const resetExecute = await resetExecuteResponse.json() as { status: string; stdout: string };
+        assert.equal(resetExecute.status, 'executed');
+        assert.equal(resetExecute.stdout, 'task ok');
+        assert.equal(executedCommands.length, 1);
+        assert.match(executedCommands[0], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+
         const statsResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
             headers: actionHeaders,
@@ -1340,8 +1410,8 @@ test('local UI task actions support preview confirmation execution and audit', a
         const stats = await statsResponse.json() as { status: string; stdout: string; audit_path: string };
         assert.equal(stats.status, 'executed');
         assert.equal(stats.stdout, 'task ok');
-        assert.equal(executedCommands.length, 1);
-        assert.match(executedCommands[0], /task T-100 stats --target-root/u);
+        assert.equal(executedCommands.length, 2);
+        assert.match(executedCommands[1], /task T-100 stats --target-root/u);
         const auditLines = fs.readFileSync(stats.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.match(auditLines[auditLines.length - 1], /"action_id":"T-100:task-stats"/u);
         assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);

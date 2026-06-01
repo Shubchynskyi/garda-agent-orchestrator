@@ -115,6 +115,7 @@ tr.selected { background: #eef8f6; }
 .task-section-title { margin-top: 20px; }
 .task-command-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .task-action-status { margin: 10px 0; }
+.task-action-unavailable { color: var(--muted); font-size: 12px; }
 .instruction-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .instruction-links button { flex: 0 0 136px; width: 136px; }
 .workflow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
@@ -440,6 +441,7 @@ function resultStatusText(status) {
   if (status === 'executed') return t('resultStatusExecuted');
   if (status === 'confirmation_required') return t('resultStatusConfirmationRequired');
   if (status === 'disabled') return t('resultStatusDisabled');
+  if (status === 'unavailable') return t('resultStatusUnavailable');
   return String(status || '-');
 }
 function uniqueSorted(values) {
@@ -1050,15 +1052,23 @@ function reviewSummary(audit) {
   }
   return '<ul class="list">' + summary.map(item => '<li><code>' + safe(item.review_type) + '</code>: pass=' + safe(item.pass_count) + ', fail=' + safe(item.fail_count) + ', reused=' + safe(item.reused_count) + '</li>').join('') + '</ul>';
 }
+function isTaskResetEnabled() {
+  const settings = currentReport && currentReport.workflow_config_tab && currentReport.workflow_config_tab.settings
+    ? currentReport.workflow_config_tab.settings
+    : [];
+  const setting = settings.find(item => item && item.key === 'task_reset.enabled');
+  return setting && setting.value === true;
+}
 function taskCommandList(taskId) {
   const commands = [
-    ['task-next-step', t('taskCommandNextStep'), t('taskCommandNextStepDescription'), 'garda next-step "' + taskId + '" --repo-root "."', true],
-    ['task-stats', t('taskCommandStats'), t('taskCommandStatsDescription'), 'garda task "' + taskId + '" stats --target-root "."', false],
-    ['task-events', t('taskCommandEvents'), t('taskCommandEventsDescription'), 'garda task "' + taskId + '" events --target-root "."', false]
+    { id: 'task-next-step', label: t('taskCommandNextStep'), description: t('taskCommandNextStepDescription'), command: 'garda next-step "' + taskId + '" --repo-root "."', mutates: true, disabled: false, unavailable: '' },
+    { id: 'task-reset-reopen', label: t('taskCommandReset'), description: t('taskCommandResetDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --reopen --confirm --repo-root "."', mutates: true, disabled: !isTaskResetEnabled(), unavailable: t('taskResetUnavailable') },
+    { id: 'task-stats', label: t('taskCommandStats'), description: t('taskCommandStatsDescription'), command: 'garda task "' + taskId + '" stats --target-root "."', mutates: false, disabled: false, unavailable: '' },
+    { id: 'task-events', label: t('taskCommandEvents'), description: t('taskCommandEventsDescription'), command: 'garda task "' + taskId + '" events --target-root "."', mutates: false, disabled: false, unavailable: '' }
   ];
-  return '<div class="task-command-list">' + commands.map(([id, label, description, command, mutates]) => '<section class="task-command-card"><strong>' + safe(label) + '</strong><p>' + safe(description) + '</p><code>' + safe(command) + '</code>'
+  return '<div class="task-command-list">' + commands.map(action => '<section class="task-command-card"><strong>' + safe(action.label) + '</strong><p>' + safe(action.description) + '</p><code>' + safe(action.command) + '</code>'
     + (actionsEnabled
-      ? '<div class="task-command-buttons"><button type="button" data-task-action-id="' + safe(id) + '" data-task-action-mode="execute">' + safe(t('run')) + '</button>' + (mutates ? '<span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span>' : '<span class="action-kind">' + safe(t('safeAction')) + '</span>') + '</div>'
+      ? '<div class="task-command-buttons"><button type="button" data-task-action-id="' + safe(action.id) + '" data-task-action-mode="execute"' + (action.disabled ? ' disabled' : '') + '>' + safe(action.disabled ? t('actionUnavailable') : t('run')) + '</button>' + (action.mutates ? '<span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span>' : '<span class="action-kind">' + safe(t('safeAction')) + '</span>') + '</div>' + (action.disabled ? '<p class="task-action-unavailable">' + safe(action.unavailable) + '</p>' : '')
       : '<p class="empty">' + inlineText(t('taskCommandUnavailable')) + '</p>')
     + '</section>').join('') + '</div>';
 }
@@ -1084,15 +1094,21 @@ function wireTaskActionButtons(taskId) {
     button.addEventListener('click', async () => {
       const actionId = button.dataset.taskActionId;
       const mode = button.dataset.taskActionMode;
-      const confirmation = mode === 'execute' && actionId === 'task-next-step'
-        ? window.prompt(t('typeToRunAction') + ' "RUN TASK NEXT STEP" ' + t('typeToRunActionTail'))
+      const confirmationPhrase = taskActionConfirmationPhrase(actionId);
+      const confirmation = mode === 'execute' && confirmationPhrase
+        ? window.prompt(t('typeToRunAction') + ' "' + confirmationPhrase + '" ' + t('typeToRunActionTail'))
         : null;
-      if (mode === 'execute' && actionId === 'task-next-step' && confirmation === null) {
+      if (mode === 'execute' && confirmationPhrase && confirmation === null) {
         return;
       }
       await runTaskAction(taskId, actionId, mode, confirmation);
     });
   }
+}
+function taskActionConfirmationPhrase(actionId) {
+  if (actionId === 'task-next-step') return 'RUN TASK NEXT STEP';
+  if (actionId === 'task-reset-reopen') return 'RESET TASK';
+  return null;
 }
 async function runTaskAction(taskId, actionId, mode, confirmation) {
   const response = await fetch('/api/tasks/' + encodeURIComponent(taskId) + '/actions', {
@@ -1108,6 +1124,7 @@ async function runTaskAction(taskId, actionId, mode, confirmation) {
   node.innerHTML = '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3>'
     + '<div class="command-preview-main"><strong>' + safe(result.task_id || taskId) + '</strong><br><code>' + safe(result.command || '-') + '</code></div>'
     + '<div class="command-preview-meta"><span>' + safe(t('statusColumn')) + '<code>' + safe(resultStatusText(result.status)) + '</code></span></div>'
+    + (result.unavailable_reason ? '<p class="task-action-unavailable">' + safe(result.unavailable_reason) + '</p>' : '')
     + (result.audit_path ? '<p><strong>' + safe(t('audit')) + ':</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')
     + outputBlock('stdout', result.stdout)
     + outputBlock('stderr', result.stderr)

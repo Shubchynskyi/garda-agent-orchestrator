@@ -2,6 +2,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 import { resolveBundleNameForTarget } from '../core/constants';
+import {
+    buildDefaultWorkflowConfig,
+    getWorkflowConfigPath,
+    readWorkflowConfigForMerge
+} from '../core/workflow-config';
 import { buildWorkflowConfigTab } from './report-data-contract';
 import {
     WORKFLOW_SETTING_DEFINITIONS,
@@ -23,6 +28,8 @@ export interface UiActionDefinition {
     label: string;
     description: string;
     mutates: boolean;
+    enabled: boolean;
+    unavailable_reason: string | null;
     requires_confirmation: boolean;
     confirmation_phrase: string | null;
     command: UiActionCommand;
@@ -81,6 +88,17 @@ function resolveBundleRoot(repoRoot: string): string {
     return path.join(repoRoot, resolveBundleNameForTarget(repoRoot));
 }
 
+function isTaskResetMutationEnabled(repoRoot: string): boolean {
+    const defaultConfig = buildDefaultWorkflowConfig();
+    const bundleRoot = resolveBundleRoot(repoRoot);
+    const configPath = getWorkflowConfigPath(bundleRoot);
+    const readResult = readWorkflowConfigForMerge(configPath);
+    const taskReset = readResult.config?.task_reset && typeof readResult.config.task_reset === 'object'
+        ? readResult.config.task_reset as Record<string, unknown>
+        : defaultConfig.task_reset as unknown as Record<string, unknown>;
+    return taskReset.enabled === true;
+}
+
 export function detectUiSwitchModeState(repoRoot: string): UiSwitchModeState {
     const bundleRoot = resolveBundleRoot(repoRoot);
     const statePath = path.join(bundleRoot, 'runtime', 'switch', 'state.json');
@@ -125,13 +143,17 @@ export function buildUiActionDefinitions(repoRoot: string): UiActionDefinition[]
         label: string,
         description: string,
         args: string[],
-        options: { mutates?: boolean; confirmationPhrase?: string } = {}
+        options: { mutates?: boolean; confirmationPhrase?: string; enabled?: boolean; unavailableReason?: string } = {}
     ): UiActionDefinition => ({
         id,
         category,
         label,
         description,
         mutates: options.mutates === true,
+        enabled: options.enabled !== false,
+        unavailable_reason: options.enabled === false
+            ? options.unavailableReason || 'Action is unavailable.'
+            : null,
         requires_confirmation: Boolean(options.confirmationPhrase),
         confirmation_phrase: options.confirmationPhrase || null,
         command: {
@@ -199,18 +221,23 @@ export function buildUiActionDefinitions(repoRoot: string): UiActionDefinition[]
 
 export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): UiActionDefinition[] {
     const cliPath = resolveGardaCliPath(repoRoot);
+    const taskResetEnabled = isTaskResetMutationEnabled(repoRoot);
     const buildTaskAction = (
         id: string,
         label: string,
         description: string,
         args: string[],
-        options: { mutates?: boolean; confirmationPhrase?: string } = {}
+        options: { mutates?: boolean; confirmationPhrase?: string; enabled?: boolean; unavailableReason?: string } = {}
     ): UiActionDefinition => ({
         id,
         category: 'Task',
         label,
         description,
         mutates: options.mutates === true,
+        enabled: options.enabled !== false,
+        unavailable_reason: options.enabled === false
+            ? options.unavailableReason || 'Action is unavailable.'
+            : null,
         requires_confirmation: Boolean(options.confirmationPhrase),
         confirmation_phrase: options.confirmationPhrase || null,
         command: {
@@ -226,6 +253,18 @@ export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): 
             'Run the task router and print the next required lifecycle command.',
             ['next-step', taskId, '--repo-root', repoRoot],
             { mutates: true, confirmationPhrase: 'RUN TASK NEXT STEP' }
+        ),
+        buildTaskAction(
+            'task-reset-reopen',
+            'Reset task',
+            'Reset this task through the guarded task-reset gate and reopen it for a fresh lifecycle run.',
+            ['gate', 'task-reset', '--task-id', taskId, '--reopen', '--confirm', '--repo-root', repoRoot],
+            {
+                mutates: true,
+                confirmationPhrase: 'RESET TASK',
+                enabled: taskResetEnabled,
+                unavailableReason: 'Task reset mutations are disabled. Enable workflow setting task_reset.enabled before running a confirmed reset.'
+            }
         ),
         buildTaskAction(
             'task-stats',
@@ -384,6 +423,8 @@ export function buildUiSettingAction(repoRoot: string, setting: UiSettingDefinit
         label: setting.label,
         description: setting.description,
         mutates: true,
+        enabled: true,
+        unavailable_reason: null,
         requires_confirmation: true,
         confirmation_phrase: setting.confirmation_phrase,
         command: buildUiSettingCommand(repoRoot, setting, commandValue, timestampUtc)
@@ -486,6 +527,8 @@ export function formatPublicAction(action: UiActionDefinition): Record<string, u
         label: action.label,
         description: action.description,
         mutates: action.mutates,
+        enabled: action.enabled,
+        unavailable_reason: action.unavailable_reason,
         requires_confirmation: action.requires_confirmation,
         confirmation_phrase: action.confirmation_phrase,
         command: action.command.display

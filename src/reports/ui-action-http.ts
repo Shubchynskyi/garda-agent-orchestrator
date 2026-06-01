@@ -149,6 +149,16 @@ export async function handleUiActionRequest(
         sendApiError(response, 400, 'Unknown UI action.', 'unknown_action');
         return;
     }
+    if (action.enabled === false) {
+        sendJson(response, 409, {
+            action_id: action.id,
+            mode: payload.mode === 'execute' ? 'execute' : 'preview',
+            status: 'unavailable',
+            command: action.command.display,
+            unavailable_reason: action.unavailable_reason || 'Action is unavailable.'
+        });
+        return;
+    }
     const mode = payload.mode === 'execute' ? 'execute' : 'preview';
     if (mode === 'preview') {
         const auditPath = appendUiActionAudit(repoRoot, {
@@ -251,6 +261,26 @@ export async function handleUiTaskActionRequest(
     const action = findAction(actions, payload.action_id);
     if (!action) {
         sendApiError(response, 400, 'Unknown task UI action.', 'unknown_task_action');
+        return;
+    }
+    if (action.enabled === false) {
+        const mode = payload.mode === 'execute' ? 'execute' : 'preview';
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: `${taskId}:${action.id}`,
+            mode,
+            status: 'unavailable',
+            command: action.command.display
+        });
+        sendJson(response, 409, {
+            action_id: action.id,
+            task_id: taskId,
+            mode,
+            status: 'unavailable',
+            command: action.command.display,
+            unavailable_reason: action.unavailable_reason || 'Task action is unavailable.',
+            audit_path: auditPath
+        });
         return;
     }
     const mode = payload.mode === 'execute' ? 'execute' : 'preview';
