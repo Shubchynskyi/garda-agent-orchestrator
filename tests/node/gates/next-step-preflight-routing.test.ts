@@ -1381,6 +1381,76 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!command.includes('<path>'));
     });
 
+    it('refreshes workflow-config preflight when dirty-baseline source files are outside scope', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfigPath = 'template/config/workflow-config.json';
+        fs.mkdirSync(path.join(repoRoot, 'template', 'config'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, workflowConfigPath), '{\n  "version": 1\n}\n', 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const hiddenDirtyBaseline = true;\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, workflowConfigPath), '{\n  "version": 2\n}\n', 'utf8');
+
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const dirtyWorkspaceBaseline = {
+            detection_source: baselineSnapshot.detection_source,
+            include_untracked: !!baselineSnapshot.include_untracked,
+            changed_files: baselineSnapshot.changed_files,
+            changed_files_sha256: baselineSnapshot.changed_files_sha256,
+            scope_sha256: baselineSnapshot.scope_sha256,
+            file_hashes: Object.fromEntries(
+                baselineSnapshot.changed_files.map((changedFile) => [
+                    changedFile,
+                    fileSha256(path.join(repoRoot, changedFile))
+                ])
+            )
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh protected workflow config scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            workflowConfigWork: true,
+            plannedChangedFiles: [workflowConfigPath],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [workflowConfigPath]
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.triggers = {
+            changed_workflow_config_files: [workflowConfigPath],
+            dirty_workspace_baseline_changed_files: baselineSnapshot.changed_files,
+            dirty_workspace_baseline_changed_files_sha256: baselineSnapshot.changed_files_sha256,
+            dirty_workspace_protected_files: ['src/app.ts'],
+            dirty_workspace_protected_files_sha256: sha256Text('src/app.ts'),
+            dirty_workspace_protected_file_hashes: {
+                'src/app.ts': fileSha256(path.join(repoRoot, 'src', 'app.ts'))
+            },
+            dirty_workspace_protection_status: 'PASS',
+            dirty_workspace_protection_changed_files: []
+        };
+        writeJson(preflightPath, preflight);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /workflow-config preflight is underscoped/);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(command.includes('--changed-file "template/config/workflow-config.json"'));
+    });
+
     it('preserves custom task-mode path when building classify-change commands', () => {
         const repoRoot = makeTempRepo();
         const customTaskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-custom-task-mode.json`);

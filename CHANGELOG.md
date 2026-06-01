@@ -55,6 +55,7 @@
 
 ### Internal Hardening
 - Protected control-plane checks, launcher delegation trust, offline-mode ordering, task-event integrity, update cache invalidation, and runtime lock recovery were hardened.
+- Workflow-config preflight recovery now refreshes underscoped scopes when protected dirty-baseline files are still present outside the planned workflow-config change.
 - Command dispatch, help discovery, workflow settings, profile selection, and optional-skill activation now fail closed in more ambiguous states.
 - CI, release readiness, pack smoke, embedded bundle parity, and clean-worktree validation were expanded to better match the release path.
 

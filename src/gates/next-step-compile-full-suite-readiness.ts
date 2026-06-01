@@ -496,8 +496,26 @@ export function readPreflightWorkspaceReadiness(
         const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
         if (currentGitSnapshot) {
             const unchangedProtectedFiles = getUnchangedProtectedDirtyWorkspaceFiles(repoRoot, preflight);
-            const currentGitChangedFiles = currentGitSnapshot.changed_files.filter((entry) => (
-                !unchangedProtectedFiles.has(normalizePath(entry))
+            const currentGitSnapshotFiles = currentGitSnapshot.changed_files
+                .map((entry) => normalizePath(entry))
+                .filter(Boolean);
+            const preflightSet = new Set(changedFiles);
+            const changedWorkflowConfigFiles = getTriggerPathList(preflight, 'changed_workflow_config_files');
+            const uncoveredDirtyBaselineFiles = currentGitSnapshotFiles.filter((entry) => (
+                unchangedProtectedFiles.has(entry) && !preflightSet.has(entry)
+            ));
+            if (changedWorkflowConfigFiles.length > 0 && uncoveredDirtyBaselineFiles.length > 0) {
+                return {
+                    ready: false,
+                    reason:
+                        'Protected workflow-config preflight is underscoped: current workspace still contains dirty-baseline files outside the preflight file set ' +
+                        `${describePathList(uncoveredDirtyBaselineFiles)} while workflow-config files ${describePathList(changedWorkflowConfigFiles)} are in scope. ` +
+                        'Refresh classify-change with the full current workspace diff before compile/review so source, test, docs, and workflow-config changes share one audited preflight.',
+                    currentChangedFiles: currentGitSnapshotFiles
+                };
+            }
+            const currentGitChangedFiles = currentGitSnapshotFiles.filter((entry) => (
+                !unchangedProtectedFiles.has(entry)
             ));
             currentChangedFiles = currentGitChangedFiles;
             const plannedSet = new Set(plannedChangedFiles);
@@ -697,6 +715,13 @@ function getUnchangedProtectedDirtyWorkspaceFiles(
 
 function getPreflightTriggers(preflight: Record<string, unknown> | null): Record<string, unknown> {
     return isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
+}
+
+function getTriggerPathList(preflight: Record<string, unknown>, fieldName: string): string[] {
+    const triggers = getPreflightTriggers(preflight);
+    return Array.isArray(triggers[fieldName])
+        ? [...new Set(triggers[fieldName].map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
 }
 
 function isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource: string): boolean {
