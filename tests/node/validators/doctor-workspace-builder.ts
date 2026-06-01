@@ -168,6 +168,25 @@ export function buildFakeDoctorResult(overrides?: Record<string, unknown>): Doct
             contradictory_count: 0,
             invalid_count: 0
         },
+        largeModuleReport: {
+            schema_version: 1,
+            mode: 'REPORT_ONLY',
+            target_root: '/tmp/test',
+            scanned_roots: ['src', 'tests'],
+            ignored_roots: ['.git', 'coverage', 'dist', 'node_modules', 'garda-agent-orchestrator'],
+            file_extensions: ['.ts', '.tsx', '.js', '.mjs', '.cjs'],
+            generated_file_policy: 'test fixture',
+            summary: {
+                scanned_file_count: 0,
+                total_lines: 0,
+                largest_source_lines: 0,
+                largest_test_lines: 0,
+                files_with_todo_follow_up: 0
+            },
+            top_source_files: [],
+            top_test_files: [],
+            top_declarations: []
+        },
         ...overrides
     };
     return base as unknown as DoctorResult;

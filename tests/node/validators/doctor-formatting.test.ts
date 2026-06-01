@@ -260,6 +260,74 @@ test('formatDoctorResult includes protected manifest section in clean output', (
     assert.ok(output.includes('Doctor: PASSED'));
 });
 
+test('formatDoctorResult includes non-blocking large module decomposition report', () => {
+    const fakeResult = buildFakeDoctorResult({
+        largeModuleReport: {
+            schema_version: 1,
+            mode: 'REPORT_ONLY',
+            target_root: '/tmp/test',
+            scanned_roots: ['src', 'tests'],
+            ignored_roots: ['.git', 'coverage', 'dist', 'node_modules', 'garda-agent-orchestrator'],
+            file_extensions: ['.ts', '.tsx', '.js', '.mjs', '.cjs'],
+            generated_file_policy: 'test fixture',
+            summary: {
+                scanned_file_count: 2,
+                total_lines: 1500,
+                largest_source_lines: 900,
+                largest_test_lines: 600,
+                files_with_todo_follow_up: 1
+            },
+            top_source_files: [{
+                relative_path: 'src/gates/next-step.ts',
+                category: 'source',
+                line_count: 900,
+                byte_count: 45000,
+                owner_tasks: [{
+                    task_id: 'T-683',
+                    status: '🟪 DECOMPOSED',
+                    title: 'Decompose next-step'
+                }, {
+                    task_id: 'T-683-1',
+                    status: '🟦 TODO',
+                    title: 'Slim coordinator'
+                }],
+                todo_follow_up_exists: true
+            }],
+            top_test_files: [{
+                relative_path: 'tests/node/cli/commands/gates-command-review-result.test.ts',
+                category: 'test',
+                line_count: 600,
+                byte_count: 30000,
+                owner_tasks: [],
+                todo_follow_up_exists: false
+            }],
+            top_declarations: [{
+                relative_path: 'src/gates/next-step.ts',
+                declaration_kind: 'function',
+                declaration_name: 'resolveNextStep',
+                start_line: 10,
+                end_line: 500,
+                line_count: 491,
+                owner_tasks: [{
+                    task_id: 'T-683-1',
+                    status: '🟦 TODO',
+                    title: 'Slim coordinator'
+                }],
+                todo_follow_up_exists: true
+            }]
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Large Module Decomposition Report'));
+    assert.ok(output.includes('Mode: REPORT_ONLY'));
+    assert.ok(output.includes('Role: recurring size and responsibility signal'));
+    assert.ok(output.includes('src/gates/next-step.ts: 900 lines owner=T-683(🟪 DECOMPOSED), T-683-1(🟦 TODO) follow_up=yes'));
+    assert.ok(output.includes('tests/node/cli/commands/gates-command-review-result.test.ts: 600 lines owner=unknown follow_up=no'));
+    assert.ok(output.includes('src/gates/next-step.ts:10 function resolveNextStep spans 491 lines owner=T-683-1(🟦 TODO) follow_up=yes'));
+    assert.ok(output.includes('Doctor: PASSED'));
+});
+
 test('formatDoctorResult treats source-checkout protected-manifest drift as informational', () => {
     const fakeResult = buildFakeDoctorResult({
         protectedManifestEvidence: {

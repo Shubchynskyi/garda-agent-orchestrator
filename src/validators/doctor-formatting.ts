@@ -30,6 +30,72 @@ function pushViolationSamples(lines: string[], violations: readonly string[], li
     }
 }
 
+function formatLargeModuleTaskRefs(
+    ownerTasks: readonly { task_id: string; status: string }[],
+    todoFollowUpExists: boolean
+): string {
+    if (ownerTasks.length === 0) {
+        return ' owner=unknown follow_up=no';
+    }
+    const refs = ownerTasks.slice(0, 4).map((task) => `${task.task_id}(${task.status})`).join(', ');
+    const suffix = ownerTasks.length > 4 ? `, +${ownerTasks.length - 4}` : '';
+    return ` owner=${refs}${suffix} follow_up=${todoFollowUpExists ? 'yes' : 'no'}`;
+}
+
+function pushLargeModuleFileLines(
+    lines: string[],
+    title: string,
+    entries: readonly {
+        relative_path: string;
+        line_count: number;
+        owner_tasks: readonly { task_id: string; status: string }[];
+        todo_follow_up_exists: boolean;
+    }[]
+): void {
+    lines.push(`  ${title}:`);
+    if (entries.length === 0) {
+        lines.push('    none');
+        return;
+    }
+    for (const entry of entries.slice(0, 5)) {
+        lines.push(
+            '    ' + entry.relative_path + ': ' + entry.line_count + ' lines' +
+            formatLargeModuleTaskRefs(entry.owner_tasks, entry.todo_follow_up_exists)
+        );
+    }
+}
+
+function pushLargeModuleReport(lines: string[], result: DoctorResult): void {
+    const report = result.largeModuleReport;
+    lines.push('Large Module Decomposition Report');
+    lines.push('  Mode: ' + report.mode);
+    lines.push('  Role: recurring size and responsibility signal for decomposition work; report-only, non-blocking.');
+    lines.push('  ScannedRoots: ' + (report.scanned_roots.length > 0 ? report.scanned_roots.join(', ') : 'none'));
+    lines.push(
+        '  Summary: files=' + report.summary.scanned_file_count +
+        ', total_lines=' + report.summary.total_lines +
+        ', largest_source=' + report.summary.largest_source_lines +
+        ', largest_test=' + report.summary.largest_test_lines +
+        ', files_with_follow_up=' + report.summary.files_with_todo_follow_up
+    );
+    pushLargeModuleFileLines(lines, 'Largest source/script files', report.top_source_files);
+    pushLargeModuleFileLines(lines, 'Largest test files', report.top_test_files);
+    lines.push('  Largest declarations:');
+    if (report.top_declarations.length === 0) {
+        lines.push('    none');
+    } else {
+        for (const declaration of report.top_declarations.slice(0, 5)) {
+            lines.push(
+                '    ' + declaration.relative_path + ':' + declaration.start_line +
+                ' ' + declaration.declaration_kind + ' ' + declaration.declaration_name +
+                ' spans ' + declaration.line_count + ' lines' +
+                formatLargeModuleTaskRefs(declaration.owner_tasks, declaration.todo_follow_up_exists)
+            );
+        }
+    }
+    lines.push('');
+}
+
 function collectVerifyViolations(result: DoctorResult): string[] {
     const violations: string[] = [];
     const grouped = result.verifyResult.violations as unknown as Record<string, readonly string[] | undefined>;
@@ -465,6 +531,8 @@ export function formatDoctorResult(result: DoctorResult): string {
         );
         lines.push('');
     }
+
+    pushLargeModuleReport(lines, result);
 
     // Profile health
     if (result.profileHealthEvidence) {

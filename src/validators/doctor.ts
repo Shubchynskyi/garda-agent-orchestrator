@@ -48,6 +48,10 @@ import {
     assessProtectedManifest,
     type ProtectedManifestAssessment
 } from './protected-manifest-assessment';
+import {
+    collectLargeModuleReport,
+    type LargeModuleReport
+} from './large-module-report';
 
 // Re-export extracted collectors for backward compatibility
 export { checkRuntimeMismatch, nodeVersionSatisfiesRange, type RuntimeMismatchEvidence } from './doctor-runtime';
@@ -234,6 +238,7 @@ export interface DoctorResult {
     rollbackHealthEvidence: RollbackHealthEvidence;
     taskHistoryLedgerSummary: TaskHistoryLedgerScanSummary;
     profileHealthEvidence: ProfileHealthEvidence | null;
+    largeModuleReport: LargeModuleReport;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -296,6 +301,7 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
 
     const rollbackHealthEvidence = checkRollbackHealth(targetRoot);
     const taskHistoryLedgerSummary = scanTaskHistoryLedgerRoot(bundlePath);
+    const largeModuleReport = collectLargeModuleReport(targetRoot);
 
     let profileHealthEvidence: ProfileHealthEvidence | null = null;
     try {
@@ -347,7 +353,8 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         partialStateEvidence: partialStateEvidence,
         rollbackHealthEvidence: rollbackHealthEvidence,
         taskHistoryLedgerSummary: taskHistoryLedgerSummary,
-        profileHealthEvidence: profileHealthEvidence
+        profileHealthEvidence: profileHealthEvidence,
+        largeModuleReport: largeModuleReport
     };
 }
 
