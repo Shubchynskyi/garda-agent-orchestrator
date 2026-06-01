@@ -153,6 +153,13 @@ import {
     appendMetricsIfEnabled
 } from './gate-flow-helpers';
 import { resolveBudgetTokensFromForecast, resolveOutputFiltersPath } from './output-budget-filter';
+import {
+    buildCompileScopeDriftMessage,
+    evaluateCompileProtectedManifestGuard,
+    evaluateCompileWorkflowConfigGuard,
+    evaluatePostCompileProtectedManifestGuard,
+    getTaskOwnedManifestChangedFiles
+} from './compile-flow-scope-guards';
 
 type ClassificationResult = ReturnType<typeof classifyChange>;
 type CompileCommandProfile = ReturnType<typeof getCompileCommandProfile>;
@@ -420,73 +427,6 @@ function resolveClassifyChangeOutputPath(
 
 function quotePowerShellCliValue(value: string): string {
     return `"${String(value).replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"')}"`;
-}
-
-function getDistGeneratedSourceCandidates(filePath: string): string[] {
-    const normalized = gateHelpers.normalizePath(filePath);
-    const distPayload = normalized.startsWith('dist/')
-        ? normalized.slice('dist/'.length)
-        : (() => {
-            const marker = '/dist/';
-            const markerIndex = normalized.indexOf(marker);
-            return markerIndex >= 0
-                ? `${normalized.slice(0, markerIndex + 1)}${normalized.slice(markerIndex + marker.length)}`
-                : '';
-        })();
-    if (!distPayload) {
-        return [];
-    }
-    const sourceExtensions = ['.ts', '.tsx', '.mts', '.cts'];
-    if (distPayload.endsWith('.d.ts')) {
-        const base = distPayload.slice(0, -'.d.ts'.length);
-        return sourceExtensions.map((extension) => `${base}${extension}`);
-    }
-    const generatedExtensions = ['.js', '.jsx', '.mjs', '.cjs'];
-    const generatedExtension = generatedExtensions.find((extension) => distPayload.endsWith(extension));
-    if (!generatedExtension) {
-        return [];
-    }
-    const base = distPayload.slice(0, -generatedExtension.length);
-    return sourceExtensions.map((extension) => `${base}${extension}`);
-}
-
-function getTaskOwnedManifestChangedFiles(taskScopeFiles: string[], manifestChangedFiles: string[]): string[] {
-    const normalizedTaskScope = new Set(
-        taskScopeFiles
-            .map((entry) => gateHelpers.normalizePath(entry))
-            .filter(Boolean)
-    );
-    const relevantManifestFiles = new Set<string>();
-    for (const manifestFile of manifestChangedFiles) {
-        const normalizedManifestFile = gateHelpers.normalizePath(manifestFile);
-        if (!normalizedManifestFile) {
-            continue;
-        }
-        if (normalizedTaskScope.has(normalizedManifestFile)) {
-            relevantManifestFiles.add(normalizedManifestFile);
-            continue;
-        }
-        if (getDistGeneratedSourceCandidates(normalizedManifestFile).some((candidate) => normalizedTaskScope.has(candidate))) {
-            relevantManifestFiles.add(normalizedManifestFile);
-        }
-    }
-    return [...relevantManifestFiles].sort();
-}
-
-function getNewManifestChangedFiles(
-    beforeManifestChangedFiles: string[],
-    afterManifestChangedFiles: string[]
-): string[] {
-    const before = new Set(
-        beforeManifestChangedFiles
-            .map((entry) => gateHelpers.normalizePath(entry))
-            .filter(Boolean)
-    );
-    return [...new Set(
-        afterManifestChangedFiles
-            .map((entry) => gateHelpers.normalizePath(entry))
-            .filter((entry) => entry && !before.has(entry))
-    )].sort();
 }
 
 function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
@@ -1301,55 +1241,42 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             exceptionMessage = rulePackViolations.join(' ');
         }
         const preflightChangedFiles = expandValueList(preflightContext.changed_files, { splitDelimiters: false });
-        const preCompileManifestEvidence = gateHelpers.evaluateProtectedControlPlaneManifest(repoRoot, null, true);
-        const preCompileTaskOwnedManifestFiles = getTaskOwnedManifestChangedFiles(
+        const preCompileManifestGuard = evaluateCompileProtectedManifestGuard({
+            repoRoot,
+            taskModeEvidence,
+            phaseLabel: 'compile gate',
+            preflight: preflightContext.preflight,
             preflightChangedFiles,
-            preCompileManifestEvidence.changed_files
-        );
-        const preCompileRestartHint = taskModeEvidence.orchestrator_work !== true
-            ? buildClassifyChangeOrchestratorWorkRestartCommand({
+            buildRestartCommand: (changedFiles) => buildClassifyChangeOrchestratorWorkRestartCommand({
                 repoRoot,
                 taskId: resolvedTaskId,
                 taskModeEvidence,
                 taskSummary: taskModeEvidence.task_summary || null,
-                changedFiles: [...preflightChangedFiles, ...preCompileTaskOwnedManifestFiles]
+                changedFiles
             })
-            : undefined;
-        protectedManifestGuard = getProtectedManifestLifecycleGuard({
-            repoRoot,
-            orchestratorWork: taskModeEvidence.orchestrator_work === true,
-            phaseLabel: 'compile gate',
-            preflight: preflightContext.preflight,
-            manifestEvidence: preCompileManifestEvidence,
-            restartCommandHint: preCompileRestartHint
         });
+        const preCompileManifestEvidence = preCompileManifestGuard.manifestEvidence;
+        const preCompileTaskOwnedManifestFiles = preCompileManifestGuard.taskOwnedManifestFiles;
+        protectedManifestGuard = preCompileManifestGuard.guard;
         if (!exceptionMessage && protectedManifestGuard.status === 'BLOCK') {
             exitCode = EXIT_GATE_FAILURE;
             exceptionMessage = protectedManifestGuard.violations.join(' ');
         }
         if (!exceptionMessage) {
             workflowConfigBaselineForCompile = taskModeEvidence.workflow_config_file_hashes;
-            const workflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile, {
-                allowProtectedManifestFallback: false
-            });
-            workflowConfigBaselineForCompile = workflowConfigChanges.baseline_file_hashes;
-            const workflowConfigViolations = getWorkflowConfigWorkViolations({
-                changedFiles: mergePathLists(
-                    workflowConfigChanges.changed_files,
-                    workflowConfigChanges.baseline_file_hashes
-                        ? []
-                        : getWorkflowConfigChangedFiles(preflightChangedFiles, getWorkflowConfigControlPlanePaths(repoRoot))
-                ),
+            const workflowConfigGuard = evaluateCompileWorkflowConfigGuard({
+                repoRoot,
                 taskModeEvidence,
                 phaseLabel: 'compile gate',
-                baselineFileHashes: workflowConfigChanges.baseline_file_hashes,
-                currentFileHashes: workflowConfigChanges.current_file_hashes
+                baselineFileHashes: workflowConfigBaselineForCompile,
+                preflightChangedFiles
             });
-            if (workflowConfigViolations.length > 0) {
+            workflowConfigBaselineForCompile = workflowConfigGuard.baselineFileHashes;
+            if (workflowConfigGuard.violations.length > 0) {
                 exitCode = EXIT_GATE_FAILURE;
-                exceptionMessage = workflowConfigViolations.join(' ');
-                if (workflowConfigChanges.scan_error) {
-                    exceptionMessage += ` Workspace scan warning: ${workflowConfigChanges.scan_error}`;
+                exceptionMessage = workflowConfigGuard.violations.join(' ');
+                if (workflowConfigGuard.scanError) {
+                    exceptionMessage += ` Workspace scan warning: ${workflowConfigGuard.scanError}`;
                 }
             }
         }
@@ -1447,26 +1374,13 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             preflightContext ? (preflightContext as Record<string, unknown>).budget_forecast : null
         );
 
-        const scopeViolations: string[] = [];
-        if (workspaceSnapshot.changed_files_sha256 !== preflightContext.changed_files_sha256) {
-            scopeViolations.push('Preflight changed_files differ from current workspace snapshot.');
-        }
-        if (workspaceSnapshot.changed_lines_total !== preflightContext.changed_lines_total) {
-            scopeViolations.push(
-                `Preflight changed_lines_total=${preflightContext.changed_lines_total} differs from current snapshot changed_lines_total=${workspaceSnapshot.changed_lines_total}.`
-            );
-        }
-        if (preflightContext.scope_sha256 && workspaceSnapshot.scope_sha256 !== preflightContext.scope_sha256) {
-            scopeViolations.push(
-                `Preflight scope_sha256=${preflightContext.scope_sha256} differs from current snapshot scope_sha256=${workspaceSnapshot.scope_sha256}.`
-            );
-        }
-        if (!exceptionMessage && scopeViolations.length > 0) {
+        const scopeDriftMessage = buildCompileScopeDriftMessage({
+            preflightContext,
+            workspaceSnapshot
+        });
+        if (!exceptionMessage && scopeDriftMessage) {
             exitCode = EXIT_GATE_FAILURE;
-            const scopeRecoveryHint = preflightContext.detection_source === 'explicit_changed_files'
-                ? 'Refresh preflight for the real diff: rerun classify-change for the current scope, rerun load-rule-pack --stage POST_PREFLIGHT, and then rerun compile-gate. If the original preflight used planned --changed-file inputs in a clean workspace before implementation, this drift is expected once the real diff exists.'
-                : 'Refresh preflight for the current scope before compile: rerun classify-change, rerun load-rule-pack --stage POST_PREFLIGHT, and then rerun compile-gate.';
-            exceptionMessage = `Preflight scope drift detected. ${scopeRecoveryHint} ${scopeViolations.join(' ')}`;
+            exceptionMessage = scopeDriftMessage;
         }
         if (!exceptionMessage && dirtyWorkspaceProtectionDrift.status === 'DRIFT_DETECTED') {
             exitCode = EXIT_GATE_FAILURE;
@@ -1560,54 +1474,40 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             }
         }
         if (!exceptionMessage) {
-            const postCompileWorkflowConfigChanges = getCurrentWorkflowConfigChanges(repoRoot, workflowConfigBaselineForCompile, {
-                allowProtectedManifestFallback: false
-            });
-            const postCompileWorkflowConfigViolations = getWorkflowConfigWorkViolations({
-                changedFiles: postCompileWorkflowConfigChanges.changed_files,
+            const postCompileWorkflowConfigGuard = evaluateCompileWorkflowConfigGuard({
+                repoRoot,
                 taskModeEvidence,
                 phaseLabel: 'compile output validation',
-                baselineFileHashes: postCompileWorkflowConfigChanges.baseline_file_hashes,
-                currentFileHashes: postCompileWorkflowConfigChanges.current_file_hashes
+                baselineFileHashes: workflowConfigBaselineForCompile
             });
-            if (postCompileWorkflowConfigViolations.length > 0) {
+            if (postCompileWorkflowConfigGuard.violations.length > 0) {
                 exitCode = EXIT_GATE_FAILURE;
-                exceptionMessage = postCompileWorkflowConfigViolations.join(' ');
-                if (postCompileWorkflowConfigChanges.scan_error) {
-                    exceptionMessage += ` Workspace scan warning: ${postCompileWorkflowConfigChanges.scan_error}`;
+                exceptionMessage = postCompileWorkflowConfigGuard.violations.join(' ');
+                if (postCompileWorkflowConfigGuard.scanError) {
+                    exceptionMessage += ` Workspace scan warning: ${postCompileWorkflowConfigGuard.scanError}`;
                 }
             }
         }
-        if (!exceptionMessage && taskModeEvidence.orchestrator_work !== true) {
-            const postCompileManifestEvidence = gateHelpers.evaluateProtectedControlPlaneManifest(repoRoot, null, true);
-            if (postCompileManifestEvidence.status === 'DRIFT') {
-                const postCompileGeneratedManifestFiles = getNewManifestChangedFiles(
-                    preCompileManifestEvidence.changed_files,
-                    postCompileManifestEvidence.changed_files
-                );
-                const postCompileRestartHint = buildClassifyChangeOrchestratorWorkRestartCommand({
+        if (!exceptionMessage) {
+            const postCompileManifestGuard = evaluatePostCompileProtectedManifestGuard({
+                repoRoot,
+                taskModeEvidence,
+                phaseLabel: 'compile output validation',
+                preflight: preflightContext?.preflight,
+                preflightChangedFiles,
+                preCompileManifestEvidence,
+                preCompileTaskOwnedManifestFiles,
+                buildRestartCommand: (changedFiles) => buildClassifyChangeOrchestratorWorkRestartCommand({
                     repoRoot,
                     taskId: resolvedTaskId,
                     taskModeEvidence,
                     taskSummary: taskModeEvidence.task_summary || null,
-                    changedFiles: [
-                        ...preflightChangedFiles,
-                        ...preCompileTaskOwnedManifestFiles,
-                        ...postCompileGeneratedManifestFiles
-                    ]
-                });
-                const postCompileManifestGuard = getProtectedManifestLifecycleGuard({
-                    repoRoot,
-                    orchestratorWork: false,
-                    phaseLabel: 'compile output validation',
-                    preflight: preflightContext?.preflight,
-                    manifestEvidence: postCompileManifestEvidence,
-                    restartCommandHint: postCompileRestartHint
-                });
-                if (postCompileManifestGuard.status === 'BLOCK') {
-                    exitCode = EXIT_GATE_FAILURE;
-                    exceptionMessage = postCompileManifestGuard.violations.join(' ');
-                }
+                    changedFiles
+                })
+            });
+            if (postCompileManifestGuard?.guard?.status === 'BLOCK') {
+                exitCode = EXIT_GATE_FAILURE;
+                exceptionMessage = postCompileManifestGuard.guard.violations.join(' ');
             }
         }
     } catch (error) {
