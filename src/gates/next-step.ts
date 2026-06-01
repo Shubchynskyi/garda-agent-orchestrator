@@ -139,6 +139,9 @@ import {
     readStartupCycleReadiness
 } from './next-step-startup-readiness';
 import {
+    resolveNextStepStartupRoute
+} from './next-step-startup-routing';
+import {
     buildCompileEvidenceDocsOnlyExtensionReadiness,
     describePathList,
     getDocImpactDeclaredDocsUpdated,
@@ -5793,24 +5796,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (!isGatePassed(summary, 'enter-task-mode')) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'enter-task-mode',
-            title: 'Enter task mode first.',
-            reason: defaultExecutionProvider
-                ? 'No TASK_MODE_ENTERED event exists for this task.'
-                : 'No TASK_MODE_ENTERED event exists for this task, and runtime provider could not be detected from GARDA_EXECUTION_PROVIDER or known provider environment markers. Set GARDA_EXECUTION_PROVIDER to the current execution provider before running the command; do not use SourceOfTruth as a runtime-provider fallback.',
-            commands: [
-                buildCommand(
-                    'Enter task mode',
-                    buildEnterTaskModeCommand(cliPrefix, taskId, taskEntry, defaultExecutionProvider)
-                )
-            ]
-        });
-    }
-
     const docImpactPath = readinessArtifacts.paths.docImpactPath;
     const preflightWorkspaceReadiness = preflight
         ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
@@ -5851,61 +5836,28 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         enforceLateRulePackAfterReviewPhase:
             !preflight || !preflightCycleReadiness.ready || !effectivePreflightWorkspaceReadiness.ready
     });
-    if (!startupCycleReadiness.ready) {
-        const command = startupCycleReadiness.nextGate === 'load-rule-pack'
-            ? buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskModePath)
-            : startupCycleReadiness.nextGate === 'handshake-diagnostics'
-                ? `${cliPrefix} gate handshake-diagnostics --task-id "${taskId}" --repo-root "."`
-                : `${cliPrefix} gate shell-smoke-preflight --task-id "${taskId}" --repo-root "."`;
-        const label = startupCycleReadiness.nextGate === 'load-rule-pack'
-            ? 'Load TASK_ENTRY rules'
-            : startupCycleReadiness.nextGate === 'handshake-diagnostics'
-                ? 'Run handshake diagnostics'
-                : 'Run shell smoke preflight';
+    const startupRoute = resolveNextStepStartupRoute({
+        enterTaskModePassed: isGatePassed(summary, 'enter-task-mode'),
+        defaultExecutionProvider,
+        enterTaskModeCommand: buildEnterTaskModeCommand(cliPrefix, taskId, taskEntry, defaultExecutionProvider),
+        startupCycleReadiness,
+        loadRulePackPassed: isGatePassed(summary, 'load-rule-pack'),
+        rulePackStage: resolveRulePackStage(rulePack),
+        preflightExists: Boolean(preflight),
+        taskEntryRulePackCommand: buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskModePath),
+        handshakeDiagnosticsPassed: isGatePassed(summary, 'handshake-diagnostics'),
+        handshakeDiagnosticsCommand: `${cliPrefix} gate handshake-diagnostics --task-id "${taskId}" --repo-root "."`,
+        shellSmokePreflightPassed: isGatePassed(summary, 'shell-smoke-preflight'),
+        shellSmokePreflightCommand: `${cliPrefix} gate shell-smoke-preflight --task-id "${taskId}" --repo-root "."`
+    });
+    if (startupRoute) {
         return buildResult({
             ...resultBase,
-            status: 'BLOCKED',
-            nextGate: startupCycleReadiness.nextGate,
-            title: startupCycleReadiness.title,
-            reason: startupCycleReadiness.reason,
-            commands: [buildCommand(label, command)]
-        });
-    }
-
-    if (!isGatePassed(summary, 'load-rule-pack') || resolveRulePackStage(rulePack) !== 'TASK_ENTRY' && !preflight) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'load-rule-pack',
-            title: 'Record TASK_ENTRY rule files.',
-            reason: 'Task execution must record the loaded core workflow rule pack before preflight.',
-            commands: [buildCommand('Load TASK_ENTRY rules', buildTaskEntryRulePackCommand(repoRoot, cliPrefix, taskId, taskModePath))]
-        });
-    }
-
-    if (!isGatePassed(summary, 'handshake-diagnostics')) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'handshake-diagnostics',
-            title: 'Run handshake diagnostics.',
-            reason: 'Runtime identity and reviewer launchability have not been recorded.',
-            commands: [
-                buildCommand('Run handshake diagnostics', `${cliPrefix} gate handshake-diagnostics --task-id "${taskId}" --repo-root "."`)
-            ]
-        });
-    }
-
-    if (!isGatePassed(summary, 'shell-smoke-preflight')) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'shell-smoke-preflight',
-            title: 'Run shell smoke preflight.',
-            reason: 'CLI launchability and filesystem probes have not been recorded.',
-            commands: [
-                buildCommand('Run shell smoke preflight', `${cliPrefix} gate shell-smoke-preflight --task-id "${taskId}" --repo-root "."`)
-            ]
+            status: startupRoute.status,
+            nextGate: startupRoute.nextGate,
+            title: startupRoute.title,
+            reason: startupRoute.reason,
+            commands: startupRoute.commands
         });
     }
 
