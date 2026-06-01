@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
@@ -78,10 +80,14 @@ describe('gates/review-context-artifacts', () => {
     });
 
     it('builds evidence manifest shape with normalized artifact paths and stable sha wiring', () => {
+        const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-manifest-'));
         const outputPath = path.join('garda-agent-orchestrator', 'runtime', 'reviews', 'T-001-code-review-context.json');
         const paths = buildReviewContextHandoffArtifactPaths(outputPath);
         const selectedSkill = sampleSelectedSkill();
         const gitDiff = sampleGitDiff();
+        const diffCachePath = path.join(tempRoot, 'T-001-scoped-diff-summary.json');
+        fs.writeFileSync(diffCachePath, JSON.stringify({ summary: { diff: gitDiff.diff } }, null, 2) + '\n', 'utf8');
+        gitDiff.cache_path = diffCachePath;
         const taskEvidence = {
             task_intent: { summary: 'Add focused helper tests' },
             task_row: { id: 'T-001' },
@@ -129,6 +135,8 @@ describe('gates/review-context-artifacts', () => {
         assert.equal(artifacts.preflight.artifact_sha256, 'preflight-sha');
         assert.equal(artifacts.scoped_diff.expected, true);
         assert.equal(artifacts.scoped_diff.diff_cache_path, gitDiff.cache_path);
+        assert.equal(artifacts.scoped_diff.diff_cache_artifact_sha256, sha256Text(fs.readFileSync(diffCachePath, 'utf8')));
+        assert.equal(artifacts.scoped_diff.diff_content_sha256, sha256Text(gitDiff.diff || ''));
         assert.equal(artifacts.scoped_diff.diff_sha256, sha256Text(gitDiff.diff || ''));
         assert.deepEqual(artifacts.compile_gate, { status: 'PASSED' });
         assert.deepEqual(artifacts.full_suite_validation, { status: 'PASSED' });

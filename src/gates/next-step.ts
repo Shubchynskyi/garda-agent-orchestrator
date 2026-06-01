@@ -4542,6 +4542,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             routingCurrent,
             artifactExists: state.artifactExists,
             receiptExists: state.receiptExists,
+            reviewFailed: state.failed,
             stateReady: state.ready,
             stateViolationsText: stateViolations,
             reviewerIdentity: state.reviewerIdentity || '',

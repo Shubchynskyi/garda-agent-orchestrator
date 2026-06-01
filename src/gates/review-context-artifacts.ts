@@ -2,6 +2,7 @@ import {
     REVIEW_CONTRACTS
 } from './required-reviews-check';
 import {
+    fileSha256,
     normalizePath
 } from './helpers';
 import {
@@ -480,6 +481,10 @@ export function buildReviewEvidenceManifest(options: {
                 metadata_path: normalizePath(options.scopedDiffMetadataPath),
                 metadata_sha256: options.scopedDiffMetadataSha256,
                 diff_cache_path: options.gitDiff.cache_path || null,
+                diff_cache_artifact_sha256: options.gitDiff.cache_path
+                    ? fileSha256(options.gitDiff.cache_path)
+                    : null,
+                diff_content_sha256: stringSha256(options.gitDiff.diff || '') || null,
                 diff_sha256: stringSha256(options.gitDiff.diff || '') || null
             },
             compile_gate: options.compileGateEvidence,

@@ -1697,6 +1697,35 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=blocked until launch artifact'));
     });
 
+    it('routes failed old review receipts through launch preparation after current context rebuild', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:code-reviewer';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID, '2026-04-28T00:00:00.000Z');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', { verdict: 'fail' });
+
+        seedCompilePass(repoRoot, TASK_ID, '2026-04-28T00:01:00.000Z');
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_PHASE_STARTED', 'INFO', {
+            review_type: 'code',
+            output_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`)
+        });
+        appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'prepare-reviewer-launch', result.reason);
+        assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+        assert.ok(result.reason.includes('launch artifact=missing or stale'));
+        assert.ok(result.reason.includes('invocation=blocked until launch artifact'));
+    });
+
     it('does not treat current context invocation telemetry without matching tree-state binding as attested', () => {
         for (const reviewTreeStateSha256 of [undefined, 'f'.repeat(64)] as const) {
             const repoRoot = makeTempRepo();

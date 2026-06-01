@@ -21,6 +21,7 @@ export interface DelegatedReviewReadinessRouteOptions {
     routingCurrent: boolean;
     artifactExists: boolean;
     receiptExists: boolean;
+    reviewFailed: boolean;
     stateReady: boolean;
     stateViolationsText: string;
     reviewerIdentity: string;
@@ -83,6 +84,7 @@ export function resolveDelegatedReviewReadinessRoute(
             || !options.receiptExists
             || options.reviewerIdentity !== options.contextReviewerIdentity
             || options.stateReady
+            || options.reviewFailed
         )
     ) {
         if (options.launchArtifactState === 'missing_or_invalid') {
