@@ -205,6 +205,7 @@ const COMPATIBILITY_TOP_LEVEL_KEYS = [
     'compile_gate',
     'full_suite_validation',
     'orchestrator_work_policy',
+    'auto_backup',
     'project_memory_maintenance',
     'review_cycle_guard',
     'review_execution_policy',
@@ -213,6 +214,7 @@ const COMPATIBILITY_TOP_LEVEL_KEYS = [
 ];
 const COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS = [
     'compile_gate',
+    'auto_backup',
     'orchestrator_work_policy',
     'review_execution_policy',
     'task_reset'
@@ -266,6 +268,7 @@ const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
     'run_before_final_closeout'
 ];
 const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
+const COMPATIBILITY_AUTO_BACKUP_KEYS = ['enabled', 'interval_days', 'keep_latest'];
 const COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS = ['mode'];
 
 function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
@@ -477,6 +480,21 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
             || !hasExactOwnKeys(defaultTaskReset, COMPATIBILITY_TASK_RESET_KEYS)
             || !hasExactOwnKeys(taskReset, COMPATIBILITY_TASK_RESET_KEYS)
             || taskReset.enabled !== false
+        ) {
+            return false;
+        }
+    }
+
+    if (hasOwnKey(config, 'auto_backup')) {
+        const autoBackup = toPlainRecord(config.auto_backup);
+        const defaultAutoBackup = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.auto_backup as unknown as Record<string, unknown>;
+        if (
+            !autoBackup
+            || !hasExactOwnKeys(defaultAutoBackup, COMPATIBILITY_AUTO_BACKUP_KEYS)
+            || !hasExactOwnKeys(autoBackup, COMPATIBILITY_AUTO_BACKUP_KEYS)
+            || autoBackup.enabled !== false
+            || !numberEquals(autoBackup, 'interval_days', defaultAutoBackup.interval_days)
+            || !numberEquals(autoBackup, 'keep_latest', defaultAutoBackup.keep_latest)
         ) {
             return false;
         }

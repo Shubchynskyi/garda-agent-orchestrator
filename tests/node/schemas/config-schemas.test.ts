@@ -276,7 +276,7 @@ test('workflow-config template carries the full-suite placement default for gene
     );
 });
 
-test('workflow-config schema accepts project memory maintenance and task reset defaults', () => {
+test('workflow-config schema accepts project memory maintenance, task reset, and auto-backup defaults', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     const result = validateAgainstSchema(data, workflowConfigSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
@@ -291,6 +291,11 @@ test('workflow-config schema accepts project memory maintenance and task reset d
     });
     assert.deepEqual(data.task_reset, {
         enabled: false
+    });
+    assert.deepEqual(data.auto_backup, {
+        enabled: false,
+        interval_days: 1,
+        keep_latest: 10
     });
 });
 
@@ -310,6 +315,15 @@ test('workflow-config schema rejects unknown task reset keys', () => {
     const result = validateAgainstSchema(clone, workflowConfigSchema);
     assert.equal(result.valid, false);
     assert.ok(result.errors.some((error) => error.path.includes('task_reset.force')));
+});
+
+test('workflow-config schema rejects invalid auto-backup settings', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    (clone.auto_backup as Record<string, unknown>).interval_days = 0;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some((error) => error.path.includes('auto_backup.interval_days')));
 });
 
 test('template garda.config.json validates against root schema', () => {

@@ -5,8 +5,10 @@ import { resolveBundleName } from '../../core/constants';
 import {
     buildDefaultWorkflowConfig,
     hasMaterializedWorkflowConfigBaseline,
+    normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
     normalizeOrchestratorWorkPolicyConfig,
+    type AutoBackupConfig,
     type OrchestratorWorkPolicyConfig,
     type ProjectMemoryMaintenanceConfig,
     type TaskResetConfig,
@@ -50,6 +52,10 @@ export function cloneTaskResetConfig(config: TaskResetConfig): TaskResetConfig {
     return JSON.parse(JSON.stringify(config)) as TaskResetConfig;
 }
 
+export function cloneAutoBackupConfig(config: AutoBackupConfig): AutoBackupConfig {
+    return JSON.parse(JSON.stringify(config)) as AutoBackupConfig;
+}
+
 export function cloneOrchestratorWorkPolicyConfig(
     config: OrchestratorWorkPolicyConfig
 ): OrchestratorWorkPolicyConfig {
@@ -68,6 +74,9 @@ export function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): Wor
             config.project_memory_maintenance ?? defaultConfig.project_memory_maintenance
         ),
         task_reset: cloneTaskResetConfig(config.task_reset ?? defaultConfig.task_reset),
+        auto_backup: cloneAutoBackupConfig(
+            normalizeAutoBackupConfig(config.auto_backup ?? defaultConfig.auto_backup)
+        ),
         orchestrator_work_policy: cloneOrchestratorWorkPolicyConfig(
             normalizeOrchestratorWorkPolicyConfig(config.orchestrator_work_policy ?? defaultConfig.orchestrator_work_policy)
         )
@@ -85,6 +94,7 @@ export function readWorkflowConfigState(configPath: string, bundleRoot: string):
                 scope_budget_guard: defaultConfig.scope_budget_guard,
                 project_memory_maintenance: defaultConfig.project_memory_maintenance,
                 task_reset: defaultConfig.task_reset,
+                auto_backup: defaultConfig.auto_backup,
                 orchestrator_work_policy: defaultConfig.orchestrator_work_policy
             }),
             exists: false,

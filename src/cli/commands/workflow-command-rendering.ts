@@ -9,8 +9,10 @@ import {
 } from '../../core/review-execution-policy';
 import {
     buildDefaultWorkflowConfig,
+    normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
     normalizeOrchestratorWorkPolicyConfig,
+    type AutoBackupConfig,
     type CompileGateConfig,
     type OrchestratorWorkPolicyConfig,
     type TaskResetConfig,
@@ -36,6 +38,7 @@ import {
 } from './cli-helpers';
 import {
     cloneOrchestratorWorkPolicyConfig,
+    cloneAutoBackupConfig,
     cloneProjectMemoryMaintenanceConfig,
     cloneTaskResetConfig
 } from './workflow-command-state';
@@ -101,6 +104,10 @@ export function buildTaskResetLine(config: TaskResetConfig): string {
     return `Task reset: ${config.enabled ? 'enabled' : 'disabled'}`;
 }
 
+export function buildAutoBackupLine(config: AutoBackupConfig): string {
+    return `Auto backup: ${config.enabled ? 'enabled' : 'disabled'} interval_days=${config.interval_days} keep_latest=${config.keep_latest}`;
+}
+
 export function buildOrchestratorWorkPolicyLine(config: OrchestratorWorkPolicyConfig): string {
     const selfGuard = config.mode === 'deny_agent_entry' ? 'on' : 'off';
     return `Garda self-guard: ${selfGuard} (${config.mode})`;
@@ -122,6 +129,9 @@ export function buildWorkflowShowResult(
     const taskReset = cloneTaskResetConfig(
         state.config.task_reset ?? buildDefaultWorkflowConfig().task_reset
     );
+    const autoBackup = cloneAutoBackupConfig(
+        normalizeAutoBackupConfig(state.config.auto_backup ?? buildDefaultWorkflowConfig().auto_backup)
+    );
     const orchestratorWorkPolicy = cloneOrchestratorWorkPolicyConfig(
         normalizeOrchestratorWorkPolicyConfig(
             state.config.orchestrator_work_policy ?? buildDefaultWorkflowConfig().orchestrator_work_policy
@@ -141,6 +151,7 @@ export function buildWorkflowShowResult(
         review_cycle_guard: reviewCycleGuard,
         project_memory_maintenance: projectMemoryMaintenance,
         task_reset: taskReset,
+        auto_backup: autoBackup,
         orchestrator_work_policy: orchestratorWorkPolicy,
         visible_summary_line: buildMandatoryFullSuiteLine(state.config),
         compile_gate_summary_line: buildCompileGateLine({ compile_gate: compileGate }),
@@ -149,6 +160,7 @@ export function buildWorkflowShowResult(
         review_cycle_guard_summary_line: buildReviewCycleGuardLine(reviewCycleGuard),
         project_memory_maintenance_summary_line: buildProjectMemoryMaintenanceSummaryLine(projectMemoryMaintenance),
         task_reset_summary_line: buildTaskResetLine(taskReset),
+        auto_backup_summary_line: buildAutoBackupLine(autoBackup),
         orchestrator_work_policy_summary_line: buildOrchestratorWorkPolicyLine(orchestratorWorkPolicy)
     };
 }
@@ -197,6 +209,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     const reviewCycleGuard = result.review_cycle_guard;
     const projectMemoryMaintenance = result.project_memory_maintenance;
     const taskReset = result.task_reset;
+    const autoBackup = result.auto_backup;
     const orchestratorWorkPolicy = result.orchestrator_work_policy;
     const lines: string[] = [];
     lines.push('GARDA_WORKFLOW');
@@ -217,6 +230,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(result.review_cycle_guard_summary_line);
     lines.push(result.project_memory_maintenance_summary_line);
     lines.push(result.task_reset_summary_line);
+    lines.push(result.auto_backup_summary_line);
     lines.push(result.orchestrator_work_policy_summary_line);
     lines.push('');
     lines.push('Compile gate');
@@ -264,8 +278,11 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(`ProjectMemoryMaintenanceReadStrategy: ${projectMemoryMaintenance.read_strategy}`);
     lines.push(`ProjectMemoryMaintenanceImpactArtifactRetentionDays: ${projectMemoryMaintenance.impact_artifact_retention_days}`);
     lines.push('');
-    lines.push('Task reset and self-guard');
+    lines.push('Task reset, auto backup, and self-guard');
     lines.push(`TaskResetEnabled: ${taskReset.enabled}`);
+    lines.push(`AutoBackupEnabled: ${autoBackup.enabled}`);
+    lines.push(`AutoBackupIntervalDays: ${autoBackup.interval_days}`);
+    lines.push(`AutoBackupKeepLatest: ${autoBackup.keep_latest}`);
     lines.push(`GardaSelfGuard: ${orchestratorWorkPolicy.mode === 'deny_agent_entry' ? 'on' : 'off'}`);
     lines.push(`OrchestratorWorkPolicy: ${orchestratorWorkPolicy.mode}`);
     lines.push('');
@@ -276,6 +293,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Tip: run "workflow set --review-cycle on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');
     lines.push('Tip: run "workflow set --project-memory on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change project memory maintenance checks after operator approval.');
     lines.push('Tip: run "workflow set --task-reset on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
+    lines.push('Tip: run "workflow set --auto-backup on|off --auto-backup-interval-days 1 --auto-backup-keep-latest 10 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change scheduled backup maintenance after operator approval.');
     lines.push('Tip: run "workflow set --garda-self-guard on|off" to control agent self-entry into protected orchestrator work; off requires explicit operator approval.');
     return colorizeWorkflowHumanOutput(lines.join('\n'));
 }

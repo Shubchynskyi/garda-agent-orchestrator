@@ -90,6 +90,13 @@ export interface TaskResetConfig {
     [key: string]: unknown;
 }
 
+export interface AutoBackupConfig {
+    enabled: boolean;
+    interval_days: number;
+    keep_latest: number;
+    [key: string]: unknown;
+}
+
 export const ORCHESTRATOR_WORK_POLICY_MODES = Object.freeze([
     'deny_agent_entry',
     'require_operator_confirmation'
@@ -115,6 +122,7 @@ export interface WorkflowConfigData {
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
     task_reset: TaskResetConfig;
+    auto_backup: AutoBackupConfig;
     orchestrator_work_policy: OrchestratorWorkPolicyConfig;
     [key: string]: unknown;
 }
@@ -165,6 +173,11 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
     }),
     task_reset: Object.freeze({
         enabled: false
+    }),
+    auto_backup: Object.freeze({
+        enabled: false,
+        interval_days: 1,
+        keep_latest: 10
     }),
     orchestrator_work_policy: Object.freeze({
         mode: 'deny_agent_entry'
@@ -220,6 +233,24 @@ export function normalizeOrchestratorWorkPolicyConfig(input: unknown): Orchestra
     return {
         ...cloneJsonValue(input),
         mode
+    };
+}
+
+export function normalizeAutoBackupConfig(input: unknown): AutoBackupConfig {
+    if (!isPlainObject(input)) {
+        return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.auto_backup);
+    }
+    const intervalDays = typeof input.interval_days === 'number' && Number.isInteger(input.interval_days) && input.interval_days >= 1
+        ? input.interval_days
+        : DEFAULT_WORKFLOW_CONFIG.auto_backup.interval_days;
+    const keepLatest = typeof input.keep_latest === 'number' && Number.isInteger(input.keep_latest) && input.keep_latest >= 1
+        ? input.keep_latest
+        : DEFAULT_WORKFLOW_CONFIG.auto_backup.keep_latest;
+    return {
+        ...cloneJsonValue(input),
+        enabled: input.enabled === true,
+        interval_days: intervalDays,
+        keep_latest: keepLatest
     };
 }
 

@@ -49,5 +49,10 @@
   },
   "task_reset": {
     "enabled": false
+  },
+  "auto_backup": {
+    "enabled": false,
+    "interval_days": 1,
+    "keep_latest": 10
   }
 }

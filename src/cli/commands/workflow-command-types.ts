@@ -7,6 +7,7 @@ import type {
     ProjectMemoryMaintenanceConfig,
     OrchestratorWorkPolicyConfig,
     TaskResetConfig,
+    AutoBackupConfig,
     WorkflowConfigData
 } from '../../core/workflow-config';
 import type { ScopeBudgetGuardConfig } from '../../core/scope-budget-guard';
@@ -22,6 +23,7 @@ export type WorkflowFileConfigData = {
     review_cycle_guard?: WorkflowConfigData['review_cycle_guard'];
     project_memory_maintenance?: WorkflowConfigData['project_memory_maintenance'];
     task_reset?: WorkflowConfigData['task_reset'];
+    auto_backup?: WorkflowConfigData['auto_backup'];
     orchestrator_work_policy?: WorkflowConfigData['orchestrator_work_policy'];
     [key: string]: unknown;
 };
@@ -65,6 +67,7 @@ export interface WorkflowCommandResultBase {
     review_cycle_guard: ReviewCycleGuardConfig;
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
     task_reset: TaskResetConfig;
+    auto_backup: AutoBackupConfig;
     orchestrator_work_policy: OrchestratorWorkPolicyConfig;
     visible_summary_line: string;
     compile_gate_summary_line: string;
@@ -73,6 +76,7 @@ export interface WorkflowCommandResultBase {
     review_cycle_guard_summary_line: string;
     project_memory_maintenance_summary_line: string;
     task_reset_summary_line: string;
+    auto_backup_summary_line: string;
     orchestrator_work_policy_summary_line: string;
 }
 
@@ -146,6 +150,10 @@ export const WORKFLOW_SET_DEFINITIONS = {
     '--project-memory-impact-artifact-retention-days': { key: 'projectMemoryImpactArtifactRetentionDays', type: 'string' },
     '--task-reset': { key: 'taskResetAlias', type: 'string' },
     '--task-reset-enabled': { key: 'taskResetEnabled', type: 'string' },
+    '--auto-backup': { key: 'autoBackupAlias', type: 'string' },
+    '--auto-backup-enabled': { key: 'autoBackupEnabled', type: 'string' },
+    '--auto-backup-interval-days': { key: 'autoBackupIntervalDays', type: 'string' },
+    '--auto-backup-keep-latest': { key: 'autoBackupKeepLatest', type: 'string' },
     '--garda-self-guard': { key: 'gardaSelfGuard', type: 'string' },
     '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
     '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' }

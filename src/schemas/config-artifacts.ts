@@ -728,7 +728,7 @@ export function validateRuntimeRetentionConfig(input: unknown): Record<string, u
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['compile_gate', 'full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'orchestrator_work_policy'] as const;
+    const knownKeyList = ['compile_gate', 'full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'auto_backup', 'orchestrator_work_policy'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -819,6 +819,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         if (raw.task_reset !== undefined) {
             normalized.task_reset = validateTaskResetSection(raw.task_reset);
         }
+        if (raw.auto_backup !== undefined) {
+            normalized.auto_backup = validateAutoBackupSection(raw.auto_backup);
+        }
         if (raw.orchestrator_work_policy !== undefined) {
             normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
         }
@@ -856,6 +859,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     }
     if (raw.task_reset !== undefined) {
         normalized.task_reset = validateTaskResetSection(raw.task_reset);
+    }
+    if (raw.auto_backup !== undefined) {
+        normalized.auto_backup = validateAutoBackupSection(raw.auto_backup);
     }
     if (raw.orchestrator_work_policy !== undefined) {
         normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
@@ -933,6 +939,42 @@ function validateTaskResetSection(input: unknown): Record<string, unknown> {
     normalizedInput.enabled = normalizeBooleanLike(
         normalizedInput.enabled,
         'workflow-config.task_reset.enabled'
+    );
+    return normalizedInput;
+}
+
+function validateAutoBackupSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.auto_backup');
+    const sectionKnownKeys = ['enabled', 'interval_days', 'keep_latest'];
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.auto_backup'
+    );
+    assertNoUnknownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.auto_backup'
+    );
+
+    const defaults = buildDefaultWorkflowConfig().auto_backup as unknown as Record<string, unknown>;
+    const normalizedInput = {
+        ...defaults,
+        ...section
+    };
+    normalizedInput.enabled = normalizeBooleanLike(
+        normalizedInput.enabled,
+        'workflow-config.auto_backup.enabled'
+    );
+    normalizedInput.interval_days = normalizeInteger(
+        normalizedInput.interval_days,
+        'workflow-config.auto_backup.interval_days',
+        { minimum: 1 }
+    );
+    normalizedInput.keep_latest = normalizeInteger(
+        normalizedInput.keep_latest,
+        'workflow-config.auto_backup.keep_latest',
+        { minimum: 1 }
     );
     return normalizedInput;
 }

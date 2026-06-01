@@ -466,6 +466,28 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
             required: ['enabled'],
             additionalProperties: false
         },
+        auto_backup: {
+            type: 'object',
+            description: 'Scheduled backup maintenance settings. Disabled by default and executed only through the daily maintenance trigger.',
+            properties: {
+                enabled: {
+                    type: 'boolean',
+                    description: 'Enable scheduled auto-backups.'
+                },
+                interval_days: {
+                    type: 'integer',
+                    minimum: 1,
+                    description: 'Minimum number of days between successful scheduled backups.'
+                },
+                keep_latest: {
+                    type: 'integer',
+                    minimum: 1,
+                    description: 'Number of latest backups to retain after scheduled backup creation.'
+                }
+            },
+            required: ['enabled', 'interval_days', 'keep_latest'],
+            additionalProperties: false
+        },
         orchestrator_work_policy: {
             type: 'object',
             description: 'Workspace self-guard policy for agent-entered protected orchestrator work.',

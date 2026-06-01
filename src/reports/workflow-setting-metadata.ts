@@ -470,6 +470,37 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         options: BOOLEAN_OPTIONS
     },
     {
+        id: 'auto-backup-enabled',
+        key: 'auto_backup.enabled',
+        label: 'Scheduled auto-backups',
+        description: 'Allows the daily maintenance trigger to create scheduled rollback backups when due.',
+        flag: '--auto-backup-enabled',
+        value_type: 'boolean',
+        options: BOOLEAN_OPTIONS
+    },
+    {
+        id: 'auto-backup-interval-days',
+        key: 'auto_backup.interval_days',
+        label: 'Auto-backup interval',
+        description: 'Minimum number of days between successful scheduled backups.',
+        flag: '--auto-backup-interval-days',
+        value_type: 'integer',
+        min: 1,
+        max: 3650,
+        options: []
+    },
+    {
+        id: 'auto-backup-keep-latest',
+        key: 'auto_backup.keep_latest',
+        label: 'Auto-backup retention',
+        description: 'Number of latest backups to keep after a scheduled backup is created.',
+        flag: '--auto-backup-keep-latest',
+        value_type: 'integer',
+        min: 1,
+        max: 1000,
+        options: []
+    },
+    {
         id: 'garda-self-guard',
         key: 'orchestrator_work_policy.mode',
         label: 'Garda self-guard',

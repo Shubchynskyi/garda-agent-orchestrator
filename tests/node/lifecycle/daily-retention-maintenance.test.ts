@@ -8,7 +8,13 @@ import {
     runDailyRetentionMaintenance,
     resolveDailyRetentionMaintenanceReportPath
 } from '../../../src/lifecycle/daily-retention-maintenance';
+import {
+    listBackups,
+    DEFAULT_BACKUP_KEEP_LATEST
+} from '../../../src/lifecycle/backups';
+import { writeRollbackRecords } from '../../../src/lifecycle/common';
 import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
+import { buildDefaultWorkflowConfig, type WorkflowConfigData } from '../../../src/core/workflow-config';
 
 function makeWorkspace(prefix: string): { targetRoot: string; bundleRoot: string; cleanup: () => void } {
     const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -55,6 +61,45 @@ function writeRuntimeRetentionConfig(
         },
         daily_maintenance: dailyMaintenance
     }, null, 2) + '\n', 'utf8');
+}
+
+function writeWorkflowConfig(
+    bundleRoot: string,
+    configure: (config: WorkflowConfigData) => void
+): void {
+    const config = buildDefaultWorkflowConfig();
+    configure(config);
+    const configDir = path.join(bundleRoot, 'live', 'config');
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function seedRollbackSnapshot(targetRoot: string, name: string): string {
+    const snapshotPath = path.join(
+        targetRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'update-rollbacks',
+        name
+    );
+    const versionPath = path.join(snapshotPath, 'garda-agent-orchestrator', 'VERSION');
+    fs.mkdirSync(path.dirname(versionPath), { recursive: true });
+    fs.writeFileSync(versionPath, `${name}\n`, 'utf8');
+    writeRollbackRecords(snapshotPath, [
+        {
+            relativePath: 'garda-agent-orchestrator/VERSION',
+            existed: true,
+            pathType: 'file'
+        }
+    ]);
+    return snapshotPath;
+}
+
+function createCorruptBackupInventoryRoot(bundleRoot: string): string {
+    const snapshotsRoot = path.join(bundleRoot, 'runtime', 'update-rollbacks');
+    fs.mkdirSync(path.dirname(snapshotsRoot), { recursive: true });
+    fs.writeFileSync(snapshotsRoot, 'not a directory', 'utf8');
+    return snapshotsRoot;
 }
 
 function createOldRuntimeTmpEntry(bundleRoot: string): string {
@@ -235,6 +280,184 @@ describe('daily retention maintenance', () => {
             assert.equal(dryRun.gc_result?.skipped_count ?? 0, 0);
         } finally {
             dryRunWorkspace.cleanup();
+        }
+    });
+
+    it('keeps scheduled auto-backups disabled by default while daily maintenance reports state', () => {
+        const workspace = makeWorkspace('daily-auto-backup-disabled-');
+        try {
+            writeRuntimeRetentionConfig(workspace.bundleRoot, { enabled: true, purgeRequireConfirm: false });
+
+            const result = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(result.status, 'SUCCESS');
+            assert.equal(result.scheduled_backup?.status, 'DISABLED');
+            assert.equal(result.scheduled_backup?.enabled, false);
+            assert.equal(result.scheduled_backup?.keep_latest, DEFAULT_BACKUP_KEEP_LATEST);
+            assert.equal(listBackups(workspace.targetRoot).length, 0);
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('creates due scheduled auto-backups once per local day and prunes by keepLatest', () => {
+        const workspace = makeWorkspace('daily-auto-backup-due-');
+        try {
+            fs.writeFileSync(path.join(workspace.bundleRoot, 'VERSION'), '1.0.0\n', 'utf8');
+            writeRuntimeRetentionConfig(workspace.bundleRoot, { enabled: true, purgeRequireConfirm: false });
+            writeWorkflowConfig(workspace.bundleRoot, (config) => {
+                config.auto_backup.enabled = true;
+                config.auto_backup.interval_days = 1;
+                config.auto_backup.keep_latest = 2;
+            });
+            seedRollbackSnapshot(workspace.targetRoot, 'scheduled-20260518-010000-000');
+            seedRollbackSnapshot(workspace.targetRoot, 'scheduled-20260519-010000-000');
+
+            const first = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(first.status, 'SUCCESS');
+            assert.equal(first.scheduled_backup?.status, 'SUCCESS');
+            assert.equal(first.scheduled_backup?.created_backup?.reason, 'scheduled');
+            assert.equal(
+                first.scheduled_backup?.latest_scheduled_backup_id,
+                first.scheduled_backup?.created_backup?.id
+            );
+            assert.equal(
+                first.scheduled_backup?.latest_scheduled_backup_created_at,
+                first.scheduled_backup?.created_backup?.createdAt
+            );
+            assert.equal(
+                first.scheduled_backup?.next_due_at,
+                new Date(Date.parse(first.scheduled_backup?.created_backup?.createdAt ?? '') + 24 * 60 * 60 * 1000).toISOString()
+            );
+            assert.equal(first.scheduled_backup?.retention_result?.candidate_count, 1);
+            assert.equal(listBackups(workspace.targetRoot).length, 2);
+            assert.equal(
+                listBackups(workspace.targetRoot).some((backup) => backup.id === 'scheduled-20260518-010000-000'),
+                false,
+                'oldest scheduled backup should be pruned by configured keepLatest'
+            );
+
+            const second = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T11:00:00.000Z')
+            });
+            assert.equal(second.scheduled_backup?.status, 'SKIPPED_ALREADY_RAN');
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('does not read backup inventory when scheduled auto-backups are disabled', () => {
+        const workspace = makeWorkspace('daily-auto-backup-disabled-corrupt-inventory-');
+        try {
+            writeRuntimeRetentionConfig(workspace.bundleRoot, { enabled: true, purgeRequireConfirm: false });
+            createCorruptBackupInventoryRoot(workspace.bundleRoot);
+
+            const result = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(result.status, 'SUCCESS');
+            assert.equal(result.scheduled_backup?.status, 'DISABLED');
+            assert.equal(result.scheduled_backup?.error, null);
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('allows same-day scheduled auto-backup after the feature is enabled', () => {
+        const workspace = makeWorkspace('daily-auto-backup-same-day-enable-');
+        try {
+            fs.writeFileSync(path.join(workspace.bundleRoot, 'VERSION'), '1.0.0\n', 'utf8');
+            writeRuntimeRetentionConfig(workspace.bundleRoot, { enabled: false });
+            const now = new Date('2026-05-21T10:00:00.000Z');
+
+            const disabled = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now
+            });
+            assert.equal(disabled.status, 'DISABLED');
+            assert.equal(disabled.scheduled_backup?.status, 'DISABLED');
+
+            writeWorkflowConfig(workspace.bundleRoot, (config) => {
+                config.auto_backup.enabled = true;
+                config.auto_backup.interval_days = 1;
+                config.auto_backup.keep_latest = 10;
+            });
+
+            const enabled = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T11:00:00.000Z')
+            });
+            assert.equal(enabled.status, 'DISABLED');
+            assert.equal(enabled.scheduled_backup?.status, 'SUCCESS');
+            assert.equal(enabled.scheduled_backup?.created_backup?.reason, 'scheduled');
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('audits scheduled auto-backup inventory failures without throwing from daily maintenance', () => {
+        const workspace = makeWorkspace('daily-auto-backup-corrupt-inventory-');
+        try {
+            writeRuntimeRetentionConfig(workspace.bundleRoot, { enabled: false });
+            writeWorkflowConfig(workspace.bundleRoot, (config) => {
+                config.auto_backup.enabled = true;
+            });
+            createCorruptBackupInventoryRoot(workspace.bundleRoot);
+
+            const result = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(result.status, 'DISABLED');
+            assert.equal(result.scheduled_backup?.status, 'FAILED');
+            assert.match(result.scheduled_backup?.error ?? '', /ENOTDIR|not a directory|directory/i);
+            assert.equal(fs.existsSync(result.scheduled_backup?.report_path ?? ''), true);
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('skips scheduled auto-backup when the latest scheduled backup is not due', () => {
+        const workspace = makeWorkspace('daily-auto-backup-not-due-');
+        try {
+            writeRuntimeRetentionConfig(workspace.bundleRoot, { enabled: false });
+            writeWorkflowConfig(workspace.bundleRoot, (config) => {
+                config.auto_backup.enabled = true;
+                config.auto_backup.interval_days = 7;
+                config.auto_backup.keep_latest = 10;
+            });
+            seedRollbackSnapshot(workspace.targetRoot, 'scheduled-20260520-010000-000');
+
+            const result = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(result.status, 'DISABLED');
+            assert.equal(result.scheduled_backup?.status, 'SKIPPED_NOT_DUE');
+            assert.equal(result.scheduled_backup?.latest_scheduled_backup_id, 'scheduled-20260520-010000-000');
+            assert.equal(listBackups(workspace.targetRoot).length, 1);
+        } finally {
+            workspace.cleanup();
         }
     });
 

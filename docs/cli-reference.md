@@ -532,6 +532,7 @@ garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-
 garda workflow set --target-root "." --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --review-cycle-auto-split-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --auto-backup-enabled true --auto-backup-interval-days 1 --auto-backup-keep-latest 10 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --garda-self-guard on
 garda workflow set --target-root "." --garda-self-guard off --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow explain --target-root "."
@@ -539,9 +540,10 @@ garda workflow explain --target-root "."
 
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
-- The current surface manages repo-local `compile_gate`, `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, and `task_reset` settings in `live/config/workflow-config.json`.
+- The current surface manages repo-local `compile_gate`, `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, `task_reset`, and `auto_backup` settings in `live/config/workflow-config.json`.
 - `compile_gate.command` overrides the legacy `40-commands.md` Compile Gate block when it is configured. Missing or unconfigured values keep the legacy fallback for existing workspaces.
 - `--compile-gate-command` must stay a compile/build/type-check command and must not match the configured full-suite validation command.
+- Scheduled auto-backups are disabled by default and run only through the existing daily maintenance trigger when enabled; configure them with `--auto-backup-enabled`, `--auto-backup-interval-days`, and `--auto-backup-keep-latest`.
 - `workflow set` requires explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
 - `--garda-self-guard on` maps to `orchestrator_work_policy.mode=deny_agent_entry`; `off` maps to `require_operator_confirmation` and requires explicit operator approval.
 - Supported `review_execution_policy` modes are `parallel_all`, `test_after_code`, `code_first_optional`, and `strict_sequential`.

@@ -49,6 +49,11 @@ function createBundleRoot(
             task_reset: {
                 enabled: false
             },
+            auto_backup: {
+                enabled: false,
+                interval_days: 1,
+                keep_latest: 10
+            },
             ...workflowOverrides
         }, null, 2),
         'utf8'
@@ -93,7 +98,9 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('max_failed_non_test_reviews=15 max_total_non_test_reviews=30'));
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
         assert.ok(output.includes('Task reset: disabled'));
+        assert.ok(output.includes('Auto backup: disabled interval_days=1 keep_latest=10'));
         assert.ok(output.includes('TaskResetEnabled: false'));
+        assert.ok(output.includes('AutoBackupEnabled: false'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -269,6 +276,40 @@ test('workflow set updates task reset availability with audit record', () => {
     }
 });
 
+test('workflow set updates scheduled auto-backup settings with audit record', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--auto-backup-enabled', 'true',
+            '--auto-backup-interval-days', '3',
+            '--auto-backup-keep-latest', '12',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.equal(result.auto_backup.enabled, true);
+        assert.equal(result.auto_backup.interval_days, 3);
+        assert.equal(result.auto_backup.keep_latest, 12);
+        assert.ok(result.changed_fields.includes('auto_backup.enabled'));
+        assert.ok(result.changed_fields.includes('auto_backup.interval_days'));
+        assert.ok(result.changed_fields.includes('auto_backup.keep_latest'));
+        assert.ok(result.audit_path);
+        assert.ok(output.includes('Auto backup: enabled interval_days=3 keep_latest=12'));
+        assert.ok(output.includes('AutoBackupEnabled: true'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.auto_backup.enabled, true);
+        assert.equal(parsedConfig.auto_backup.interval_days, 3);
+        assert.equal(parsedConfig.auto_backup.keep_latest, 12);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow set maps short on off aliases to existing boolean settings', () => {
     const bundleRoot = createBundleRoot();
     const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
@@ -283,6 +324,7 @@ test('workflow set maps short on off aliases to existing boolean settings', () =
             '--review-cycle-auto-split', 'on',
             '--project-memory', 'off',
             '--task-reset', 'on',
+            '--auto-backup', 'on',
             ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
 
@@ -294,6 +336,7 @@ test('workflow set maps short on off aliases to existing boolean settings', () =
         assert.ok(result.changed_fields.includes('review_cycle_guard.auto_split_enabled'));
         assert.ok(result.changed_fields.includes('project_memory_maintenance.enabled'));
         assert.ok(result.changed_fields.includes('task_reset.enabled'));
+        assert.ok(result.changed_fields.includes('auto_backup.enabled'));
 
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.full_suite_validation.enabled, true);
@@ -302,6 +345,7 @@ test('workflow set maps short on off aliases to existing boolean settings', () =
         assert.equal(parsedConfig.review_cycle_guard.auto_split_enabled, true);
         assert.equal(parsedConfig.project_memory_maintenance.enabled, false);
         assert.equal(parsedConfig.task_reset.enabled, true);
+        assert.equal(parsedConfig.auto_backup.enabled, true);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -314,7 +358,8 @@ test('workflow set rejects conflicting short alias and long boolean flag values'
         ['--review-cycle', '--review-cycle-enabled'],
         ['--review-cycle-auto-split', '--review-cycle-auto-split-enabled'],
         ['--project-memory', '--project-memory-enabled'],
-        ['--task-reset', '--task-reset-enabled']
+        ['--task-reset', '--task-reset-enabled'],
+        ['--auto-backup', '--auto-backup-enabled']
     ] as const;
 
     for (const [aliasFlag, canonicalFlag] of pairs) {
@@ -343,7 +388,8 @@ test('workflow set rejects invalid boolean tokens for short aliases and canonica
         ['--review-cycle', '--review-cycle-enabled'],
         ['--review-cycle-auto-split', '--review-cycle-auto-split-enabled'],
         ['--project-memory', '--project-memory-enabled'],
-        ['--task-reset', '--task-reset-enabled']
+        ['--task-reset', '--task-reset-enabled'],
+        ['--auto-backup', '--auto-backup-enabled']
     ] as const;
 
     for (const flags of pairs) {
@@ -599,6 +645,7 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('workflow set --project-memory on --project-memory-mode update'));
     assert.ok(helpText.includes('workflow set --task-reset on --operator-confirmed yes --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('--task-reset on|off|--task-reset-enabled true|false'));
+    assert.ok(helpText.includes('--auto-backup on|off|--auto-backup-enabled true|false'));
     assert.ok(helpText.includes('Short aliases map exactly to existing boolean settings'));
     assert.ok(helpText.includes('workflow set --garda-self-guard on'));
     assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));

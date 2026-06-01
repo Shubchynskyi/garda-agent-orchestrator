@@ -1,6 +1,7 @@
 import {
     buildDefaultWorkflowConfig,
     hasMaterializedWorkflowConfigBaseline,
+    normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
     normalizeOrchestratorWorkPolicyConfig,
     type WorkflowConfigData
@@ -11,6 +12,7 @@ import { normalizeReviewCycleGuardConfig } from '../../core/review-cycle-guard';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
     cloneOrchestratorWorkPolicyConfig,
+    cloneAutoBackupConfig,
     cloneProjectMemoryMaintenanceConfig,
     cloneTaskResetConfig,
     normalizeWorkflowFileConfig,
@@ -111,6 +113,13 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         aliasKey: 'taskResetAlias',
         canonicalFlag: '--task-reset-enabled',
         aliasFlag: '--task-reset'
+    });
+    const autoBackupEnabledSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'autoBackupEnabled',
+        aliasKey: 'autoBackupAlias',
+        canonicalFlag: '--auto-backup-enabled',
+        aliasFlag: '--auto-backup'
     });
 
     if (fullSuiteEnabledSetting) {
@@ -324,6 +333,34 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.task_reset = nextTaskReset;
 
+    const nextAutoBackup = cloneAutoBackupConfig(
+        normalizeAutoBackupConfig(nextConfig.auto_backup ?? buildDefaultWorkflowConfig().auto_backup)
+    );
+    if (autoBackupEnabledSetting) {
+        nextAutoBackup.enabled = parseBooleanText(
+            autoBackupEnabledSetting.value,
+            autoBackupEnabledSetting.flagName
+        );
+        changedFields.push('auto_backup.enabled');
+    }
+    if (typeof options.autoBackupIntervalDays === 'string') {
+        nextAutoBackup.interval_days = parseIntegerText(
+            options.autoBackupIntervalDays,
+            '--auto-backup-interval-days',
+            1
+        );
+        changedFields.push('auto_backup.interval_days');
+    }
+    if (typeof options.autoBackupKeepLatest === 'string') {
+        nextAutoBackup.keep_latest = parseIntegerText(
+            options.autoBackupKeepLatest,
+            '--auto-backup-keep-latest',
+            1
+        );
+        changedFields.push('auto_backup.keep_latest');
+    }
+    nextConfig.auto_backup = nextAutoBackup;
+
     const nextOrchestratorWorkPolicy = cloneOrchestratorWorkPolicyConfig(
         normalizeOrchestratorWorkPolicyConfig(
             nextConfig.orchestrator_work_policy ?? buildDefaultWorkflowConfig().orchestrator_work_policy
@@ -342,7 +379,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
-            + '--task-reset-enabled, their short on/off aliases, or --garda-self-guard.'
+            + '--task-reset-enabled, --auto-backup-* flags, their short on/off aliases, or --garda-self-guard.'
         );
     }
 
@@ -353,6 +390,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             review_cycle_guard: state.config.review_cycle_guard,
             project_memory_maintenance: state.config.project_memory_maintenance,
             task_reset: state.config.task_reset,
+            auto_backup: state.config.auto_backup,
             orchestrator_work_policy: state.config.orchestrator_work_policy
         }) as WorkflowFileConfigData);
     const currentSerialized = JSON.stringify(currentValidated, null, 2) + '\n';

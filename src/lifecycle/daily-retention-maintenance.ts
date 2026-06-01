@@ -6,6 +6,10 @@ import { withLifecycleOperationLock } from './lifecycle-lock';
 import { runGc } from './cleanup-orchestration';
 import { loadRuntimeRetentionPolicy, resolveRuntimeRetentionPolicyConfigPath } from './runtime-retention-policy';
 import type { GcResult } from './cleanup-types';
+import {
+    runScheduledAutoBackupMaintenance,
+    type ScheduledAutoBackupResult
+} from './scheduled-backups';
 
 export type DailyRetentionMaintenanceStatus =
     | 'DISABLED'
@@ -42,6 +46,7 @@ export interface DailyRetentionMaintenanceResult {
         eligible_now_count: number | null;
         selected_task_limit: number;
     };
+    scheduled_backup?: ScheduledAutoBackupResult;
 }
 
 function pad2(value: number): string {
@@ -86,6 +91,15 @@ function summarizeGcResult(gcResult: GcResult, selectedTaskLimit: number): NonNu
     };
 }
 
+function runScheduledBackupForDailyMaintenance(options: DailyRetentionMaintenanceOptions, localDate: string): ScheduledAutoBackupResult {
+    return runScheduledAutoBackupMaintenance({
+        targetRoot: options.targetRoot,
+        bundleRoot: options.bundleRoot,
+        localDate,
+        now: options.now
+    });
+}
+
 function buildBaseResult(options: DailyRetentionMaintenanceOptions, localDate: string): DailyRetentionMaintenanceResult {
     const reportPath = resolveDailyRetentionMaintenanceReportPath(options.bundleRoot, localDate);
     const policy = loadRuntimeRetentionPolicy(options.bundleRoot);
@@ -113,11 +127,21 @@ export function runDailyRetentionMaintenance(
     const base = buildBaseResult(options, localDate);
 
     if (!base.enabled) {
-        return { ...base, status: 'DISABLED', skipped_reason: 'daily_maintenance_disabled' };
+        return {
+            ...base,
+            status: 'DISABLED',
+            skipped_reason: 'daily_maintenance_disabled',
+            scheduled_backup: runScheduledBackupForDailyMaintenance(options, localDate)
+        };
     }
 
     if (readExistingSuccessfulSentinel(base.report_path)) {
-        return { ...base, status: 'SKIPPED_ALREADY_RAN', skipped_reason: 'daily_sentinel_present' };
+        return {
+            ...base,
+            status: 'SKIPPED_ALREADY_RAN',
+            skipped_reason: 'daily_sentinel_present',
+            scheduled_backup: runScheduledBackupForDailyMaintenance(options, localDate)
+        };
     }
 
     try {
@@ -127,7 +151,8 @@ export function runDailyRetentionMaintenance(
                     ...base,
                     status: 'SKIPPED_ALREADY_RAN',
                     lock_acquired: true,
-                    skipped_reason: 'daily_sentinel_present_after_lock'
+                    skipped_reason: 'daily_sentinel_present_after_lock',
+                    scheduled_backup: runScheduledBackupForDailyMaintenance(options, localDate)
                 };
             }
 
@@ -148,7 +173,8 @@ export function runDailyRetentionMaintenance(
                 lock_acquired: true,
                 skipped_reason: null,
                 error: status === 'FAILED' ? `retention maintenance gc result was ${gcResult.result}` : null,
-                gc_result: gcSummary
+                gc_result: gcSummary,
+                scheduled_backup: runScheduledBackupForDailyMaintenance(options, localDate)
             };
             writeMaintenanceReport(base.report_path, result);
             return result;
