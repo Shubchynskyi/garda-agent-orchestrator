@@ -89,7 +89,7 @@ outside-repo symlink targets while building protected snapshots.
 | `garda-agent-orchestrator/live/docs/agent-rules/` | Materialized rule files |
 | `garda-agent-orchestrator/src/bin/` | Source — bin layer |
 | `garda-agent-orchestrator/src/cli/` | Source — CLI layer |
-| `garda-agent-orchestrator/src/gates/` | Source — gate implementations |
+| `garda-agent-orchestrator/src/gates/` | Source — domain-organized gate implementations |
 | `garda-agent-orchestrator/src/gate-runtime/` | Source — gate runtime |
 | `garda-agent-orchestrator/src/lifecycle/` | Source — lifecycle commands |
 | `garda-agent-orchestrator/src/materialization/` | Source — materialization |

@@ -20,7 +20,7 @@ This document records the TypeScript/Node foundation that now backs the active r
 | `src/materialization/*.ts` | Install/init materialization logic |
 | `src/lifecycle/*.ts` | Bootstrap, install, reinit, update, uninstall flows |
 | `src/validators/*.ts` | Status, verify, doctor, manifest validation |
-| `src/gates/*.ts` | Gate implementations and task-event summaries |
+| `src/gates/*/*.ts` | Gate implementations and task-event summaries organized by domain |
 | `src/gate-runtime/*.ts` | Shared gate runtime helpers |
 | `tests/node/**` | Node-native unit and integration coverage |
 | `scripts/node-foundation/*.ts` | Repository-only build/test harness for staged `.node-build/` output |

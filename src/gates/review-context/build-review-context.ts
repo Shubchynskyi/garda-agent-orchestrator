@@ -584,7 +584,7 @@ function getPromptDiffSectionPriority(reviewType: string, filePath: string): num
     if (normalized === 'docs/cli-reference.md') {
         return 2;
     }
-    if (normalized.startsWith('tests/node/cli/') || normalized === 'tests/node/gates/build-review-context.test.ts') {
+    if (normalized.startsWith('tests/node/cli/') || normalized === 'tests/node/gates/review-context/build-review-context.test.ts') {
         return 3;
     }
     if (normalized.startsWith('src/gates/')) {

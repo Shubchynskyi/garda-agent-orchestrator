@@ -278,22 +278,22 @@ function sortByLinesDesc<T extends { line_count: number; relative_path: string }
 }
 
 function isNextStepModule(relativePath: string): boolean {
-    return /^src\/gates\/next-step(?:[-\w]+)?\.ts$/u.test(relativePath);
+    return /^src\/gates\/next-step\/next-step(?:[-\w]+)?\.ts$/u.test(relativePath);
 }
 
 function describeNextStepResponsibility(relativePath: string): string {
     const explicitResponsibilities: Record<string, string> = {
-        'src/gates/next-step.ts': 'public navigator coordinator and result assembly',
-        'src/gates/next-step-compile-full-suite-readiness.ts': 'compile, preflight, and full-suite readiness reads',
-        'src/gates/next-step-task-queue.ts': 'task queue parsing and child routing reads',
-        'src/gates/next-step-task-queue-transitions.ts': 'gate-owned task queue status transitions',
-        'src/gates/next-step-review-artifact-readers.ts': 'review artifact, receipt, scoped-diff, and trust reads',
-        'src/gates/next-step-review-cycle-guard.ts': 'review-cycle attempt guard and split/continuation prompts',
-        'src/gates/next-step-reviewer-launch-evidence.ts': 'delegated reviewer launch and invocation evidence reads',
-        'src/gates/next-step-split-required-latch.ts': 'split-required latch evidence and materialization',
-        'src/gates/next-step-closeout-status-readers.ts': 'final closeout status, final report, and post-DONE drift reads',
-        'src/gates/next-step-closeout-routing.ts': 'post-review and completed-closeout route selection',
-        'src/gates/next-step-terminal-status-routing.ts': 'terminal task queue status route selection'
+        'src/gates/next-step/next-step.ts': 'public navigator coordinator and result assembly',
+        'src/gates/next-step/next-step-compile-full-suite-readiness.ts': 'compile, preflight, and full-suite readiness reads',
+        'src/gates/next-step/next-step-task-queue.ts': 'task queue parsing and child routing reads',
+        'src/gates/next-step/next-step-task-queue-transitions.ts': 'gate-owned task queue status transitions',
+        'src/gates/next-step/next-step-review-artifact-readers.ts': 'review artifact, receipt, scoped-diff, and trust reads',
+        'src/gates/next-step/next-step-review-cycle-guard.ts': 'review-cycle attempt guard and split/continuation prompts',
+        'src/gates/next-step/next-step-reviewer-launch-evidence.ts': 'delegated reviewer launch and invocation evidence reads',
+        'src/gates/next-step/next-step-split-required-latch.ts': 'split-required latch evidence and materialization',
+        'src/gates/next-step/next-step-closeout-status-readers.ts': 'final closeout status, final report, and post-DONE drift reads',
+        'src/gates/next-step/next-step-closeout-routing.ts': 'post-review and completed-closeout route selection',
+        'src/gates/next-step/next-step-terminal-status-routing.ts': 'terminal task queue status route selection'
     };
     if (explicitResponsibilities[relativePath]) {
         return explicitResponsibilities[relativePath];
@@ -309,7 +309,7 @@ function buildNextStepModuleBudget(
         fileEntries
             .filter((entry) => isNextStepModule(entry.relative_path))
             .map((entry): NextStepModuleBudgetEntry => {
-                const role = entry.relative_path === 'src/gates/next-step.ts' ? 'coordinator' : 'helper';
+                const role = entry.relative_path === 'src/gates/next-step/next-step.ts' ? 'coordinator' : 'helper';
                 const lineBudget = role === 'coordinator'
                     ? NEXT_STEP_COORDINATOR_LINE_BUDGET
                     : NEXT_STEP_HELPER_LINE_BUDGET;
