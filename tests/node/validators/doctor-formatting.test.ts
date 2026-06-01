@@ -314,7 +314,47 @@ test('formatDoctorResult includes non-blocking large module decomposition report
                     title: 'Slim coordinator'
                 }],
                 todo_follow_up_exists: true
-            }]
+            }],
+            next_step_module_budget: {
+                schema_version: 1,
+                mode: 'REPORT_ONLY',
+                coordinator_line_budget: 5000,
+                helper_line_budget: 1000,
+                status: 'OVER_BUDGET',
+                total_module_count: 2,
+                total_lines: 2105,
+                largest_helper_lines: 1105,
+                over_budget_count: 1,
+                modules: [{
+                    relative_path: 'src/gates/next-step-review-artifact-readers.ts',
+                    role: 'helper',
+                    responsibility: 'review artifact, receipt, scoped-diff, and trust reads',
+                    line_count: 1105,
+                    line_budget: 1000,
+                    budget_status: 'OVER_BUDGET',
+                    owner_tasks: [{
+                        task_id: 'T-683-2',
+                        status: '🟩 DONE',
+                        title: 'Review artifact readers'
+                    }],
+                    todo_follow_up_exists: false,
+                    exception_reason: 'Report-only budget exception: keep a concrete decomposition follow-up before raising this threshold.'
+                }, {
+                    relative_path: 'src/gates/next-step.ts',
+                    role: 'coordinator',
+                    responsibility: 'public navigator coordinator and result assembly',
+                    line_count: 1000,
+                    line_budget: 5000,
+                    budget_status: 'WITHIN_BUDGET',
+                    owner_tasks: [{
+                        task_id: 'T-683-1',
+                        status: '🟦 TODO',
+                        title: 'Slim coordinator'
+                    }],
+                    todo_follow_up_exists: true,
+                    exception_reason: null
+                }]
+            }
         }
     });
 
@@ -322,6 +362,8 @@ test('formatDoctorResult includes non-blocking large module decomposition report
     assert.ok(output.includes('Large Module Decomposition Report'));
     assert.ok(output.includes('Mode: REPORT_ONLY'));
     assert.ok(output.includes('Role: recurring size and responsibility signal'));
+    assert.ok(output.includes('Next-step module budget: status=OVER_BUDGET, modules=2, total_lines=2105, coordinator_budget=5000, helper_budget=1000, largest_helper=1105, over_budget=1'));
+    assert.ok(output.includes('src/gates/next-step-review-artifact-readers.ts: 1105/1000 lines role=helper status=OVER_BUDGET responsibility=review artifact, receipt, scoped-diff, and trust reads owner=T-683-2(🟩 DONE) follow_up=no exception=Report-only budget exception'));
     assert.ok(output.includes('src/gates/next-step.ts: 900 lines owner=T-683(🟪 DECOMPOSED), T-683-1(🟦 TODO) follow_up=yes'));
     assert.ok(output.includes('tests/node/cli/commands/gates-command-review-result.test.ts: 600 lines owner=unknown follow_up=no'));
     assert.ok(output.includes('src/gates/next-step.ts:10 function resolveNextStep spans 491 lines owner=T-683-1(🟦 TODO) follow_up=yes'));

@@ -67,6 +67,7 @@ function pushLargeModuleFileLines(
 
 function pushLargeModuleReport(lines: string[], result: DoctorResult): void {
     const report = result.largeModuleReport;
+    const nextStepBudget = report.next_step_module_budget;
     lines.push('Large Module Decomposition Report');
     lines.push('  Mode: ' + report.mode);
     lines.push('  Role: recurring size and responsibility signal for decomposition work; report-only, non-blocking.');
@@ -78,6 +79,29 @@ function pushLargeModuleReport(lines: string[], result: DoctorResult): void {
         ', largest_test=' + report.summary.largest_test_lines +
         ', files_with_follow_up=' + report.summary.files_with_todo_follow_up
     );
+    lines.push(
+        '  Next-step module budget: status=' + nextStepBudget.status +
+        ', modules=' + nextStepBudget.total_module_count +
+        ', total_lines=' + nextStepBudget.total_lines +
+        ', coordinator_budget=' + nextStepBudget.coordinator_line_budget +
+        ', helper_budget=' + nextStepBudget.helper_line_budget +
+        ', largest_helper=' + nextStepBudget.largest_helper_lines +
+        ', over_budget=' + nextStepBudget.over_budget_count
+    );
+    if (nextStepBudget.modules.length > 0) {
+        lines.push('  Next-step modules:');
+        for (const entry of nextStepBudget.modules.slice(0, 5)) {
+            const exception = entry.exception_reason ? ' exception=' + entry.exception_reason : '';
+            lines.push(
+                '    ' + entry.relative_path + ': ' + entry.line_count + '/' + entry.line_budget +
+                ' lines role=' + entry.role +
+                ' status=' + entry.budget_status +
+                ' responsibility=' + entry.responsibility +
+                formatLargeModuleTaskRefs(entry.owner_tasks, entry.todo_follow_up_exists) +
+                exception
+            );
+        }
+    }
     pushLargeModuleFileLines(lines, 'Largest source/script files', report.top_source_files);
     pushLargeModuleFileLines(lines, 'Largest test files', report.top_test_files);
     lines.push('  Largest declarations:');

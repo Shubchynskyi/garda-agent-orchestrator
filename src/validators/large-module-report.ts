@@ -36,6 +36,31 @@ export interface LargeModuleReportSummary {
     files_with_todo_follow_up: number;
 }
 
+export interface NextStepModuleBudgetEntry {
+    relative_path: string;
+    role: 'coordinator' | 'helper';
+    responsibility: string;
+    line_count: number;
+    line_budget: number;
+    budget_status: 'WITHIN_BUDGET' | 'OVER_BUDGET';
+    owner_tasks: LargeModuleTaskReference[];
+    todo_follow_up_exists: boolean;
+    exception_reason: string | null;
+}
+
+export interface NextStepModuleBudgetReport {
+    schema_version: 1;
+    mode: 'REPORT_ONLY';
+    coordinator_line_budget: number;
+    helper_line_budget: number;
+    status: 'WITHIN_BUDGET' | 'OVER_BUDGET';
+    total_module_count: number;
+    total_lines: number;
+    largest_helper_lines: number;
+    over_budget_count: number;
+    modules: NextStepModuleBudgetEntry[];
+}
+
 export interface LargeModuleReport {
     schema_version: 1;
     mode: 'REPORT_ONLY';
@@ -48,6 +73,7 @@ export interface LargeModuleReport {
     top_source_files: LargeModuleFileEntry[];
     top_test_files: LargeModuleFileEntry[];
     top_declarations: LargeModuleDeclarationEntry[];
+    next_step_module_budget: NextStepModuleBudgetReport;
 }
 
 interface LargeModuleReportOptions {
@@ -73,6 +99,8 @@ interface FileScanEntry {
 
 const DEFAULT_FILE_LIMIT = 10;
 const DEFAULT_DECLARATION_LIMIT = 10;
+const NEXT_STEP_COORDINATOR_LINE_BUDGET = 5000;
+const NEXT_STEP_HELPER_LINE_BUDGET = 1000;
 const SCAN_ROOTS = ['src', 'tests', 'scripts', 'bin'];
 const IGNORED_ROOTS = [
     '.git',
@@ -249,6 +277,75 @@ function sortByLinesDesc<T extends { line_count: number; relative_path: string }
     });
 }
 
+function isNextStepModule(relativePath: string): boolean {
+    return /^src\/gates\/next-step(?:[-\w]+)?\.ts$/u.test(relativePath);
+}
+
+function describeNextStepResponsibility(relativePath: string): string {
+    const explicitResponsibilities: Record<string, string> = {
+        'src/gates/next-step.ts': 'public navigator coordinator and result assembly',
+        'src/gates/next-step-compile-full-suite-readiness.ts': 'compile, preflight, and full-suite readiness reads',
+        'src/gates/next-step-task-queue.ts': 'task queue parsing and child routing reads',
+        'src/gates/next-step-task-queue-transitions.ts': 'gate-owned task queue status transitions',
+        'src/gates/next-step-review-artifact-readers.ts': 'review artifact, receipt, scoped-diff, and trust reads',
+        'src/gates/next-step-review-cycle-guard.ts': 'review-cycle attempt guard and split/continuation prompts',
+        'src/gates/next-step-reviewer-launch-evidence.ts': 'delegated reviewer launch and invocation evidence reads',
+        'src/gates/next-step-split-required-latch.ts': 'split-required latch evidence and materialization',
+        'src/gates/next-step-closeout-status-readers.ts': 'final closeout status, final report, and post-DONE drift reads',
+        'src/gates/next-step-closeout-routing.ts': 'post-review and completed-closeout route selection',
+        'src/gates/next-step-terminal-status-routing.ts': 'terminal task queue status route selection'
+    };
+    if (explicitResponsibilities[relativePath]) {
+        return explicitResponsibilities[relativePath];
+    }
+    const stem = path.basename(relativePath, '.ts').replace(/^next-step-/, '').replace(/-/g, ' ');
+    return `next-step helper: ${stem || 'shared helper'}`;
+}
+
+function buildNextStepModuleBudget(
+    fileEntries: readonly LargeModuleFileEntry[]
+): NextStepModuleBudgetReport {
+    const modules = sortByLinesDesc(
+        fileEntries
+            .filter((entry) => isNextStepModule(entry.relative_path))
+            .map((entry): NextStepModuleBudgetEntry => {
+                const role = entry.relative_path === 'src/gates/next-step.ts' ? 'coordinator' : 'helper';
+                const lineBudget = role === 'coordinator'
+                    ? NEXT_STEP_COORDINATOR_LINE_BUDGET
+                    : NEXT_STEP_HELPER_LINE_BUDGET;
+                const overBudget = entry.line_count > lineBudget;
+                return {
+                    relative_path: entry.relative_path,
+                    role,
+                    responsibility: describeNextStepResponsibility(entry.relative_path),
+                    line_count: entry.line_count,
+                    line_budget: lineBudget,
+                    budget_status: overBudget ? 'OVER_BUDGET' : 'WITHIN_BUDGET',
+                    owner_tasks: entry.owner_tasks,
+                    todo_follow_up_exists: entry.todo_follow_up_exists,
+                    exception_reason: overBudget
+                        ? 'Report-only budget exception: keep a concrete decomposition follow-up before raising this threshold.'
+                        : null
+                };
+            })
+    );
+    const overBudgetCount = modules.filter((entry) => entry.budget_status === 'OVER_BUDGET').length;
+    return {
+        schema_version: 1,
+        mode: 'REPORT_ONLY',
+        coordinator_line_budget: NEXT_STEP_COORDINATOR_LINE_BUDGET,
+        helper_line_budget: NEXT_STEP_HELPER_LINE_BUDGET,
+        status: overBudgetCount > 0 ? 'OVER_BUDGET' : 'WITHIN_BUDGET',
+        total_module_count: modules.length,
+        total_lines: modules.reduce((total, entry) => total + entry.line_count, 0),
+        largest_helper_lines: modules
+            .filter((entry) => entry.role === 'helper')
+            .reduce((largest, entry) => Math.max(largest, entry.line_count), 0),
+        over_budget_count: overBudgetCount,
+        modules
+    };
+}
+
 export function collectLargeModuleReport(
     targetRootInput: string,
     options?: LargeModuleReportOptions
@@ -284,6 +381,7 @@ export function collectLargeModuleReport(
         },
         top_source_files: sourceFileEntries.slice(0, fileLimit),
         top_test_files: testFileEntries.slice(0, fileLimit),
-        top_declarations: declarationEntries.slice(0, declarationLimit)
+        top_declarations: declarationEntries.slice(0, declarationLimit),
+        next_step_module_budget: buildNextStepModuleBudget(fileEntries)
     };
 }

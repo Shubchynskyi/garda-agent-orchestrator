@@ -185,7 +185,19 @@ export function buildFakeDoctorResult(overrides?: Record<string, unknown>): Doct
             },
             top_source_files: [],
             top_test_files: [],
-            top_declarations: []
+            top_declarations: [],
+            next_step_module_budget: {
+                schema_version: 1,
+                mode: 'REPORT_ONLY',
+                coordinator_line_budget: 5000,
+                helper_line_budget: 1000,
+                status: 'WITHIN_BUDGET',
+                total_module_count: 0,
+                total_lines: 0,
+                largest_helper_lines: 0,
+                over_budget_count: 0,
+                modules: []
+            }
         },
         ...overrides
     };
