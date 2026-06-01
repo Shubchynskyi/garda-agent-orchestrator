@@ -387,11 +387,11 @@ test('appendTaskEvent timeout includes retry count in diagnostic', () => {
 
 test('task-events module avoids Atomics.wait and uses async timer-based waiting', () => {
     const facadePath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'task-events.ts');
-    const lockingPath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'task-events-locking.ts');
+    const lockingSupportPath = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'gate-runtime', 'task-events-locking-support.ts');
     const strippedFacade = fs.readFileSync(facadePath, 'utf8')
         .replace(/\/\/.*$/gm, '')
         .replace(/\/\*[\s\S]*?\*\//g, '');
-    const strippedLocking = fs.readFileSync(lockingPath, 'utf8')
+    const strippedLockingSupport = fs.readFileSync(lockingSupportPath, 'utf8')
         .replace(/\/\/.*$/gm, '')
         .replace(/\/\*[\s\S]*?\*\//g, '');
 
@@ -406,9 +406,9 @@ test('task-events module avoids Atomics.wait and uses async timer-based waiting'
         'task-events.ts must not contain a Date.now() busy-wait spin loop'
     );
     assert.equal(
-        /setTimeout\s*\(/.test(strippedLocking),
+        /setTimeout\s*\(/.test(strippedLockingSupport),
         true,
-        'task-events-locking.ts should use setTimeout-backed async waiting for lock retries'
+        'task-events-locking-support.ts should use setTimeout-backed async waiting for lock retries'
     );
 });
 
