@@ -25,6 +25,12 @@ import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 import { buildDomainScopeFingerprints } from '../../../src/gates/domain-scope-fingerprints';
 import { buildStrictDecompositionDecisionArtifact } from '../../../src/gates/strict-decomposition-decision';
+import {
+    hasCompletedDecomposedParentAfterSplitRequiredClear,
+    hasSplitRequiredClearedEvidence,
+    readSplitRequiredLatchEvidence,
+    resolveSplitRequiredArtifactPath
+} from '../../../src/gates/next-step-split-required-latch';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -1266,6 +1272,66 @@ afterEach(() => {
 });
 
 describe('gates/next-step split-required latch', () => {
+    it('resolves and validates split-required latch helper evidence directly', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-681 | SPLIT_REQUIRED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-682`. |',
+            ''
+        ].join('\n'), 'utf8');
+        seedSplitRequiredLatchEvidence(repoRoot, 'T-681', 'review_cycle');
+
+        const latchEvidence = readSplitRequiredLatchEvidence({
+            reviewsRoot: reviewsRoot(repoRoot),
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: 'T-681'
+        });
+
+        assert.equal(
+            resolveSplitRequiredArtifactPath(reviewsRoot(repoRoot), 'T-681'),
+            path.join(reviewsRoot(repoRoot), 'T-681-split-required.json')
+        );
+        assert.equal(latchEvidence.valid, true);
+        assert.equal(latchEvidence.guard_kind, 'review_cycle');
+        assert.equal(hasSplitRequiredClearedEvidence({
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: 'T-681',
+            latchEvidence
+        }), false);
+
+        appendEvent(repoRoot, 'T-681', 'SPLIT_REQUIRED_CLEARED', 'INFO', {
+            previous_status: 'SPLIT_REQUIRED',
+            new_status: 'DECOMPOSED',
+            reason: 'child_tasks_linked'
+        });
+
+        assert.equal(hasSplitRequiredClearedEvidence({
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: 'T-681',
+            latchEvidence
+        }), true);
+        assert.equal(hasCompletedDecomposedParentAfterSplitRequiredClear({
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: 'T-681',
+            latchEvidence
+        }), false);
+
+        appendEvent(repoRoot, 'T-681', 'DECOMPOSED_PARENT_COMPLETED', 'INFO', {
+            previous_status: 'DECOMPOSED',
+            new_status: 'DONE',
+            reason: 'explicit_children_done'
+        });
+
+        assert.equal(hasCompletedDecomposedParentAfterSplitRequiredClear({
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: 'T-681',
+            latchEvidence
+        }), true);
+    });
+
     it('latches oversized strict-profile scopes as split-required before compile', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
