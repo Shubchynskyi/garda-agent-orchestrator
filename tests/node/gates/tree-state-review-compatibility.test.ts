@@ -88,7 +88,7 @@ test('tree-state review compatibility suite keeps the focused regression shards 
             "required-reviews-check rejects passed staged receipts after same-path MM drift"
         ],
         [
-            'tests/node/cli/commands/gates-command-review-result.test.ts',
+            'tests/node/cli/commands/gates-command-review-result-receipt.test.ts',
             "record-review-result accepts legacy review-context identity when task-mode runtime identity is backfilled safely"
         ],
         [

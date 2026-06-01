@@ -294,7 +294,7 @@ test('formatDoctorResult includes non-blocking large module decomposition report
                 todo_follow_up_exists: true
             }],
             top_test_files: [{
-                relative_path: 'tests/node/cli/commands/gates-command-review-result.test.ts',
+                relative_path: 'tests/node/cli/commands/gates-command-review-result-receipt.test.ts',
                 category: 'test',
                 line_count: 600,
                 byte_count: 30000,
@@ -365,7 +365,7 @@ test('formatDoctorResult includes non-blocking large module decomposition report
     assert.ok(output.includes('Next-step module budget: status=OVER_BUDGET, modules=2, total_lines=2105, coordinator_budget=5000, helper_budget=1000, largest_helper=1105, over_budget=1'));
     assert.ok(output.includes('src/gates/next-step-review-artifact-readers.ts: 1105/1000 lines role=helper status=OVER_BUDGET responsibility=review artifact, receipt, scoped-diff, and trust reads owner=T-683-2(🟩 DONE) follow_up=no exception=Report-only budget exception'));
     assert.ok(output.includes('src/gates/next-step.ts: 900 lines owner=T-683(🟪 DECOMPOSED), T-683-1(🟦 TODO) follow_up=yes'));
-    assert.ok(output.includes('tests/node/cli/commands/gates-command-review-result.test.ts: 600 lines owner=unknown follow_up=no'));
+    assert.ok(output.includes('tests/node/cli/commands/gates-command-review-result-receipt.test.ts: 600 lines owner=unknown follow_up=no'));
     assert.ok(output.includes('src/gates/next-step.ts:10 function resolveNextStep spans 491 lines owner=T-683-1(🟦 TODO) follow_up=yes'));
     assert.ok(output.includes('Doctor: PASSED'));
 });
