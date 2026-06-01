@@ -76,11 +76,11 @@ test('tree-state review compatibility suite keeps the focused regression shards 
             "fails required reviews gate when receipt tree-state binding is missing or tampered"
         ],
         [
-            'tests/node/cli/commands/gates-command-review-launch.test.ts',
+            'tests/node/cli/commands/gates-command-review-launch-routing.test.ts',
             "record-review-routing rejects schema-less review contexts without tree_state binding"
         ],
         [
-            'tests/node/cli/commands/gates-command-review-launch.test.ts',
+            'tests/node/cli/commands/gates-command-review-launch-prepared.test.ts',
             "prepare-reviewer-launch rejects stale staged review contexts after MM drift"
         ],
         [
