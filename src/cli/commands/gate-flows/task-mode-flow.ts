@@ -2,22 +2,9 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EXIT_GATE_FAILURE } from '../../exit-codes';
 import {
-    normalizeOrchestratorStartBanner,
-    ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE
-} from '../../../core/orchestrator-start-banner';
-import {
-    getBundleCliCommand,
-    getSourceCliCommand,
-    resolveBundleName
-} from '../../../core/constants';
-import {
     parseOperatorConfirmationYes,
     validateFreshOperatorConfirmation
 } from '../../../core/operator-confirmation';
-import {
-    formatGardaSelfGuardProtectedControlPlaneGuidance,
-    isGardaSelfGuardDenyAgentEntryForBundle
-} from '../../../core/workflow-config';
 import {
     emitHandshakeDiagnosticsEvent,
     emitShellSmokePreflightEvent,
@@ -58,13 +45,11 @@ import {
 } from '../../../gates/command-timeout-diagnostics';
 import {
     buildTaskModeArtifact,
-    normalizeTaskModeEntryMode,
     parseTaskModeDepth,
     readOptionalMarkdownWorkingPlan,
     resolveTaskModeArtifactPath,
     type TaskModePlanMetadata
 } from '../../../gates/task-mode';
-import { resolveReviewerRoutingPolicy } from '../../../gates/reviewer-routing';
 import { captureDirtyWorkspaceBaseline } from '../../../gates/dirty-worktree-protection';
 import {
     validateTaskPlan,
@@ -94,7 +79,6 @@ import {
 } from '../../../gates/review-cycle-split-decision';
 import {
     getCurrentWorkflowConfigFileHashes,
-    getWorkflowConfigControlPlanePaths,
     getWorkflowConfigPreTaskBaselineState
 } from '../../../gates/workflow-config-work';
 import {
@@ -124,8 +108,23 @@ import {
 } from './gate-flow-helpers';
 import { readRoutingDecision } from './routing-decision';
 import { readTaskQueueStatus, syncTaskQueueStatus, syncTaskQueueStatusDetailed } from './task-queue-sync';
+import {
+    buildGateCommandPrefix,
+    quotePowerShellCliValue
+} from './task-mode-command-format';
+import {
+    assertTaskModeProtectedEntryAllowed,
+    WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE
+} from './task-mode-entry-protection';
+import { resolveTaskModeEntryScope } from './task-mode-entry-scope';
+import { resolveTaskModeStartBanner } from './task-mode-entry-start-banner';
+import {
+    assertResolvedRuntimeIdentityForDependentPreflightGate,
+    assertTaskModeRuntimeIdentity,
+    resolveTaskModeReviewerRoutingFields
+} from './task-mode-runtime-identity';
 
-export const WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE = 'workflow-config policy changes';
+export { WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE };
 
 export interface EnterTaskModeCommandOptions {
     repoRoot?: string;
@@ -277,150 +276,12 @@ export interface CommandTimeoutDiagnosticsCommandOptions {
     emitMetrics?: unknown;
 }
 
-function quotePowerShellCliValue(value: string): string {
-    return `'${String(value).replace(/'/g, "''")}'`;
-}
-
 function parseNonNegativeIntegerOption(value: unknown, label: string): number {
     const text = String(value ?? '').trim();
     if (!/^\d+$/u.test(text)) {
         throw new Error(`${label} must be a non-negative integer.`);
     }
     return Number.parseInt(text, 10);
-}
-
-function normalizePlannedChangedFiles(repoRoot: string, rawValues: unknown): string[] {
-    const normalizedRepoRoot = path.resolve(repoRoot);
-    const unique = new Set<string>();
-    for (const rawValue of expandValueList(rawValues || [], { splitDelimiters: true })) {
-        const rawPath = String(rawValue || '').trim();
-        if (!rawPath) {
-            continue;
-        }
-        const resolvedPath = gateHelpers.resolvePathInsideRepo(rawPath, normalizedRepoRoot, { allowMissing: true });
-        if (!resolvedPath) {
-            continue;
-        }
-        const relativePath = gateHelpers.normalizePath(path.relative(normalizedRepoRoot, resolvedPath));
-        if (!relativePath || relativePath === '.' || relativePath.startsWith('../')) {
-            throw new Error(`PlannedChangedFile must stay inside repo root. Got '${rawPath}'.`);
-        }
-        unique.add(relativePath);
-    }
-    return [...unique].sort();
-}
-
-function buildOrchestratorWorkHandoffCommand(
-    repoRoot: string,
-    taskId: string,
-    options: EnterTaskModeCommandOptions,
-    plannedChangedFiles: string[],
-    includeWorkflowConfigWork = false
-): string {
-    const cliPrefix = gateHelpers.isOrchestratorSourceCheckout(repoRoot)
-        ? getSourceCliCommand()
-        : getBundleCliCommand(resolveBundleName());
-    const parts: string[] = [
-        `${cliPrefix} gate enter-task-mode`,
-        `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
-        `--task-id ${quotePowerShellCliValue(taskId)}`,
-        `--entry-mode ${quotePowerShellCliValue(normalizeTaskModeEntryMode(options.entryMode || 'EXPLICIT_TASK_EXECUTION'))}`,
-        `--requested-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)))}`,
-        `--task-summary ${quotePowerShellCliValue(String(options.taskSummary || '').trim())}`,
-        '--orchestrator-work'
-    ];
-    if (includeWorkflowConfigWork) {
-        parts.push('--workflow-config-work');
-    }
-    const startBanner = String(options.startBanner || '').trim();
-    if (startBanner) {
-        parts.push(`--start-banner ${quotePowerShellCliValue(startBanner)}`);
-    }
-
-    const effectiveDepthRaw = String(options.effectiveDepth || '').trim();
-    if (effectiveDepthRaw) {
-        parts.push(`--effective-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(effectiveDepthRaw, 'EffectiveDepth', 2)))}`);
-    }
-    const provider = String(options.provider || '').trim();
-    if (provider) {
-        parts.push(`--provider ${quotePowerShellCliValue(provider)}`);
-    }
-    const routedTo = String(options.routedTo || '').trim();
-    if (routedTo) {
-        parts.push(`--routed-to ${quotePowerShellCliValue(routedTo)}`);
-    }
-    const actor = String(options.actor || '').trim();
-    if (actor) {
-        parts.push(`--actor ${quotePowerShellCliValue(actor)}`);
-    }
-    const planPath = String(options.planPath || '').trim();
-    if (planPath) {
-        parts.push(`--plan-path ${quotePowerShellCliValue(planPath)}`);
-    }
-    const artifactPath = String(options.artifactPath || '').trim();
-    if (artifactPath) {
-        parts.push(`--artifact-path ${quotePowerShellCliValue(artifactPath)}`);
-    }
-    const metricsPath = String(options.metricsPath || '').trim();
-    if (metricsPath) {
-        parts.push(`--metrics-path ${quotePowerShellCliValue(metricsPath)}`);
-    }
-    if (options.emitMetrics === false || String(options.emitMetrics || '').trim().toLowerCase() === 'false') {
-        parts.push('--emit-metrics false');
-    }
-    for (const plannedChangedFile of plannedChangedFiles) {
-        parts.push(`--planned-changed-file ${quotePowerShellCliValue(plannedChangedFile)}`);
-    }
-    return parts.join(' ');
-}
-
-function buildGateCommandPrefix(repoRoot: string): string {
-    return gateHelpers.isOrchestratorSourceCheckout(repoRoot)
-        ? getSourceCliCommand()
-        : getBundleCliCommand(resolveBundleName());
-}
-
-function taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata: ReturnType<typeof readTaskQueueMetadata>): boolean {
-    if (!taskQueueMetadata) {
-        return false;
-    }
-    const trustedTaskText = [
-        taskQueueMetadata.area,
-        taskQueueMetadata.title,
-        taskQueueMetadata.notes
-    ].filter(Boolean).join(' ').toLowerCase();
-    return trustedTaskText.includes(WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE);
-}
-
-function isGardaSelfGuardDenyAgentEntry(repoRoot: string, orchestratorRoot: string): boolean {
-    return isGardaSelfGuardDenyAgentEntryForBundle(
-        gateHelpers.isOrchestratorSourceCheckout(repoRoot),
-        orchestratorRoot
-    );
-}
-
-function buildGardaSelfGuardDenialMessage(protectedFiles: readonly string[]): string {
-    return formatGardaSelfGuardProtectedControlPlaneGuidance({
-        protectedFiles,
-        includeWorkflowConfigWork: true
-    });
-}
-
-function requireTaskModeOperatorConfirmation(
-    options: EnterTaskModeCommandOptions,
-    scopeLabel: string
-): void {
-    const rawConfirmation = String(options.operatorConfirmed || '').trim();
-    const confirmed = rawConfirmation ? parseOperatorConfirmationYes(rawConfirmation) : false;
-    validateFreshOperatorConfirmation({
-        actionLabel: `enter-task-mode ${scopeLabel}`,
-        confirmed,
-        confirmedAtUtc: String(options.operatorConfirmedAtUtc || '').trim(),
-        requireConfirmedAtUtc: true,
-        instruction:
-            'Ask the operator to approve this protected task-mode entry, then rerun with --operator-confirmed yes and --operator-confirmed-at-utc "<ISO-8601 timestamp>". ' +
-            'Agents must not approve --orchestrator-work or --workflow-config-work for themselves.'
-    });
 }
 
 function resolveContainedStrictDecompositionWritePath(repoRoot: string, pathValue: string, label: string): string {
@@ -480,172 +341,11 @@ function buildLoadRulePackPostPreflightRemediationCommand(
     return parts.join(' ');
 }
 
-function buildTaskModeIdentitySuggestionCommand(
-    repoRoot: string,
-    taskId: string,
-    routingDecision: ReturnType<typeof readRoutingDecision>,
-    artifactPath = ''
-): string {
-    const commandParts = [
-        `${buildGateCommandPrefix(repoRoot)} gate enter-task-mode`,
-        `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
-        `--task-id ${quotePowerShellCliValue(taskId)}`,
-        '--task-summary "<task-summary>"'
-    ];
-    if (routingDecision.provider) {
-        commandParts.push(`--provider ${quotePowerShellCliValue(routingDecision.provider)}`);
-    } else {
-        commandParts.push('--provider "<provider>"');
-    }
-    const safeRoutedIdentityHint = routingDecision.identityStatus !== 'contradictory'
-        ? (
-            routingDecision.reviewerSubagentLaunchRoute
-            || routingDecision.routedTo
-            || routingDecision.providerBridge
-            || routingDecision.executionEntrypoint
-            || routingDecision.canonicalEntrypoint
-        )
-        : null;
-    if (safeRoutedIdentityHint) {
-        commandParts.push(`--routed-to ${quotePowerShellCliValue(safeRoutedIdentityHint)}`);
-    }
-    const trimmedArtifactPath = String(artifactPath || '').trim();
-    if (trimmedArtifactPath) {
-        commandParts.push(`--artifact-path ${quotePowerShellCliValue(trimmedArtifactPath)}`);
-    }
-    return commandParts.join(' ');
-}
-
-function assertLaunchableReviewerSubagents(
-    repoRoot: string,
-    taskId: string,
-    stageLabel: string,
-    routingDecision: ReturnType<typeof readRoutingDecision>,
-    rerunGateName: string | null = null,
-    taskModePath = ''
-): void {
-    const reviewerSubagentLaunchStatus = String(routingDecision.reviewerSubagentLaunchStatus || '').trim() || 'unknown';
-    if (reviewerSubagentLaunchStatus === 'launchable') {
-        return;
-    }
-
-    const reviewerSubagentLaunchReason = String(routingDecision.reviewerSubagentLaunchReason || '').trim();
-    const reviewerSubagentLaunchRemediation = String(routingDecision.reviewerSubagentLaunchRemediation || '').trim();
-    const errorParts = [
-        `Reviewer subagent launchability is '${reviewerSubagentLaunchStatus}' ${stageLabel}.`
-    ];
-    if (reviewerSubagentLaunchReason) {
-        errorParts.push(reviewerSubagentLaunchReason);
-    }
-    if (reviewerSubagentLaunchRemediation) {
-        errorParts.push(reviewerSubagentLaunchRemediation);
-    }
-    if (rerunGateName) {
-        errorParts.push(
-            `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)} ; ` +
-            `${buildGateRerunCommand(repoRoot, taskId, rerunGateName, taskModePath)}`
-        );
-    } else {
-        errorParts.push(`Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)}`);
-    }
-    throw new Error(errorParts.join(' '));
-}
-
-function assertTaskModeRuntimeIdentity(
-    repoRoot: string,
-    taskId: string,
-    routingDecision: ReturnType<typeof readRoutingDecision>,
-    artifactPath = ''
-): void {
-    if (!routingDecision.canonicalSourceOfTruth) {
-        throw new Error(
-            'Canonical SourceOfTruth is missing at task-mode entry. Re-run setup/reinit to restore canonical owner files ' +
-            `before starting '${taskId}'. Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, artifactPath)}`
-        );
-    }
-
-    if (routingDecision.identityStatus === 'resolved') {
-        assertLaunchableReviewerSubagents(repoRoot, taskId, 'at task-mode entry', routingDecision, null, artifactPath);
-        return;
-    }
-
-    const violationText = routingDecision.violations.length > 0
-        ? ` ${routingDecision.violations.join(' ')}`
-        : '';
-    const remediation = 'Re-run enter-task-mode with explicit runtime identity via `--provider "<provider>"` ' +
-        'and add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned. ' +
-        'Do not infer runtime provider from canonical SourceOfTruth.';
-
-    throw new Error(
-        `Runtime execution identity is '${routingDecision.identityStatus}' at task-mode entry.${violationText} ${remediation} ` +
-        `Suggested command: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, artifactPath)}`
-    );
-}
-
-function assertResolvedRuntimeIdentityForDependentPreflightGate(
-    repoRoot: string,
-    taskId: string,
-    gateName: string,
-    routingDecision: ReturnType<typeof readRoutingDecision>,
-    taskModePath = ''
-): void {
-    if (!routingDecision.canonicalSourceOfTruth) {
-        throw new Error(
-            `Canonical SourceOfTruth is missing before ${gateName}. Re-run setup/reinit to restore canonical owner files, ` +
-            `then re-enter task mode before ${gateName}. Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)} ; ` +
-            `${buildGateRerunCommand(repoRoot, taskId, gateName, taskModePath)}`
-        );
-    }
-
-    if (routingDecision.identityStatus === 'resolved') {
-        assertLaunchableReviewerSubagents(
-            repoRoot,
-            taskId,
-            `before ${gateName}`,
-            routingDecision,
-            gateName,
-            taskModePath
-        );
-        return;
-    }
-
-    const violationText = routingDecision.violations.length > 0
-        ? ` ${routingDecision.violations.join(' ')}`
-        : '';
-    const remediation = 'Re-enter task mode with explicit runtime identity via `--provider "<provider>"` ' +
-        'and add `--routed-to "<provider-bridge-or-entrypoint>"` only when route telemetry must be pinned. ' +
-        'Do not infer runtime provider from canonical SourceOfTruth.';
-
-    throw new Error(
-        `Runtime execution identity is '${routingDecision.identityStatus}' before ${gateName}.${violationText} ${remediation} ` +
-        `Suggested commands: ${buildTaskModeIdentitySuggestionCommand(repoRoot, taskId, routingDecision, taskModePath)} ; ` +
-        `${buildGateRerunCommand(repoRoot, taskId, gateName, taskModePath)}`
-    );
-}
-
 function resolvePrePreflightSequenceLockPath(repoRoot: string, taskId: string): string {
     return gateHelpers.joinOrchestratorPath(
         repoRoot,
         path.join('runtime', 'task-events', `${taskId}-pre-preflight-sequence.lock`)
     );
-}
-
-function resolveTaskModeStartBanner(
-    requestedStartBanner: unknown
-): string | null {
-    const requestedBanner = String(requestedStartBanner || '').trim();
-    if (requestedBanner) {
-        const normalizedRequestedBanner = normalizeOrchestratorStartBanner(requestedBanner);
-        if (!normalizedRequestedBanner) {
-            throw new Error(
-                `StartBanner must be one of the repo-owned banners (${ORCHESTRATOR_START_BANNER_EXAMPLES_INLINE}). ` +
-                `Got '${requestedBanner}'.`
-            );
-        }
-        return normalizedRequestedBanner;
-    }
-
-    return null;
 }
 
 export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): { outputLines: string[]; exitCode: number } {
@@ -658,20 +358,16 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     assertTaskModeRuntimeIdentity(repoRoot, taskId, routingDecision, artifactPath);
     const dirtyWorkspaceBaseline = captureDirtyWorkspaceBaseline(repoRoot);
     const workflowConfigFileHashes = getCurrentWorkflowConfigFileHashes(repoRoot);
-    const plannedChangedFiles = normalizePlannedChangedFiles(repoRoot, options.plannedChangedFiles);
-    const protectedPlannedFiles = plannedChangedFiles.filter((entry) =>
-        gateHelpers.testPathPrefix(entry, gateHelpers.getProtectedControlPlaneRoots(repoRoot))
-    );
+    const {
+        plannedChangedFiles,
+        protectedPlannedFiles,
+        workflowConfigPlannedFiles
+    } = resolveTaskModeEntryScope(repoRoot, options.plannedChangedFiles);
     const orchestratorWork = parseBooleanOption(options.orchestratorWork, false);
     const workflowConfigWork = parseBooleanOption(options.workflowConfigWork, false);
-    const workflowConfigControlPlanePaths = new Set(getWorkflowConfigControlPlanePaths(repoRoot));
-    const workflowConfigPlannedFiles = plannedChangedFiles.filter((entry) =>
-        workflowConfigControlPlanePaths.has(gateHelpers.normalizePath(entry))
-    );
     const workflowConfigPreTaskBaseline = getWorkflowConfigPreTaskBaselineState(repoRoot, workflowConfigFileHashes);
     const dirtyWorkflowConfigFiles = [...workflowConfigPreTaskBaseline.changed_files].sort();
     const startBanner = resolveTaskModeStartBanner(options.startBanner);
-    const selfGuardDenyAgentEntry = isGardaSelfGuardDenyAgentEntry(repoRoot, orchestratorRoot);
 
     let planMetadata: TaskModePlanMetadata | null = null;
     const rawPlanPath = String(options.planPath || '').trim();
@@ -702,66 +398,19 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
 
     const taskQueueMetadata = readTaskQueueMetadata(repoRoot, taskId);
 
-    if (dirtyWorkflowConfigFiles.length > 0) {
-        throw new Error(
-            `Workspace already contains workflow config changes before task-mode entry: ${dirtyWorkflowConfigFiles.join(', ')}. ` +
-            'Enter task mode before editing workflow-config.json so the change cannot be laundered into the baseline.'
-        );
-    }
-
-    if (
-        selfGuardDenyAgentEntry
-        && (orchestratorWork || workflowConfigWork || protectedPlannedFiles.length > 0)
-    ) {
-        throw new Error(buildGardaSelfGuardDenialMessage(protectedPlannedFiles));
-    }
-
-    if (workflowConfigWork && !orchestratorWork) {
-        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles, true);
-        throw new Error(
-            'Task-mode --workflow-config-work requires --orchestrator-work because workflow-config.json is part of the protected orchestrator control plane. ' +
-            `Suggested command: ${rerunCommand}`
-        );
-    }
-
-    if (workflowConfigWork && workflowConfigPlannedFiles.length === 0) {
-        throw new Error(
-            'Task-mode --workflow-config-work requires the planned task scope to include a protected workflow-config.json file. ' +
-            'Add the intended workflow-config.json path to the planned changed files before entering task mode.'
-        );
-    }
-
-    if (workflowConfigWork && !taskMetadataAllowsWorkflowConfigWork(taskQueueMetadata)) {
-        throw new Error(
-            'Task-mode --workflow-config-work requires trusted TASK.md metadata to explicitly own workflow-config policy changes. ' +
-            `Update the task row Area, Title, or Notes to include the exact ownership phrase '${WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE}' before entering task mode.`
-        );
-    }
-
-    if (workflowConfigPlannedFiles.length > 0 && !workflowConfigWork) {
-        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles, true);
-        throw new Error(
-            `Planned task scope includes workflow config files: ${workflowConfigPlannedFiles.join(', ')}. ` +
-            'Re-run enter-task-mode with --orchestrator-work --workflow-config-work before preflight so this high-risk config intent stays explicit and auditable. ' +
-            `Suggested command: ${rerunCommand}`
-        );
-    }
-
-    if (!orchestratorWork && protectedPlannedFiles.length > 0) {
-        const rerunCommand = buildOrchestratorWorkHandoffCommand(repoRoot, taskId, options, plannedChangedFiles, workflowConfigWork);
-        throw new Error(
-            `Planned task scope includes protected orchestrator files: ${protectedPlannedFiles.join(', ')}. ` +
-            'Re-run enter-task-mode with --orchestrator-work before preflight so the intent stays explicit and auditable. ' +
-            `Suggested command: ${rerunCommand}`
-        );
-    }
-
-    if (orchestratorWork || workflowConfigWork) {
-        requireTaskModeOperatorConfirmation(
-            options,
-            workflowConfigWork ? '--orchestrator-work --workflow-config-work' : '--orchestrator-work'
-        );
-    }
+    assertTaskModeProtectedEntryAllowed({
+        repoRoot,
+        orchestratorRoot,
+        taskId,
+        options,
+        plannedChangedFiles,
+        protectedPlannedFiles,
+        workflowConfigPlannedFiles,
+        dirtyWorkflowConfigFiles,
+        orchestratorWork,
+        workflowConfigWork,
+        taskQueueMetadata
+    });
 
     const rawTaskProfile = taskQueueMetadata?.profile || null;
     let taskProfile: string | null = null;
@@ -791,6 +440,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         }
     }
 
+    const reviewerRoutingFields = resolveTaskModeReviewerRoutingFields(routingDecision.provider);
     const taskModeArtifact = buildTaskModeArtifact({
         taskId,
         entryMode: options.entryMode,
@@ -803,18 +453,10 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         provider: routingDecision.provider,
         canonicalSourceOfTruth: routingDecision.canonicalSourceOfTruth,
         executionProviderSource: routingDecision.executionProviderSource,
-        reviewerCapabilityLevel: routingDecision.provider
-            ? resolveReviewerRoutingPolicy(routingDecision.provider).capability_level
-            : null,
-        reviewerExpectedExecutionMode: routingDecision.provider
-            ? resolveReviewerRoutingPolicy(routingDecision.provider).expected_execution_mode
-            : null,
-        reviewerFallbackAllowed: routingDecision.provider
-            ? resolveReviewerRoutingPolicy(routingDecision.provider).fallback_allowed
-            : null,
-        reviewerFallbackReasonRequired: routingDecision.provider
-            ? resolveReviewerRoutingPolicy(routingDecision.provider).fallback_reason_required
-            : null,
+        reviewerCapabilityLevel: reviewerRoutingFields.reviewerCapabilityLevel,
+        reviewerExpectedExecutionMode: reviewerRoutingFields.reviewerExpectedExecutionMode,
+        reviewerFallbackAllowed: reviewerRoutingFields.reviewerFallbackAllowed,
+        reviewerFallbackReasonRequired: reviewerRoutingFields.reviewerFallbackReasonRequired,
         reviewerSubagentLaunchStatus: routingDecision.reviewerSubagentLaunchStatus,
         reviewerSubagentLaunchRoute: routingDecision.reviewerSubagentLaunchRoute,
         reviewerSubagentLaunchReason: routingDecision.reviewerSubagentLaunchReason,
@@ -1676,6 +1318,7 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
         const artifactPath = options.artifactPath
             ? requireResolvedPath(resolvePathForWrite(options.artifactPath, repoRoot), 'ArtifactPath')
             : resolveHandshakeArtifactPath(repoRoot, taskId, '');
+        const reviewerRoutingFields = resolveTaskModeReviewerRoutingFields(provider);
 
         const artifact = buildHandshakeDiagnostics({
             taskId,
@@ -1688,18 +1331,10 @@ export function runHandshakeDiagnosticsCommand(options: HandshakeDiagnosticsComm
             providerBridge: options.providerBridge ? String(options.providerBridge) : undefined,
             routedTo: routingDecision.routedTo,
             executionProviderSource: routingDecision.executionProviderSource,
-            reviewerCapabilityLevel: provider
-                ? resolveReviewerRoutingPolicy(provider).capability_level
-                : null,
-            reviewerExpectedExecutionMode: provider
-                ? resolveReviewerRoutingPolicy(provider).expected_execution_mode
-                : null,
-            reviewerFallbackAllowed: provider
-                ? resolveReviewerRoutingPolicy(provider).fallback_allowed
-                : null,
-            reviewerFallbackReasonRequired: provider
-                ? resolveReviewerRoutingPolicy(provider).fallback_reason_required
-                : null,
+            reviewerCapabilityLevel: reviewerRoutingFields.reviewerCapabilityLevel,
+            reviewerExpectedExecutionMode: reviewerRoutingFields.reviewerExpectedExecutionMode,
+            reviewerFallbackAllowed: reviewerRoutingFields.reviewerFallbackAllowed,
+            reviewerFallbackReasonRequired: reviewerRoutingFields.reviewerFallbackReasonRequired,
             reviewerSubagentLaunchStatus: routingDecision.reviewerSubagentLaunchStatus,
             reviewerSubagentLaunchRoute: routingDecision.reviewerSubagentLaunchRoute,
             reviewerSubagentLaunchReason: routingDecision.reviewerSubagentLaunchReason,
