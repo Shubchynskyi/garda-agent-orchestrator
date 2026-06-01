@@ -16,13 +16,9 @@ import {
     EXIT_GATE_FAILURE
 } from '../../exit-codes';
 import {
-    DEFAULT_COMPILE_TIMEOUT_MS,
     DEFAULT_GIT_TIMEOUT_MS,
     spawnSyncWithTimeout
 } from '../../../core/subprocess';
-import { buildOutputTelemetry, formatVisibleSavingsLine } from '../../../gate-runtime/token-telemetry';
-import { buildRawOutputRetentionEvidence } from '../../../gate-runtime/output-log-retention';
-import { applyOutputFilterProfile } from '../../../gate-runtime/output-filters';
 import {
     emitMandatoryImplementationStartedEventAsync,
     emitMandatoryPreflightFailedEvent,
@@ -37,7 +33,6 @@ import {
     acquireFilesystemLock,
     releaseFilesystemLock
 } from '../../../gate-runtime/task-events-locking';
-import { auditGateCommand } from '../../../gates/task-events-summary';
 import type { CommandCompactnessAudit } from '../../../gates/task-events-summary';
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../gate-runtime/budget-preflight';
 import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../gates/classify-change';
@@ -60,7 +55,6 @@ import {
 import {
     getCompileCommandProfile,
     getCompileCommands,
-    getOutputStats,
     getPreflightContext,
     getWorkspaceSnapshot,
     validateCompileGateCommand
@@ -134,7 +128,6 @@ import {
     writeTextArtifact
 } from '../gates-artifacts';
 import {
-    formatCompileOutputEntry,
     type OutputTelemetrySummary
 } from '../gates-formatter';
 import {
@@ -142,9 +135,6 @@ import {
     parseBooleanOption,
     parseIntOption
 } from '../gates-parser';
-import {
-    executeCommandAsync
-} from '../gates-subprocess';
 import { requireResolvedPath } from '../shared-command-utils';
 import {
     getErrorMessage,
@@ -160,6 +150,11 @@ import {
     evaluatePostCompileProtectedManifestGuard,
     getTaskOwnedManifestChangedFiles
 } from './compile-flow-scope-guards';
+import {
+    buildCompileOutputPresentation,
+    executeCompileCommands,
+    formatCompileOutputRetentionLine
+} from './compile-flow-execution-retention';
 
 type ClassificationResult = ReturnType<typeof classifyChange>;
 type CompileCommandProfile = ReturnType<typeof getCompileCommandProfile>;
@@ -1442,35 +1437,20 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             preflightHash = gateHelpers.fileSha256(resolvedPreflightPath);
             compileOutputInitialized = true;
 
-            for (let index = 0; index < compileCommands.length; index += 1) {
-                const compileCommand = compileCommands[index];
-                const commandProfile = getCompileCommandProfile(compileCommand);
-                const execution = await executeCommandAsync(compileCommand, {
-                    cwd: repoRoot,
-                    timeoutMs: DEFAULT_COMPILE_TIMEOUT_MS
-                });
-                const stats = getOutputStats(execution.outputLines);
-                compileCommandAudits.push(auditGateCommand(compileCommand, 'compile-gate'));
-
-                compileOutputLines.push(...execution.outputLines);
-                warningCount += stats.warningLines;
-                errorCount += stats.errorLines;
-                compileOutputChunks.push(
-                    formatCompileOutputEntry(index + 1, compileCommands.length, compileCommand, execution.outputLines)
-                );
-
-                if (execution.exitCode !== 0) {
-                    exitCode = execution.exitCode;
-                    exceptionMessage = `Compile command #${index + 1} exited with code ${execution.exitCode}.`;
-                    selectedCommandProfile = commandProfile;
-                    selectedCommandIndex = index + 1;
-                    break;
-                }
-
-                if (index === 0) {
-                    selectedCommandProfile = commandProfile;
-                    selectedCommandIndex = 1;
-                }
+            const compileExecution = await executeCompileCommands({
+                commands: compileCommands,
+                repoRoot
+            });
+            compileOutputLines.push(...compileExecution.outputLines);
+            compileOutputChunks.push(...compileExecution.outputChunks);
+            compileCommandAudits.push(...compileExecution.commandAudits);
+            warningCount = compileExecution.warningCount;
+            errorCount = compileExecution.errorCount;
+            selectedCommandProfile = compileExecution.selectedCommandProfile;
+            selectedCommandIndex = compileExecution.selectedCommandIndex;
+            if (compileExecution.exceptionMessage) {
+                exitCode = compileExecution.exitCode;
+                exceptionMessage = compileExecution.exceptionMessage;
             }
         }
         if (!exceptionMessage) {
@@ -1527,45 +1507,27 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         : null;
 
     const durationMs = Math.max(0, Date.now() - startedAt);
-    const fallbackProfile = compileCommands.length > 0
-        ? getCompileCommandProfile(compileCommands[0])
-        : {
-            kind: 'compile',
-            strategy: 'generic',
-            label: 'compile',
-            failure_profile: 'compile_failure_console_generic',
-            success_profile: 'compile_success_console'
-        };
-    const effectiveProfile = selectedCommandProfile || fallbackProfile;
-    const selectedOutputProfile = exceptionMessage ? effectiveProfile.failure_profile : effectiveProfile.success_profile;
-    const filteredOutput = applyOutputFilterProfile(compileOutputLines, outputFiltersPath, selectedOutputProfile, {
-        budgetTokens: budgetTokensForOutputFilters,
-        context: {
-            fail_tail_lines: failTailLines,
-            command_filter_strategy: effectiveProfile.strategy,
-            command_kind: effectiveProfile.kind
-        }
+    const outputPresentation = buildCompileOutputPresentation({
+        budgetTokensForOutputFilters,
+        compileCommands,
+        errorCount,
+        exceptionMessage,
+        failTailLines,
+        outputChunks: compileOutputChunks,
+        outputFiltersPath,
+        outputLines: compileOutputLines,
+        selectedCommandProfile,
+        warningCount
     });
-    const outputTelemetry = buildOutputTelemetry(compileOutputLines, filteredOutput.lines, {
-        filterMode: filteredOutput.filter_mode,
-        fallbackMode: filteredOutput.fallback_mode,
-        parserMode: filteredOutput.parser_mode,
-        parserName: filteredOutput.parser_name ?? undefined,
-        parserStrategy: filteredOutput.parser_strategy ?? undefined
-    });
-    const telemetrySummary: OutputTelemetrySummary = {
-        filter_mode: filteredOutput.filter_mode,
-        fallback_mode: filteredOutput.fallback_mode,
-        parser_mode: filteredOutput.parser_mode ?? 'NONE',
-        parser_name: filteredOutput.parser_name ?? null,
-        parser_strategy: filteredOutput.parser_strategy ?? null,
-        original_lines: compileOutputLines.length,
-        filtered_lines: filteredOutput.lines.length
-    };
-    const visibleSavingsLine = formatVisibleSavingsLine(outputTelemetry);
-    const compileOutputText = compileOutputChunks.join('');
-    const retainCompileOutput = !!exceptionMessage || warningCount > 0 || errorCount > 0;
-    const compileOutputRetention = buildRawOutputRetentionEvidence(compileOutputText, retainCompileOutput);
+    const effectiveProfile = outputPresentation.effectiveProfile;
+    const selectedOutputProfile = outputPresentation.selectedOutputProfile;
+    const filteredOutput = outputPresentation.filteredOutput;
+    const outputTelemetry = outputPresentation.outputTelemetry;
+    const telemetrySummary: OutputTelemetrySummary = outputPresentation.telemetrySummary;
+    const visibleSavingsLine = outputPresentation.visibleSavingsLine;
+    const compileOutputText = outputPresentation.compileOutputText;
+    const retainCompileOutput = outputPresentation.retainCompileOutput;
+    const compileOutputRetention = outputPresentation.compileOutputRetention;
     if (compileOutputPath && compileOutputInitialized) {
         if (retainCompileOutput) {
             writeTextArtifact(compileOutputPath, compileOutputText);
@@ -1660,13 +1622,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         if (compileOutputPath) {
             outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
         }
-        outputLines.push(
-            `CompileOutputRetention: retained=${String(compileOutputRetention.raw_output_retained)} `
-            + `reason=${compileOutputRetention.retention_reason} `
-            + `sha256=${compileOutputRetention.raw_output_sha256 || 'null'} `
-            + `lines=${compileOutputRetention.raw_output_line_count} `
-            + `chars=${compileOutputRetention.raw_output_char_count}`
-        );
+        outputLines.push(formatCompileOutputRetentionLine(compileOutputRetention));
         if (filteredOutput.lines.length > 0) {
             if (telemetrySummary.parser_mode === 'FULL' || telemetrySummary.parser_mode === 'DEGRADED') {
                 outputLines.push(
@@ -1727,13 +1683,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
     if (retainCompileOutput && compileOutputPath) {
         outputLines.push(`CompileOutputPath: ${gateHelpers.normalizePath(compileOutputPath)}`);
     }
-    outputLines.push(
-        `CompileOutputRetention: retained=${String(compileOutputRetention.raw_output_retained)} `
-        + `reason=${compileOutputRetention.retention_reason} `
-        + `sha256=${compileOutputRetention.raw_output_sha256 || 'null'} `
-        + `lines=${compileOutputRetention.raw_output_line_count} `
-        + `chars=${compileOutputRetention.raw_output_char_count}`
-    );
+    outputLines.push(formatCompileOutputRetentionLine(compileOutputRetention));
     if (visibleSavingsLine) {
         outputLines.push(visibleSavingsLine);
     }
