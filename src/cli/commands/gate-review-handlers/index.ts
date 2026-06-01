@@ -26,7 +26,6 @@ import {
     buildReviewerLaunchBindingSha256,
     COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
     findMatchingReviewerInvocationAttestationEvent,
-    findMatchingReviewerLaunchPreparedEvent,
     findMatchingRoutingEvent,
     getCurrentPreparedReviewerLaunchMismatches,
     getReviewerScopedDiffHandoffPaths,
@@ -118,21 +117,11 @@ const reviewInvocationHandlers = createReviewInvocationHandlers({
     assertExplicitReviewContextRuntimeIdentity,
     assertReviewContextContractOrThrow,
     assertRoutingCompatibility,
-    buildReviewerLaunchBindingSha256,
-    COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
-    findMatchingReviewerLaunchPreparedEvent,
     findMatchingRoutingEvent,
     getReviewTreeStateSha256,
-    getStringField,
-    isForbiddenReviewerLaunchAttestationSource,
-    LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY,
     parseReviewerIdentity,
-    PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
-    readJsonFile,
     resolveCanonicalPreflightArtifactPath,
-    resolveReviewerHandoffBindings,
-    REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS,
-    stringSha256
+    resolveReviewerHandoffBindings
 });
 
 export const {
