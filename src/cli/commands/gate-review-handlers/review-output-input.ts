@@ -1,8 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import {
-    writeReviewArtifactText
-} from '../../../gate-runtime/review-artifacts';
 import * as gateHelpers from '../../../gates/helpers';
 import { normalizePath } from '../../../gates/helpers';
 import {
@@ -121,8 +118,6 @@ export async function resolveReviewOutputInput(
     if (!reviewContent.trim()) {
         throw new Error(`Review output is empty: ${normalizePath(reviewOutputArtifactPath)}.`);
     }
-    // Persist raw reviewer input before verdict extraction so direct ingest cannot bypass the audited file path.
-    writeReviewArtifactText(reviewOutputArtifactPath, reviewContent);
 
     return {
         reviewContent,

@@ -708,12 +708,19 @@ export async function writeReviewArtifactsWithRollback<T>(
             assertTransactionIndexPersisted(reviewsDir, 'commit');
             return afterWritesResult;
         } catch (error: unknown) {
+            let rollbackFailed = false;
             try {
                 for (let index = rollbackStates.length - 1; index >= 0; index -= 1) {
                     const entry = rollbackStates[index];
-                    restoreReviewArtifactFromRollbackStateUnlocked(entry.artifactPath, entry.rollbackState, entry.options);
+                    try {
+                        restoreReviewArtifactFromRollbackStateUnlocked(entry.artifactPath, entry.rollbackState, entry.options);
+                    } catch {
+                        rollbackFailed = true;
+                    }
                 }
-                assertTransactionIndexPersisted(reviewsDir, 'rollback');
+                if (!rollbackFailed) {
+                    assertTransactionIndexPersisted(reviewsDir, 'rollback');
+                }
             } catch {
                 // Preserve the original write or post-write failure.
             }

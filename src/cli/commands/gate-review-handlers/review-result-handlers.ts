@@ -16,12 +16,12 @@ import {
     emitReviewRecordedEventAsync
 } from '../../../gate-runtime/lifecycle-events';
 import {
+    redactSecretText
+} from '../../../core/redaction';
+import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
 } from '../../../gate-runtime/reviewer-session-contract';
 import {
-    captureReviewArtifactRollbackState,
-    restoreReviewArtifactFromRollbackState,
-    writeReviewArtifactText,
     writeReviewArtifactsWithRollback
 } from '../../../gate-runtime/review-artifacts';
 import {
@@ -225,7 +225,10 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     taskId: string;
     reviewType: string;
     artifactPath: string;
+    artifactContent?: string | null;
     contextPath: string;
+    rawReviewOutputPath?: string | null;
+    rawReviewOutputContent?: string | null;
     receipt: Record<string, unknown>;
     receiptPayloadSha256: string;
     artifactSha256: string | null;
@@ -235,23 +238,39 @@ async function writeReviewReceiptSnapshotsAndTelemetry(options: {
     const artifactSnapshotPath = options.artifactPath.replace(/\.md$/, `-artifact-${options.artifactSha256}.md`);
 
     const orchestratorRoot = gateHelpers.joinOrchestratorPath(options.repoRoot, '');
-    await writeReviewArtifactsWithRollback([
+    const artifactContent = options.artifactContent ?? fs.readFileSync(options.artifactPath, 'utf8');
+    const writes = [
+        ...(options.rawReviewOutputPath && options.rawReviewOutputContent != null
+            ? [{
+                artifactPath: options.rawReviewOutputPath,
+                contentType: 'text' as const,
+                content: options.rawReviewOutputContent
+            }]
+            : []),
+        ...(options.artifactContent != null
+            ? [{
+                artifactPath: options.artifactPath,
+                contentType: 'text' as const,
+                content: options.artifactContent
+            }]
+            : []),
         {
             artifactPath: receiptPath,
-            contentType: 'json',
+            contentType: 'json' as const,
             payload: options.receipt
         },
         {
             artifactPath: receiptSnapshotPath,
-            contentType: 'json',
+            contentType: 'json' as const,
             payload: options.receipt
         },
         {
             artifactPath: artifactSnapshotPath,
-            contentType: 'text',
-            content: fs.readFileSync(options.artifactPath, 'utf8')
+            contentType: 'text' as const,
+            content: artifactContent
         }
-    ], async () => {
+    ];
+    await writeReviewArtifactsWithRollback(writes, async () => {
         const recordedEvent = await emitReviewRecordedEventAsync(orchestratorRoot, options.taskId, options.reviewType, {
             ...options.receipt,
             receipt_path: normalizePath(receiptPath),
@@ -279,8 +298,10 @@ async function recordReviewReceiptFromArtifacts(options: {
     reviewType: string;
     preflightPath: string;
     artifactPath: string;
+    reviewArtifactContent?: string | null;
     contextPath: string;
     rawReviewOutputPath?: string | null;
+    rawReviewOutputContent?: string | null;
     rawReviewOutputSha256?: string | null;
     rawReviewOutputSourceMtimeUtc?: string | null;
     reviewMaterializationFidelity?: string | null;
@@ -290,13 +311,18 @@ async function recordReviewReceiptFromArtifacts(options: {
     reviewerFallbackReason: string | null;
     requireStrictBindingMetadata?: boolean;
 }, dependencies: ReviewResultHandlersDependencies): Promise<string> {
-    if (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile()) {
+    if (
+        options.reviewArtifactContent == null
+        && (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile())
+    ) {
         throw new Error(`Review artifact not found: ${options.artifactPath}`);
     }
 
     const preflight = JSON.parse(fs.readFileSync(options.preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(options.preflightPath);
-    const artifactSha256 = fileSha256(options.artifactPath);
+    const artifactSha256 = options.reviewArtifactContent == null
+        ? fileSha256(options.artifactPath)
+        : sha256ReviewArtifactContent(options.reviewArtifactContent);
     const parsedReviewContext = JSON.parse(fs.readFileSync(options.contextPath, 'utf8')) as Record<string, unknown>;
     dependencies.assertReviewContextContractOrThrow({
         taskId: options.taskId,
@@ -450,11 +476,37 @@ async function recordReviewReceiptFromArtifacts(options: {
         taskId: options.taskId,
         reviewType: options.reviewType,
         artifactPath: options.artifactPath,
+        artifactContent: options.reviewArtifactContent,
         contextPath: options.contextPath,
+        rawReviewOutputPath: options.rawReviewOutputPath,
+        rawReviewOutputContent: options.rawReviewOutputContent,
         receipt: receipt as unknown as Record<string, unknown>,
         receiptPayloadSha256,
         artifactSha256
     });
+}
+
+function sha256ReviewArtifactContent(content: string): string {
+    return createHash('sha256')
+        .update(redactSecretText(content))
+        .digest('hex');
+}
+
+function buildSafeReviewOutputRetryInstruction(taskId: string, reviewType: string): string {
+    return [
+        'Safe recovery:',
+        `fix the reviewer output and rerun record-review-result for '${taskId}' '${reviewType}'.`,
+        'The canonical raw review-output artifact is replaced only after validation and receipt recording succeed.'
+    ].join(' ');
+}
+
+function appendSafeReviewOutputRetryInstruction(error: unknown, taskId: string, reviewType: string): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    const instruction = buildSafeReviewOutputRetryInstruction(taskId, reviewType);
+    if (message.includes(instruction)) {
+        return error instanceof Error ? error : new Error(message);
+    }
+    return new Error(`${message}\n\n${instruction}`);
 }
 
 async function handleRecordReviewResultWithDependencies(
@@ -484,7 +536,6 @@ async function handleRecordReviewResultWithDependencies(
         reviewType,
         dependencies.readReviewOutputFromStdin
     );
-    const rawReviewOutputSha256 = fileSha256(reviewOutput.reviewOutputPath);
     let reviewContent = reviewOutput.reviewContent;
     let reviewMaterializationFidelity = 'exact';
     const expectedPassVerdict = REVIEW_CONTRACTS.find(([candidate]) => candidate === reviewType)?.[1] || null;
@@ -503,7 +554,8 @@ async function handleRecordReviewResultWithDependencies(
             ` The token must appear as a standalone line inside the reviewer output file (--review-output-path), not as a CLI flag. ` +
             `Example PASS line: '${passExample}'. Example FAIL line: '${failExample}'. ` +
             `Do not pass '--verdict pass' or similar flags; place the token on its own line under a '## Verdict' heading in the review output file.\n\n` +
-            dependencies.buildMinimalPassReviewTemplateHint(reviewType, passExample)
+            dependencies.buildMinimalPassReviewTemplateHint(reviewType, passExample) +
+            `\n\n${buildSafeReviewOutputRetryInstruction(taskId, reviewType)}`
         );
     }
     const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = dependencies.parseReviewerIdentity(
@@ -554,19 +606,24 @@ async function handleRecordReviewResultWithDependencies(
         });
     }
 
-    const materializedReview = materializeReviewContent({
-        artifactPath,
-        reviewType,
-        reviewContent,
-        verdictToken,
-        expectedPassVerdict,
-        requirePassValidationNotes: dependencies.reviewContextRequiresPassValidationNotes(contextPath, repoRoot),
-        analyze: dependencies.analyzeEarlyReviewMaterialization,
-        normalizeHeadings: dependencies.normalizeReviewSectionHeadings,
-        buildLosslessPassReviewNormalization: dependencies.buildLosslessPassReviewNormalization,
-        isLosslessPassNormalizationEligibleViolation: dependencies.isLosslessPassNormalizationEligibleViolation,
-        buildPassReviewTemplateHintMessage: dependencies.buildPassReviewTemplateHintMessage
-    });
+    let materializedReview: ReturnType<typeof materializeReviewContent>;
+    try {
+        materializedReview = materializeReviewContent({
+            artifactPath,
+            reviewType,
+            reviewContent,
+            verdictToken,
+            expectedPassVerdict,
+            requirePassValidationNotes: dependencies.reviewContextRequiresPassValidationNotes(contextPath, repoRoot),
+            analyze: dependencies.analyzeEarlyReviewMaterialization,
+            normalizeHeadings: dependencies.normalizeReviewSectionHeadings,
+            buildLosslessPassReviewNormalization: dependencies.buildLosslessPassReviewNormalization,
+            isLosslessPassNormalizationEligibleViolation: dependencies.isLosslessPassNormalizationEligibleViolation,
+            buildPassReviewTemplateHintMessage: dependencies.buildPassReviewTemplateHintMessage
+        });
+    } catch (error: unknown) {
+        throw appendSafeReviewOutputRetryInstruction(error, taskId, reviewType);
+    }
     reviewContent = materializedReview.reviewContent;
     reviewMaterializationFidelity = materializedReview.reviewMaterializationFidelity;
     if (reviewType !== 'test') {
@@ -607,7 +664,9 @@ async function handleRecordReviewResultWithDependencies(
         reviewerFallbackReason
     });
 
-    const artifactRollbackState = captureReviewArtifactRollbackState(artifactPath);
+    const acceptedRawReviewContent = reviewOutput.reviewContent;
+    const acceptedReviewArtifactContent = reviewContent.endsWith('\n') ? reviewContent : `${reviewContent}\n`;
+    const rawReviewOutputSha256 = sha256ReviewArtifactContent(acceptedRawReviewContent);
     const previousRoutingUpdate = {
         actualExecutionMode: currentRouting?.actual_execution_mode != null
             ? String(currentRouting.actual_execution_mode).trim() || null
@@ -619,7 +678,6 @@ async function handleRecordReviewResultWithDependencies(
             ? String(currentRouting.fallback_reason).trim() || null
             : null
     };
-    writeReviewArtifactText(artifactPath, reviewContent.endsWith('\n') ? reviewContent : `${reviewContent}\n`);
     const routingUpdate = applyReviewerRoutingMetadata(contextPath, {
         actualExecutionMode: reviewerExecutionMode,
         reviewerSessionId: reviewerIdentity,
@@ -633,8 +691,10 @@ async function handleRecordReviewResultWithDependencies(
             reviewType,
             preflightPath,
             artifactPath,
+            reviewArtifactContent: acceptedReviewArtifactContent,
             contextPath,
             rawReviewOutputPath: reviewOutput.reviewOutputPath,
+            rawReviewOutputContent: acceptedRawReviewContent,
             rawReviewOutputSha256,
             rawReviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
             reviewMaterializationFidelity,
@@ -668,11 +728,6 @@ async function handleRecordReviewResultWithDependencies(
     } catch (error: unknown) {
         try {
             restoreReviewerRoutingMetadata(contextPath, previousRoutingUpdate);
-        } catch {
-            // Best-effort rollback only.
-        }
-        try {
-            restoreReviewArtifactFromRollbackState(artifactPath, artifactRollbackState, { ensureTrailingNewline: true });
         } catch {
             // Best-effort rollback only.
         }

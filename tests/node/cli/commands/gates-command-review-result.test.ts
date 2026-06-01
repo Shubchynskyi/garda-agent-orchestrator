@@ -1650,6 +1650,7 @@ describe('gates command review result', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
@@ -2655,6 +2656,8 @@ describe('gates command review result', () => {
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const existingRawOutput = '# Previous Review\n\n## Verdict\nREVIEW PASSED\n';
+        fs.writeFileSync(rawReviewOutputPath, existingRawOutput, 'utf8');
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
@@ -2710,7 +2713,7 @@ describe('gates command review result', () => {
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
-        assert.ok(fs.readFileSync(rawReviewOutputPath, 'utf8').includes('- APPROVED'));
+        assert.equal(fs.readFileSync(rawReviewOutputPath, 'utf8'), existingRawOutput);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
@@ -3044,7 +3047,7 @@ describe('gates command review result', () => {
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
-        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), false);
         assert.ok(capturedErrors.some((line) => line.includes('trivial or obviously synthetic')));
         assert.ok(capturedErrors.some((line) => line.includes('Minimal compliant PASS review template')));
         assert.ok(capturedErrors.some((line) => line.includes('## Findings by Severity')));
@@ -3348,7 +3351,7 @@ describe('gates command review result', () => {
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
-        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), false);
         assert.ok(capturedErrors.some((line) => line.includes('trivial or obviously synthetic')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
@@ -3443,8 +3446,8 @@ describe('gates command review result', () => {
         assert.notEqual(observedExitCode, 0);
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
-        assert.equal(fs.existsSync(rawReviewOutputPath), true);
-        const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
+        assert.equal(fs.existsSync(rawReviewOutputPath), false);
+        const rawReviewContent = fs.readFileSync(reviewOutputPath, 'utf8');
         assert.ok(rawReviewContent.includes('still reports active follow-up while preserving the reviewer evidence losslessly.'));
         assert.ok(rawReviewContent.includes('## Findings by Severity'));
         assert.ok(rawReviewContent.includes('## Residual Risks\n- Confirm the follow-up stays visible to operators after pass-review normalization.'));
@@ -3545,8 +3548,8 @@ describe('gates command review result', () => {
         assert.notEqual(observedExitCode, 0);
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
-        assert.equal(fs.existsSync(rawReviewOutputPath), true);
-        const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
+        assert.equal(fs.existsSync(rawReviewOutputPath), false);
+        const rawReviewContent = fs.readFileSync(reviewOutputPath, 'utf8');
         assert.ok(rawReviewContent.includes('## Deferred Findings'));
         assert.ok(rawReviewContent.includes('- [low] follow up on reviewer wording'));
         assert.ok(!rawReviewContent.includes('Justification:'));
@@ -3569,6 +3572,8 @@ describe('gates command review result', () => {
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const existingRawOutput = '# Previous Failed Review\n\n## Verdict\nREVIEW FAILED\n';
+        fs.writeFileSync(rawReviewOutputPath, existingRawOutput, 'utf8');
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
@@ -3627,6 +3632,7 @@ describe('gates command review result', () => {
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.equal(fs.readFileSync(rawReviewOutputPath, 'utf8'), existingRawOutput);
         assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Residual Risks'")));
         assert.ok(!capturedErrors.some((line) => line.includes('Minimal compliant PASS review template')));
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
@@ -3714,7 +3720,7 @@ describe('gates command review result', () => {
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
-        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), false);
         assert.ok(capturedErrors.some((line) => line.includes("ambiguous duplicate section heading for '## Findings by Severity'")));
         assert.ok(capturedErrors.some((line) => line.includes("Accepted section heading shapes include '## Findings by Severity'")));
 
@@ -3990,6 +3996,9 @@ describe('gates command review result', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const existingRawOutput = '# Previous Review Output\n\n## Verdict\nREVIEW PASSED\n';
+        fs.writeFileSync(rawReviewOutputPath, existingRawOutput, 'utf8');
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
@@ -4060,7 +4069,8 @@ describe('gates command review result', () => {
         assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
         assert.equal(fs.existsSync(artifactPath), false);
         assert.equal(fs.existsSync(receiptPath), false);
-        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-code-review-output.md`)), true);
+        assert.equal(fs.existsSync(rawReviewOutputPath), true);
+        assert.equal(fs.readFileSync(rawReviewOutputPath, 'utf8'), existingRawOutput);
         const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, null);
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, null);
@@ -4134,7 +4144,7 @@ describe('gates command review result', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('record-review-result preserves artifact materialization but fails cleanly when receipt path is locked', async () => {
+    it('record-review-result rolls back artifact materialization when receipt path is locked', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-904a-result-lock';
         seedTaskQueue(repoRoot, taskId);
@@ -4146,6 +4156,9 @@ describe('gates command review result', () => {
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const existingRawOutput = '# Previous Receipt Lock Review\n\n## Verdict\nREVIEW PASSED\n';
+        fs.writeFileSync(rawReviewOutputPath, existingRawOutput, 'utf8');
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
@@ -4217,6 +4230,7 @@ describe('gates command review result', () => {
         assert.equal(reviewContext.reviewer_routing.actual_execution_mode, 'delegated_subagent');
         assert.equal(reviewContext.reviewer_routing.reviewer_session_id, 'agent:code-reviewer');
         assert.equal(fs.existsSync(receiptPath), false);
+        assert.equal(fs.readFileSync(rawReviewOutputPath, 'utf8'), existingRawOutput);
         assert.equal(fs.existsSync(reviewOutputPath), true);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_DELEGATION_ROUTED').length, 1);
@@ -4916,6 +4930,8 @@ describe('gates command review result', () => {
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
         const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
+        const existingRawOutput = '# Previous Review Output\n\n## Verdict\nREVIEW PASSED\n';
+        fs.writeFileSync(rawReviewOutputPath, existingRawOutput, 'utf8');
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),
@@ -4987,9 +5003,10 @@ describe('gates command review result', () => {
         assert.equal(fs.existsSync(rawReviewOutputPath), true);
         const rawReviewContent = fs.readFileSync(rawReviewOutputPath, 'utf8');
 
-        assert.equal(rawReviewContent, stdinReviewOutput);
+        assert.equal(rawReviewContent, existingRawOutput);
         assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Findings by Severity'")));
         assert.ok(capturedErrors.some((line) => line.includes("missing required section '## Residual Risks'")));
+        assert.ok(capturedErrors.some((line) => line.includes('Safe recovery:')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
