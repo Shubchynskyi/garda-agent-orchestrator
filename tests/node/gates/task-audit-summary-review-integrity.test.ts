@@ -383,7 +383,7 @@ describe('gates/task-audit-summary', () => {
                     });
                     writePreflight(reviewsDir, TASK_ID, {
                         mode: 'FULL_PATH',
-                        changed_files: ['tests/node/cli/commands/gates-review-reuse.test.ts'],
+                        changed_files: ['tests/node/cli/commands/gates-review-reuse-stale-evidence.test.ts'],
                         metrics: { changed_lines_total: 32 },
                         required_reviews: { code: true, test: true }
                     });

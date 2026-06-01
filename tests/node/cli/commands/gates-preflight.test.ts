@@ -999,7 +999,7 @@ describe('cli/commands/gates — preflight', () => {
 
         const result = runClassifyChangeCommand({
             repoRoot,
-            changedFiles: ['tests/node/cli/commands/gates-review-reuse.test.ts'],
+            changedFiles: ['tests/node/cli/commands/gates-review-reuse-stale-evidence.test.ts'],
             taskId,
             taskIntent: 'Keep strict profile test fixture changes on test review only',
             outputPath,
