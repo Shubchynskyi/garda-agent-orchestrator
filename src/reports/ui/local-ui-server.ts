@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
@@ -7,6 +6,7 @@ import { performance } from 'node:perf_hooks';
 import { isCanonicalTaskId } from '../../core/task-ids';
 import {
     buildReportDataContract,
+    buildReportSnapshotFingerprint,
     buildReportTaskDetail,
     type ReportDataContract,
     type ReportTaskDetail
@@ -211,27 +211,8 @@ function buildReport(repoRoot: string): ReportDataContract {
     });
 }
 
-function statFingerprint(filePath: string): string {
-    try {
-        const stat = fs.statSync(filePath);
-        return `${filePath}:${stat.mtimeMs}:${stat.size}`;
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            return `${filePath}:missing`;
-        }
-        throw error;
-    }
-}
-
-function buildSnapshotFingerprint(repoRoot: string): string {
-    return [
-        statFingerprint(path.join(repoRoot, 'TASK.md')),
-        statFingerprint(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'))
-    ].join('|');
-}
-
 function getCachedReport(repoRoot: string, cache: ReportSnapshotCache): ReportDataContract {
-    const fingerprint = buildSnapshotFingerprint(repoRoot);
+    const fingerprint = buildReportSnapshotFingerprint(repoRoot);
     if (cache.report && cache.fingerprint === fingerprint) {
         return cache.report;
     }

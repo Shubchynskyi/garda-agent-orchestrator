@@ -6,11 +6,14 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import {
+    buildBackupsTab,
     buildReportDataContract,
+    buildReportSnapshotFingerprint,
     buildReportTaskDetail,
     buildWorkflowConfigTab,
     readCanonicalActiveQueueRows
 } from '../../../src/reports/report-data-contract';
+import { writeRollbackRecords } from '../../../src/lifecycle/common';
 
 function makeTempRepo(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-report-data-'));
@@ -311,6 +314,11 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.ok(report.project_memory_tab.files.some((file) => file.path.endsWith('project-memory/compact.md') && file.content?.includes('Memory for compact.md')));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Task execution'));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Review execution modes'));
+    assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Backups'));
+    assert.equal(report.backups_tab.auto_backup.enabled, false);
+    assert.equal(report.backups_tab.auto_backup.keep_latest, 10);
+    assert.deepEqual(report.backups_tab.rows, []);
+    assert.equal(report.backups_tab.snapshots_root_exists, false);
     assert.ok(report.tasks_tab.rows[0].detail.unavailable.some((entry) => entry.scope === 'task:T-100:detail'));
     assert.equal(report.unavailable.length, 0);
 });
@@ -377,6 +385,58 @@ test('buildReportTaskDetail marks required full-suite evidence as not run when a
     assert.equal(detail.full_suite_validation.required, true);
     assert.equal(detail.full_suite_validation.duration_ms, null);
     assert.match(detail.full_suite_validation.mismatch_reason || '', /artifact is missing/);
+});
+
+test('buildBackupsTab lists inventory rows without inventing backup state', () => {
+    const repoRoot = makeTempRepo();
+    writeWorkflowConfig(repoRoot);
+    const snapshotPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'update-rollbacks',
+        'update-20260501-010000-000'
+    );
+    const versionPath = path.join(snapshotPath, 'garda-agent-orchestrator', 'VERSION');
+    fs.mkdirSync(path.dirname(versionPath), { recursive: true });
+    fs.writeFileSync(versionPath, 'backup-version\n', 'utf8');
+    writeRollbackRecords(snapshotPath, [{
+        relativePath: 'garda-agent-orchestrator/VERSION',
+        existed: true,
+        pathType: 'file'
+    }]);
+
+    const tab = buildBackupsTab(repoRoot);
+
+    assert.equal(tab.snapshots_root_exists, true);
+    assert.equal(tab.rows.length, 1);
+    assert.equal(tab.rows[0].id, 'update-20260501-010000-000');
+    assert.equal(tab.rows[0].reason, 'update');
+    assert.equal(tab.rows[0].health, 'AVAILABLE');
+    assert.equal(tab.rows[0].restorable, true);
+    assert.ok(tab.rows[0].size_bytes > 0);
+    assert.match(tab.rows[0].size_human, /B|KB|MB/);
+    assert.equal(tab.auto_backup.enabled, false);
+    assert.equal(tab.unavailable.length, 0);
+});
+
+test('buildReportSnapshotFingerprint changes when backup inventory root changes', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const before = buildReportSnapshotFingerprint(repoRoot);
+    const snapshotsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'update-rollbacks');
+    const snapshotPath = path.join(snapshotsRoot, 'update-20260501-010000-000');
+    const versionPath = path.join(snapshotPath, 'garda-agent-orchestrator', 'VERSION');
+    fs.mkdirSync(path.dirname(versionPath), { recursive: true });
+    fs.writeFileSync(versionPath, 'backup-version\n', 'utf8');
+    writeRollbackRecords(snapshotPath, [{
+        relativePath: 'garda-agent-orchestrator/VERSION',
+        existed: true,
+        pathType: 'file'
+    }]);
+    const after = buildReportSnapshotFingerprint(repoRoot);
+    assert.notEqual(before, after);
 });
 
 test('buildReportTaskDetail surfaces timed-out full-suite failures without inventing duration', () => {

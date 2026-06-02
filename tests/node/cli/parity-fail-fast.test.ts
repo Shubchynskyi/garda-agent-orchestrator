@@ -35,6 +35,12 @@ const CLI_PATH = path.join(REPO_ROOT, 'bin', 'garda.js');
 const TEST_PACKAGE_JSON = { name: 'garda-agent-orchestrator-test', version: '1.0.0' };
 const WORKFLOW_CLI_REGRESSION_TIMEOUT_MS = process.platform === 'win32' ? 60000 : 30000;
 
+function cliChildEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
+    const env = { ...process.env, ...overrides };
+    delete env.NO_COLOR;
+    return env;
+}
+
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
     const filePath = path.join(root, relativePath);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -944,7 +950,7 @@ test('workflow set human output colorizes statuses and honors no-color', () => {
                 windowsHide: true,
                 encoding: 'utf8',
                 timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS,
-                env: { ...process.env, FORCE_COLOR: '1' }
+                env: cliChildEnv({ FORCE_COLOR: '1' })
             }
         );
         assert.equal(colorResult.status, 0, 'workflow set no-op should succeed with FORCE_COLOR');
@@ -965,7 +971,7 @@ test('workflow set human output colorizes statuses and honors no-color', () => {
                 windowsHide: true,
                 encoding: 'utf8',
                 timeout: WORKFLOW_CLI_REGRESSION_TIMEOUT_MS,
-                env: { ...process.env, FORCE_COLOR: '1' }
+                env: cliChildEnv({ FORCE_COLOR: '1' })
             }
         );
         const noColorCombined = (noColorResult.stdout || '') + (noColorResult.stderr || '');
