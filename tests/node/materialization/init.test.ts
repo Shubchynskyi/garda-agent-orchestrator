@@ -44,6 +44,12 @@ function copyDirRecursive(src: string, dst: string) {
     }
 }
 
+function extractMarkdownSection(markdown: string, heading: string): string {
+    const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const match = new RegExp(`^## ${escapedHeading}\\r?\\n([\\s\\S]*?)(?=^## |\\Z)`, 'm').exec(markdown);
+    return match ? match[1].trim() : '';
+}
+
 function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: string = os.hostname()) {
     const lockPath = getLifecycleOperationLockPath(projectRoot);
     fs.mkdirSync(lockPath, { recursive: true });
@@ -543,6 +549,7 @@ describe('runInit', () => {
         const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
         try {
             fs.writeFileSync(path.join(projectRoot, 'build.gradle.kts'), 'plugins {}\n', 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'gradlew'), '#!/bin/sh\n', 'utf8');
             fs.writeFileSync(path.join(projectRoot, 'gradlew.bat'), '@echo off\r\n', 'utf8');
 
             const result = runInit({
@@ -562,13 +569,15 @@ describe('runInit', () => {
                 path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
                 'utf8'
             );
+            const fullSuiteSection = extractMarkdownSection(discovery, 'Suggested Full-Suite Validation Command');
+            const compileSection = extractMarkdownSection(discovery, 'Suggested Compile Gate Commands (Heuristic)');
 
             assert.equal(workflowConfig.full_suite_validation.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
             assert.equal(workflowConfig.full_suite_validation.enabled, false);
             assert.ok(discovery.includes('Java or JVM'));
             assert.ok(discovery.includes('`build.gradle.kts`'));
-            assert.ok(discovery.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat test' : './gradlew test') + '`'));
-            assert.ok(discovery.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat assemble' : './gradlew assemble') + '`'));
+            assert.ok(fullSuiteSection.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat test' : './gradlew test') + '`'));
+            assert.ok(compileSection.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat assemble' : './gradlew assemble') + '`'));
             assert.ok(commands.includes(process.platform === 'win32' ? '.\\gradlew.bat assemble' : './gradlew assemble'));
             assert.equal(/### Compile Gate \(Mandatory\)\r?\n```bash\r?\nnpm run build\r?\n```/.test(commands), false);
             assert.ok(commands.includes('Use the command detected in `garda-agent-orchestrator/live/project-discovery.md`'));
