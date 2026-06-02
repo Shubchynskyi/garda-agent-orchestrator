@@ -66,10 +66,16 @@ function makePreparedLaunchArtifact(repoRoot: string, options: { copyPastePrompt
     };
     writeJson(launchArtifactPath, preparedArtifact);
     writeJson(inputArtifactPath, preparedArtifact);
+    const pinnedInputArtifactSha256 = fileSha256(inputArtifactPath);
+    const preparedArtifactWithPinnedInput = {
+        ...preparedArtifact,
+        reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256
+    };
+    writeJson(launchArtifactPath, preparedArtifactWithPinnedInput);
     return {
         launchArtifactPath,
         inputArtifactPath,
-        preparedArtifact,
+        preparedArtifact: preparedArtifactWithPinnedInput,
         preparedArtifactSha256: fileSha256(launchArtifactPath),
         copyPastePromptSha256
     };
@@ -124,6 +130,7 @@ describe('review launch input attestation helpers', () => {
     it('accepts immutable reviewer-launch-input artifact path evidence', () => {
         const repoRoot = makeTempRepo();
         const prepared = makePreparedLaunchArtifact(repoRoot);
+        const pinnedInputArtifactSha256 = String(prepared.preparedArtifact.reviewer_launch_input_artifact_sha256);
 
         const attestation = resolveReviewerLaunchInputAttestation({
             repoRoot,
@@ -131,14 +138,38 @@ describe('review launch input attestation helpers', () => {
             preparedArtifact: prepared.preparedArtifact,
             preparedLaunchArtifactSha256: prepared.preparedArtifactSha256,
             rawMode: 'launch_artifact_path',
-            rawSha256: prepared.preparedArtifactSha256,
+            rawSha256: pinnedInputArtifactSha256,
             rawArtifactPath: path.relative(repoRoot, prepared.inputArtifactPath)
         });
 
         assert.equal(attestation.mode, 'launch_artifact_path');
-        assert.equal(attestation.sha256, prepared.preparedArtifactSha256);
+        assert.equal(attestation.sha256, pinnedInputArtifactSha256);
         assert.equal(attestation.artifactPath, prepared.inputArtifactPath);
-        assert.equal(attestation.artifactSha256, prepared.preparedArtifactSha256);
+        assert.equal(attestation.artifactSha256, pinnedInputArtifactSha256);
+    });
+
+    it('rejects tampered reviewer-launch-input artifact path evidence after prepare', () => {
+        const repoRoot = makeTempRepo();
+        const prepared = makePreparedLaunchArtifact(repoRoot);
+        const pinnedInputArtifactSha256 = String(prepared.preparedArtifact.reviewer_launch_input_artifact_sha256);
+        fs.writeFileSync(
+            prepared.inputArtifactPath,
+            `${JSON.stringify({ ...prepared.preparedArtifact, tampered: true }, null, 2)}\n`,
+            'utf8'
+        );
+
+        assert.throws(
+            () => resolveReviewerLaunchInputAttestation({
+                repoRoot,
+                launchArtifactPath: prepared.launchArtifactPath,
+                preparedArtifact: prepared.preparedArtifact,
+                preparedLaunchArtifactSha256: prepared.preparedArtifactSha256,
+                rawMode: 'launch_artifact_path',
+                rawSha256: pinnedInputArtifactSha256,
+                rawArtifactPath: path.relative(repoRoot, prepared.inputArtifactPath)
+            }),
+            /launch_input_artifact_sha256 must match the selected reviewer launch input artifact sha256/
+        );
     });
 
     it('rejects mismatched launch input hashes before launch completion', () => {

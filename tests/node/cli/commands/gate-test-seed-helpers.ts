@@ -891,6 +891,7 @@ export function writeReceiptBackedReviewArtifact(
         reviewer_launch_attestation_source: 'codex.spawn_agent',
         provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, reviewerEvidence.reviewerIdentity),
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
@@ -1063,6 +1064,7 @@ export function seedReusableReviewEvidence(
         reviewer_launch_attestation_source: 'codex.spawn_agent',
         provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, resolvedReviewerIdentity),
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC

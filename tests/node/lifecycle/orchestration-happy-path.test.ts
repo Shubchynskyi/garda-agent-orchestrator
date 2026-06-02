@@ -279,6 +279,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
     const reviewContextPath = path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-test-review-context.json`);
     const reviewOutputPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'review-output.md');
     const reviewerLaunchArtifactPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'reviewer-launch.json');
+    const reviewerLaunchInputArtifactPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'reviewer-launch-input.json');
 
     try {
         runGit(workspaceRoot, ['init']);
@@ -443,8 +444,28 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath
         ]);
 
+        assertNextGate(workspaceRoot, 'record-reviewer-delegation-started');
+        const preparedReviewerLaunchInputArtifactSha256 = createHash('sha256')
+            .update(fs.readFileSync(reviewerLaunchInputArtifactPath))
+            .digest('hex');
+        await runReviewGateCommand(workspaceRoot, [
+            'record-reviewer-delegation-started',
+            '--task-id', TASK_ID,
+            '--review-type', 'test',
+            '--review-context-path', reviewContextPath,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', 'agent:e2e-test-reviewer',
+            '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
+            '--provider-invocation-id', 'codex-e2e-test-reviewer-001',
+            '--attestation-source', 'codex_agent_launch',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', reviewerLaunchInputArtifactPath,
+            '--launch-input-sha256', preparedReviewerLaunchInputArtifactSha256,
+            '--fresh-context'
+        ]);
+
         assertNextGate(workspaceRoot, 'complete-reviewer-launch');
-        const preparedReviewerLaunchArtifactSha256 = createHash('sha256')
+        const startedReviewerLaunchArtifactSha256 = createHash('sha256')
             .update(fs.readFileSync(reviewerLaunchArtifactPath))
             .digest('hex');
         await runReviewGateCommand(workspaceRoot, [
@@ -455,11 +476,10 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--reviewer-execution-mode', 'delegated_subagent',
             '--reviewer-identity', 'agent:e2e-test-reviewer',
             '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
-            '--provider-invocation-id', 'codex-e2e-test-reviewer-001',
             '--attestation-source', 'codex_agent_launch',
             '--launch-input-mode', 'launch_artifact_path',
             '--launch-input-artifact-path', reviewerLaunchArtifactPath,
-            '--launch-input-sha256', preparedReviewerLaunchArtifactSha256,
+            '--launch-input-sha256', startedReviewerLaunchArtifactSha256,
             '--fresh-context'
         ]);
 

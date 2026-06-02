@@ -410,6 +410,7 @@ export interface ReviewerInvocationAttestationReviewReceiptReviewerProvenance {
     review_tree_state_sha256?: string | null;
     routing_event_sha256: string;
     launch_prepared_at_utc?: string | null;
+    delegation_started_at_utc?: string | null;
     launched_at_utc?: string | null;
     launch_completed_at_utc?: string | null;
     invocation_attested_at_utc?: string | null;
@@ -525,10 +526,12 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             : normalizeProvenanceSha256(rawReviewTreeStateSha256);
         const routingEventSha256 = normalizeProvenanceSha256(record.routing_event_sha256);
         const rawLaunchPreparedAtUtc = record.launch_prepared_at_utc ?? record.launchPreparedAtUtc;
+        const rawDelegationStartedAtUtc = record.delegation_started_at_utc ?? record.delegationStartedAtUtc;
         const rawLaunchedAtUtc = record.launched_at_utc ?? record.launchedAtUtc;
         const rawLaunchCompletedAtUtc = record.launch_completed_at_utc ?? record.launchCompletedAtUtc;
         const rawInvocationAttestedAtUtc = record.invocation_attested_at_utc ?? record.invocationAttestedAtUtc;
         const launchPreparedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawLaunchPreparedAtUtc);
+        const delegationStartedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawDelegationStartedAtUtc);
         const launchedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawLaunchedAtUtc);
         const launchCompletedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawLaunchCompletedAtUtc);
         const invocationAttestedAtUtc = normalizeReviewProvenanceUtcTimestamp(rawInvocationAttestedAtUtc);
@@ -547,6 +550,7 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             || (rawReviewTreeStateSha256 != null && !reviewTreeStateSha256)
             || !routingEventSha256
             || (rawLaunchPreparedAtUtc != null && String(rawLaunchPreparedAtUtc).trim() !== '' && !launchPreparedAtUtc)
+            || (rawDelegationStartedAtUtc != null && String(rawDelegationStartedAtUtc).trim() !== '' && !delegationStartedAtUtc)
             || (rawLaunchedAtUtc != null && String(rawLaunchedAtUtc).trim() !== '' && !launchedAtUtc)
             || (rawLaunchCompletedAtUtc != null && String(rawLaunchCompletedAtUtc).trim() !== '' && !launchCompletedAtUtc)
             || (rawInvocationAttestedAtUtc != null && String(rawInvocationAttestedAtUtc).trim() !== '' && !invocationAttestedAtUtc)
@@ -568,6 +572,7 @@ export function normalizeReviewReceiptReviewerProvenance(value: unknown): Review
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routingEventSha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: delegationStartedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             invocation_attested_at_utc: invocationAttestedAtUtc
@@ -637,6 +642,7 @@ export function buildReviewReceiptReviewerInvocationProvenance(
         review_tree_state_sha256: record.review_tree_state_sha256 ?? record.reviewTreeStateSha256,
         routing_event_sha256: record.routing_event_sha256 ?? record.routingEventSha256,
         launch_prepared_at_utc: record.launch_prepared_at_utc ?? record.launchPreparedAtUtc,
+        delegation_started_at_utc: record.delegation_started_at_utc ?? record.delegationStartedAtUtc,
         launched_at_utc: record.launched_at_utc ?? record.launchedAtUtc,
         launch_completed_at_utc: record.launch_completed_at_utc ?? record.launchCompletedAtUtc,
         invocation_attested_at_utc: record.invocation_attested_at_utc ?? record.invocationAttestedAtUtc

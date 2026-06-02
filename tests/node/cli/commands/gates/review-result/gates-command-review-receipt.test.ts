@@ -349,6 +349,7 @@ function attestReviewerInvocationForTest(options: {
         review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedIntegrity.event_sha256,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC

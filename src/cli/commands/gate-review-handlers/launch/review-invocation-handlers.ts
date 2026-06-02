@@ -222,6 +222,7 @@ export function createReviewInvocationHandlers(deps: ReviewInvocationHandlerDepe
                     launch_input_sha256: launchArtifact.launchInputSha256,
                     copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copyPasteReviewerLaunchPromptSha256,
                     launch_prepared_at_utc: launchArtifact.launchPreparedAtUtc,
+                    delegation_started_at_utc: launchArtifact.delegationStartedAtUtc,
                     launched_at_utc: launchArtifact.launchedAtUtc,
                     launch_completed_at_utc: launchArtifact.launchCompletedAtUtc,
                     invocation_attested_at_utc: invocationAttestedAtUtc,

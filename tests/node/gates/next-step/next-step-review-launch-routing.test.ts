@@ -744,6 +744,7 @@ function writeReviewEvidence(
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: `test-${reviewType}-invocation`,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             ...launchInputEvidenceFixture(taskId, reviewType),
@@ -777,6 +778,7 @@ function writeReviewEvidence(
                 reviewer_launch_tool: 'test-subagent-spawn',
                 provider_invocation_id: `test-${reviewType}-invocation`,
                 launch_prepared_at_utc: launchPreparedAtUtc,
+                delegation_started_at_utc: launchedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
                 launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
@@ -812,6 +814,7 @@ function writeReviewEvidence(
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             invocation_attested_at_utc: invocationAttestedAtUtc
@@ -1392,7 +1395,7 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
     });
 
-    it('routes to complete-reviewer-launch after current launch metadata is prepared', () => {
+    it('routes to record-reviewer-delegation-started after current launch metadata is prepared', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -1433,10 +1436,15 @@ describe('gates/next-step', () => {
             prepared_launch_event_sha256: preparedIntegrity.event_sha256
         });
         fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
+        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        writeJson(launchArtifactPath, {
+            ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256
+        });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'complete-reviewer-launch');
+        assert.equal(result.next_gate, 'record-reviewer-delegation-started');
         assert.ok(result.reason.includes('launch metadata'));
         assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff'));
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
@@ -1444,22 +1452,17 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));
         assert.ok(result.reason.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(result.reason.includes('this is expected behavior in this repository'));
-        assert.ok(result.reason.includes('complete-reviewer-launch'));
+        assert.ok(result.reason.includes('record-reviewer-delegation-started'));
         assert.ok(result.reason.includes('ProviderLaunchTarget:'));
         assert.ok(result.reason.includes('launch clean-context reviewers'));
-        assertGateChainDecision(result.reason, {
-            edgeId: 'review-launch-prepared-to-launch-completed',
-            status: 'pass'
-        });
         assert.ok(result.reason.includes('launch artifact=prepared'));
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
-        assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
-        assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        assert.equal(result.commands[0].label, 'Record delegated reviewer start');
+        assert.ok(result.commands[0].command.includes('gate record-reviewer-delegation-started'));
         assert.ok(result.commands[0].command.includes('--launch-input-mode "launch_artifact_path"'));
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
         assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchInputArtifactPath)}"`));
-        assert.ok(result.commands[0].command.includes('--record-invocation'));
         assert.ok(!result.commands[0].command.includes('--launched-at-utc'));
     });
 

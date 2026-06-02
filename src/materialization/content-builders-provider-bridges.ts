@@ -12,6 +12,7 @@ import {
 import { getRequiredProviderEntryByBridgePath } from '../core/provider-registry';
 import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
+    REVIEWER_DELEGATION_STARTED_INSTRUCTION,
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
     REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION
 } from '../gate-runtime/reviewer-session-contract';
@@ -218,6 +219,7 @@ Hard stops:
 - If \`next-step\` reports \`operator-maintenance\` because Garda self-guard is on, do not rerun task mode with \`--orchestrator-work\`; an operator must run update/repair/maintenance or deliberately relax the guard.
 - Do not make code edits before \`enter-task-mode\`; unscoped pre-task diffs must be isolated first.
 - ${REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION}
+- ${REVIEWER_DELEGATION_STARTED_INSTRUCTION}
 - ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
 - Do not spawn or pre-launch a dependent downstream reviewer before the required upstream PASS artifact and receipt exist for the same cycle.

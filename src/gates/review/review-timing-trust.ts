@@ -41,6 +41,7 @@ export interface ReviewTimingTrustProvenance {
     prev_event_sha256?: string | null;
     event_sha256?: string | null;
     launch_prepared_at_utc?: string | null;
+    delegation_started_at_utc?: string | null;
     launched_at_utc?: string | null;
     launch_completed_at_utc?: string | null;
     invocation_attested_at_utc?: string | null;
@@ -264,6 +265,9 @@ export function evaluateHiddenReviewTimingTrust(options: {
         ?? getDetailsTimestampMs(details, 'launch_prepared_at_utc', 'launchPreparedAtUtc');
     const launchedAtMs = getTimestampMs(provenance.launched_at_utc)
         ?? getDetailsTimestampMs(details, 'launched_at_utc', 'launchedAtUtc');
+    const explicitDelegationStartedAtMs = getTimestampMs(provenance.delegation_started_at_utc)
+        ?? getDetailsTimestampMs(details, 'delegation_started_at_utc', 'delegationStartedAtUtc');
+    const delegationStartedAtMs = explicitDelegationStartedAtMs ?? launchedAtMs;
     const launchCompletedAtMs = getTimestampMs(provenance.launch_completed_at_utc)
         ?? getDetailsTimestampMs(details, 'launch_completed_at_utc', 'launchCompletedAtUtc');
     const invocationAttestedAtMs = getTimestampMs(provenance.invocation_attested_at_utc)
@@ -273,7 +277,7 @@ export function evaluateHiddenReviewTimingTrust(options: {
     const reviewOutputSourceMtimeMs = getTimestampMs(options.reviewOutputSourceMtimeUtc);
     const timestamps = [
         launchPreparedAtMs,
-        launchedAtMs,
+        delegationStartedAtMs,
         launchCompletedAtMs,
         invocationAttestedAtMs,
         reviewResultRecordedAtMs
@@ -287,14 +291,24 @@ export function evaluateHiddenReviewTimingTrust(options: {
         return distrust('future_timestamp');
     }
     if (
-        Number(launchPreparedAtMs) > Number(launchedAtMs)
-        || Number(launchedAtMs) > Number(launchCompletedAtMs)
+        Number(launchPreparedAtMs) > Number(delegationStartedAtMs)
+        || Number(delegationStartedAtMs) > Number(launchCompletedAtMs)
         || Number(launchCompletedAtMs) > Number(invocationAttestedAtMs)
         || Number(invocationAttestedAtMs) > Number(reviewResultRecordedAtMs)
     ) {
         return distrust('impossible_ordering');
     }
-    if (reviewOutputSourceMtimeMs != null && reviewOutputSourceMtimeMs < Number(launchedAtMs)) {
+    if (
+        explicitDelegationStartedAtMs != null
+        && launchedAtMs != null
+        && (
+            Number(launchedAtMs) < Number(delegationStartedAtMs)
+            || Number(launchedAtMs) > Number(launchCompletedAtMs)
+        )
+    ) {
+        return distrust('impossible_ordering');
+    }
+    if (reviewOutputSourceMtimeMs != null && reviewOutputSourceMtimeMs < Number(delegationStartedAtMs)) {
         return distrust('impossible_ordering');
     }
 
@@ -309,11 +323,11 @@ export function evaluateHiddenReviewTimingTrust(options: {
         return distrust('duplicate_provider_invocation_id');
     }
 
-    const launchToResultMs = Number(reviewResultRecordedAtMs) - Number(launchedAtMs);
+    const delegationToResultMs = Number(reviewResultRecordedAtMs) - Number(delegationStartedAtMs);
     if (
         !hasStrongProviderInvocationEvidence(details)
-        && launchToResultMs >= 0
-        && launchToResultMs < SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS
+        && delegationToResultMs >= 0
+        && delegationToResultMs < SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS
     ) {
         return distrust('too_short_without_strong_provider_evidence');
     }

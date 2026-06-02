@@ -1,4 +1,4 @@
-export type DelegatedReviewLaunchArtifactState = 'missing_or_invalid' | 'prepared' | 'launched';
+export type DelegatedReviewLaunchArtifactState = 'missing_or_invalid' | 'prepared' | 'delegation_started' | 'launched';
 
 export interface DelegatedReviewReadinessCommand {
     label: string;
@@ -47,6 +47,7 @@ export interface DelegatedReviewReadinessRouteOptions {
     commands: {
         recordRouting: DelegatedReviewReadinessCommand;
         prepareLaunch: DelegatedReviewReadinessCommand;
+        recordDelegationStarted: DelegatedReviewReadinessCommand;
         completeLaunch: DelegatedReviewReadinessCommand;
         recordInvocation: DelegatedReviewReadinessCommand;
         recordResult: DelegatedReviewReadinessCommand;
@@ -103,13 +104,26 @@ export function resolveDelegatedReviewReadinessRoute(
         if (options.launchArtifactState === 'prepared') {
             return {
                 status: 'BLOCKED',
+                nextGate: 'record-reviewer-delegation-started',
+                title: `Record '${options.reviewType}' delegated reviewer start.`,
+                reason:
+                    `Required review '${options.reviewType}' has prepared launch metadata for the current routing event and review context. ` +
+                    `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff, then immediately run record-reviewer-delegation-started with the provider/controller invocation id so the gate records the real delegation start timestamp before the reviewer returns. Do not reconstruct reviewer prompts from memory. ` +
+                    `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
+                    `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
+                commands: [options.commands.recordDelegationStarted]
+            };
+        }
+
+        if (options.launchArtifactState === 'delegation_started') {
+            return {
+                status: 'BLOCKED',
                 nextGate: 'complete-reviewer-launch',
                 title: `Complete '${options.reviewType}' delegated reviewer launch metadata.`,
                 reason:
-                    `Required review '${options.reviewType}' has prepared launch metadata for the current routing event and review context. ` +
-                    `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff, then run complete-reviewer-launch so the gate records post-launch fields, launch input hash evidence, and its own launch timestamp before invocation attestation. Do not reconstruct reviewer prompts from memory. ` +
-                    `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
-                    `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
+                    `Required review '${options.reviewType}' has recorded reviewer delegation start evidence for the current routing event and review context. ` +
+                    `After the delegated reviewer returns, run complete-reviewer-launch so the gate records completion attestation without redefining the reviewer start time. ` +
+                    `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.completeLaunch]
             };
         }

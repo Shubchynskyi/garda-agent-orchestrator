@@ -27,6 +27,7 @@ export interface ReviewerLaunchArtifactValidationResult {
     launchTool: string;
     providerInvocationId: string;
     launchPreparedAtUtc: string | null;
+    delegationStartedAtUtc: string | null;
     launchedAtUtc: string;
     launchCompletedAtUtc: string | null;
     launchInputMode: ReviewerLaunchInputMode | null;
@@ -60,7 +61,8 @@ export const REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS = Object.freeze([
     "attestation_state='launched'",
     'attestation_source=<provider/controller source, not garda_prepare_reviewer_launch/manual/mock>',
     'provider_invocation_id or controller_invocation_id=<actual delegated reviewer invocation id>',
-    'launched_at_utc=<gate-owned UTC timestamp recorded by complete-reviewer-launch>',
+    'delegation_started_at_utc=<gate-owned UTC timestamp recorded by record-reviewer-delegation-started>',
+    'launched_at_utc=<same reviewer delegation start timestamp for compatibility>',
     'launch_input_mode=copy_paste_prompt or launch_artifact_path',
     'launch_input_sha256=<sha256 of exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath>',
     'fresh_context=true, isolated_context=true, or fork_context=false'
@@ -437,9 +439,17 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     } else if (!fs.existsSync(expectedLaunchInputArtifactPath) || !fs.statSync(expectedLaunchInputArtifactPath).isFile()) {
         mismatches.push('reviewer launch input artifact missing');
     } else {
-        const artifactSha256 = fileSha256(options.artifactPath) || '';
+        const pinnedInputArtifactSha256 = getStringField(
+            options.artifact,
+            'reviewer_launch_input_artifact_sha256',
+            'reviewerLaunchInputArtifactSha256'
+        ).toLowerCase();
         const launchInputArtifactSha256 = fileSha256(expectedLaunchInputArtifactPath) || '';
-        if (!artifactSha256 || launchInputArtifactSha256 !== artifactSha256) {
+        if (!launchInputArtifactSha256) {
+            mismatches.push('reviewer launch input artifact could not be hashed');
+        } else if (!/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
+            mismatches.push('reviewer_launch_input_artifact_sha256 missing');
+        } else if (launchInputArtifactSha256 !== pinnedInputArtifactSha256) {
             mismatches.push('reviewer launch input artifact sha256 mismatch');
         }
     }
@@ -504,9 +514,11 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     evidenceManifestSha256?: string | null;
     reviewOutputPath?: string | null;
     reviewerLaunchInputArtifactPath?: string | null;
+    reviewerLaunchInputArtifactSha256?: string | null;
     copyPasteReviewerLaunchPrompt?: string | null;
     copyPasteReviewerLaunchPromptSha256?: string | null;
     reviewTreeStateSha256?: string | null;
+    allowedAttestationStates?: readonly string[];
 }): void {
     const artifact = readJsonFile(options.artifactPath, 'Prepared reviewer launch artifact');
     const launchBindingSha256 = getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
@@ -528,8 +540,10 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     if (getStringField(artifact, 'evidence_type', 'artifact_type') !== PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE) {
         violations.push(`evidence_type must be '${PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE}'`);
     }
-    if (getStringField(artifact, 'attestation_state', 'attestationState') !== 'prepared') {
-        violations.push("attestation_state must be 'prepared'");
+    const allowedAttestationStates = options.allowedAttestationStates || ['prepared'];
+    const attestationState = getStringField(artifact, 'attestation_state', 'attestationState');
+    if (!allowedAttestationStates.includes(attestationState)) {
+        violations.push(`attestation_state must be one of: ${allowedAttestationStates.join(', ')}`);
     }
     if (getStringField(artifact, 'task_id', 'taskId') !== options.taskId) {
         violations.push(`task_id must be '${options.taskId}'`);
@@ -598,6 +612,16 @@ export function assertPreparedReviewerLaunchArtifact(options: {
         if (actualInputArtifactPath !== normalizePath(options.reviewerLaunchInputArtifactPath)) {
             violations.push('reviewer_launch_input_artifact_path must match the immutable reviewer launch input artifact path');
         }
+        if (options.reviewerLaunchInputArtifactSha256) {
+            const actualInputArtifactSha256 = getStringField(
+                artifact,
+                'reviewer_launch_input_artifact_sha256',
+                'reviewerLaunchInputArtifactSha256'
+            ).toLowerCase();
+            if (actualInputArtifactSha256 !== options.reviewerLaunchInputArtifactSha256.toLowerCase()) {
+                violations.push('reviewer_launch_input_artifact_sha256 must match the immutable reviewer launch input artifact hash');
+            }
+        }
     }
     if (options.copyPasteReviewerLaunchPrompt) {
         const actualCopyPastePrompt = getStringField(
@@ -651,8 +675,11 @@ export function assertPreparedReviewerLaunchArtifact(options: {
             violations.push('review_tree_state_sha256 must match the current review context tree_state');
         }
     }
-    if (getStringField(artifact, 'attestation_source', 'attestationSource', 'source') !== PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE) {
+    const attestationSource = getStringField(artifact, 'attestation_source', 'attestationSource', 'source');
+    if (attestationState === 'prepared' && attestationSource !== PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE) {
         violations.push(`attestation_source must be '${PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE}'`);
+    } else if (attestationState === 'delegation_started' && !attestationSource) {
+        violations.push('attestation_source is required for delegation_started launch artifact');
     }
     if (!launchBindingSha256) {
         violations.push('launch_binding_sha256 is required');
@@ -733,6 +760,11 @@ export function validateReviewerLaunchArtifact(options: {
         'controllerInvocationId'
     );
     const launchPreparedAtUtc = getStringField(artifact, 'launch_prepared_at_utc', 'launchPreparedAtUtc') || null;
+    const delegationStartedAtUtc = getStringField(
+        artifact,
+        'delegation_started_at_utc',
+        'delegationStartedAtUtc'
+    ) || null;
     const launchedAtUtc = getStringField(artifact, 'launched_at_utc', 'launchedAtUtc');
     const launchCompletedAtUtc = getStringField(artifact, 'launch_completed_at_utc', 'launchCompletedAtUtc') || null;
     const preparedLaunchEventSha256 = getStringField(
@@ -914,9 +946,18 @@ export function validateReviewerLaunchArtifact(options: {
                     normalizedReviewerLaunchInputArtifactPath
                     && normalizedResolvedLaunchInputArtifactPath === normalizedReviewerLaunchInputArtifactPath
                 ) {
+                    const pinnedInputArtifactSha256 = getStringField(
+                        artifact,
+                        'reviewer_launch_input_artifact_sha256',
+                        'reviewerLaunchInputArtifactSha256'
+                    ).toLowerCase();
                     const actualLaunchInputArtifactSha256 = fileSha256(resolvedLaunchInputArtifactPath) || '';
                     if (!actualLaunchInputArtifactSha256) {
                         violations.push('ReviewerLaunchInputArtifactPath must be hashable');
+                    } else if (!pinnedInputArtifactSha256 || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
+                        violations.push('reviewer_launch_input_artifact_sha256 is required for ReviewerLaunchInputArtifactPath attestation');
+                    } else if (actualLaunchInputArtifactSha256 !== pinnedInputArtifactSha256) {
+                        violations.push('ReviewerLaunchInputArtifactPath contents must match the immutable prepare-time handoff hash');
                     } else if (launchInputArtifactSha256 && actualLaunchInputArtifactSha256 !== launchInputArtifactSha256) {
                         violations.push('launch_input_artifact_sha256 must match ReviewerLaunchInputArtifactPath contents');
                     }
@@ -985,10 +1026,15 @@ export function validateReviewerLaunchArtifact(options: {
     if (!providerInvocationId) {
         violations.push('provider_invocation_id or controller_invocation_id is required');
     }
+    if (delegationStartedAtUtc && !isValidUtcIso8601Timestamp(delegationStartedAtUtc)) {
+        violations.push('delegation_started_at_utc must be a valid UTC ISO-8601 timestamp');
+    }
     if (!launchedAtUtc) {
         violations.push('launched_at_utc is required');
     } else if (!isValidUtcIso8601Timestamp(launchedAtUtc)) {
         violations.push('launched_at_utc must be a valid UTC ISO-8601 timestamp');
+    } else if (delegationStartedAtUtc && launchedAtUtc !== delegationStartedAtUtc) {
+        violations.push('launched_at_utc must match delegation_started_at_utc for compatibility');
     }
     if (launchPreparedAtUtc && !isValidUtcIso8601Timestamp(launchPreparedAtUtc)) {
         violations.push('launch_prepared_at_utc must be a valid UTC ISO-8601 timestamp');
@@ -1012,6 +1058,7 @@ export function validateReviewerLaunchArtifact(options: {
         launchTool,
         providerInvocationId,
         launchPreparedAtUtc,
+        delegationStartedAtUtc,
         launchedAtUtc,
         launchCompletedAtUtc,
         launchInputMode: launchInputMode || null,

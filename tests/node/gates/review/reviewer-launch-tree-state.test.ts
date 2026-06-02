@@ -14,7 +14,8 @@ import {
     handlePrepareReviewerLaunch,
     handleRecordReviewResult,
     handleRecordReviewInvocation,
-    handleRecordReviewRouting
+    handleRecordReviewRouting,
+    handleRecordReviewerDelegationStarted
 } from '../../../../src/cli/commands/gate-review-handlers';
 
 const REVIEWER_IDENTITY = 'agent:019de361-0000-7000-a000-000000000001';
@@ -151,6 +152,24 @@ async function prepareLaunch(repoRoot: string, taskId: string, launchArtifactPat
     ]);
 }
 
+async function recordDelegationStarted(repoRoot: string, taskId: string, launchArtifactPath: string): Promise<void> {
+    const launchArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
+    await handleRecordReviewerDelegationStarted([
+        '--task-id', taskId,
+        '--review-type', 'code',
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', REVIEWER_IDENTITY,
+        '--reviewer-launch-artifact-path', launchArtifactPath,
+        '--provider-invocation-id', REVIEWER_IDENTITY.slice('agent:'.length),
+        '--attestation-source', 'codex_spawn_agent',
+        '--launch-input-mode', 'launch_artifact_path',
+        '--launch-input-artifact-path', launchArtifactPath,
+        '--launch-input-sha256', launchArtifactSha256,
+        '--fork-context', 'false',
+        '--repo-root', repoRoot
+    ]);
+}
+
 async function completeLaunch(repoRoot: string, taskId: string, launchArtifactPath: string): Promise<void> {
     const launchArtifactSha256 = createHash('sha256').update(fs.readFileSync(launchArtifactPath)).digest('hex');
     await handleCompleteReviewerLaunch([
@@ -229,6 +248,7 @@ describe('reviewer launch tree-state freshness', () => {
         try {
             await recordRouting(fixture.repoRoot, taskId);
             await prepareLaunch(fixture.repoRoot, taskId, fixture.launchArtifactPath);
+            await recordDelegationStarted(fixture.repoRoot, taskId, fixture.launchArtifactPath);
             dirtyWorkingTree(fixture.repoRoot);
 
             await assert.rejects(
@@ -246,6 +266,7 @@ describe('reviewer launch tree-state freshness', () => {
         try {
             await recordRouting(fixture.repoRoot, taskId);
             await prepareLaunch(fixture.repoRoot, taskId, fixture.launchArtifactPath);
+            await recordDelegationStarted(fixture.repoRoot, taskId, fixture.launchArtifactPath);
             await completeLaunch(fixture.repoRoot, taskId, fixture.launchArtifactPath);
             dirtyWorkingTree(fixture.repoRoot);
 
@@ -264,6 +285,7 @@ describe('reviewer launch tree-state freshness', () => {
         try {
             await recordRouting(fixture.repoRoot, taskId);
             await prepareLaunch(fixture.repoRoot, taskId, fixture.launchArtifactPath);
+            await recordDelegationStarted(fixture.repoRoot, taskId, fixture.launchArtifactPath);
             await completeLaunch(fixture.repoRoot, taskId, fixture.launchArtifactPath);
             await recordInvocation(fixture.repoRoot, taskId, fixture.launchArtifactPath);
             const reviewOutputPath = writeReviewOutput(fixture.repoRoot, taskId);

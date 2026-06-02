@@ -15,6 +15,7 @@ import {
     prepareCurrentReviewPhase,
     prepareReviewerLaunchForTest,
     readTaskTimelineEvents,
+    recordReviewerDelegationStartedForTest,
     reviewContextScopedDiffFixture,
     runCliMainWithHandling,
     runCliWithCapturedOutput,
@@ -598,6 +599,14 @@ describe('cli/commands/gates review launch invocation', () => {
             taskId,
             reviewerIdentity: fixture.reviewerIdentity,
             launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-677-stripped',
+            attestationSource: 'codex_spawn_agent'
         });
 
         const complete = await runCliWithCapturedOutput([

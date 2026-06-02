@@ -21,6 +21,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'record-review-result',
     'record-review-routing',
     'prepare-reviewer-launch',
+    'record-reviewer-delegation-started',
     'complete-reviewer-launch',
     'record-review-invocation',
     'record-review-receipt',

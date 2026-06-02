@@ -17,6 +17,7 @@ import {
 import { fileSha256 } from '../../../../gate-runtime/hash';
 import {
     emitReviewerDelegationRoutedEventAsync,
+    emitReviewerDelegationStartedEventAsync,
     emitReviewerLaunchPreparedEventAsync
 } from '../../../../gate-runtime/lifecycle-events';
 import {
@@ -529,7 +530,7 @@ async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<void> {
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath, then run complete-reviewer-launch with launch_input evidence. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
+            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath, then immediately run record-reviewer-delegation-started with launch_input evidence. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
             return;
         }
         if (
@@ -605,7 +606,8 @@ async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<void> {
         'review_tree_state_sha256',
         'launch_binding_sha256',
         'prepared_launch_event_sha256',
-        'prepared_launch_event_task_sequence'
+        'prepared_launch_event_task_sequence',
+        'reviewer_launch_input_artifact_sha256'
     ];
     const handoffArtifactNames = handoffBindings.rolePromptPath
         ? 'role_prompt_path, prompt_template_path, reviewer_prompt_path, output_template_path, and evidence_manifest_path'
@@ -657,7 +659,8 @@ async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<void> {
             attestation_source: '<provider/controller source, not garda_prepare_reviewer_launch/manual/mock>',
             launch_tool: providerLaunch.launchTool,
             provider_invocation_id_or_controller_invocation_id: '<actual delegated reviewer invocation id>',
-            launched_at_utc: '<gate-owned UTC timestamp recorded by complete-reviewer-launch>',
+            delegation_started_at_utc: '<gate-owned UTC timestamp recorded by record-reviewer-delegation-started>',
+            launched_at_utc: '<same delegation_started_at_utc value for compatibility>',
             launch_completed_at_utc: '<gate-owned ISO-8601 completion timestamp>',
             launch_input_mode: 'launch_artifact_path or copy_paste_prompt',
             launch_input_sha256: '<prepared reviewer launch artifact sha256, or CopyPasteReviewerLaunchPromptSha256>',
@@ -679,7 +682,7 @@ async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<void> {
             `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
             'do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
-            'Run record_invocation_command after the real launch is recorded in this artifact.'
+            'Run record-reviewer-delegation-started immediately after provider launch, then complete-reviewer-launch after the reviewer returns.'
         )
     };
     writeReviewArtifactJson(launchArtifactPath, preparedArtifact);
@@ -734,6 +737,15 @@ async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<void> {
     };
     writeReviewArtifactJson(launchArtifactPath, preparedArtifactWithEvent);
     fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
+    const pinnedReviewerLaunchInputArtifactSha256 = fileSha256(launchInputArtifactPath) || '';
+    if (!pinnedReviewerLaunchInputArtifactSha256) {
+        throw new Error('Reviewer launch input artifact must be hashable immediately after prepare-reviewer-launch.');
+    }
+    const preparedArtifactWithPinnedInput = {
+        ...preparedArtifactWithEvent,
+        reviewer_launch_input_artifact_sha256: pinnedReviewerLaunchInputArtifactSha256
+    };
+    writeReviewArtifactJson(launchArtifactPath, preparedArtifactWithPinnedInput);
     assertPreparedReviewerLaunchArtifact({
         artifactPath: launchArtifactPath,
         taskId,
@@ -749,15 +761,16 @@ async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<void> {
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewOutputPath,
         reviewerLaunchInputArtifactPath: launchInputArtifactPath,
+        reviewerLaunchInputArtifactSha256: pinnedReviewerLaunchInputArtifactSha256,
         copyPasteReviewerLaunchPrompt,
         copyPasteReviewerLaunchPromptSha256,
         reviewTreeStateSha256
     });
     const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const launchInputArtifactSha256 = fileSha256(launchInputArtifactPath) || '';
-    if (launchInputArtifactSha256 !== launchArtifactSha256) {
+    if (launchInputArtifactSha256 !== pinnedReviewerLaunchInputArtifactSha256) {
         throw new Error(
-            'Reviewer launch input artifact must be an immutable byte-for-byte copy of the prepared launch artifact.'
+            'Reviewer launch input artifact must remain byte-for-byte identical to the immutable prepare-time handoff copy.'
         );
     }
 
@@ -808,7 +821,7 @@ async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<void> {
     console.log(`PreservePreparedFields: ${preservePreparedFields.join(', ')}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-    console.log(`NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; do not reconstruct reviewer prompts from memory. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Update after_launch_required_updates, then run complete-reviewer-launch with launch_input evidence or run RecordInvocationCommand after completion.`);
+    console.log(`NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; do not reconstruct reviewer prompts from memory. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Immediately run record-reviewer-delegation-started with launch_input evidence, then run complete-reviewer-launch after reviewer completion.`);
 }
 
 async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
@@ -861,9 +874,6 @@ async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
 
     const providerInvocationId = String(options.providerInvocationId || '').trim();
     const controllerInvocationId = String(options.controllerInvocationId || '').trim();
-    if (!providerInvocationId && !controllerInvocationId) {
-        throw new Error('ProviderInvocationId or ControllerInvocationId is required (the actual delegated reviewer invocation id).');
-    }
     if (providerInvocationId && controllerInvocationId) {
         throw new Error('Provide either --provider-invocation-id or --controller-invocation-id, not both.');
     }
@@ -873,7 +883,6 @@ async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
             'This is spoof-like launch freshness input; omit the flag so the gate records its own UTC timestamp.'
         );
     }
-    const launchedAtUtc = new Date().toISOString();
     const attestationSource = normalizeReviewerLaunchAttestationSource(options.attestationSource);
     if (!attestationSource) {
         throw new Error('AttestationSource is required (provider/controller source).');
@@ -958,19 +967,47 @@ async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewerLaunchInputArtifactPath: launchInputArtifactPath,
-        reviewTreeStateSha256
+        reviewTreeStateSha256,
+        allowedAttestationStates: ['delegation_started']
     });
 
     const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
     const preparedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+    const artifactProviderInvocationId = getStringField(preparedArtifact, 'provider_invocation_id', 'providerInvocationId');
+    const artifactControllerInvocationId = getStringField(preparedArtifact, 'controller_invocation_id', 'controllerInvocationId');
+    if (providerInvocationId && artifactProviderInvocationId && providerInvocationId !== artifactProviderInvocationId) {
+        throw new Error('ProviderInvocationId must match the recorded reviewer delegation start artifact.');
+    }
+    if (controllerInvocationId && artifactControllerInvocationId && controllerInvocationId !== artifactControllerInvocationId) {
+        throw new Error('ControllerInvocationId must match the recorded reviewer delegation start artifact.');
+    }
+    const effectiveProviderInvocationId = providerInvocationId || artifactProviderInvocationId;
+    const effectiveControllerInvocationId = controllerInvocationId || artifactControllerInvocationId;
+    if (!effectiveProviderInvocationId && !effectiveControllerInvocationId) {
+        throw new Error(
+            'ProviderInvocationId or ControllerInvocationId is required. ' +
+            'Run record-reviewer-delegation-started immediately after launching the delegated reviewer.'
+        );
+    }
+    const delegationStartedAtUtc = getStringField(
+        preparedArtifact,
+        'delegation_started_at_utc',
+        'delegationStartedAtUtc'
+    );
+    if (!delegationStartedAtUtc) {
+        throw new Error(
+            'delegation_started_at_utc is required. Run record-reviewer-delegation-started immediately after launching the delegated reviewer before complete-reviewer-launch.'
+        );
+    }
+    const effectiveDelegationStartedAtUtc = delegationStartedAtUtc;
     const launchInputAttestation = resolveReviewerLaunchInputAttestation({
         repoRoot,
         launchArtifactPath,
         preparedArtifact,
         preparedLaunchArtifactSha256,
-        rawMode: options.launchInputMode,
-        rawSha256: options.launchInputSha256,
-        rawArtifactPath: options.launchInputArtifactPath
+        rawMode: options.launchInputMode || preparedArtifact.launch_input_mode,
+        rawSha256: options.launchInputSha256 || preparedArtifact.launch_input_sha256,
+        rawArtifactPath: options.launchInputArtifactPath || preparedArtifact.launch_input_artifact_path
     });
     const launchCompletedAtUtc = new Date().toISOString();
     const completedArtifact: Record<string, unknown> = {
@@ -983,6 +1020,8 @@ async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
         launch_input_attestation_source: 'complete-reviewer-launch',
         launch_input_verified_at_utc: launchCompletedAtUtc,
         launch_input_copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
+        delegation_started_at_utc: effectiveDelegationStartedAtUtc,
+        launched_at_utc: effectiveDelegationStartedAtUtc,
         launch_completed_at_utc: launchCompletedAtUtc
     };
     if (launchInputAttestation.artifactPath) {
@@ -992,12 +1031,11 @@ async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
         completedArtifact.launch_input_artifact_sha256 = launchInputAttestation.artifactSha256;
         completedArtifact.prepared_reviewer_launch_artifact_sha256 = launchInputAttestation.artifactSha256;
     }
-    if (providerInvocationId) {
-        completedArtifact.provider_invocation_id = providerInvocationId;
+    if (effectiveProviderInvocationId) {
+        completedArtifact.provider_invocation_id = effectiveProviderInvocationId;
     } else {
-        completedArtifact.controller_invocation_id = controllerInvocationId;
+        completedArtifact.controller_invocation_id = effectiveControllerInvocationId;
     }
-    completedArtifact.launched_at_utc = launchedAtUtc;
     if (options.freshContext === true) {
         completedArtifact.fresh_context = true;
     }
@@ -1010,14 +1048,15 @@ async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
     writeReviewArtifactJson(launchArtifactPath, completedArtifact);
     const completedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
 
-    const invocationId = providerInvocationId || controllerInvocationId;
-    const invocationIdLabel = providerInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
+    const invocationId = effectiveProviderInvocationId || effectiveControllerInvocationId;
+    const invocationIdLabel = effectiveProviderInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
     console.log(`REVIEWER_LAUNCH_COMPLETED: ${reviewType}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
     console.log(`LaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
     console.log(`LaunchArtifactSha256: ${completedLaunchArtifactSha256}`);
     console.log(`${invocationIdLabel}: ${invocationId}`);
-    console.log(`LaunchedAtUtc: ${launchedAtUtc}`);
+    console.log(`DelegationStartedAtUtc: ${effectiveDelegationStartedAtUtc}`);
+    console.log(`LaunchedAtUtc: ${effectiveDelegationStartedAtUtc}`);
     console.log(`LaunchCompletedAtUtc: ${launchCompletedAtUtc}`);
     console.log(`AttestationSource: ${attestationSource}`);
     console.log(`LaunchInputMode: ${launchInputAttestation.mode}`);
@@ -1051,10 +1090,259 @@ async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<void> {
     console.log('NextAction: run RecordInvocationCommand to attest the invocation.');
 }
 
+async function handleRecordReviewerDelegationStarted(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--review-type': { key: 'reviewType', type: 'string' },
+        '--review-context-path': { key: 'reviewContextPath', type: 'string' },
+        '--reviewer-execution-mode': { key: 'reviewerExecutionMode', type: 'string' },
+        '--reviewer-identity': { key: 'reviewerIdentity', type: 'string' },
+        '--reviewer-fallback-reason': { key: 'reviewerFallbackReason', type: 'string' },
+        '--reviewer-launch-artifact-path': { key: 'reviewerLaunchArtifactPath', type: 'string' },
+        '--provider-invocation-id': { key: 'providerInvocationId', type: 'string' },
+        '--controller-invocation-id': { key: 'controllerInvocationId', type: 'string' },
+        '--delegation-started-at-utc': { key: 'delegationStartedAtUtc', type: 'string' },
+        '--attestation-source': { key: 'attestationSource', type: 'string' },
+        '--launch-input-mode': { key: 'launchInputMode', type: 'string' },
+        '--launch-input-sha256': { key: 'launchInputSha256', type: 'string' },
+        '--launch-input-artifact-path': { key: 'launchInputArtifactPath', type: 'string' },
+        '--fresh-context': { key: 'freshContext', type: 'boolean' },
+        '--isolated-context': { key: 'isolatedContext', type: 'boolean' },
+        '--fork-context': { key: 'forkContext', type: 'boolean' },
+        '--task-mode-path': { key: 'taskModePath', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options: rawOptions } = parseOptions(gateArgv, defs, { allowPositionals: false });
+    const options = rawOptions as ParsedOptionsRecord;
+    const taskId = assertValidTaskId(options.taskId);
+    const reviewType = String(options.reviewType || '').trim().toLowerCase();
+    if (!reviewType) throw new Error('ReviewType is required.');
+
+    const repoRoot = normalizePathValue(options.repoRoot || '.');
+    assertReviewLifecycleGuard(repoRoot, taskId, 'record-reviewer-delegation-started', 'review_phase');
+    const preflightPath = resolveCanonicalPreflightArtifactPath(repoRoot, taskId);
+    const reviewsRoot = path.dirname(preflightPath);
+    const contextPath = resolveCanonicalReviewContextPath({
+        reviewsRoot,
+        taskId,
+        reviewType,
+        explicitPath: options.reviewContextPath ? String(options.reviewContextPath) : '',
+        repoRoot
+    });
+    if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
+        throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
+    }
+    const { reviewerExecutionMode, reviewerIdentity } = parseReviewerIdentity(
+        options,
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
+    );
+
+    const providerInvocationId = String(options.providerInvocationId || '').trim();
+    const controllerInvocationId = String(options.controllerInvocationId || '').trim();
+    if (!providerInvocationId && !controllerInvocationId) {
+        throw new Error('ProviderInvocationId or ControllerInvocationId is required (the actual delegated reviewer invocation id).');
+    }
+    if (providerInvocationId && controllerInvocationId) {
+        throw new Error('Provide either --provider-invocation-id or --controller-invocation-id, not both.');
+    }
+    if (Object.prototype.hasOwnProperty.call(options, 'delegationStartedAtUtc')) {
+        throw new Error(
+            'Caller-supplied --delegation-started-at-utc is not accepted. ' +
+            'Omit the flag so the gate records its own UTC timestamp immediately after provider launch.'
+        );
+    }
+    const attestationSource = normalizeReviewerLaunchAttestationSource(options.attestationSource);
+    if (!attestationSource) {
+        throw new Error('AttestationSource is required (provider/controller source).');
+    }
+    if (isForbiddenReviewerLaunchAttestationSource(attestationSource)) {
+        throw new Error(
+            `AttestationSource '${attestationSource}' is not a valid provider/controller-owned attestation source. ` +
+            'Use the actual provider or controller identifier (e.g., claude_task_tool_launch, codex_agent_launch).'
+        );
+    }
+    const freshContext = options.freshContext === true || options.isolatedContext === true || options.forkContext === false;
+    if (!freshContext) {
+        throw new Error(
+            'At least one of --fresh-context, --isolated-context, or --fork-context false must attest clean reviewer context.'
+        );
+    }
+
+    const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+        repoRoot,
+        taskId,
+        reviewType,
+        artifactPathValue: options.reviewerLaunchArtifactPath
+    });
+    const launchInputArtifactPath = resolveReviewerLaunchInputArtifactPath(launchArtifactPath);
+    if (!fs.existsSync(launchArtifactPath) || !fs.statSync(launchArtifactPath).isFile()) {
+        throw new Error(
+            `Reviewer launch artifact not found: ${normalizePath(launchArtifactPath)}. ` +
+            'Run prepare-reviewer-launch first.'
+        );
+    }
+
+    const contextSha256 = fileSha256(contextPath);
+    if (!contextSha256) {
+        throw new Error(`Reviewer delegation start requires a hashable review-context artifact: ${normalizePath(contextPath)}.`);
+    }
+    const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
+    assertReviewTreeStateFresh({
+        repoRoot,
+        reviewContext: parsedReviewContext,
+        contextPath,
+        gateName: 'record-reviewer-delegation-started'
+    });
+    const promptBinding = resolveReviewerPromptArtifactBinding({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'record-reviewer-delegation-started'
+    });
+    const handoffBindings = resolveReviewerHandoffBindings({
+        repoRoot,
+        contextPath,
+        reviewContext: parsedReviewContext,
+        gateName: 'record-reviewer-delegation-started'
+    });
+    const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
+    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
+    const timelineEvents = readDependencyTimelineEvents(timelinePath);
+    const routingEvent = findMatchingRoutingEvent(timelineEvents, reviewType, reviewerExecutionMode, reviewerIdentity, null);
+    if (!routingEvent) {
+        throw new Error(
+            `Reviewer delegation start requires current-cycle REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}' ` +
+            `and reviewer '${reviewerIdentity}'.`
+        );
+    }
+    const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
+    if (!routingEventProvenance) {
+        throw new Error(
+            `Reviewer delegation start requires integrity-backed REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}'.`
+        );
+    }
+    assertPreparedReviewerLaunchArtifact({
+        artifactPath: launchArtifactPath,
+        taskId,
+        reviewType,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewContextSha256: contextSha256,
+        routingEventSha256: routingEventProvenance.event_sha256,
+        reviewerPromptSha256: promptBinding.reviewerPromptSha256,
+        rolePromptSha256: handoffBindings.rolePromptSha256,
+        promptTemplateSha256: handoffBindings.promptTemplateSha256,
+        outputTemplateSha256: handoffBindings.outputTemplateSha256,
+        evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
+        reviewerLaunchInputArtifactPath: launchInputArtifactPath,
+        reviewTreeStateSha256
+    });
+
+    const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const preparedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+    const launchInputAttestation = resolveReviewerLaunchInputAttestation({
+        repoRoot,
+        launchArtifactPath,
+        preparedArtifact,
+        preparedLaunchArtifactSha256,
+        rawMode: options.launchInputMode,
+        rawSha256: options.launchInputSha256,
+        rawArtifactPath: options.launchInputArtifactPath
+    });
+    const delegationStartedAtUtc = new Date().toISOString();
+    const startedArtifact: Record<string, unknown> = {
+        ...preparedArtifact,
+        attestation_state: 'delegation_started',
+        attestation_source: attestationSource,
+        launch_input_mode: launchInputAttestation.mode,
+        launch_input_sha256: launchInputAttestation.sha256,
+        launch_input_attestation_source: 'record-reviewer-delegation-started',
+        launch_input_verified_at_utc: delegationStartedAtUtc,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
+        delegation_started_at_utc: delegationStartedAtUtc,
+        launched_at_utc: delegationStartedAtUtc
+    };
+    if (launchInputAttestation.artifactPath) {
+        startedArtifact.launch_input_artifact_path = normalizePath(launchInputAttestation.artifactPath);
+    }
+    if (launchInputAttestation.artifactSha256) {
+        startedArtifact.launch_input_artifact_sha256 = launchInputAttestation.artifactSha256;
+        startedArtifact.prepared_reviewer_launch_artifact_sha256 = launchInputAttestation.artifactSha256;
+    }
+    if (providerInvocationId) {
+        startedArtifact.provider_invocation_id = providerInvocationId;
+    } else {
+        startedArtifact.controller_invocation_id = controllerInvocationId;
+    }
+    if (options.freshContext === true) {
+        startedArtifact.fresh_context = true;
+    }
+    if (options.isolatedContext === true) {
+        startedArtifact.isolated_context = true;
+    }
+    if (options.forkContext !== undefined) {
+        startedArtifact.fork_context = options.forkContext;
+    }
+    writeReviewArtifactJson(launchArtifactPath, startedArtifact);
+    const startedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
+    const invocationId = providerInvocationId || controllerInvocationId;
+    const invocationIdLabel = providerInvocationId ? 'ProviderInvocationId' : 'ControllerInvocationId';
+    const startedEvent = await emitReviewerDelegationStartedEventAsync(
+        gateHelpers.joinOrchestratorPath(repoRoot, ''),
+        taskId,
+        reviewType,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        contextSha256,
+        routingEventProvenance.event_sha256,
+        {
+            launchDetails: {
+                reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
+                reviewer_launch_artifact_sha256: startedLaunchArtifactSha256,
+                reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
+                reviewer_launch_attestation_source: attestationSource,
+                launch_tool: getStringField(startedArtifact, 'launch_tool', 'launchTool'),
+                provider_invocation_id: providerInvocationId || null,
+                controller_invocation_id: controllerInvocationId || null,
+                launch_input_mode: launchInputAttestation.mode,
+                launch_input_sha256: launchInputAttestation.sha256,
+                launch_input_artifact_path: launchInputAttestation.artifactPath
+                    ? normalizePath(launchInputAttestation.artifactPath)
+                    : null,
+                launch_input_artifact_sha256: launchInputAttestation.artifactSha256,
+                copy_paste_reviewer_launch_prompt_sha256: launchInputAttestation.copyPasteReviewerLaunchPromptSha256,
+                launch_prepared_at_utc: getStringField(startedArtifact, 'launch_prepared_at_utc', 'launchPreparedAtUtc'),
+                delegation_started_at_utc: delegationStartedAtUtc,
+                launched_at_utc: delegationStartedAtUtc,
+                review_tree_state_sha256: reviewTreeStateSha256 || null
+            }
+        }
+    );
+    if (!startedEvent || taskEventAppendHasBlockingFailure(startedEvent, false)) {
+        throw new Error(
+            `Reviewer delegation start requires REVIEWER_DELEGATION_STARTED telemetry for '${reviewType}'. ` +
+            'The lifecycle event could not be persisted.'
+        );
+    }
+    console.log(`REVIEWER_DELEGATION_STARTED: ${reviewType}`);
+    console.log(`ReviewerIdentity: ${reviewerIdentity}`);
+    console.log(`LaunchArtifactPath: ${normalizePath(launchArtifactPath)}`);
+    console.log(`LaunchArtifactSha256: ${startedLaunchArtifactSha256}`);
+    console.log(`${invocationIdLabel}: ${invocationId}`);
+    console.log(`DelegationStartedAtUtc: ${delegationStartedAtUtc}`);
+    console.log(`LaunchInputMode: ${launchInputAttestation.mode}`);
+    console.log(`LaunchInputSha256: ${launchInputAttestation.sha256}`);
+    if (launchInputAttestation.artifactPath) {
+        console.log(`LaunchInputArtifactPath: ${normalizePath(launchInputAttestation.artifactPath)}`);
+    }
+    console.log('NextAction: after the delegated reviewer returns, run complete-reviewer-launch to record completion attestation.');
+}
+
 
     return {
         handleRecordReviewRouting,
         handlePrepareReviewerLaunch,
+        handleRecordReviewerDelegationStarted,
         handleCompleteReviewerLaunch
     };
 }

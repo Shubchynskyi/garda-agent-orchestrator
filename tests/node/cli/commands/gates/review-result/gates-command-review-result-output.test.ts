@@ -255,6 +255,7 @@ describe('gates command review result - review output', () => {
         assert.equal(receipt.reviewer_provenance?.attestation_type, 'reviewer_invocation_attestation');
         assert.equal(receipt.reviewer_provenance?.controller_event_type, 'REVIEWER_INVOCATION_ATTESTED');
         assert.equal(receipt.reviewer_provenance?.launch_prepared_at_utc, TEST_REVIEW_LAUNCH_PREPARED_AT_UTC);
+        assert.equal(receipt.reviewer_provenance?.delegation_started_at_utc, TEST_REVIEW_LAUNCHED_AT_UTC);
         assert.equal(receipt.reviewer_provenance?.launched_at_utc, TEST_REVIEW_LAUNCHED_AT_UTC);
         assert.equal(receipt.reviewer_provenance?.launch_completed_at_utc, TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC);
         assert.equal(receipt.reviewer_provenance?.invocation_attested_at_utc, TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC);

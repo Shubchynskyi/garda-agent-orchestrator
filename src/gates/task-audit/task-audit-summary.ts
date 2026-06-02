@@ -186,11 +186,15 @@ export interface FinalCloseoutReviewTimingAuditEntry {
     provider_invocation_id: string | null;
     reviewer_launch_attestation_source: string | null;
     launch_prepared_at_utc: string | null;
+    delegation_started_at_utc: string | null;
     launched_at_utc: string | null;
     launch_completed_at_utc: string | null;
     invocation_attested_at_utc: string | null;
     review_result_recorded_at_utc: string | null;
     review_output_source_mtime_utc: string | null;
+    delegation_to_result_ms: number | null;
+    delegation_to_source_mtime_ms: number | null;
+    gate_finalize_ms: number | null;
     launch_to_result_ms: number | null;
     launch_to_source_mtime_ms: number | null;
     hidden_timing_status: 'TRUSTED' | 'DISTRUSTED' | 'SKIPPED_REUSED';
@@ -472,6 +476,9 @@ function buildReviewTimingAuditEntry(
     const launchPreparedAtUtc = readAuditTimestamp(
         provenance?.launch_prepared_at_utc ?? invocationDetails?.launch_prepared_at_utc
     );
+    const delegationStartedAtUtc = readAuditTimestamp(
+        provenance?.delegation_started_at_utc ?? invocationDetails?.delegation_started_at_utc
+    );
     const launchedAtUtc = readAuditTimestamp(
         provenance?.launched_at_utc ?? invocationDetails?.launched_at_utc
     );
@@ -514,11 +521,15 @@ function buildReviewTimingAuditEntry(
         provider_invocation_id: readAuditString(invocationDetails?.provider_invocation_id),
         reviewer_launch_attestation_source: readAuditString(invocationDetails?.reviewer_launch_attestation_source),
         launch_prepared_at_utc: launchPreparedAtUtc,
+        delegation_started_at_utc: delegationStartedAtUtc,
         launched_at_utc: launchedAtUtc,
         launch_completed_at_utc: launchCompletedAtUtc,
         invocation_attested_at_utc: invocationAttestedAtUtc,
         review_result_recorded_at_utc: reviewResultRecordedAtUtc,
         review_output_source_mtime_utc: reviewOutputSourceMtimeUtc,
+        delegation_to_result_ms: elapsedMs(delegationStartedAtUtc, reviewResultRecordedAtUtc),
+        delegation_to_source_mtime_ms: elapsedMs(delegationStartedAtUtc, reviewOutputSourceMtimeUtc),
+        gate_finalize_ms: elapsedMs(launchCompletedAtUtc, reviewResultRecordedAtUtc),
         launch_to_result_ms: elapsedMs(launchedAtUtc, reviewResultRecordedAtUtc),
         launch_to_source_mtime_ms: elapsedMs(launchedAtUtc, reviewOutputSourceMtimeUtc),
         hidden_timing_status: reusedExistingReview
@@ -559,12 +570,13 @@ function buildReviewTimingAuditSummary(
         return null;
     }
     const compactEntries = entries.map((entry) => {
-        const resultMs = entry.launch_to_result_ms == null ? 'unknown' : `${entry.launch_to_result_ms}ms`;
-        const sourceMs = entry.launch_to_source_mtime_ms == null ? 'unknown' : `${entry.launch_to_source_mtime_ms}ms`;
+        const resultMs = entry.delegation_to_result_ms == null ? 'unknown' : `${entry.delegation_to_result_ms}ms`;
+        const sourceMs = entry.delegation_to_source_mtime_ms == null ? 'unknown' : `${entry.delegation_to_source_mtime_ms}ms`;
+        const finalizeMs = entry.gate_finalize_ms == null ? 'unknown' : `${entry.gate_finalize_ms}ms`;
         const flag = entry.hidden_timing_distrust_code
             ? `${entry.hidden_timing_status}:${entry.hidden_timing_distrust_code}`
             : entry.hidden_timing_status;
-        return `${entry.review_type}(${flag}, launch_to_result=${resultMs}, launch_to_source_mtime=${sourceMs})`;
+        return `${entry.review_type}(${flag}, delegation_to_result=${resultMs}, delegation_to_source_mtime=${sourceMs}, gate_finalize=${finalizeMs})`;
     });
     return {
         entries,

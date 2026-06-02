@@ -122,7 +122,7 @@ function buildFinalUserReportReviewLine(
     const normalizedVerdict = normalizeFinalUserReportVerdict(verdict);
     const durations = timingEntries
         .filter((entry) => !entry.reused_existing_review)
-        .map((entry) => entry.launch_to_result_ms)
+        .map((entry) => entry.delegation_to_result_ms)
         .filter((durationMs): durationMs is number =>
             durationMs != null && Number.isFinite(durationMs) && durationMs >= 0
         )
@@ -650,11 +650,13 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
                 `    - ${entry.review_type}: reviewer=${entry.reviewer_identity || 'unknown'} ` +
                 `provider=${entry.provider || 'unknown'} ` +
                 `provider_invocation=${entry.provider_invocation_id || 'unknown'} ` +
+                `delegation_started=${entry.delegation_started_at_utc || 'unknown'} ` +
                 `launched=${entry.launched_at_utc || 'unknown'} ` +
                 `result_recorded=${entry.review_result_recorded_at_utc || 'unknown'} ` +
                 `source_mtime=${entry.review_output_source_mtime_utc || 'unknown'} ` +
-                `launch_to_result=${entry.launch_to_result_ms == null ? 'unknown' : `${entry.launch_to_result_ms}ms`} ` +
-                `launch_to_source_mtime=${entry.launch_to_source_mtime_ms == null ? 'unknown' : `${entry.launch_to_source_mtime_ms}ms`} ` +
+                `delegation_to_result=${entry.delegation_to_result_ms == null ? 'unknown' : `${entry.delegation_to_result_ms}ms`} ` +
+                `delegation_to_source_mtime=${entry.delegation_to_source_mtime_ms == null ? 'unknown' : `${entry.delegation_to_source_mtime_ms}ms`} ` +
+                `gate_finalize=${entry.gate_finalize_ms == null ? 'unknown' : `${entry.gate_finalize_ms}ms`} ` +
                 `hidden_timing_status=${entry.hidden_timing_status}` +
                 `${entry.hidden_timing_distrust_code ? `:${entry.hidden_timing_distrust_code}` : ''}`
             );

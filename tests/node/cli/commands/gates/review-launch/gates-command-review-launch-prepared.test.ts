@@ -137,7 +137,9 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchArtifact.after_launch_required_updates.launch_input_artifact_path, '<ReviewerLaunchInputArtifactPath when launch_input_mode is launch_artifact_path>');
         assert.equal(launchArtifact.after_launch_required_updates.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
         assert.equal(fs.existsSync(launchInputArtifactPath), true);
-        assert.equal(fileSha256ForTest(launchInputArtifactPath), fileSha256ForTest(launchArtifactPath));
+        const pinnedInputArtifactSha256 = String(launchArtifact.reviewer_launch_input_artifact_sha256);
+        assert.equal(fileSha256ForTest(launchInputArtifactPath), pinnedInputArtifactSha256);
+        assert.notEqual(fileSha256ForTest(launchArtifactPath), pinnedInputArtifactSha256);
         assert.deepEqual(launchArtifact.preserve_prepared_fields, [
             'review_context_sha256',
             'routing_event_sha256',
@@ -150,7 +152,8 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             'review_tree_state_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
-            'prepared_launch_event_task_sequence'
+            'prepared_launch_event_task_sequence',
+            'reviewer_launch_input_artifact_sha256'
         ]);
         assert.ok(String(launchArtifact.record_invocation_command).includes('gate record-review-invocation'));
         assert.ok(String(launchArtifact.record_invocation_command).includes(`--reviewer-identity "${fixture.reviewerIdentity}"`));

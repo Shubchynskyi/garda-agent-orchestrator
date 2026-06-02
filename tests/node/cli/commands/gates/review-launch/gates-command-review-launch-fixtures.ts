@@ -308,6 +308,7 @@ function attestReviewerInvocationForTest(options: {
         review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedIntegrity.event_sha256,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
@@ -511,6 +512,37 @@ async function prepareReviewerLaunchForTest(options: {
     assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
 }
 
+async function recordReviewerDelegationStartedForTest(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewerIdentity: string;
+    launchArtifactPath: string;
+    providerInvocationId?: string;
+    controllerInvocationId?: string;
+    attestationSource?: string;
+}): Promise<void> {
+    const providerInvocationId = String(options.providerInvocationId || '').trim();
+    const controllerInvocationId = String(options.controllerInvocationId || '').trim();
+    const invocationArgs = controllerInvocationId
+        ? ['--controller-invocation-id', controllerInvocationId]
+        : ['--provider-invocation-id', providerInvocationId || 'test-invocation-305'];
+    const started = await runCliWithCapturedOutput([
+        'gate',
+        'record-reviewer-delegation-started',
+        '--task-id', options.taskId,
+        '--review-type', 'code',
+        '--repo-root', options.repoRoot,
+        '--reviewer-execution-mode', 'delegated_subagent',
+        '--reviewer-identity', options.reviewerIdentity,
+        '--reviewer-launch-artifact-path', options.launchArtifactPath,
+        ...invocationArgs,
+        '--attestation-source', options.attestationSource || 'test_provider_controller',
+        ...launchArtifactInputArgsForTest(options.launchArtifactPath),
+        '--fork-context', 'false'
+    ], { cwd: options.repoRoot });
+    assert.equal(started.exitCode, 0, started.errors.join('\n'));
+}
+
 function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void {
     const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
     const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
@@ -527,6 +559,7 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
         launch_input_artifact_sha256: preparedLaunchArtifactSha256,
         prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
         launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedArtifact.copy_paste_reviewer_launch_prompt_sha256,
+        delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z',
         fork_context: false
     }, null, 2) + '\n', 'utf8');
@@ -582,6 +615,7 @@ export {
     seedRoutedReviewerLaunchFixture,
     seedPromptBoundReviewFixture,
     prepareReviewerLaunchForTest,
+    recordReviewerDelegationStartedForTest,
     completeReviewerLaunchArtifactForTest,
     fileSha256ForTest,
     launchArtifactInputArgsForTest,

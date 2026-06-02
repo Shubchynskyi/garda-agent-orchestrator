@@ -123,6 +123,18 @@ function resolveCopyPasteReviewerLaunchPromptSha256(
     return copyPastePromptSha256;
 }
 
+function getPinnedReviewerLaunchInputArtifactSha256(
+    preparedArtifact: Record<string, unknown>
+): string {
+    return normalizeSha256Hex(
+        getStringField(
+            preparedArtifact,
+            'reviewer_launch_input_artifact_sha256',
+            'reviewerLaunchInputArtifactSha256'
+        )
+    );
+}
+
 export function resolveReviewerLaunchInputAttestation(options: {
     repoRoot: string;
     launchArtifactPath: string;
@@ -153,6 +165,7 @@ export function resolveReviewerLaunchInputAttestation(options: {
 
     let launchInputArtifactPath: string | null = null;
     let launchInputArtifactSha256: string | null = null;
+    let expectedLaunchInputArtifactSha256 = '';
     if (mode === REVIEWER_LAUNCH_INPUT_MODE_COPY_PASTE_PROMPT) {
         if (launchInputSha256 && copyPasteReviewerLaunchPromptSha256 && launchInputSha256 !== copyPasteReviewerLaunchPromptSha256) {
             violations.push('launch_input_sha256 must match copy_paste_reviewer_launch_prompt_sha256 for copy_paste_prompt mode');
@@ -182,6 +195,20 @@ export function resolveReviewerLaunchInputAttestation(options: {
                     violations.push('launch_input_artifact_path must match ReviewerLaunchInputArtifactPath or ReviewerLaunchArtifactPath');
                 } else {
                     launchInputArtifactPath = resolvedArtifactPath;
+                    if (normalizedResolvedArtifactPath === normalizedPreparedInputArtifactPath) {
+                        const pinnedInputArtifactSha256 = getPinnedReviewerLaunchInputArtifactSha256(
+                            options.preparedArtifact
+                        );
+                        if (!pinnedInputArtifactSha256 || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)) {
+                            violations.push(
+                                'reviewer_launch_input_artifact_sha256 is required for ReviewerLaunchInputArtifactPath attestation'
+                            );
+                        } else {
+                            expectedLaunchInputArtifactSha256 = pinnedInputArtifactSha256;
+                        }
+                    } else {
+                        expectedLaunchInputArtifactSha256 = options.preparedLaunchArtifactSha256;
+                    }
                 }
             }
         }
@@ -193,11 +220,13 @@ export function resolveReviewerLaunchInputAttestation(options: {
                 violations.push('launch_input_artifact_path must point to a hashable reviewer launch input artifact');
             } else {
                 launchInputArtifactSha256 = resolvedInputArtifactSha256;
-                if (resolvedInputArtifactSha256 !== options.preparedLaunchArtifactSha256) {
-                    violations.push('launch_input_artifact_sha256 must match the current prepared reviewer launch artifact sha256');
+                if (!expectedLaunchInputArtifactSha256) {
+                    violations.push('expected reviewer launch input artifact sha256 could not be resolved');
+                } else if (resolvedInputArtifactSha256 !== expectedLaunchInputArtifactSha256) {
+                    violations.push('launch_input_artifact_sha256 must match the selected reviewer launch input artifact sha256');
                 }
                 if (launchInputSha256 && launchInputSha256 !== resolvedInputArtifactSha256) {
-                    violations.push('launch_input_sha256 must match the current prepared reviewer launch input artifact sha256');
+                    violations.push('launch_input_sha256 must match the selected reviewer launch input artifact sha256');
                 }
             }
         }

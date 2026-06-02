@@ -263,6 +263,7 @@ export { formatNextStepText } from './next-step-command-formatters';
 import {
     buildCompleteReviewerLaunchCommand,
     buildPrepareReviewerLaunchCommand,
+    buildRecordReviewerDelegationStartedCommand,
     buildRecordReviewResultCommand,
     buildRecordReviewerInvocationCommand,
     buildRestartReviewCycleCommand,
@@ -4573,6 +4574,18 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 prepareLaunch: buildCommand(
                     'Prepare delegated reviewer launch metadata',
                     buildPrepareReviewerLaunchCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, launchArtifactPath, taskModePath)
+                ),
+                recordDelegationStarted: buildCommand(
+                    'Record delegated reviewer start',
+                    buildRecordReviewerDelegationStartedCommand({
+                        cliPrefix,
+                        taskId,
+                        reviewType,
+                        reviewerIdentity,
+                        launchArtifactPath,
+                        launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
+                        launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256
+                    })
                 ),
                 completeLaunch: buildCommand(
                     'Complete delegated reviewer launch metadata',

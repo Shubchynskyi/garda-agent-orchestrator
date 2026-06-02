@@ -101,6 +101,36 @@ export function buildPrepareReviewerLaunchCommand(
     ], taskModePath);
 }
 
+export function buildRecordReviewerDelegationStartedCommand(params: {
+    cliPrefix: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    launchArtifactPath: string;
+    launchInputArtifactPath?: string | null;
+    launchInputArtifactSha256?: string | null;
+}): string {
+    const launchInputArtifactSha256 = String(params.launchInputArtifactSha256 || '').trim()
+        || '<prepared-launch-artifact-sha256>';
+    const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
+        || params.launchArtifactPath;
+    return [
+        `${params.cliPrefix} gate record-reviewer-delegation-started`,
+        `--task-id "${params.taskId}"`,
+        `--review-type "${params.reviewType}"`,
+        '--reviewer-execution-mode "delegated_subagent"',
+        `--reviewer-identity "${params.reviewerIdentity}"`,
+        `--reviewer-launch-artifact-path "${params.launchArtifactPath}"`,
+        '--provider-invocation-id "<actual-invocation-id>"',
+        '--attestation-source "<provider-source>"',
+        '--launch-input-mode "launch_artifact_path"',
+        `--launch-input-artifact-path "${launchInputArtifactPath}"`,
+        `--launch-input-sha256 "${launchInputArtifactSha256}"`,
+        '--fork-context false',
+        '--repo-root "."'
+    ].join(' ');
+}
+
 export function buildCompleteReviewerLaunchCommand(params: {
     cliPrefix: string;
     taskId: string;
@@ -122,7 +152,6 @@ export function buildCompleteReviewerLaunchCommand(params: {
         '--reviewer-execution-mode "delegated_subagent"',
         `--reviewer-identity "${params.reviewerIdentity}"`,
         `--reviewer-launch-artifact-path "${params.launchArtifactPath}"`,
-        '--provider-invocation-id "<actual-invocation-id>"',
         '--attestation-source "<provider-source>"',
         '--launch-input-mode "launch_artifact_path"',
         `--launch-input-artifact-path "${launchInputArtifactPath}"`,

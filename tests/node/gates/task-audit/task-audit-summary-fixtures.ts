@@ -348,7 +348,12 @@ export function makeReviewerInvocationProvenance(
         reviewer_execution_mode: 'delegated_subagent',
         reviewer_identity: reviewerIdentity,
         review_context_sha256: reviewContextSha256,
-        routing_event_sha256: 'd'.repeat(64)
+        routing_event_sha256: 'd'.repeat(64),
+        launch_prepared_at_utc: '2026-04-29T00:00:06.000Z',
+        delegation_started_at_utc: '2026-04-29T00:00:07.000Z',
+        launched_at_utc: '2026-04-29T00:00:07.000Z',
+        launch_completed_at_utc: '2026-04-29T00:00:42.000Z',
+        invocation_attested_at_utc: '2026-04-29T00:00:43.000Z'
     };
 }
 
@@ -496,6 +501,8 @@ export function writeCurrentIndependentReviewFixture(options: {
         reviewer_fallback_reason: null,
         reviewer_provenance: provenance,
         trust_level: 'INDEPENDENT_AUDITED',
+        recorded_at_utc: '2026-04-29T00:01:00.000Z',
+        review_result_recorded_at_utc: '2026-04-29T00:01:00.000Z',
         ...(options.receiptOverrides || {})
     });
     writeArtifact(options.reviewsDir, options.taskId, '-review-gate.json', {

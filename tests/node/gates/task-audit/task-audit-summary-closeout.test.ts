@@ -85,11 +85,15 @@ describe('gates/task-audit-summary', () => {
             provider_invocation_id: `codex-${reviewType}-run`,
             reviewer_launch_attestation_source: 'codex.spawn_agent',
             launch_prepared_at_utc: null,
+            delegation_started_at_utc: null,
             launched_at_utc: null,
             launch_completed_at_utc: null,
             invocation_attested_at_utc: null,
             review_result_recorded_at_utc: null,
             review_output_source_mtime_utc: null,
+            delegation_to_result_ms: durationMs,
+            delegation_to_source_mtime_ms: null,
+            gate_finalize_ms: null,
             launch_to_result_ms: durationMs,
             launch_to_source_mtime_ms: null,
             hidden_timing_status: 'TRUSTED',
@@ -1001,11 +1005,15 @@ describe('gates/task-audit-summary', () => {
                             provider_invocation_id: 'agent:t149-db-reviewer',
                             reviewer_launch_attestation_source: 'provider_subagent',
                             launch_prepared_at_utc: null,
+                            delegation_started_at_utc: null,
                             launched_at_utc: null,
                             launch_completed_at_utc: null,
                             invocation_attested_at_utc: null,
                             review_result_recorded_at_utc: null,
                             review_output_source_mtime_utc: null,
+                            delegation_to_result_ms: 11_840,
+                            delegation_to_source_mtime_ms: null,
+                            gate_finalize_ms: null,
                             launch_to_result_ms: 11_840,
                             launch_to_source_mtime_ms: null,
                             hidden_timing_status: 'DISTRUSTED',
@@ -1024,11 +1032,15 @@ describe('gates/task-audit-summary', () => {
                             provider_invocation_id: 'codex-run-1',
                             reviewer_launch_attestation_source: 'codex.spawn_agent',
                             launch_prepared_at_utc: null,
+                            delegation_started_at_utc: null,
                             launched_at_utc: null,
                             launch_completed_at_utc: null,
                             invocation_attested_at_utc: null,
                             review_result_recorded_at_utc: null,
                             review_output_source_mtime_utc: null,
+                            delegation_to_result_ms: 76_522,
+                            delegation_to_source_mtime_ms: null,
+                            gate_finalize_ms: null,
                             launch_to_result_ms: 76_522,
                             launch_to_source_mtime_ms: null,
                             hidden_timing_status: 'TRUSTED',
@@ -1153,6 +1165,32 @@ describe('gates/task-audit-summary', () => {
             assert.ok(renderedReport.includes('code(2): passed (1m 05s / 1m 10s)'));
             assert.ok(renderedReport.includes('test(1): passed (0m 42s)'));
             assert.ok(!renderedReport.includes('0m 08s'));
+        });
+
+        it('renders delegated reviewer wall-clock duration instead of gate finalization seconds', () => {
+            const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+                implementation_summary: {
+                    review_verdicts: { api: 'API REVIEW PASSED' },
+                    docs_updated: false,
+                    changed_files_count: 2,
+                    changed_lines_total: 20,
+                    scope_category: 'mixed',
+                    active_profile: 'strict'
+                },
+                review_timing_audit: {
+                    entries: [
+                        makeFinalUserReportTimingEntry('api', 125_000, {
+                            gate_finalize_ms: 1_000,
+                            launch_to_result_ms: 1_000,
+                            launch_to_source_mtime_ms: 1_000
+                        })
+                    ],
+                    visible_summary_line: 'Review timing audit: api(TRUSTED, delegation_to_result=125000ms, gate_finalize=1000ms).'
+                }
+            }));
+
+            assert.ok(renderedReport.includes('api(1): passed (2m 05s)'));
+            assert.ok(!renderedReport.includes('0m 01s'));
         });
 
         it('renders the final passed review timing after a failed-then-passed review lifecycle', () => {

@@ -281,12 +281,13 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.ok(!helpOutput.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
     });
 
-    it('includes real-subagent hard-stop guidance in complete-reviewer-launch help', () => {
-        const helpOutput = stripAnsi(buildGateHelpText('complete-reviewer-launch', path.resolve('.')));
+    it('includes real-subagent hard-stop guidance in delegation-start help', () => {
+        const helpOutput = stripAnsi(buildGateHelpText('record-reviewer-delegation-started', path.resolve('.')));
 
         assert.ok(helpOutput.includes('Launch a real subagent using built-in tools'));
         assert.ok(helpOutput.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(helpOutput.includes('this is expected behavior in this repository'));
+        assert.ok(helpOutput.includes('complete-reviewer-launch only after the reviewer returns'));
     });
 
     it('does not treat --help as a standalone help request when it is a string option value', async () => {

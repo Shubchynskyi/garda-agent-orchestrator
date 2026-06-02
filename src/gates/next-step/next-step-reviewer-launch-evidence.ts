@@ -158,6 +158,30 @@ function hasCompletedReviewerLaunchEvidence(launchArtifact: Record<string, unkno
     );
 }
 
+function hasDelegationStartedEvidence(launchArtifact: Record<string, unknown>): boolean {
+    const providerInvocationId = getArtifactStringField(
+        launchArtifact,
+        'provider_invocation_id',
+        'providerInvocationId',
+        'controller_invocation_id',
+        'controllerInvocationId'
+    );
+    const freshContext = launchArtifact.fresh_context === true
+        || launchArtifact.freshContext === true
+        || launchArtifact.isolated_context === true
+        || launchArtifact.isolatedContext === true
+        || launchArtifact.fork_context === false
+        || launchArtifact.forkContext === false;
+    return Boolean(
+        getArtifactStringField(launchArtifact, 'launch_tool', 'launchTool')
+        && providerInvocationId
+        && getArtifactStringField(launchArtifact, 'delegation_started_at_utc', 'delegationStartedAtUtc')
+        && getArtifactStringField(launchArtifact, 'launched_at_utc', 'launchedAtUtc')
+        && freshContext
+        && hasReviewerLaunchInputEvidence(launchArtifact)
+    );
+}
+
 function resolveReviewerLaunchArtifactPathFromTelemetry(repoRoot: string, rawPath: unknown): string | null {
     const pathValue = String(rawPath || '').trim();
     if (!pathValue) {
@@ -316,6 +340,12 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
             if (evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE && attestationState === 'prepared') {
                 artifactState = 'prepared';
             } else if (
+                evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE
+                && attestationState === 'delegation_started'
+                && hasDelegationStartedEvidence(launchArtifact)
+            ) {
+                artifactState = 'delegation_started';
+            } else if (
                 evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
                 && attestationState === 'launched'
                 && hasCompletedReviewerLaunchEvidence(launchArtifact)
@@ -340,8 +370,17 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 if (!launchInputArtifactPath || !fileExists(launchInputArtifactPath)) {
                     continue;
                 }
+                const pinnedInputArtifactSha256 = getArtifactStringField(
+                    launchArtifact,
+                    'reviewer_launch_input_artifact_sha256',
+                    'reviewerLaunchInputArtifactSha256'
+                ).toLowerCase();
                 launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
-                if (!launchInputArtifactSha256 || launchInputArtifactSha256 !== launchArtifactSha256) {
+                if (
+                    !launchInputArtifactSha256
+                    || !/^[0-9a-f]{64}$/.test(pinnedInputArtifactSha256)
+                    || launchInputArtifactSha256 !== pinnedInputArtifactSha256
+                ) {
                     continue;
                 }
             }
@@ -514,9 +553,11 @@ export function buildReviewerReadinessChainSummary(
         ? 'blocked until routing'
         : launchArtifactState === 'prepared'
             ? 'prepared'
-            : launchArtifactState === 'launched'
-                ? 'launched'
-                : 'missing or stale';
+            : launchArtifactState === 'delegation_started'
+                ? 'delegation started'
+                : launchArtifactState === 'launched'
+                    ? 'launched'
+                    : 'missing or stale';
     const invocationCurrent = Boolean(
         state
         && timelineHasDelegatedReviewInvocationForCurrentContext(repoRoot, eventsRoot, taskId, state)
@@ -525,6 +566,8 @@ export function buildReviewerReadinessChainSummary(
         ? 'attested'
         : launchArtifactState === 'launched'
             ? 'missing current-cycle attestation'
+            : launchArtifactState === 'delegation_started'
+                ? 'blocked until launch completion'
             : launchArtifactState === 'prepared'
                 ? 'blocked until launch completion'
                 : 'blocked until launch artifact';

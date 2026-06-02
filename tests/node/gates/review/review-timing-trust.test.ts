@@ -22,6 +22,7 @@ function invocationEvent(overrides: Record<string, unknown> = {}) {
             provider_invocation_id: 'provider-run-1',
             reviewer_launch_attestation_source: 'codex-subagent',
             launch_prepared_at_utc: '2026-05-17T20:00:00.000Z',
+            delegation_started_at_utc: '2026-05-17T20:00:01.000Z',
             launched_at_utc: '2026-05-17T20:00:01.000Z',
             launch_completed_at_utc: '2026-05-17T20:00:02.000Z',
             invocation_attested_at_utc: '2026-05-17T20:00:03.000Z',
@@ -42,6 +43,7 @@ function provenance(overrides: Record<string, unknown> = {}) {
         prev_event_sha256: ROUTING_SHA,
         event_sha256: INVOCATION_SHA,
         launch_prepared_at_utc: '2026-05-17T20:00:00.000Z',
+        delegation_started_at_utc: '2026-05-17T20:00:01.000Z',
         launched_at_utc: '2026-05-17T20:00:01.000Z',
         launch_completed_at_utc: '2026-05-17T20:00:02.000Z',
         invocation_attested_at_utc: '2026-05-17T20:00:03.000Z',
@@ -90,6 +92,7 @@ test('review timing trust rejects Chronobot-shaped generic Antigravity review me
         reviewType: 'db',
         reusedExistingReview: false,
         reviewerProvenance: provenance({
+            delegation_started_at_utc: '2026-05-28T09:05:34.903Z',
             launched_at_utc: '2026-05-28T09:05:34.903Z',
             launch_completed_at_utc: '2026-05-28T09:05:35.095Z',
             invocation_attested_at_utc: '2026-05-28T09:05:35.300Z'
@@ -102,6 +105,7 @@ test('review timing trust rejects Chronobot-shaped generic Antigravity review me
                 reviewer_session_id: 'agent:t088-db-reviewer-v1',
                 provider_invocation_id: 'agent:t088-db-reviewer-v1',
                 reviewer_launch_attestation_source: 'provider_subagent',
+                delegation_started_at_utc: '2026-05-28T09:05:34.903Z',
                 launched_at_utc: '2026-05-28T09:05:34.903Z',
                 launch_completed_at_utc: '2026-05-28T09:05:35.095Z',
                 invocation_attested_at_utc: '2026-05-28T09:05:35.300Z'

@@ -172,6 +172,7 @@ const reviewRoutingLaunchHandlers = createReviewRoutingLaunchHandlers({
 export const {
     handleRecordReviewRouting,
     handlePrepareReviewerLaunch,
+    handleRecordReviewerDelegationStarted,
     handleCompleteReviewerLaunch
 } = reviewRoutingLaunchHandlers;
 

@@ -750,6 +750,7 @@ function writeReviewEvidence(
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: `test-${reviewType}-invocation`,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             ...launchInputEvidenceFixture(taskId, reviewType),
@@ -783,6 +784,7 @@ function writeReviewEvidence(
                 reviewer_launch_tool: 'test-subagent-spawn',
                 provider_invocation_id: `test-${reviewType}-invocation`,
                 launch_prepared_at_utc: launchPreparedAtUtc,
+                delegation_started_at_utc: launchedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
                 launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
@@ -818,6 +820,7 @@ function writeReviewEvidence(
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             invocation_attested_at_utc: invocationAttestedAtUtc

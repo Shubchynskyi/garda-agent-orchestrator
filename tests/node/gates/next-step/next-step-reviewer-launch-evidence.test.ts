@@ -183,7 +183,7 @@ function seedPreparedLaunchArtifact(repoRoot: string, contextPath: string): {
         launch_binding_sha256: launchBindingSha256,
         reviewer_launch_artifact_path: launchArtifactPath
     });
-    const launchArtifact = {
+    const launchArtifactBase = {
         schema_version: 1,
         evidence_type: 'delegated_reviewer_launch_preparation',
         attestation_state: 'prepared',
@@ -197,8 +197,12 @@ function seedPreparedLaunchArtifact(repoRoot: string, contextPath: string): {
         prepared_launch_event_sha256: preparedEvent.event_sha256,
         reviewer_launch_input_artifact_path: launchInputArtifactPath
     };
-    writeJson(launchArtifactPath, launchArtifact);
-    writeJson(launchInputArtifactPath, launchArtifact);
+    writeJson(launchInputArtifactPath, launchArtifactBase);
+    const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+    writeJson(launchArtifactPath, {
+        ...launchArtifactBase,
+        reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256
+    });
     return {
         launchArtifactPath,
         launchArtifactSha256: fileSha256(launchArtifactPath),
@@ -258,7 +262,10 @@ describe('next-step reviewer launch evidence helpers', () => {
 
         assert.equal(timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot(repoRoot), TASK_ID, REVIEW_TYPE, REVIEWER_IDENTITY), true);
         assert.equal(artifactEvidence.state, 'prepared');
-        assert.equal(artifactEvidence.launchInputArtifactSha256, artifactEvidence.sha256);
+        assert.equal(artifactEvidence.launchInputArtifactSha256, fileSha256(
+            reviewScratchPath(repoRoot, TASK_ID, REVIEW_TYPE, 'reviewer-launch-input.json')
+        ));
+        assert.notEqual(artifactEvidence.launchInputArtifactSha256, artifactEvidence.sha256);
         assert.match(
             buildReviewerReadinessChainSummary(
                 repoRoot,
