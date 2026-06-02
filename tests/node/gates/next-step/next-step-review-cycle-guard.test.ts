@@ -1,4 +1,4 @@
-import { describe, it, afterEach } from 'node:test';
+﻿import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -745,8 +745,8 @@ function writeReviewEvidence(
     });
     const launchPreparedAtUtc = '2026-04-28T00:00:00.000Z';
     const launchedAtUtc = '2026-04-28T00:00:01.000Z';
-    const launchCompletedAtUtc = '2026-04-28T00:00:02.000Z';
-    const invocationAttestedAtUtc = '2026-04-28T00:00:03.000Z';
+    const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
+    const invocationAttestedAtUtc = '2026-04-28T00:00:13.000Z';
     const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
     let reviewerLaunchArtifactSha256 = '';
     if (options.includeLaunchArtifact !== false) {

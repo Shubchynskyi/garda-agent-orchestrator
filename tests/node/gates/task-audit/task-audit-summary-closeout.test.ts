@@ -1093,7 +1093,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(!renderedReport.includes('PathMode:'));
             assert.ok(!renderedReport.includes('Commit Readiness:'));
             assert.ok(!renderedReport.includes('Operator Question:'));
-            assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nWARNING: suspicious or insufficiently verified review timing\/evidence detected for db\..*$/u);
+            assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nWARNING: suspicious or insufficiently verified review timing\/evidence detected for db\(too_short_without_strong_provider_evidence\)\..*$/u);
         });
 
         it('renders no-review-required final user reports without review timing warnings', () => {
@@ -1137,7 +1137,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(!renderedReport.includes('Status: READY'));
         });
 
-        it('renders actual review attempt durations and ignores reused materialization timings', () => {
+        it('renders the latest actual review attempt duration and ignores reused materialization timings', () => {
             const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
                 implementation_summary: {
                     review_verdicts: { code: 'REVIEW PASSED', test: 'TEST REVIEW PASSED' },
@@ -1162,8 +1162,9 @@ describe('gates/task-audit-summary', () => {
                 }
             }));
 
-            assert.ok(renderedReport.includes('code(2): passed (1m 05s / 1m 10s)'));
+            assert.ok(renderedReport.includes('code(1): passed (1m 10s)'));
             assert.ok(renderedReport.includes('test(1): passed (0m 42s)'));
+            assert.ok(!renderedReport.includes('1m 05s'));
             assert.ok(!renderedReport.includes('0m 08s'));
         });
 
@@ -1193,7 +1194,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(!renderedReport.includes('0m 01s'));
         });
 
-        it('renders the final passed review timing after a failed-then-passed review lifecycle', () => {
+        it('renders only the latest review timing after a failed-then-passed review lifecycle', () => {
             const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
                 implementation_summary: {
                     review_verdicts: { test: 'TEST REVIEW PASSED' },
@@ -1213,7 +1214,8 @@ describe('gates/task-audit-summary', () => {
             }));
 
             assert.ok(renderedReport.includes('Profile: strict'));
-            assert.ok(renderedReport.includes('test(2): passed (0m 50s / 2m 05s)'));
+            assert.ok(renderedReport.includes('test(1): passed (2m 05s)'));
+            assert.ok(!renderedReport.includes('0m 50s'));
             assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone$/u);
         });
 

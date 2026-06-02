@@ -15,7 +15,8 @@ const TIMING_ENFORCED_REVIEW_TYPES = new Set([
     'infra',
     'dependency'
 ]);
-const SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS = 30_000;
+const SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS = 10_000;
+const MIN_DELEGATED_WORK_WINDOW_MS = 10_000;
 const FUTURE_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
 export type HiddenReviewTimingDistrustCode =
@@ -23,6 +24,7 @@ export type HiddenReviewTimingDistrustCode =
     | 'future_timestamp'
     | 'impossible_ordering'
     | 'duplicate_provider_invocation_id'
+    | 'too_short_delegated_work_window'
     | 'too_short_without_strong_provider_evidence';
 
 export interface ReviewTimingTrustEventLike {
@@ -324,12 +326,20 @@ export function evaluateHiddenReviewTimingTrust(options: {
     }
 
     const delegationToResultMs = Number(reviewResultRecordedAtMs) - Number(delegationStartedAtMs);
+    const delegationToLaunchCompletionMs = Number(launchCompletedAtMs) - Number(delegationStartedAtMs);
+    const strongProviderInvocationEvidence = hasStrongProviderInvocationEvidence(details);
     if (
-        !hasStrongProviderInvocationEvidence(details)
+        !strongProviderInvocationEvidence
         && delegationToResultMs >= 0
         && delegationToResultMs < SHORT_REVIEW_WITHOUT_STRONG_PROVIDER_EVIDENCE_MS
     ) {
         return distrust('too_short_without_strong_provider_evidence');
+    }
+    if (
+        delegationToLaunchCompletionMs >= 0
+        && delegationToLaunchCompletionMs < MIN_DELEGATED_WORK_WINDOW_MS
+    ) {
+        return distrust('too_short_delegated_work_window');
     }
 
     return { trusted: true, code: null, message: null };

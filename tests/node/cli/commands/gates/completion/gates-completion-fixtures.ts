@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import {
     runEnterTaskModeCommand,
@@ -10,7 +11,11 @@ import {
 } from '../../../../../../src/cli/commands/gates';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { buildReviewTreeState } from '../../../../../../src/gates/review/review-tree-state';
+import { resolveDefaultReviewScratchPath } from '../../../../../../src/gates/review/review-scratch-paths';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
+import {
+    buildReviewerLaunchBindingSha256
+} from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
 import {
     computeCodeReviewScopeFingerprint,
     computeReviewContextReuseHash,
@@ -143,12 +148,137 @@ const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
 
 const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
 const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
-const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:02.000Z';
-const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:03.000Z';
+const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:12.000Z';
+const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:13.000Z';
 
 function buildTestProviderInvocationId(taskId: string, reviewKey: string, reviewerIdentity: string): string {
     const normalizedIdentity = reviewerIdentity.replace(/^agent:/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
     return `test-${taskId}-${reviewKey}-${normalizedIdentity}`;
+}
+
+function buildFixtureLaunchInputEvidence(taskId: string, reviewKey: string): {
+    copy_paste_reviewer_launch_prompt: string;
+    copy_paste_reviewer_launch_prompt_sha256: string;
+    launch_input_mode: 'copy_paste_prompt';
+    launch_input_sha256: string;
+    launch_input_copy_paste_reviewer_launch_prompt_sha256: string;
+    reviewer_prompt_sha256: string;
+    role_prompt_sha256: string;
+    prompt_template_sha256: string;
+    output_template_sha256: string;
+    evidence_manifest_sha256: string;
+} {
+    const copyPastePrompt = `Delegated ${reviewKey} reviewer launch prompt for ${taskId}.`;
+    const copyPastePromptSha256 = createHash('sha256').update(copyPastePrompt, 'utf8').digest('hex');
+    return {
+        copy_paste_reviewer_launch_prompt: copyPastePrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        launch_input_mode: 'copy_paste_prompt',
+        launch_input_sha256: copyPastePromptSha256,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        reviewer_prompt_sha256: createHash('sha256').update(`reviewer-prompt:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        role_prompt_sha256: createHash('sha256').update(`role-prompt:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        prompt_template_sha256: createHash('sha256').update(`prompt-template:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        output_template_sha256: createHash('sha256').update(`output-template:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        evidence_manifest_sha256: createHash('sha256').update(`evidence-manifest:${taskId}:${reviewKey}`, 'utf8').digest('hex')
+    };
+}
+
+function seedCompletedReviewerLaunchFixture(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewKey: string;
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+}): {
+    launchArtifactPath: string;
+    launchArtifactSha256: string;
+    launchInputMode: 'copy_paste_prompt';
+    launchInputSha256: string;
+    copyPastePromptSha256: string;
+    providerInvocationId: string;
+    launchTool: string;
+    attestationSource: string;
+} {
+    const launchInputEvidence = buildFixtureLaunchInputEvidence(options.taskId, options.reviewKey);
+    const providerInvocationId = buildTestProviderInvocationId(options.taskId, options.reviewKey, options.reviewerIdentity);
+    const launchTool = 'test-subagent-spawn';
+    const attestationSource = 'test-subagent-spawn';
+    const launchArtifactPath = resolveDefaultReviewScratchPath(
+        options.repoRoot,
+        options.taskId,
+        options.reviewKey,
+        'reviewer-launch.json'
+    );
+    fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
+    const launchBindingSha256 = buildReviewerLaunchBindingSha256({
+        taskId: options.taskId,
+        reviewType: options.reviewKey,
+        reviewerExecutionMode: 'delegated_subagent',
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256: options.reviewContextSha256,
+        routingEventSha256: options.routingEventSha256,
+        reviewerPromptSha256: launchInputEvidence.reviewer_prompt_sha256
+    });
+    const preparedEvent = appendTaskEvent(
+        path.join(options.repoRoot, 'garda-agent-orchestrator'),
+        options.taskId,
+        'REVIEWER_LAUNCH_PREPARED',
+        'INFO',
+        'reviewer launch prepared',
+        {
+            task_id: options.taskId,
+            review_type: options.reviewKey,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: options.reviewerIdentity,
+            reviewer_identity: options.reviewerIdentity,
+            review_context_sha256: options.reviewContextSha256,
+            routing_event_sha256: options.routingEventSha256,
+            reviewer_prompt_sha256: launchInputEvidence.reviewer_prompt_sha256,
+            role_prompt_sha256: launchInputEvidence.role_prompt_sha256,
+            prompt_template_sha256: launchInputEvidence.prompt_template_sha256,
+            output_template_sha256: launchInputEvidence.output_template_sha256,
+            evidence_manifest_sha256: launchInputEvidence.evidence_manifest_sha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/')
+        },
+        { passThru: true }
+    );
+    const launchArtifact = {
+        schema_version: 1,
+        evidence_type: 'delegated_reviewer_launch',
+        attestation_state: 'launched',
+        task_id: options.taskId,
+        review_type: options.reviewKey,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: options.reviewerIdentity,
+        reviewer_session_id: options.reviewerIdentity,
+        review_context_sha256: options.reviewContextSha256,
+        routing_event_sha256: options.routingEventSha256,
+        launch_binding_sha256: launchBindingSha256,
+        prepared_launch_event_sha256: String(preparedEvent?.integrity?.event_sha256 || '').trim(),
+        launch_tool: launchTool,
+        provider_invocation_id: providerInvocationId,
+        launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        ...launchInputEvidence,
+        fork_context: false
+    };
+    const launchArtifactText = JSON.stringify(launchArtifact, null, 2);
+    fs.writeFileSync(launchArtifactPath, launchArtifactText, 'utf8');
+    return {
+        launchArtifactPath,
+        launchArtifactSha256: createHash('sha256').update(launchArtifactText, 'utf8').digest('hex'),
+        launchInputMode: launchInputEvidence.launch_input_mode,
+        launchInputSha256: launchInputEvidence.launch_input_sha256,
+        copyPastePromptSha256: launchInputEvidence.copy_paste_reviewer_launch_prompt_sha256,
+        providerInvocationId,
+        launchTool,
+        attestationSource
+    };
 }
 
 function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
@@ -576,6 +706,14 @@ function writeReceiptBackedReviewArtifact(
             delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
             reviewer_fallback_reason: execution.reviewerFallbackReason
         }, { passThru: true });
+        const launchEvidence = seedCompletedReviewerLaunchFixture({
+            repoRoot,
+            taskId,
+            reviewKey,
+            reviewerIdentity: execution.reviewerIdentity,
+            reviewContextSha256: reviewContextHash,
+            routingEventSha256: String(routedEvent?.integrity?.event_sha256 || '').trim()
+        });
         const invocationDetails = {
             task_id: taskId,
             review_type: reviewKey,
@@ -585,12 +723,18 @@ function writeReceiptBackedReviewArtifact(
             review_context_sha256: reviewContextHash,
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routedEvent?.integrity?.event_sha256,
-            reviewer_launch_attestation_source: 'codex.spawn_agent',
-            provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, execution.reviewerIdentity),
+            reviewer_launch_artifact_path: path.normalize(launchEvidence.launchArtifactPath).replace(/\\/g, '/'),
+            reviewer_launch_artifact_sha256: launchEvidence.launchArtifactSha256,
+            reviewer_launch_attestation_source: launchEvidence.attestationSource,
+            reviewer_launch_tool: launchEvidence.launchTool,
+            provider_invocation_id: launchEvidence.providerInvocationId,
             launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
             delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
             launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
             launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+            launch_input_mode: launchEvidence.launchInputMode,
+            launch_input_sha256: launchEvidence.launchInputSha256,
+            copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
             invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
         };
         const invocationEvent = appendTaskEvent(
@@ -733,6 +877,14 @@ function seedReusableReviewEvidence(
         delegation_used: execution.reviewerExecutionMode === 'delegated_subagent',
         reviewer_fallback_reason: execution.reviewerFallbackReason
     }, { passThru: true });
+    const launchEvidence = seedCompletedReviewerLaunchFixture({
+        repoRoot,
+        taskId,
+        reviewKey,
+        reviewerIdentity: execution.reviewerIdentity,
+        reviewContextSha256: reviewContextHash,
+        routingEventSha256: String(routedEvent?.integrity?.event_sha256 || '').trim()
+    });
     const invocationDetails = {
         task_id: taskId,
         review_type: reviewKey,
@@ -742,12 +894,18 @@ function seedReusableReviewEvidence(
         review_context_sha256: reviewContextHash,
         review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256,
-        reviewer_launch_attestation_source: 'codex.spawn_agent',
-        provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, execution.reviewerIdentity),
+        reviewer_launch_artifact_path: path.normalize(launchEvidence.launchArtifactPath).replace(/\\/g, '/'),
+        reviewer_launch_artifact_sha256: launchEvidence.launchArtifactSha256,
+        reviewer_launch_attestation_source: launchEvidence.attestationSource,
+        reviewer_launch_tool: launchEvidence.launchTool,
+        provider_invocation_id: launchEvidence.providerInvocationId,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
         delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        launch_input_mode: launchEvidence.launchInputMode,
+        launch_input_sha256: launchEvidence.launchInputSha256,
+        copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     };
     const invocationEvent = appendTaskEvent(

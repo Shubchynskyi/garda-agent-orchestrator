@@ -147,8 +147,8 @@ function createHistoricalLaneDomainReviewDependencyFixture(options: {
     const reviewerIdentity = 'agent:code-reviewer';
     const launchPreparedAtUtc = '2026-05-19T10:00:00.000Z';
     const launchedAtUtc = '2026-05-19T10:00:05.000Z';
-    const launchCompletedAtUtc = '2026-05-19T10:00:10.000Z';
-    const invocationAttestedAtUtc = '2026-05-19T10:00:15.000Z';
+    const launchCompletedAtUtc = '2026-05-19T10:00:16.000Z';
+    const invocationAttestedAtUtc = '2026-05-19T10:00:20.000Z';
     const reviewRecordedAtUtc = '2026-05-19T10:03:00.000Z';
     const reviewOutputSourceMtimeUtc = '2026-05-19T10:02:30.000Z';
     fs.writeFileSync(reviewArtifactPath, [
@@ -233,6 +233,7 @@ function createHistoricalLaneDomainReviewDependencyFixture(options: {
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routingEventSha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             invocation_attested_at_utc: invocationAttestedAtUtc
@@ -272,6 +273,7 @@ function createHistoricalLaneDomainReviewDependencyFixture(options: {
                 provider_invocation_id: 'codex-review-invocation-123',
                 reviewer_launch_attestation_source: 'provider_native',
                 launch_prepared_at_utc: launchPreparedAtUtc,
+                delegation_started_at_utc: launchedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
                 invocation_attested_at_utc: invocationAttestedAtUtc

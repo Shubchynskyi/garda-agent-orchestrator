@@ -100,6 +100,42 @@ function formatDurationMsAsMinutesSeconds(durationMs: number | null | undefined)
     return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
 }
 
+function parseReviewTimingAuditTimestamp(value: string | null | undefined): number | null {
+    const text = String(value || '').trim();
+    if (!text) {
+        return null;
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getReviewTimingAuditSortTimestamp(entry: ReviewTimingAuditEntry): number {
+    return parseReviewTimingAuditTimestamp(entry.review_result_recorded_at_utc)
+        ?? parseReviewTimingAuditTimestamp(entry.review_output_source_mtime_utc)
+        ?? parseReviewTimingAuditTimestamp(entry.invocation_attested_at_utc)
+        ?? parseReviewTimingAuditTimestamp(entry.launch_completed_at_utc)
+        ?? parseReviewTimingAuditTimestamp(entry.launched_at_utc)
+        ?? parseReviewTimingAuditTimestamp(entry.delegation_started_at_utc)
+        ?? parseReviewTimingAuditTimestamp(entry.launch_prepared_at_utc)
+        ?? Number.NEGATIVE_INFINITY;
+}
+
+function selectPreferredFinalUserReportTimingEntries(timingEntries: ReviewTimingAuditEntry[]): ReviewTimingAuditEntry[] {
+    const eligibleEntries = timingEntries
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ entry }) => (
+            !entry.reused_existing_review
+            && entry.delegation_to_result_ms != null
+            && Number.isFinite(entry.delegation_to_result_ms)
+            && entry.delegation_to_result_ms >= 0
+        ))
+        .sort((left, right) => (
+            getReviewTimingAuditSortTimestamp(right.entry) - getReviewTimingAuditSortTimestamp(left.entry)
+            || right.index - left.index
+        ));
+    return eligibleEntries.length > 0 ? [eligibleEntries[0].entry] : [];
+}
+
 function normalizeFinalUserReportVerdict(value: string): string {
     const text = String(value || '').trim();
     if (!text) {
@@ -120,8 +156,7 @@ function buildFinalUserReportReviewLine(
     timingEntries: ReviewTimingAuditEntry[]
 ): string {
     const normalizedVerdict = normalizeFinalUserReportVerdict(verdict);
-    const durations = timingEntries
-        .filter((entry) => !entry.reused_existing_review)
+    const durations = selectPreferredFinalUserReportTimingEntries(timingEntries)
         .map((entry) => entry.delegation_to_result_ms)
         .filter((durationMs): durationMs is number =>
             durationMs != null && Number.isFinite(durationMs) && durationMs >= 0
@@ -137,12 +172,16 @@ function buildReviewTimingWarning(closeout: FinalCloseoutArtifact, attestation: 
     const suspiciousEntries = (closeout.review_timing_audit?.entries || [])
         .filter((entry) => entry.hidden_timing_status === 'DISTRUSTED');
     if (suspiciousEntries.length > 0) {
-        const reviewTypes = suspiciousEntries
-            .map((entry) => entry.review_type)
-            .filter(Boolean)
+        const reviewTypesWithCodes = [...new Set(suspiciousEntries
+            .map((entry) => {
+                const reviewType = String(entry.review_type || '').trim() || 'unknown';
+                const distrustCode = String(entry.hidden_timing_distrust_code || '').trim();
+                return distrustCode ? `${reviewType}(${distrustCode})` : reviewType;
+            })
+            .filter(Boolean))]
             .sort()
             .join(', ');
-        return `WARNING: suspicious or insufficiently verified review timing/evidence detected for ${reviewTypes || 'one or more reviews'}. Do not treat this task as independently reviewed until fresh review evidence is recorded.`;
+        return `WARNING: suspicious or insufficiently verified review timing/evidence detected for ${reviewTypesWithCodes || 'one or more reviews'}. Do not treat this task as independently reviewed until fresh review evidence is recorded.`;
     }
     if (attestation.completion_allowed !== true || attestation.status === 'DEGRADED_OR_UNVERIFIABLE') {
         return `WARNING: review evidence is degraded or unverifiable. ${attestation.reason}`;

@@ -115,7 +115,7 @@ test('review timing trust rejects Chronobot-shaped generic Antigravity review me
     });
 
     assert.equal(result.trusted, false);
-    assert.equal(result.code, 'too_short_without_strong_provider_evidence');
+    assert.equal(result.code, 'too_short_delegated_work_window');
     assert.equal(result.message, HIDDEN_REVIEW_TIMING_DISTRUST_MESSAGE);
 });
 
@@ -136,20 +136,25 @@ test('review timing trust treats generic provider_subagent source as weak even w
     });
 
     assert.equal(result.trusted, false);
-    assert.equal(result.code, 'too_short_without_strong_provider_evidence');
+    assert.equal(result.code, 'too_short_delegated_work_window');
 });
 
 test('review timing trust accepts weak-provider evidence after the hidden baseline', () => {
     const result = evaluateHiddenReviewTimingTrust({
         reviewType: 'test',
         reusedExistingReview: false,
-        reviewerProvenance: provenance(),
+        reviewerProvenance: provenance({
+            launch_completed_at_utc: '2026-05-17T20:00:15.000Z',
+            invocation_attested_at_utc: '2026-05-17T20:00:16.000Z'
+        }),
         recordedAtUtc: '2026-05-17T20:00:32.000Z',
         timelineEvents: [
             invocationEvent({
                 review_type: 'test',
                 provider_invocation_id: 'provider-run-weak-2',
-                reviewer_launch_attestation_source: 'provider_subagent'
+                reviewer_launch_attestation_source: 'provider_subagent',
+                launch_completed_at_utc: '2026-05-17T20:00:15.000Z',
+                invocation_attested_at_utc: '2026-05-17T20:00:16.000Z'
             })
         ],
         nowMs: Date.parse('2026-05-17T20:03:00.000Z')
@@ -163,12 +168,17 @@ test('review timing trust accepts short review with concrete provider-native inv
     const result = evaluateHiddenReviewTimingTrust({
         reviewType: 'code',
         reusedExistingReview: false,
-        reviewerProvenance: provenance(),
+        reviewerProvenance: provenance({
+            launch_completed_at_utc: '2026-05-17T20:00:12.000Z',
+            invocation_attested_at_utc: '2026-05-17T20:00:13.000Z'
+        }),
         recordedAtUtc: '2026-05-17T20:00:20.000Z',
         timelineEvents: [
             invocationEvent({
                 provider_invocation_id: 'codex-run-20260517-abc123',
-                reviewer_launch_attestation_source: 'codex.spawn_agent'
+                reviewer_launch_attestation_source: 'codex.spawn_agent',
+                launch_completed_at_utc: '2026-05-17T20:00:12.000Z',
+                invocation_attested_at_utc: '2026-05-17T20:00:13.000Z'
             })
         ],
         nowMs: Date.parse('2026-05-17T20:01:00.000Z')
@@ -178,17 +188,42 @@ test('review timing trust accepts short review with concrete provider-native inv
     assert.equal(result.code, null);
 });
 
+test('review timing trust rejects instant delegated-work windows even with concrete provider-native invocation evidence', () => {
+    const result = evaluateHiddenReviewTimingTrust({
+        reviewType: 'code',
+        reusedExistingReview: false,
+        reviewerProvenance: provenance(),
+        recordedAtUtc: '2026-05-17T20:00:20.000Z',
+        timelineEvents: [
+            invocationEvent({
+                provider_invocation_id: 'codex-run-20260517-short-window',
+                reviewer_launch_attestation_source: 'codex.spawn_agent'
+            })
+        ],
+        nowMs: Date.parse('2026-05-17T20:01:00.000Z')
+    });
+
+    assert.equal(result.trusted, false);
+    assert.equal(result.code, 'too_short_delegated_work_window');
+    assert.equal(result.message, HIDDEN_REVIEW_TIMING_DISTRUST_MESSAGE);
+});
+
 test('review timing trust accepts observed short Gemini invocation evidence', () => {
     const result = evaluateHiddenReviewTimingTrust({
         reviewType: 'db',
         reusedExistingReview: false,
-        reviewerProvenance: provenance(),
-        recordedAtUtc: '2026-05-17T20:00:11.000Z',
+        reviewerProvenance: provenance({
+            launch_completed_at_utc: '2026-05-17T20:00:11.000Z',
+            invocation_attested_at_utc: '2026-05-17T20:00:12.000Z'
+        }),
+        recordedAtUtc: '2026-05-17T20:00:13.000Z',
         timelineEvents: [
             invocationEvent({
                 review_type: 'db',
                 provider_invocation_id: 'invocation:generalist:T-063-db-v4',
-                reviewer_launch_attestation_source: 'gemini'
+                reviewer_launch_attestation_source: 'gemini',
+                launch_completed_at_utc: '2026-05-17T20:00:11.000Z',
+                invocation_attested_at_utc: '2026-05-17T20:00:12.000Z'
             })
         ],
         nowMs: Date.parse('2026-05-17T20:01:00.000Z')

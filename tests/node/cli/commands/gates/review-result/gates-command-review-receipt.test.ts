@@ -34,6 +34,9 @@ import { buildReviewContext } from '../../../../../../src/gates/review-context/b
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
 import { buildReviewTreeState } from '../../../../../../src/gates/review/review-tree-state';
 import {
+    buildReviewerLaunchBindingSha256
+} from '../../../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
+import {
     applyReviewerRoutingMetadata
 } from '../../../../../../src/gate-runtime/review-context';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
@@ -78,8 +81,132 @@ import {
 
 const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
 const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
-const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:02.000Z';
-const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:03.000Z';
+const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:12.000Z';
+const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:13.000Z';
+
+function buildTestProviderInvocationId(taskId: string, reviewType: string, reviewerIdentity: string): string {
+    const normalizedIdentity = reviewerIdentity.replace(/^agent:/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
+    return `test-${taskId}-${reviewType}-${normalizedIdentity}`;
+}
+
+function buildFixtureLaunchInputEvidence(taskId: string, reviewType: string): {
+    copy_paste_reviewer_launch_prompt: string;
+    copy_paste_reviewer_launch_prompt_sha256: string;
+    launch_input_mode: 'copy_paste_prompt';
+    launch_input_sha256: string;
+    launch_input_copy_paste_reviewer_launch_prompt_sha256: string;
+    reviewer_prompt_sha256: string;
+    role_prompt_sha256: string;
+    prompt_template_sha256: string;
+    output_template_sha256: string;
+    evidence_manifest_sha256: string;
+} {
+    const copyPastePrompt = `Delegated ${reviewType} reviewer launch prompt for ${taskId}.`;
+    const copyPastePromptSha256 = createHash('sha256').update(copyPastePrompt, 'utf8').digest('hex');
+    return {
+        copy_paste_reviewer_launch_prompt: copyPastePrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        launch_input_mode: 'copy_paste_prompt',
+        launch_input_sha256: copyPastePromptSha256,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        reviewer_prompt_sha256: createHash('sha256').update(`reviewer-prompt:${taskId}:${reviewType}`, 'utf8').digest('hex'),
+        role_prompt_sha256: createHash('sha256').update(`role-prompt:${taskId}:${reviewType}`, 'utf8').digest('hex'),
+        prompt_template_sha256: createHash('sha256').update(`prompt-template:${taskId}:${reviewType}`, 'utf8').digest('hex'),
+        output_template_sha256: createHash('sha256').update(`output-template:${taskId}:${reviewType}`, 'utf8').digest('hex'),
+        evidence_manifest_sha256: createHash('sha256').update(`evidence-manifest:${taskId}:${reviewType}`, 'utf8').digest('hex')
+    };
+}
+
+function seedCompletedReviewerLaunchFixture(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+}): {
+    launchArtifactPath: string;
+    launchArtifactSha256: string;
+    launchInputMode: 'copy_paste_prompt';
+    launchInputSha256: string;
+    copyPastePromptSha256: string;
+    providerInvocationId: string;
+    launchTool: string;
+    attestationSource: string;
+} {
+    const launchInputEvidence = buildFixtureLaunchInputEvidence(options.taskId, options.reviewType);
+    const providerInvocationId = buildTestProviderInvocationId(options.taskId, options.reviewType, options.reviewerIdentity);
+    const launchTool = 'test-subagent-spawn';
+    const attestationSource = 'test-subagent-spawn';
+    const launchArtifactPath = path.join(
+        getOrchestratorRoot(options.repoRoot),
+        'runtime',
+        'tmp',
+        'reviews',
+        options.taskId,
+        options.reviewType,
+        'reviewer-launch.json'
+    );
+    fs.mkdirSync(path.dirname(launchArtifactPath), { recursive: true });
+    const launchBindingSha256 = buildReviewerLaunchBindingSha256({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerExecutionMode: 'delegated_subagent',
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256: options.reviewContextSha256,
+        routingEventSha256: options.routingEventSha256,
+        reviewerPromptSha256: launchInputEvidence.reviewer_prompt_sha256
+    });
+    const preparedEvent = appendTaskEvent(getOrchestratorRoot(options.repoRoot), options.taskId, 'REVIEWER_LAUNCH_PREPARED', 'INFO', 'Reviewer launch prepared by test controller fixture.', {
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: options.reviewerIdentity,
+        reviewer_identity: options.reviewerIdentity,
+        review_context_sha256: options.reviewContextSha256,
+        routing_event_sha256: options.routingEventSha256,
+        reviewer_prompt_sha256: launchInputEvidence.reviewer_prompt_sha256,
+        role_prompt_sha256: launchInputEvidence.role_prompt_sha256,
+        prompt_template_sha256: launchInputEvidence.prompt_template_sha256,
+        output_template_sha256: launchInputEvidence.output_template_sha256,
+        evidence_manifest_sha256: launchInputEvidence.evidence_manifest_sha256,
+        launch_binding_sha256: launchBindingSha256,
+        reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/')
+    }, { passThru: true });
+    const launchArtifactText = `${JSON.stringify({
+        schema_version: 1,
+        evidence_type: 'delegated_reviewer_launch',
+        attestation_state: 'launched',
+        task_id: options.taskId,
+        review_type: options.reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: options.reviewerIdentity,
+        reviewer_session_id: options.reviewerIdentity,
+        review_context_sha256: options.reviewContextSha256,
+        routing_event_sha256: options.routingEventSha256,
+        launch_binding_sha256: launchBindingSha256,
+        prepared_launch_event_sha256: String(preparedEvent?.integrity?.event_sha256 || '').trim(),
+        launch_tool: launchTool,
+        provider_invocation_id: providerInvocationId,
+        launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        ...launchInputEvidence,
+        fork_context: false
+    }, null, 2)}\n`;
+    fs.writeFileSync(launchArtifactPath, launchArtifactText, 'utf8');
+    return {
+        launchArtifactPath,
+        launchArtifactSha256: fileSha256(launchArtifactPath),
+        launchInputMode: launchInputEvidence.launch_input_mode,
+        launchInputSha256: launchInputEvidence.launch_input_sha256,
+        copyPastePromptSha256: launchInputEvidence.copy_paste_reviewer_launch_prompt_sha256,
+        providerInvocationId,
+        launchTool,
+        attestationSource
+    };
+}
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
@@ -329,6 +456,14 @@ function attestReviewerInvocationForTest(options: {
         .update(fs.readFileSync(options.reviewContextPath))
         .digest('hex');
     const reviewTreeStateSha256 = readReviewTreeStateSha256FromContextPath(options.reviewContextPath);
+    const launchEvidence = seedCompletedReviewerLaunchFixture({
+        repoRoot: options.repoRoot,
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256,
+        routingEventSha256: String(routedIntegrity.event_sha256).trim()
+    });
     if (events.some((event) => (
         event.event_type === 'REVIEWER_INVOCATION_ATTESTED'
         && String((event.details as Record<string, unknown> | undefined)?.review_type || '').trim().toLowerCase() === options.reviewType
@@ -336,6 +471,7 @@ function attestReviewerInvocationForTest(options: {
         && String((event.details as Record<string, unknown> | undefined)?.review_context_sha256 || '').trim().toLowerCase() === reviewContextSha256
         && (!reviewTreeStateSha256 || String((event.details as Record<string, unknown> | undefined)?.review_tree_state_sha256 || '').trim().toLowerCase() === reviewTreeStateSha256)
         && String((event.details as Record<string, unknown> | undefined)?.routing_event_sha256 || '').trim().toLowerCase() === String(routedIntegrity.event_sha256).trim().toLowerCase()
+        && String((event.details as Record<string, unknown> | undefined)?.reviewer_launch_artifact_sha256 || '').trim().toLowerCase() === launchEvidence.launchArtifactSha256
     ))) {
         return;
     }
@@ -348,10 +484,18 @@ function attestReviewerInvocationForTest(options: {
         review_context_sha256: reviewContextSha256,
         review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedIntegrity.event_sha256,
+        reviewer_launch_artifact_path: path.normalize(launchEvidence.launchArtifactPath).replace(/\\/g, '/'),
+        reviewer_launch_artifact_sha256: launchEvidence.launchArtifactSha256,
+        reviewer_launch_attestation_source: launchEvidence.attestationSource,
+        reviewer_launch_tool: launchEvidence.launchTool,
+        provider_invocation_id: launchEvidence.providerInvocationId,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
         delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        launch_input_mode: launchEvidence.launchInputMode,
+        launch_input_sha256: launchEvidence.launchInputSha256,
+        copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     });
 }

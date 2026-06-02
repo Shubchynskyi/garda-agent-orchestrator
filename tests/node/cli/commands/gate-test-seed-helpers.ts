@@ -11,39 +11,40 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
-import { createHash } from 'node:crypto';
+import {createHash} from 'node:crypto';
 
 import {
     runClassifyChangeCommand,
     runEnterTaskModeCommand,
     runLoadRulePackCommand
 } from '../../../../src/cli/commands/gates';
-import { buildReviewContext } from '../../../../src/gates/review-context/build-review-context';
-import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
-import { buildScopedDiff } from '../../../../src/gates/preflight/build-scoped-diff';
-import { buildReviewContextPreflightDiffExpectations } from '../../../../src/gates/review-context/review-context-contract';
+import {buildReviewContext} from '../../../../src/gates/review-context/build-review-context';
+import {getWorkspaceSnapshot} from '../../../../src/gates/compile/compile-gate';
+import {buildScopedDiff} from '../../../../src/gates/preflight/build-scoped-diff';
+import {
+    buildReviewContextPreflightDiffExpectations
+} from '../../../../src/gates/review-context/review-context-contract';
 import {
     computeCodeReviewScopeFingerprint,
-    computeReviewRelevantScopeFingerprint,
-    computeReviewContextReuseHash
+    computeReviewContextReuseHash,
+    computeReviewRelevantScopeFingerprint
 } from '../../../../src/gates/review-reuse';
-import { buildReviewTreeState } from '../../../../src/gates/review/review-tree-state';
-import { writeProtectedControlPlaneManifest } from '../../../../src/gates/shared/helpers';
-import { getWorkflowConfigPreTaskBaselineState } from '../../../../src/gates/workflow-config/workflow-config-work';
+import {buildReviewTreeState} from '../../../../src/gates/review/review-tree-state';
+import {resolveDefaultReviewScratchPath} from '../../../../src/gates/review/review-scratch-paths';
 import {
-    resolveReviewerRoutingPolicy
-} from '../../../../src/gates/review/reviewer-routing';
+    buildReviewerLaunchBindingSha256
+} from '../../../../src/cli/commands/gate-review-handlers/launch/review-launch-input-attestation';
+import {writeProtectedControlPlaneManifest} from '../../../../src/gates/shared/helpers';
+import {getWorkflowConfigPreTaskBaselineState} from '../../../../src/gates/workflow-config/workflow-config-work';
+import {resolveReviewerRoutingPolicy} from '../../../../src/gates/review/reviewer-routing';
 import {
     applyReviewerRoutingMetadata,
     buildReviewReceipt,
     buildReviewReceiptReviewerInvocationProvenance
 } from '../../../../src/gate-runtime/review-context';
-import { appendTaskEvent } from '../../../../src/gate-runtime/task-events';
+import {appendTaskEvent} from '../../../../src/gate-runtime/task-events';
 
-import {
-    getReviewsRoot,
-    getOrchestratorRoot
-} from './gate-test-repo-bootstrap';
+import {getOrchestratorRoot, getReviewsRoot} from './gate-test-repo-bootstrap';
 
 
 export {
@@ -70,12 +71,137 @@ export const PROVIDER_BRIDGE_BY_SOURCE: Record<string, string> = {
 
 const TEST_REVIEW_LAUNCH_PREPARED_AT_UTC = '2026-04-28T00:00:00.000Z';
 const TEST_REVIEW_LAUNCHED_AT_UTC = '2026-04-28T00:00:01.000Z';
-const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:02.000Z';
-const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:03.000Z';
+const TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:12.000Z';
+const TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC = '2026-04-28T00:00:13.000Z';
 
 function buildTestProviderInvocationId(taskId: string, reviewKey: string, reviewerIdentity: string): string {
     const normalizedIdentity = reviewerIdentity.replace(/^agent:/, '').replace(/[^a-zA-Z0-9._-]+/g, '-');
     return `test-${taskId}-${reviewKey}-${normalizedIdentity}`;
+}
+
+function buildFixtureLaunchInputEvidence(taskId: string, reviewKey: string): {
+    copy_paste_reviewer_launch_prompt: string;
+    copy_paste_reviewer_launch_prompt_sha256: string;
+    launch_input_mode: 'copy_paste_prompt';
+    launch_input_sha256: string;
+    launch_input_copy_paste_reviewer_launch_prompt_sha256: string;
+    reviewer_prompt_sha256: string;
+    role_prompt_sha256: string;
+    prompt_template_sha256: string;
+    output_template_sha256: string;
+    evidence_manifest_sha256: string;
+} {
+    const copyPastePrompt = `Delegated ${reviewKey} reviewer launch prompt for ${taskId}.`;
+    const copyPastePromptSha256 = createHash('sha256').update(copyPastePrompt, 'utf8').digest('hex');
+    return {
+        copy_paste_reviewer_launch_prompt: copyPastePrompt,
+        copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        launch_input_mode: 'copy_paste_prompt',
+        launch_input_sha256: copyPastePromptSha256,
+        launch_input_copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+        reviewer_prompt_sha256: createHash('sha256').update(`reviewer-prompt:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        role_prompt_sha256: createHash('sha256').update(`role-prompt:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        prompt_template_sha256: createHash('sha256').update(`prompt-template:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        output_template_sha256: createHash('sha256').update(`output-template:${taskId}:${reviewKey}`, 'utf8').digest('hex'),
+        evidence_manifest_sha256: createHash('sha256').update(`evidence-manifest:${taskId}:${reviewKey}`, 'utf8').digest('hex')
+    };
+}
+
+function seedCompletedReviewerLaunchFixture(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewKey: string;
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+}): {
+    launchArtifactPath: string;
+    launchArtifactSha256: string;
+    launchInputMode: 'copy_paste_prompt';
+    launchInputSha256: string;
+    copyPastePromptSha256: string;
+    providerInvocationId: string;
+    launchTool: string;
+    attestationSource: string;
+} {
+    const launchInputEvidence = buildFixtureLaunchInputEvidence(options.taskId, options.reviewKey);
+    const providerInvocationId = buildTestProviderInvocationId(options.taskId, options.reviewKey, options.reviewerIdentity);
+    const launchTool = 'test-subagent-spawn';
+    const attestationSource = 'test-subagent-spawn';
+    const launchArtifactPath = resolveDefaultReviewScratchPath(
+        options.repoRoot,
+        options.taskId,
+        options.reviewKey,
+        'reviewer-launch.json'
+    );
+    fs.mkdirSync(path.dirname(launchArtifactPath), {recursive: true});
+    const launchBindingSha256 = buildReviewerLaunchBindingSha256({
+        taskId: options.taskId,
+        reviewType: options.reviewKey,
+        reviewerExecutionMode: 'delegated_subagent',
+        reviewerIdentity: options.reviewerIdentity,
+        reviewContextSha256: options.reviewContextSha256,
+        routingEventSha256: options.routingEventSha256,
+        reviewerPromptSha256: launchInputEvidence.reviewer_prompt_sha256
+    });
+    const preparedEvent = appendTaskEvent(
+        getOrchestratorRoot(options.repoRoot),
+        options.taskId,
+        'REVIEWER_LAUNCH_PREPARED',
+        'INFO',
+        'reviewer launch prepared',
+        {
+            task_id: options.taskId,
+            review_type: options.reviewKey,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: options.reviewerIdentity,
+            reviewer_identity: options.reviewerIdentity,
+            review_context_sha256: options.reviewContextSha256,
+            routing_event_sha256: options.routingEventSha256,
+            reviewer_prompt_sha256: launchInputEvidence.reviewer_prompt_sha256,
+            role_prompt_sha256: launchInputEvidence.role_prompt_sha256,
+            prompt_template_sha256: launchInputEvidence.prompt_template_sha256,
+            output_template_sha256: launchInputEvidence.output_template_sha256,
+            evidence_manifest_sha256: launchInputEvidence.evidence_manifest_sha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_artifact_path: path.normalize(launchArtifactPath).replace(/\\/g, '/')
+        },
+        {passThru: true}
+    );
+    const launchArtifact = {
+        schema_version: 1,
+        evidence_type: 'delegated_reviewer_launch',
+        attestation_state: 'launched',
+        task_id: options.taskId,
+        review_type: options.reviewKey,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_identity: options.reviewerIdentity,
+        reviewer_session_id: options.reviewerIdentity,
+        review_context_sha256: options.reviewContextSha256,
+        routing_event_sha256: options.routingEventSha256,
+        launch_binding_sha256: launchBindingSha256,
+        prepared_launch_event_sha256: String(preparedEvent?.integrity?.event_sha256 || '').trim(),
+        launch_tool: launchTool,
+        provider_invocation_id: providerInvocationId,
+        launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
+        delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
+        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        ...launchInputEvidence,
+        fork_context: false
+    };
+    const launchArtifactText = JSON.stringify(launchArtifact, null, 2);
+    fs.writeFileSync(launchArtifactPath, launchArtifactText, 'utf8');
+    return {
+        launchArtifactPath,
+        launchArtifactSha256: createHash('sha256').update(launchArtifactText, 'utf8').digest('hex'),
+        launchInputMode: launchInputEvidence.launch_input_mode,
+        launchInputSha256: launchInputEvidence.launch_input_sha256,
+        copyPastePromptSha256: launchInputEvidence.copy_paste_reviewer_launch_prompt_sha256,
+        providerInvocationId,
+        launchTool,
+        attestationSource
+    };
 }
 
 function resolveAttestedTaskModeRoute(provider: string): string | null {
@@ -93,7 +219,7 @@ export function writeReviewCapabilitiesConfig(
 ): string {
     const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
     const configPath = path.join(configDir, 'review-capabilities.json');
-    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(configDir, {recursive: true});
     fs.writeFileSync(configPath, JSON.stringify({
         code: true,
         db: true,
@@ -111,7 +237,7 @@ export function writeReviewCapabilitiesConfig(
 
 export function writeBudgetOutputFilters(repoRoot: string): string {
     const outputFiltersPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'output-filters.json');
-    fs.mkdirSync(path.dirname(outputFiltersPath), { recursive: true });
+    fs.mkdirSync(path.dirname(outputFiltersPath), {recursive: true});
     fs.writeFileSync(outputFiltersPath, JSON.stringify({
         version: 2,
         budget_profiles: {
@@ -161,7 +287,7 @@ export function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO')
 export function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
     const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
-    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+    fs.mkdirSync(path.dirname(initAnswersPath), {recursive: true});
     fs.writeFileSync(initAnswersPath, JSON.stringify({
         AssistantLanguage: 'English',
         AssistantBrevity: 'concise',
@@ -175,7 +301,11 @@ export function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void
 }
 
 
-export function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
+export function withDefaultTaskModeRouting<T extends {
+    repoRoot?: string;
+    provider?: unknown;
+    routedTo?: unknown
+}>(options: T): T {
     if (String(options.routedTo || '').trim()) {
         return options;
     }
@@ -222,7 +352,7 @@ export function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeComm
     const routedTo = String(resolvedOptions.routedTo || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
     if (routedTo) {
         const routedFilePath = path.join(repoRoot, routedTo);
-        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
+        fs.mkdirSync(path.dirname(routedFilePath), {recursive: true});
         if (!fs.existsSync(routedFilePath)) {
             fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
         }
@@ -232,7 +362,7 @@ export function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeComm
         const hasGit = fs.existsSync(path.join(repoRoot, '.git'));
         const workflowConfigBaseline = hasGit
             ? getWorkflowConfigPreTaskBaselineState(repoRoot)
-            : { changed_files: [], compatibility_baseline_files: [] };
+            : {changed_files: [], compatibility_baseline_files: []};
         if (
             !hasGit
             || (
@@ -311,13 +441,13 @@ export function writePreflight(
     outputFileName = `${taskId}-preflight.json`
 ): string {
     const reviewsRoot = getReviewsRoot(repoRoot);
-    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.mkdirSync(reviewsRoot, {recursive: true});
     const preflightPath = path.join(reviewsRoot, outputFileName);
     const payload = {
         task_id: taskId,
         detection_source: 'explicit_changed_files',
         mode: 'FULL_PATH',
-        metrics: { changed_lines_total: 3 },
+        metrics: {changed_lines_total: 3},
         required_reviews: {
             code: true,
             db: false,
@@ -423,8 +553,8 @@ export function runGit(
 }
 
 export function initializeGitRepo(repoRoot: string): void {
-    runGit(repoRoot, ['init'], { retryFixtureSetup: true });
-    
+    runGit(repoRoot, ['init'], {retryFixtureSetup: true});
+
     const configPath = path.join(repoRoot, '.git', 'config');
     if (fs.existsSync(configPath)) {
         const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
@@ -475,7 +605,7 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
     }
 
     if (!fs.existsSync(path.join(repoRoot, '.git'))) {
-        runGitBestEffort(repoRoot, ['init'], { retryFixtureSetup: true });
+        runGitBestEffort(repoRoot, ['init'], {retryFixtureSetup: true});
     }
     const configPath = path.join(repoRoot, '.git', 'config');
     if (fs.existsSync(configPath)) {
@@ -506,7 +636,7 @@ export function prepareReviewDiffFixture(repoRoot: string, preflightPath: string
             continue;
         }
         const absolutePath = path.join(repoRoot, ...changedFile.split('/'));
-        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        fs.mkdirSync(path.dirname(absolutePath), {recursive: true});
         if (!fs.existsSync(absolutePath)) {
             fs.writeFileSync(absolutePath, `// review fixture for ${changedFile}\n`, 'utf8');
         }
@@ -614,8 +744,8 @@ function buildReceiptBackedReviewContextFixture(
             .filter(Boolean)
         : [];
     const metrics = preflightFixture.preflight.metrics
-        && typeof preflightFixture.preflight.metrics === 'object'
-        && !Array.isArray(preflightFixture.preflight.metrics)
+    && typeof preflightFixture.preflight.metrics === 'object'
+    && !Array.isArray(preflightFixture.preflight.metrics)
         ? preflightFixture.preflight.metrics as Record<string, unknown>
         : {};
     const reviewTreeState = buildReviewTreeState({
@@ -682,7 +812,7 @@ export function appendPreflightClassifiedEvent(repoRoot: string, taskId: string,
     const zeroDiffGuard = preflight.zero_diff_guard && typeof preflight.zero_diff_guard === 'object' && !Array.isArray(preflight.zero_diff_guard)
         ? preflight.zero_diff_guard
         : (changedFilesCount === 0 && changedLinesTotal === 0
-            ? { zero_diff_detected: true, status: 'BASELINE_ONLY' }
+            ? {zero_diff_detected: true, status: 'BASELINE_ONLY'}
             : null);
     appendTaskEvent(
         getOrchestratorRoot(repoRoot),
@@ -819,7 +949,7 @@ export function writeReceiptBackedReviewArtifact(
     options: { allowLegacyManualReviewContext?: boolean } = {}
 ): void {
     const reviewsRoot = getReviewsRoot(repoRoot);
-    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.mkdirSync(reviewsRoot, {recursive: true});
     const reviewerEvidence = resolveDefaultReviewerEvidence(repoRoot, taskId, reviewKey);
     const content = (contentLines || [
         '# Review',
@@ -840,7 +970,10 @@ export function writeReceiptBackedReviewArtifact(
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
     fs.writeFileSync(artifactPath, content, 'utf8');
     const reviewContextPath = path.join(reviewsRoot, `${taskId}-${reviewKey}-review-context.json`);
-    const { reviewContext, reviewContextText } = buildReceiptBackedReviewContextFixture(repoRoot, taskId, reviewKey, reviewerEvidence, options);
+    const {
+        reviewContext,
+        reviewContextText
+    } = buildReceiptBackedReviewContextFixture(repoRoot, taskId, reviewKey, reviewerEvidence, options);
     fs.writeFileSync(reviewContextPath, reviewContextText, 'utf8');
 
     const crypto = require('node:crypto');
@@ -853,15 +986,23 @@ export function writeReceiptBackedReviewArtifact(
     appendTaskEvent(orchestratorRoot, taskId, 'REVIEW_PHASE_STARTED', 'INFO', 'review started', {
         review_type: reviewKey
     });
-    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
-    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', {skill_id: skillId});
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', {reference_path: `/live/skills/${skillId}/SKILL.md`});
     const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'delegated', {
         review_type: reviewKey,
         reviewer_execution_mode: reviewerEvidence.executionMode,
         reviewer_session_id: reviewerEvidence.reviewerIdentity,
         reviewer_fallback_reason: reviewerEvidence.reviewerFallbackReason,
         delegation_used: reviewerEvidence.executionMode === 'delegated_subagent'
-    }, { passThru: true });
+    }, {passThru: true});
+    const launchEvidence = seedCompletedReviewerLaunchFixture({
+        repoRoot,
+        taskId,
+        reviewKey,
+        reviewerIdentity: reviewerEvidence.reviewerIdentity,
+        reviewContextSha256: reviewContextHash,
+        routingEventSha256: String(routedEvent?.integrity?.event_sha256 || '').trim()
+    });
     const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
     let preflightSha256: string | null = null;
     let scopeSha256: string | null = null;
@@ -888,12 +1029,18 @@ export function writeReceiptBackedReviewArtifact(
         review_context_sha256: reviewContextHash,
         review_tree_state_sha256: reviewTreeStateSha256,
         routing_event_sha256: routedEvent?.integrity?.event_sha256,
-        reviewer_launch_attestation_source: 'codex.spawn_agent',
-        provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, reviewerEvidence.reviewerIdentity),
+        reviewer_launch_artifact_path: path.normalize(launchEvidence.launchArtifactPath).replace(/\\/g, '/'),
+        reviewer_launch_artifact_sha256: launchEvidence.launchArtifactSha256,
+        reviewer_launch_attestation_source: launchEvidence.attestationSource,
+        reviewer_launch_tool: launchEvidence.launchTool,
+        provider_invocation_id: launchEvidence.providerInvocationId,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
         delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        launch_input_mode: launchEvidence.launchInputMode,
+        launch_input_sha256: launchEvidence.launchInputSha256,
+        copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     };
     const invocationEvent = appendTaskEvent(
@@ -903,7 +1050,7 @@ export function writeReceiptBackedReviewArtifact(
         'INFO',
         'reviewer invocation attested',
         invocationDetails,
-        { passThru: true }
+        {passThru: true}
     );
     const reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
         'REVIEWER_INVOCATION_ATTESTED',
@@ -974,7 +1121,7 @@ export function seedReusableReviewEvidence(
 ): string {
     const crypto = require('node:crypto');
     const reviewsRoot = getReviewsRoot(repoRoot);
-    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.mkdirSync(reviewsRoot, {recursive: true});
     const sourceOfTruth = readSeededSourceOfTruth(repoRoot);
     const execution = resolveReviewerExecutionFixture(taskId, sourceOfTruth, reviewerIdentity);
     const artifactPath = path.join(reviewsRoot, `${taskId}-${reviewKey}.md`);
@@ -1016,8 +1163,8 @@ export function seedReusableReviewEvidence(
     if (options.legacyReviewContextIdentity) {
         const legacyReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
         const reviewerRouting = legacyReviewContext.reviewer_routing
-            && typeof legacyReviewContext.reviewer_routing === 'object'
-            && !Array.isArray(legacyReviewContext.reviewer_routing)
+        && typeof legacyReviewContext.reviewer_routing === 'object'
+        && !Array.isArray(legacyReviewContext.reviewer_routing)
             ? legacyReviewContext.reviewer_routing as Record<string, unknown>
             : {};
         if (options.legacyReviewContextSourceOfTruth) {
@@ -1044,15 +1191,23 @@ export function seedReusableReviewEvidence(
         review_type: reviewKey
     });
     const skillId = reviewKey === 'test' ? 'testing-strategy' : 'code-review';
-    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: skillId });
-    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', { reference_path: `/live/skills/${skillId}/SKILL.md` });
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_SELECTED', 'INFO', 'selected', {skill_id: skillId});
+    appendTaskEvent(orchestratorRoot, taskId, 'SKILL_REFERENCE_LOADED', 'INFO', 'loaded', {reference_path: `/live/skills/${skillId}/SKILL.md`});
     const routedEvent = appendTaskEvent(orchestratorRoot, taskId, 'REVIEWER_DELEGATION_ROUTED', 'INFO', 'reusable review routing recorded', {
         review_type: reviewKey,
         reviewer_execution_mode: executionMode,
         reviewer_session_id: resolvedReviewerIdentity,
         reviewer_fallback_reason: reviewerFallbackReason,
         delegation_used: true
-    }, { passThru: true });
+    }, {passThru: true});
+    const launchEvidence = seedCompletedReviewerLaunchFixture({
+        repoRoot,
+        taskId,
+        reviewKey,
+        reviewerIdentity: resolvedReviewerIdentity,
+        reviewContextSha256: reviewContextHash,
+        routingEventSha256: String(routedEvent?.integrity?.event_sha256 || '').trim()
+    });
     const invocationDetails: Record<string, unknown> = {
         task_id: taskId,
         review_type: reviewKey,
@@ -1061,12 +1216,18 @@ export function seedReusableReviewEvidence(
         reviewer_identity: resolvedReviewerIdentity,
         review_context_sha256: reviewContextHash,
         routing_event_sha256: routedEvent?.integrity?.event_sha256,
-        reviewer_launch_attestation_source: 'codex.spawn_agent',
-        provider_invocation_id: buildTestProviderInvocationId(taskId, reviewKey, resolvedReviewerIdentity),
+        reviewer_launch_artifact_path: path.normalize(launchEvidence.launchArtifactPath).replace(/\\/g, '/'),
+        reviewer_launch_artifact_sha256: launchEvidence.launchArtifactSha256,
+        reviewer_launch_attestation_source: launchEvidence.attestationSource,
+        reviewer_launch_tool: launchEvidence.launchTool,
+        provider_invocation_id: launchEvidence.providerInvocationId,
         launch_prepared_at_utc: TEST_REVIEW_LAUNCH_PREPARED_AT_UTC,
         delegation_started_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launched_at_utc: TEST_REVIEW_LAUNCHED_AT_UTC,
         launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
+        launch_input_mode: launchEvidence.launchInputMode,
+        launch_input_sha256: launchEvidence.launchInputSha256,
+        copy_paste_reviewer_launch_prompt_sha256: launchEvidence.copyPastePromptSha256,
         invocation_attested_at_utc: TEST_REVIEW_INVOCATION_ATTESTED_AT_UTC
     };
     if (!options.omitInvocationTreeState) {
@@ -1079,7 +1240,7 @@ export function seedReusableReviewEvidence(
         'INFO',
         'reusable reviewer invocation attested',
         invocationDetails,
-        { passThru: true }
+        {passThru: true}
     );
     const reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
         'REVIEWER_INVOCATION_ATTESTED',
@@ -1153,8 +1314,8 @@ export function writeHandshakeArtifact(repoRoot: string, taskId: string, provide
     const providerEntrypoint = PROVIDER_ENTRYPOINT_BY_SOURCE[provider] || null;
     const routedTo = providerBridgePath || providerEntrypoint || null;
     const executionProviderSource = providerBridgePath ? 'provider_bridge' : 'provider_entrypoint';
-    
-    fs.mkdirSync(reviewsRoot, { recursive: true });
+
+    fs.mkdirSync(reviewsRoot, {recursive: true});
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-handshake.json`), JSON.stringify({
         schema_version: 1,
         timestamp_utc: new Date().toISOString(),
@@ -1187,7 +1348,7 @@ export function writeHandshakeArtifact(repoRoot: string, taskId: string, provide
 
 export function writeShellSmokeArtifact(repoRoot: string, taskId: string, provider = 'Codex'): void {
     const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
-    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.mkdirSync(reviewsRoot, {recursive: true});
     fs.writeFileSync(path.join(reviewsRoot, `${taskId}-shell-smoke.json`), JSON.stringify({
         schema_version: 1,
         timestamp_utc: new Date().toISOString(),
@@ -1279,7 +1440,7 @@ export function runHandshakeForTask(repoRoot: string, taskId: string, provider =
             passed: true,
             artifact_hash: artifactHash
         },
-        { actor: 'gate', passThru: true }
+        {actor: 'gate', passThru: true}
     );
 }
 
@@ -1296,8 +1457,8 @@ export function runShellSmokeForTask(repoRoot: string, taskId: string, provider 
         'SHELL_SMOKE_PREFLIGHT_RECORDED',
         'PASS',
         `Shell smoke preflight passed: provider=${provider}, context=materialized-bundle.`,
-        { provider, execution_context: 'materialized-bundle', passed: true, artifact_hash: artifactHash },
-        { actor: 'gate', passThru: true }
+        {provider, execution_context: 'materialized-bundle', passed: true, artifact_hash: artifactHash},
+        {actor: 'gate', passThru: true}
     );
 }
 
@@ -1318,7 +1479,7 @@ export function prepareCurrentReviewPhase(repoRoot: string, taskId: string, pref
         taskId,
         taskSummary: `Prepare review lifecycle for ${taskId}`,
         ...(shouldPinExplicitProvider
-            ? { provider, routedTo: resolveAttestedTaskModeRoute(provider) }
+            ? {provider, routedTo: resolveAttestedTaskModeRoute(provider)}
             : {})
     });
     assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
