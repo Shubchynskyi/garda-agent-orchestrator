@@ -220,6 +220,10 @@ import {
     resolvePostReviewCloseoutRoute
 } from './next-step-closeout-routing';
 import {
+    resolveNextStepCompileGateRoute,
+    resolveNextStepPreGuardRoute
+} from './next-step-pre-review-routing';
+import {
     readPostDoneWorkspaceDriftDecision,
     readReadyFinalReportSummary,
     type NextStepFinalReportSummary
@@ -3627,8 +3631,25 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (!preflightCycleReadiness.ready) {
-        const classifyCommand = buildClassifyChangeCommand({
+    const coherentCycleReadiness = readCoherentCycleReadiness(
+        repoRoot,
+        eventsRoot,
+        reviewsRoot,
+        taskId,
+        preflightPath,
+        taskModePath
+    );
+    const postPreflightRulePackReadiness = readPostPreflightRulePackReadiness(
+        repoRoot,
+        taskId,
+        preflightPath,
+        rulePackPath,
+        taskModePath
+    );
+
+    const preGuardRoute = resolveNextStepPreGuardRoute({
+        preflightCycleReadiness,
+        preflightCycleRefreshCommand: buildClassifyChangeCommand({
             repoRoot,
             cliPrefix,
             taskId,
@@ -3637,70 +3658,17 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             preflightCommandPath,
             includePlannedScope: false,
             changedFiles: getPreflightRefreshChangedFiles(taskMode, preflight)
-        });
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'classify-change',
-            title: 'Refresh preflight for the current task cycle.',
-            reason: preflightCycleReadiness.reason,
-            commands: [
-                buildCommand(
-                    'Refresh preflight',
-                    classifyCommand
-                )
-            ]
-        });
-    }
-
-    if (
-        preflightTouchesProtectedControlPlane(preflight)
-        && !taskMode?.orchestrator_work
-    ) {
-        if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'operator-maintenance',
-                title: 'Garda self-guard blocks agent-owned protected control-plane work.',
-                reason:
-                    'The current preflight touches protected Garda control-plane files. ' +
-                    formatGardaSelfGuardProtectedControlPlaneGuidance(),
-                commands: [
-                    buildCommand(
-                        'Operator policy change',
-                        buildGardaSelfGuardPolicyChangeCommand(cliPrefix)
-                    )
-                ]
-            });
-        }
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'enter-task-mode',
-            title: 'Restart task mode as orchestrator work.',
-            reason: 'The current preflight touches protected orchestrator control-plane files, but task-mode evidence does not declare --orchestrator-work. Fresh operator approval is required before the agent can rerun protected task-mode entry.',
-            commands: [
-                buildCommand(
-                    'Restart task mode with orchestrator work',
-                    buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode)
-                )
-            ]
-        });
-    }
-
-    if (!effectivePreflightWorkspaceReadiness.ready) {
-        if (effectivePreflightWorkspaceReadiness.awaitingMaterializedPlannedScope) {
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'materialize-planned-scope',
-                title: 'Materialize planned task changes before refreshing preflight.',
-                reason: effectivePreflightWorkspaceReadiness.reason,
-                commands: []
-            });
-        }
-        const classifyCommand = buildClassifyChangeCommand({
+        }),
+        protectedControlPlane: {
+            touched: preflightTouchesProtectedControlPlane(preflight),
+            taskModeHasOrchestratorWork: Boolean(taskMode?.orchestrator_work),
+            selfGuardDeny: isGardaSelfGuardDenyAgentEntry(repoRoot),
+            selfGuardGuidance: formatGardaSelfGuardProtectedControlPlaneGuidance(),
+            selfGuardPolicyChangeCommand: buildGardaSelfGuardPolicyChangeCommand(cliPrefix),
+            orchestratorWorkRestartCommand: buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode)
+        },
+        workspaceReadiness: effectivePreflightWorkspaceReadiness,
+        workspaceRefreshCommand: buildClassifyChangeCommand({
             repoRoot,
             cliPrefix,
             taskId,
@@ -3710,87 +3678,38 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             includePlannedScope: false,
             changedFiles: effectivePreflightWorkspaceReadiness.currentChangedFiles
                 ?? getPreflightRefreshChangedFiles(taskMode, preflight)
-        });
+        }),
+        coherentCycleReadiness,
+        navigatorCommand,
+        postPreflightRulePack: {
+            stage: resolveRulePackStage(rulePack),
+            ready: postPreflightRulePackReadiness.ready,
+            reason: postPreflightRulePackReadiness.reason,
+            canBind: postPreflightRulePackReadiness.rebind?.can_bind === true,
+            rebindReason: postPreflightRulePackReadiness.rebind?.reason,
+            loadCommand: buildPostPreflightRulePackCommandForFiles(
+                repoRoot,
+                cliPrefix,
+                taskId,
+                getPostPreflightRuleFileNames(preflight, taskMode),
+                taskModePath
+            ),
+            bindCommand: buildPostPreflightRulePackBindCommand(
+                repoRoot,
+                cliPrefix,
+                taskId,
+                taskModePath
+            )
+        }
+    });
+    if (preGuardRoute) {
         return buildResult({
             ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'classify-change',
-            title: 'Refresh preflight for the current workspace.',
-            reason: effectivePreflightWorkspaceReadiness.reason,
-            commands: [
-                buildCommand(
-                    'Refresh preflight',
-                    classifyCommand
-                )
-            ]
-        });
-    }
-
-    const coherentCycleReadiness = readCoherentCycleReadiness(
-        repoRoot,
-        eventsRoot,
-        reviewsRoot,
-        taskId,
-        preflightPath,
-        taskModePath
-    );
-    if (!coherentCycleReadiness.ready) {
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'restart-coherent-cycle',
-            title: 'Restart the latest coherent task cycle.',
-            reason: coherentCycleReadiness.reason,
-            commands: [
-                buildCommand(
-                    'Restart coherent cycle',
-                    coherentCycleReadiness.command || navigatorCommand
-                )
-            ]
-        });
-    }
-
-    const postPreflightRulePackReadiness = readPostPreflightRulePackReadiness(
-        repoRoot,
-        taskId,
-        preflightPath,
-        rulePackPath,
-        taskModePath
-    );
-    if (resolveRulePackStage(rulePack) !== 'POST_PREFLIGHT' || !postPreflightRulePackReadiness.ready) {
-        const canBindPostPreflightRules = resolveRulePackStage(rulePack) === 'POST_PREFLIGHT'
-            && postPreflightRulePackReadiness.rebind?.can_bind === true;
-        return buildResult({
-            ...resultBase,
-            status: 'BLOCKED',
-            nextGate: canBindPostPreflightRules ? 'bind-rule-pack-to-preflight' : 'load-rule-pack',
-            title: canBindPostPreflightRules
-                ? 'Bind existing POST_PREFLIGHT rule-pack evidence to the current preflight.'
-                : 'Read and record POST_PREFLIGHT rule files.',
-            reason: canBindPostPreflightRules
-                ? `${postPreflightRulePackReadiness.rebind?.reason || 'Rule files are already loaded.'} Rebind the machine-readable evidence to the latest preflight before compile.`
-                : postPreflightRulePackReadiness.ready
-                ? 'Preflight exists; downstream rule files and risk-specific packs must be recorded for the current scope.'
-                : postPreflightRulePackReadiness.reason,
-            commands: [
-                buildCommand(
-                    canBindPostPreflightRules ? 'Bind POST_PREFLIGHT rules to current preflight' : 'Load POST_PREFLIGHT rules',
-                    canBindPostPreflightRules
-                        ? buildPostPreflightRulePackBindCommand(
-                            repoRoot,
-                            cliPrefix,
-                            taskId,
-                            taskModePath
-                        )
-                        : buildPostPreflightRulePackCommandForFiles(
-                        repoRoot,
-                        cliPrefix,
-                        taskId,
-                        getPostPreflightRuleFileNames(preflight, taskMode),
-                        taskModePath
-                    )
-                )
-            ]
+            status: preGuardRoute.status,
+            nextGate: preGuardRoute.nextGate,
+            title: preGuardRoute.title,
+            reason: preGuardRoute.reason,
+            commands: preGuardRoute.commands
         });
     }
 
@@ -4015,52 +3934,38 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const compileReadiness = preflight
         ? readCompileReadiness(repoRoot, reviewsRoot, eventsRoot, taskId, preflightPath)
         : { ready: false, reason: 'No current preflight exists.' };
-    if (!isGatePassed(summary, 'compile-gate') || !compileReadiness.ready) {
-        if (preflight && compileReadiness.recoveryGate === 'classify-change') {
-            const classifyCommand = buildClassifyChangeCommand({
-                repoRoot,
-                cliPrefix,
-                taskId,
-                taskMode,
-                taskModePath,
-                preflightCommandPath,
-                includePlannedScope: false,
-                changedFiles: preflightWorkspaceReadiness.currentChangedFiles
-                    ?? getPreflightRefreshChangedFiles(taskMode, preflight)
-            });
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'classify-change',
-                title: 'Refresh preflight after compile scope drift.',
-                reason: compileReadiness.reason,
-                commands: [
-                    buildCommand(
-                        'Refresh preflight',
-                        classifyCommand
-                    )
-                ]
-            });
-        }
-        const compileCommand = buildCompileGateCommand(
+    const compileGateRoute = resolveNextStepCompileGateRoute({
+        compileGatePassed: isGatePassed(summary, 'compile-gate'),
+        ready: compileReadiness.ready,
+        reason: compileReadiness.reason,
+        recoveryGate: compileReadiness.recoveryGate,
+        refreshPreflightCommand: buildClassifyChangeCommand({
+            repoRoot,
+            cliPrefix,
+            taskId,
+            taskMode,
+            taskModePath,
+            preflightCommandPath,
+            includePlannedScope: false,
+            changedFiles: preflightWorkspaceReadiness.currentChangedFiles
+                ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+        }),
+        compileCommand: buildCompileGateCommand(
             repoRoot,
             cliPrefix,
             taskId,
             preflightCommandPath,
             taskModePath
-        );
+        )
+    });
+    if (compileGateRoute) {
         return buildResult({
             ...resultBase,
-            status: 'BLOCKED',
-            nextGate: 'compile-gate',
-            title: 'Run compile gate.',
-            reason: compileReadiness.reason,
-            commands: [
-                buildCommand(
-                    'Run compile gate',
-                    compileCommand
-                )
-            ]
+            status: compileGateRoute.status,
+            nextGate: compileGateRoute.nextGate,
+            title: compileGateRoute.title,
+            reason: compileGateRoute.reason,
+            commands: compileGateRoute.commands
         });
     }
 
