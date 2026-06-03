@@ -276,5 +276,47 @@
       "label": "Garda ausschalten",
       "description": "Verschiebt verwaltete Garda-Root-Instruction-Dateien nach runtime/switch/off und aktiviert den Off-Mode-Ignore-Block."
     }
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Speicherindex, Eigentumsregeln und Lesereihenfolge."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Kurze Projektkarte und Routing-Hinweise für den Task-Start."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Domäne, Projektziele und Gesamtumfang."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Sprachen, Frameworks, Infrastruktur, Abhängigkeiten und Fallbacks für Custom-Stacks."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Architektur, Komponentengrenzen und Integrationspunkte."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Repository-Bereiche, Pfad-Eigentum und typische Änderungsorte."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Build-, Test-, Dev-, Release- und Verifikationsbefehle."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Coding-Standards, Namensregeln und Workflow-Konventionen außerhalb von agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Architektur- und Prozessentscheidungen mit Begründung."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Bekannte Risiken, fragile Pfade, Sicherheitshinweise und Kompatibilitätsgrenzen."
+    }
   }
 }

@@ -8,13 +8,12 @@ import type { ParsedOptionsRecord } from './shared-command-utils';
 import {
     formatLocalUiServerOutput,
     startLocalUiServer
-} from '../../reports/ui/local-ui-server';
+} from '../../reports/ui';
 import {
+    findLocalUiLanguage,
     formatLocalUiLanguageCliChoices,
-    isLocalUiLanguage,
-    normalizeLocalUiLanguage,
     type LocalUiLanguage
-} from '../../reports/ui/ui-i18n';
+} from '../../reports/ui';
 
 const UI_COMMAND_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
@@ -62,11 +61,11 @@ export function parseLanguage(value: unknown): LocalUiLanguage {
     if (typeof value !== 'string' || value.trim() === '') {
         throw new Error(`--language must be one of: ${formatLocalUiLanguageCliChoices()}.`);
     }
-    const normalized = value.trim().toLowerCase();
-    if (!isLocalUiLanguage(normalized)) {
+    const language = findLocalUiLanguage(value);
+    if (language === null) {
         throw new Error(`--language must be one of: ${formatLocalUiLanguageCliChoices()}.`);
     }
-    return normalizeLocalUiLanguage(normalized);
+    return language;
 }
 
 export async function handleUi(commandArgv: string[], _packageJson: PackageJsonLike): Promise<void> {

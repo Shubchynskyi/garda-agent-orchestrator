@@ -41,6 +41,7 @@ function loadBuildFixtureItems(repoRoot: string): readonly string[] {
     items.delete('bin');
     items.add('scripts/node-foundation');
     items.add('tsconfig.build.json');
+    items.add('tsconfig.scripts.json');
     return Object.freeze(Array.from(items).sort());
 }
 
@@ -74,10 +75,6 @@ function readJson(filePath: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function getTypescriptCliPath(repoRoot: string): string {
-    return path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
-}
-
 function buildEnvWithoutBundleName(): NodeJS.ProcessEnv {
     const env = { ...process.env };
     delete env.GARDA_BUNDLE_NAME;
@@ -96,7 +93,11 @@ function syncGeneratedCliEntrypoint(repoRoot: string): void {
 }
 
 function buildPublishRuntimeInRepo(repoRoot: string): void {
-    const result = childProcess.spawnSync(process.execPath, [getTypescriptCliPath(repoRoot), '-p', 'tsconfig.build.json'], {
+    const result = childProcess.spawnSync(process.execPath, [
+        path.join(repoRoot, 'scripts', 'node-foundation', 'build-scripts.cjs'),
+        'build.js',
+        'publish-runtime'
+    ], {
         cwd: repoRoot,
         encoding: 'utf8',
         timeout: 120_000,
@@ -121,6 +122,7 @@ test('published runtime works when the package is executed from node_modules', (
         copyBuildFixture(repoRoot, fixtureRoot);
         buildPublishRuntimeInRepo(fixtureRoot);
         assert.ok(fs.existsSync(path.join(fixtureRoot, 'dist', 'src', 'index.js')));
+        assert.ok(fs.existsSync(path.join(fixtureRoot, 'dist', 'src', 'reports', 'ui', 'lang-packs', 'garda-ui-ru.json')));
 
         copyPublishedPackageSurface(fixtureRoot, packageRoot);
         fs.mkdirSync(workspaceRoot, { recursive: true });

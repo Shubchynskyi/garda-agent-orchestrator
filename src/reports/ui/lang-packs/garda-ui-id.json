@@ -246,5 +246,47 @@
     "existingArtifacts": "Artefak yang ada",
     "missingArtifacts": "Artefak yang hilang",
     "artifactPath": "Jalur artefak"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Indeks memori, aturan kepemilikan, dan urutan baca."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Peta proyek singkat dan petunjuk routing untuk memulai tugas."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Domain, tujuan proyek, dan ruang lingkup keseluruhan."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Bahasa, framework, infrastruktur, dependensi, dan fallback untuk stack kustom."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Arsitektur, batas komponen, dan titik integrasi."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Area repositori, kepemilikan path, dan tempat mencari perubahan umum."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Perintah build, test, dev, release, dan verifikasi."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Standar kode, aturan penamaan, dan konvensi workflow di luar agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Keputusan arsitektur dan proses beserta alasannya."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Risiko yang diketahui, jalur rapuh, catatan keamanan, dan batas kompatibilitas."
+    }
   }
 }

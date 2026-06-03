@@ -246,5 +246,47 @@
     "existingArtifacts": "기존 아티팩트",
     "missingArtifacts": "누락된 아티팩트",
     "artifactPath": "아티팩트 경로"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "메모리 인덱스, 소유 규칙, 읽기 순서."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "짧은 프로젝트 맵과 작업 시작 라우팅 힌트."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "도메인, 프로젝트 목표, 전체 범위."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "언어, 프레임워크, 인프라, 의존성, 사용자 정의 스택 대체."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "아키텍처, 구성 요소 경계, 통합 지점."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "리포지토리 영역, 경로 소유권, 일반적인 변경 위치."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "빌드, 테스트, 개발, 릴리스, 검증 명령."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "코딩 표준, 명명 규칙, agent-rules 외 워크플로 규약."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "근거가 있는 아키텍처 및 프로세스 결정."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "알려진 위험, 취약한 경로, 보안 메모, 호환성 제약."
+    }
   }
 }

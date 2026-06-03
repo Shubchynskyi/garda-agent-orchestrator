@@ -246,5 +246,47 @@
     "existingArtifacts": "التحف الموجودة",
     "missingArtifacts": "التحف المفقودة",
     "artifactPath": "مسار قطعة أثرية"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "فهرس الذاكرة وقواعد الملكية وترتيب القراءة."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "خريطة مختصرة للمشروع وتلميحات التوجيه لبدء المهمة."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "المجال وأهداف المشروع والنطاق العام."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "اللغات والأطر والبنية التحتية والتبعيات والبدائل للمكدس المخصص."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "البنية وحدود المكونات ونقاط التكامل."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "مناطق المستودع وملكية المسارات وأين تبحث عن التغييرات النموذجية."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "أوامر البناء والاختبار والتطوير والإصدار والتحقق."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "معايير الترميز وقواعد التسمية واتفاقيات سير العمل خارج agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "قرارات معمارية وعملية مع المبررات."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "مخاطر معروفة ومسارات هشة وملاحظات أمنية وقيود التوافق."
+    }
   }
 }

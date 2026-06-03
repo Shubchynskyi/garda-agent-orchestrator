@@ -276,5 +276,47 @@
       "label": "Вимкнути Garda",
       "description": "Прибирає керовані Garda root instruction файли в runtime/switch/off і вмикає off-mode ignore block."
     }
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Індекс пам'яті, правила власності та порядок читання."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Коротка карта проєкту та підказки маршрутизації для старту задачі."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Домен, цілі проєкту та загальний scope."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Мови, фреймворки, інфраструктура, залежності та fallback для custom stack."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Архітектура, межі компонентів та точки інтеграції."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Області репозиторію, власність шляхів і де шукати типові зміни."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Команди build, test, dev, release і verification."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Стандарти коду, правила іменування та workflow-угоди поза agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Архітектурні та процесні рішення з обґрунтуванням."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Відомі ризики, крихкі шляхи, нотатки безпеки та обмеження сумісності."
+    }
   }
 }

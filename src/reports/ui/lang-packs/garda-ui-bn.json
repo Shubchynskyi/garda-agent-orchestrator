@@ -246,5 +246,47 @@
     "existingArtifacts": "বিদ্যমান নিদর্শন",
     "missingArtifacts": "নিখোঁজ নিদর্শন",
     "artifactPath": "শৈল্পিক পথ"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "মেমরি সূচক, মালিকানার নিয়ম এবং পড়ার ক্রম।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "সংক্ষিপ্ত প্রকল্প মানচিত্র এবং টাস্ক শুরুর রাউটিং ইঙ্গিত।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "ডোমেন, প্রকল্পের লক্ষ্য এবং সামগ্রিক সুযোগ।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "ভাষা, ফ্রেমওয়ার্ক, অবকাঠামো, নির্ভরতা এবং কাস্টম স্ট্যাকের ফলব্যাক।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "স্থাপত্য, উপাদানের সীমানা এবং ইন্টিগ্রেশন পয়েন্ট।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "রিপোজিটরি এলাকা, পাথ মালিকানা এবং সাধারণ পরিবর্তন কোথায় দেখবেন।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "বিল্ড, টেস্ট, ডেভ, রিলিজ এবং ভেরিফিকেশন কমান্ড।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "কোডিং স্ট্যান্ডার্ড, নামকরণ এবং agent-rules-এর বাইরে ওয়ার্কফ্লো কনভেনশন।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "যুক্তিসহ আর্কিটেকচারাল ও প্রক্রিয়াগত সিদ্ধান্ত।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "পরিচিত ঝুঁকি, ভঙ্গুর পাথ, নিরাপত্তা নোট এবং সামঞ্জস্য সীমা।"
+    }
   }
 }

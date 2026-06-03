@@ -246,5 +246,47 @@
     "existingArtifacts": "Artefatos existentes",
     "missingArtifacts": "Artefatos ausentes",
     "artifactPath": "Caminho do artefato"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Índice de memória, regras de propriedade e ordem de leitura."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Mapa curta do projeto e dicas de encaminhamento para iniciar tarefas."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Domínio, objetivos do projeto e âmbito geral."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Linguagens, frameworks, infraestrutura, dependências e alternativas para stack personalizada."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Arquitetura, limites de componentes e pontos de integração."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Áreas do repositório, propriedade de caminhos e onde procurar alterações típicas."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Comandos de build, test, dev, release e verificação."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Padrões de código, regras de nomenclatura e convenções de workflow fora de agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Decisões arquitetónicas e de processo com justificação."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Riscos conhecidos, caminhos frágeis, notas de segurança e restrições de compatibilidade."
+    }
   }
 }

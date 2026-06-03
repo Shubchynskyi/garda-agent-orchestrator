@@ -246,5 +246,47 @@
     "existingArtifacts": "Bestaande artefacten",
     "missingArtifacts": "Ontbrekende artefacten",
     "artifactPath": "Artefact pad"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Geheugenindex, eigendomsregels en leesvolgorde."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Korte projectkaart en routinghints voor taakstart."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Domein, projectdoelen en totale scope."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Talen, frameworks, infrastructuur, afhankelijkheden en fallbacks voor custom stacks."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Architectuur, componentgrenzen en integratiepunten."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Repositorygebieden, pad-eigendom en waar je typische wijzigingen vindt."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Build-, test-, dev-, release- en verificatiecommando's."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Coderingsstandaarden, naamgevingsregels en workflowconventies buiten agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Architectuur- en procesbeslissingen met onderbouwing."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Bekende risico's, fragiele paden, beveiligingsnotities en compatibiliteitsgrenzen."
+    }
   }
 }

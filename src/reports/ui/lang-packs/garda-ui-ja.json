@@ -276,5 +276,47 @@
       "label": "Garda をオフ",
       "description": "管理対象の Garda ルート instruction ファイルを runtime/switch/off に移動し、オフモード無視ブロックを有効にします。"
     }
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "メモリ索引、所有ルール、読み取り順序。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "短いプロジェクトマップとタスク開始のルーティングヒント。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "ドメイン、プロジェクト目標、全体スコープ。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "言語、フレームワーク、インフラ、依存関係、カスタムスタックのフォールバック。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "アーキテクチャ、コンポーネント境界、統合ポイント。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "リポジトリ領域、パス所有権、典型的な変更の見方。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "ビルド、テスト、開発、リリース、検証コマンド。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "コーディング標準、命名規則、agent-rules 外のワークフロー規約。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "根拠付きのアーキテクチャおよびプロセス上の決定。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "既知のリスク、脆弱なパス、セキュリティ注意、互換性制約。"
+    }
   }
 }

@@ -246,5 +246,47 @@
     "existingArtifacts": "मौजूदा कलाकृतियाँ",
     "missingArtifacts": "गायब कलाकृतियाँ",
     "artifactPath": "विरूपण साक्ष्य पथ"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "मेमोरी इंडेक्स, स्वामित्व नियम और पढ़ने का क्रम।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "संक्षिप्त प्रोजेक्ट मानचित्र और टास्क शुरू करने के रूटिंग संकेत।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "डोमेन, प्रोजेक्ट लक्ष्य और समग्र दायरा।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "भाषाएँ, फ्रेमवर्क, इन्फ्रास्ट्रक्चर, निर्भरताएँ और कस्टम स्टैक फॉलबैक।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "आर्किटेक्चर, घटक सीमाएँ और इंटीग्रेशन बिंदु।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "रिपॉजिटरी क्षेत्र, पथ स्वामित्व और सामान्य बदलाव कहाँ देखें।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "बिल्ड, टेस्ट, डेव, रिलीज़ और सत्यापन कमांड।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "कोडिंग मानक, नामकरण नियम और agent-rules के बाहर workflow समझौते।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "तर्क सहित आर्किटेक्चरल और प्रक्रियात्मक निर्णय।"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "ज्ञात जोखिम, नाज़ुक पथ, सुरक्षा नोट्स और अनुकूलता सीमाएँ।"
+    }
   }
 }

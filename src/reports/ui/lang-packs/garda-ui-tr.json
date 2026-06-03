@@ -276,5 +276,47 @@
       "label": "Garda’yı kapat",
       "description": "Yönetilen Garda kök instruction dosyalarını runtime/switch/off konumuna taşır ve kapalı mod yoksayma bloğunu etkinleştirir."
     }
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Bellek dizini, sahiplik kuralları ve okuma sırası."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Kısa proje haritası ve görev başlangıcı için yönlendirme ipuçları."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Alan, proje hedefleri ve genel kapsam."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Diller, framework'ler, altyapı, bağımlılıklar ve özel yığın yedekleri."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Mimari, bileşen sınırları ve entegrasyon noktaları."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Depo alanları, yol sahipliği ve tipik değişikliklere bakılacak yerler."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Derleme, test, geliştirme, sürüm ve doğrulama komutları."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Kodlama standartları, adlandırma kuralları ve agent-rules dışı workflow kuralları."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Gerekçeli mimari ve süreç kararları."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Bilinen riskler, kırılgan yollar, güvenlik notları ve uyumluluk kısıtları."
+    }
   }
 }

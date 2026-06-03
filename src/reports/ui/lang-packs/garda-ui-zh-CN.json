@@ -276,5 +276,47 @@
       "label": "关闭 Garda",
       "description": "将受管理的 Garda 根 instruction 文件移至 runtime/switch/off 并启用关闭模式忽略块。"
     }
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "内存索引、所有权规则和阅读顺序。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "简短项目地图和任务开始的路由提示。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "领域、项目目标和整体范围。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "语言、框架、基础设施、依赖项以及自定义技术栈的回退方案。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "架构、组件边界和集成点。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "仓库区域、路径归属以及常见变更的查看位置。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "构建、测试、开发、发布和验证命令。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "编码标准、命名规则以及 agent-rules 之外的工作流约定。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "带有理由的架构和流程决策。"
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "已知风险、脆弱路径、安全说明和兼容性限制。"
+    }
   }
 }

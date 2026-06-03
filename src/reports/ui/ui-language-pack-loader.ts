@@ -13,7 +13,7 @@ export interface LocalUiLocalizedText {
 }
 
 const PACK_FILE_PATTERN = /^garda-ui-(.+)\.json$/u;
-const BUILTIN_LANGUAGE_IDS = new Set(['en', 'ru']);
+const BUILTIN_LANGUAGE_IDS = new Set(['en']);
 
 export interface UiLanguagePackDescriptor {
     readonly id: string;
@@ -24,6 +24,7 @@ export interface UiLanguagePackDescriptor {
 export interface ImportedUiLanguagePack {
     readonly language: UiLanguagePackDescriptor;
     readonly LOCAL_UI_TEXT: Readonly<Record<string, string>>;
+    readonly LOCAL_UI_SETTING_TEXT: Readonly<Record<string, LocalUiLocalizedText>>;
     readonly LOCAL_UI_ACTION_TEXT: Readonly<Record<string, LocalUiLocalizedText>>;
     readonly LOCAL_UI_INIT_SETTING_TEXT: Readonly<Record<string, LocalUiLocalizedText>>;
     readonly LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<string, LocalUiLocalizedText>>;
@@ -34,6 +35,7 @@ export interface ImportedUiLanguagePack {
 interface UiLanguagePackFile {
     language: UiLanguagePackDescriptor;
     LOCAL_UI_TEXT: Record<string, string>;
+    LOCAL_UI_SETTING_TEXT?: Record<string, LocalUiLocalizedText>;
     LOCAL_UI_ACTION_TEXT?: Record<string, LocalUiLocalizedText>;
     LOCAL_UI_INIT_SETTING_TEXT?: Record<string, LocalUiLocalizedText>;
     LOCAL_UI_PROJECT_MEMORY_TEXT?: Record<string, LocalUiLocalizedText>;
@@ -62,7 +64,7 @@ function readPackFile(filePath: string): UiLanguagePackFile {
     }
 
     const pack = parsed as UiLanguagePackFile;
-    if (pack.language == null || typeof pack.language.id !== 'string' || pack.language.id.trim() === '') {
+    if (pack.language == null || pack.language.id.trim() === '') {
         throw new Error(`UI language pack is missing language.id: ${filePath}`);
     }
     if (pack.LOCAL_UI_TEXT == null || typeof pack.LOCAL_UI_TEXT !== 'object') {
@@ -83,13 +85,16 @@ function assertPackTextKeys(languageId: string, packKeys: string[], englishKeys:
 }
 
 function normalizePack(filePath: string, pack: UiLanguagePackFile): ImportedUiLanguagePack {
+    const languageId = pack.language.id;
+
     return Object.freeze({
         language: Object.freeze({
-            id: pack.language.id,
+            id: languageId,
             label: pack.language.label,
             nativeLabel: pack.language.nativeLabel
         }),
         LOCAL_UI_TEXT: Object.freeze({ ...pack.LOCAL_UI_TEXT }),
+        LOCAL_UI_SETTING_TEXT: Object.freeze({ ...(pack.LOCAL_UI_SETTING_TEXT || {}) }),
         LOCAL_UI_ACTION_TEXT: Object.freeze({ ...(pack.LOCAL_UI_ACTION_TEXT || {}) }),
         LOCAL_UI_INIT_SETTING_TEXT: Object.freeze({ ...(pack.LOCAL_UI_INIT_SETTING_TEXT || {}) }),
         LOCAL_UI_PROJECT_MEMORY_TEXT: Object.freeze({ ...(pack.LOCAL_UI_PROJECT_MEMORY_TEXT || {}) }),

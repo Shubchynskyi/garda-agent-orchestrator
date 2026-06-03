@@ -246,5 +246,47 @@
     "existingArtifacts": "Befintliga artefakter",
     "missingArtifacts": "Saknade artefakter",
     "artifactPath": "Artefaktväg"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Minnesindex, äganderegler och läsordning."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Kort projektkarta och routingtips för att starta en uppgift."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Domän, projektmål och övergripande omfattning."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Språk, ramverk, infrastruktur, beroenden och reserv för anpassad stack."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Arkitektur, komponentgränser och integrationspunkter."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Repositoryområden, sökvägsägande och var typiska ändringar finns."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Build-, test-, dev-, release- och verifieringskommandon."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Kodstandarder, namnregler och workflowkonventioner utanför agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Arkitektur- och processbeslut med motivering."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Kända risker, sköra sökvägar, säkerhetsanteckningar och kompatibilitetsgränser."
+    }
   }
 }

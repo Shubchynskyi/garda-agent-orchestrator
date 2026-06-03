@@ -30,7 +30,8 @@ test('handleUi prints no-dependency localhost server help', async () => {
     assert.match(text, /--idle-minutes/);
     assert.match(text, /--idle-warning-seconds/);
     assert.match(text, /--no-idle-shutdown/);
-    assert.match(text, /--language en\|ru\|ar\|bn\|de/);
+    assert.match(text, /--language en\|ar\|bn\|de/);
+    assert.match(text, /\|ru\|/);
     assert.match(text, /allow-listed/i);
     assert.match(text, /Ctrl\+C/);
 });
@@ -73,4 +74,8 @@ test('parseLanguage accepts supported UI languages and falls back to English by 
     assert.equal(parseLanguage('ru'), 'ru');
     assert.equal(parseLanguage('RU'), 'ru');
     assert.equal(parseLanguage('de'), 'de');
+    assert.equal(parseLanguage('pt-BR'), 'pt-BR');
+    assert.equal(parseLanguage('pt-br'), 'pt-BR');
+    assert.equal(parseLanguage('zh-CN'), 'zh-CN');
+    assert.equal(parseLanguage('zh-cn'), 'zh-CN');
 });

@@ -246,5 +246,47 @@
     "existingArtifacts": "Artefatti esistenti",
     "missingArtifacts": "Manufatti mancanti",
     "artifactPath": "Percorso dell'artefatto"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Indice della memoria, regole di proprietà e ordine di lettura."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Mappa breve del progetto e suggerimenti di routing per avviare un task."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Dominio, obiettivi del progetto e ambito generale."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Linguaggi, framework, infrastruttura, dipendenze e fallback per stack personalizzati."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Architettura, confini dei componenti e punti di integrazione."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Aree del repository, proprietà dei percorsi e dove cercare le modifiche tipiche."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Comandi di build, test, dev, release e verifica."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Standard di codifica, regole di naming e convenzioni workflow fuori da agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Decisioni architetturali e di processo con motivazione."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Rischi noti, percorsi fragili, note di sicurezza e vincoli di compatibilità."
+    }
   }
 }

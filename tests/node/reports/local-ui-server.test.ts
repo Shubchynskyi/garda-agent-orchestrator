@@ -10,7 +10,7 @@ import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import {
     DEFAULT_UI_HOST,
     startLocalUiServer
-} from '../../../src/reports/ui/local-ui-server';
+} from '../../../src/reports/ui';
 
 type FakeListener = () => void | Promise<void>;
 
@@ -421,8 +421,9 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /Backups/u);
         assert.match(html, /Instructions/u);
         assert.match(html, /Actions/u);
-        assert.match(html, /Language/u);
-        assert.match(html, /id="language-select"/u);
+        assert.match(html, /class="language-icon"/u);
+        assert.match(html, /id="language-select"[^>]*data-i18n-aria-label="languageTitle"/u);
+        assert.match(html, /visually-hidden[^>]*data-i18n="languageTitle"/u);
         assert.match(html, /id="task-search"/u);
         assert.match(html, /id="status-filter"/u);
         assert.match(html, /id="priority-filter"/u);
@@ -432,8 +433,10 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /id="top-controls"/u);
         assert.match(html, /id="session-countdown"/u);
         assert.match(html, /api\/session/u);
-        assert.match(html, /\.tab-buttons button \{[^}]*flex: 0 0 136px/u);
-        assert.match(html, /\.session-compact \{[^}]*width: 410px/u);
+        assert.match(html, /\.tab-buttons \{[^}]*flex-wrap: wrap/u);
+        assert.match(html, /\.tab-buttons button\.active \{[^}]*background: var\(--ok\)/u);
+        assert.match(html, /\.session-compact \{[^}]*flex-direction: column/u);
+        assert.match(html, /\.session-status-line/u);
         assert.match(html, /\.setting-buttons button, \.action-buttons button, \.switch-buttons button, #tasks button\[data-task-id\] \{[^}]*width: 138px/u);
         assert.match(html, /Gate Timeline/u);
         assert.match(html, /Artifacts/u);
@@ -855,6 +858,177 @@ test('local UI dashboard restores persisted browser language on page load', asyn
         assert.equal(fakeDocument.elements['language-select'].value, 'ru');
         assert.match(fakeDocument.elements.overview.innerHTML, /Активные/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI dashboard prefers case-insensitive regional browser language before base fallback', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0 });
+    try {
+        const html = await (await fetch(server.url)).text();
+        const fakeDocument = createFakeDocument();
+        const report = {
+            repo_root: repoRoot,
+            unavailable: [],
+            tasks_tab: {
+                rows: [
+                    {
+                        task_id: 'T-100',
+                        status: 'TODO',
+                        status_token: 'TODO',
+                        priority: 'P2',
+                        area: 'ui/report',
+                        title: 'Build UI',
+                        owner: 'gpt-5.4',
+                        notes: 'Uses lazy details',
+                        detail: { detail_status: 'skipped' }
+                    }
+                ]
+            },
+            workflow_config_tab: { settings: [] },
+            instructions_tab: { entries: [] }
+        };
+        const session = {
+            enabled: true,
+            state: 'active',
+            last_activity_at: '2026-05-19T00:00:00.000Z',
+            idle_minutes: 15,
+            warning_seconds: 60,
+            idle_deadline_at: '2026-05-19T00:15:00.000Z',
+            shutdown_deadline_at: null,
+            seconds_until_warning: 900,
+            seconds_until_shutdown: null,
+            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui` from a terminal to launch it again.'
+        };
+
+        vm.runInNewContext(extractDashboardScript(html), {
+            document: fakeDocument,
+            navigator: {
+                language: 'pt-br',
+                languages: ['pt-br', 'pt']
+            },
+            window: {
+                prompt: () => null,
+                addEventListener: () => undefined,
+                localStorage: {
+                    getItem: () => null,
+                    setItem: () => undefined
+                }
+            },
+            setInterval: () => 1,
+            clearInterval: () => undefined,
+            fetch: async (url: string) => ({
+                ok: true,
+                status: 200,
+                json: async () => {
+                    if (url === '/api/session') {
+                        return session;
+                    }
+                    if (url === '/api/report') {
+                        return report;
+                    }
+                    if (url === '/api/actions') {
+                        return { enabled: false, switch_state: 'on', actions: [] };
+                    }
+                    if (url === '/api/settings') {
+                        return { enabled: false, settings: [] };
+                    }
+                    return {};
+                }
+            })
+        });
+        await flushPromises();
+
+        assert.equal(fakeDocument.elements['language-select'].value, 'pt-BR');
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI dashboard falls back from unsupported browser locale to server initial language', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0, language: 'de' });
+    try {
+        const html = await (await fetch(server.url)).text();
+        const fakeDocument = createFakeDocument();
+        const report = {
+            repo_root: repoRoot,
+            unavailable: [],
+            tasks_tab: {
+                rows: [
+                    {
+                        task_id: 'T-100',
+                        status: 'TODO',
+                        status_token: 'TODO',
+                        priority: 'P2',
+                        area: 'ui/report',
+                        title: 'Build UI',
+                        owner: 'gpt-5.4',
+                        notes: 'Uses lazy details',
+                        detail: { detail_status: 'skipped' }
+                    }
+                ]
+            },
+            workflow_config_tab: { settings: [] },
+            instructions_tab: { entries: [] }
+        };
+        const session = {
+            enabled: true,
+            state: 'active',
+            last_activity_at: '2026-05-19T00:00:00.000Z',
+            idle_minutes: 15,
+            warning_seconds: 60,
+            idle_deadline_at: '2026-05-19T00:15:00.000Z',
+            shutdown_deadline_at: null,
+            seconds_until_warning: 900,
+            seconds_until_shutdown: null,
+            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui` from a terminal to launch it again.'
+        };
+
+        vm.runInNewContext(extractDashboardScript(html), {
+            document: fakeDocument,
+            navigator: {
+                language: 'zz-ZZ',
+                languages: ['zz-ZZ']
+            },
+            window: {
+                prompt: () => null,
+                addEventListener: () => undefined,
+                localStorage: {
+                    getItem: () => null,
+                    setItem: () => undefined
+                }
+            },
+            setInterval: () => 1,
+            clearInterval: () => undefined,
+            fetch: async (url: string) => ({
+                ok: true,
+                status: 200,
+                json: async () => {
+                    if (url === '/api/session') {
+                        return session;
+                    }
+                    if (url === '/api/report') {
+                        return report;
+                    }
+                    if (url === '/api/actions') {
+                        return { enabled: false, switch_state: 'on', actions: [] };
+                    }
+                    if (url === '/api/settings') {
+                        return { enabled: false, settings: [] };
+                    }
+                    return {};
+                }
+            })
+        });
+        await flushPromises();
+
+        assert.equal(fakeDocument.elements['language-select'].value, 'de');
+        assert.match(fakeDocument.elements.overview.innerHTML, /Aktiv/u);
     } finally {
         await server.close();
     }

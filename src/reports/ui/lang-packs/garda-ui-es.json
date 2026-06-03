@@ -276,5 +276,47 @@
       "label": "Desactivar Garda",
       "description": "Mueve los archivos de instrucciones raíz de Garda gestionados a runtime/switch/off y activa el bloque de ignorar en modo apagado."
     }
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Índice de memoria, reglas de propiedad y orden de lectura."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Mapa breve del proyecto y pistas de enrutamiento para iniciar tareas."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Dominio, objetivos del proyecto y alcance general."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Lenguajes, frameworks, infraestructura, dependencias y alternativas para stacks personalizados."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Arquitectura, límites de componentes y puntos de integración."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Áreas del repositorio, propiedad de rutas y dónde buscar cambios típicos."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Comandos de build, test, dev, release y verificación."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Estándares de código, reglas de nombres y convenciones de workflow fuera de agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Decisiones arquitectónicas y de proceso con justificación."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Riesgos conocidos, rutas frágiles, notas de seguridad y restricciones de compatibilidad."
+    }
   }
 }

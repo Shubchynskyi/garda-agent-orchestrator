@@ -246,5 +246,47 @@
     "existingArtifacts": "Hiện vật hiện có",
     "missingArtifacts": "Hiện vật bị thiếu",
     "artifactPath": "Đường dẫn tạo tác"
+  },
+  "LOCAL_UI_PROJECT_MEMORY_TEXT": {
+    "garda-agent-orchestrator/live/docs/project-memory/README.md": {
+      "label": "README.md",
+      "description": "Chỉ mục bộ nhớ, quy tắc sở hữu và thứ tự đọc."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
+      "label": "compact.md",
+      "description": "Bản đồ dự án ngắn và gợi ý định tuyến khi bắt đầu tác vụ."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/context.md": {
+      "label": "context.md",
+      "description": "Miền, mục tiêu dự án và phạm vi tổng thể."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
+      "label": "stack.md",
+      "description": "Ngôn ngữ, framework, hạ tầng, phụ thuộc và dự phòng cho stack tùy chỉnh."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
+      "label": "architecture.md",
+      "description": "Kiến trúc, ranh giới thành phần và điểm tích hợp."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
+      "label": "module-map.md",
+      "description": "Vùng kho lưu trữ, quyền sở hữu đường dẫn và nơi xem thay đổi điển hình."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
+      "label": "commands.md",
+      "description": "Lệnh build, test, dev, release và xác minh."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
+      "label": "conventions.md",
+      "description": "Tiêu chuẩn mã, quy tắc đặt tên và quy ước workflow ngoài agent-rules."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
+      "label": "decisions.md",
+      "description": "Quyết định kiến trúc và quy trình kèm lý do."
+    },
+    "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
+      "label": "risks.md",
+      "description": "Rủi ro đã biết, đường dẫn mong manh, ghi chú bảo mật và ràng buộc tương thích."
+    }
   }
 }
