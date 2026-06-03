@@ -552,8 +552,8 @@ function hasPerformanceSensitiveCacheIntent(taskIntent: string): boolean {
 
 function isOrdinaryOrchestratorCacheMaintenancePath(pathValue: string): boolean {
     const normalizedPath = normalizePath(pathValue).replace(/^garda-agent-orchestrator\//, '');
-    return normalizedPath === 'src/gates/workspace-snapshot-cache.ts'
-        || normalizedPath === 'src/gates/protected-hash-cache.ts';
+    return normalizedPath === 'src/gates/workspace/workspace-snapshot-cache.ts'
+        || normalizedPath === 'src/gates/protected-control-plane/protected-hash-cache.ts';
 }
 
 export function isDocumentationLikePath(pathValue: string, ordinaryDocPaths: string[] = []): boolean {

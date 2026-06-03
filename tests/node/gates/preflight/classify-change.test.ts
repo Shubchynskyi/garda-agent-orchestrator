@@ -476,7 +476,7 @@ describe('gates/classify-change', () => {
 
         it('does not trigger performance review for ordinary cache helper maintenance', () => {
             const workspaceSnapshotCacheResult = classifyChange({
-                normalizedFiles: ['src/gates/workspace-snapshot-cache.ts'],
+                normalizedFiles: ['src/gates/workspace/workspace-snapshot-cache.ts'],
                 taskIntent: 'Update workspace snapshot cache diagnostics',
                 changedLinesTotal: 24,
                 additionsTotal: 16,
@@ -487,7 +487,7 @@ describe('gates/classify-change', () => {
                 reviewCapabilities: { ...defaultCapabilities, performance: true }
             });
             const protectedHashCacheResult = classifyChange({
-                normalizedFiles: ['src/gates/protected-hash-cache.ts'],
+                normalizedFiles: ['src/gates/protected-control-plane/protected-hash-cache.ts'],
                 taskIntent: 'Update protected hash cache diagnostics',
                 changedLinesTotal: 24,
                 additionsTotal: 16,
@@ -502,29 +502,29 @@ describe('gates/classify-change', () => {
             assert.equal(workspaceSnapshotCacheResult.required_reviews.performance, false);
             assert.deepEqual(
                 (workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_candidate_files,
-                ['src/gates/workspace-snapshot-cache.ts']
+                ['src/gates/workspace/workspace-snapshot-cache.ts']
             );
             assert.deepEqual(
                 (workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
-                ['src/gates/workspace-snapshot-cache.ts']
+                ['src/gates/workspace/workspace-snapshot-cache.ts']
             );
             assert.equal((workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_intent, false);
             assert.equal(protectedHashCacheResult.triggers.performance, false);
             assert.equal(protectedHashCacheResult.required_reviews.performance, false);
             assert.deepEqual(
                 (protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_candidate_files,
-                ['src/gates/protected-hash-cache.ts']
+                ['src/gates/protected-control-plane/protected-hash-cache.ts']
             );
             assert.deepEqual(
                 (protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
-                ['src/gates/protected-hash-cache.ts']
+                ['src/gates/protected-control-plane/protected-hash-cache.ts']
             );
             assert.equal((protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_intent, false);
         });
 
         it('keeps performance review for cache tuning intent and cache-adjacent performance paths', () => {
             const cacheTuningResult = classifyChange({
-                normalizedFiles: ['src/gates/workspace-snapshot-cache.ts'],
+                normalizedFiles: ['src/gates/workspace/workspace-snapshot-cache.ts'],
                 taskIntent: 'Tune cache eviction TTL for a hot path',
                 changedLinesTotal: 24,
                 additionsTotal: 16,
