@@ -203,6 +203,9 @@ import {
     resolveDelegatedReviewReadinessRoute
 } from './next-step-review-readiness-routing';
 import {
+    resolveReviewLaunchableLanePreparationRoute
+} from './next-step-review-cycle-routing';
+import {
     buildProviderNativeReviewerLaunchTargetSummary,
     buildReviewerReadinessChainSummary,
     getCurrentReviewerLaunchArtifactEvidenceForInvocation,
@@ -4142,20 +4145,37 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             state,
             (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
         );
-        if (dependencies.length > 0) {
-            const dependencyDetails = describeBlockedReviewDependencies(dependencies, reviewStates);
+        const blockedDependencyRoute = resolveReviewLaunchableLanePreparationRoute({
+            reviewPolicyMode: reviewPolicy.mode,
+            reviewType,
+            dependencies,
+            dependencyDetails: dependencies.length > 0
+                ? describeBlockedReviewDependencies(dependencies, reviewStates)
+                : '',
+            reviewerReadinessChain,
+            reviewContextChain: '',
+            scopedDiffReadiness: { ready: true, reason: '' },
+            stateExists: true,
+            contextExists: true,
+            contextCurrent: true,
+            contextDetailsSuffix: '',
+            commands: {
+                finishUpstreamReview: buildCommand(
+                    'Finish upstream review first',
+                    navigatorCommand
+                ),
+                buildScopedDiff: buildCommand('Build scoped diff', navigatorCommand),
+                buildReviewContext: buildCommand('Build review context', navigatorCommand)
+            }
+        });
+        if (blockedDependencyRoute) {
             return buildResult({
                 ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'build-review-context',
-                title: `Review '${reviewType}' is waiting for upstream review evidence.`,
-                reason: `Configured review policy '${reviewPolicy.mode}' requires upstream PASS evidence before '${reviewType}': ${dependencyDetails}. Do not launch '${reviewType}' reviewer until those dependencies pass. ${reviewerReadinessChain}`,
-                commands: [
-                    buildCommand(
-                        'Finish upstream review first',
-                        navigatorCommand
-                    )
-                ]
+                status: blockedDependencyRoute.status,
+                nextGate: blockedDependencyRoute.nextGate,
+                title: blockedDependencyRoute.title,
+                reason: blockedDependencyRoute.reason,
+                commands: blockedDependencyRoute.commands
             });
         }
         const strictSequentialUpstreamReuse = findStrictSequentialUpstreamNeedingCurrentCycleReuse({
@@ -4321,42 +4341,61 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             const contextDetails = state?.violations
                 .filter((violation) => violation.includes('review context'))
                 .join(' ');
-            const contextDetailsSuffix = contextDetails ? ` ${contextDetails}` : '';
-            if (!scopedDiffReadiness.ready) {
+            const preparationRoute = resolveReviewLaunchableLanePreparationRoute({
+                reviewPolicyMode: reviewPolicy.mode,
+                reviewType,
+                dependencies: [],
+                dependencyDetails: '',
+                reviewerReadinessChain,
+                reviewContextChain,
+                scopedDiffReadiness,
+                stateExists: Boolean(state),
+                contextExists: Boolean(state?.contextExists),
+                contextCurrent: Boolean(state?.contextCurrent),
+                contextDetailsSuffix: contextDetails ? ` ${contextDetails}` : '',
+                commands: {
+                    finishUpstreamReview: buildCommand(
+                        'Finish upstream review first',
+                        navigatorCommand
+                    ),
+                    buildScopedDiff: buildCommand(
+                        'Build scoped diff',
+                        buildScopedDiffCommand({
+                            cliPrefix,
+                            reviewType,
+                            preflightCommandPath,
+                            outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                            metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                        })
+                    ),
+                    buildReviewContext: buildCommand(
+                        'Build review context',
+                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
+                    )
+                }
+            });
+            if (!preparationRoute) {
                 return buildResult({
                     ...resultBase,
                     status: 'BLOCKED',
-                    nextGate: 'build-scoped-diff',
-                    title: `Prepare '${reviewType}' scoped diff metadata.`,
-                    reason: `${scopedDiffReadiness.reason} Required '${reviewType}' review contexts for code-changing scopes must include scoped diff metadata before reviewer routing. ${reviewerReadinessChain} ${reviewContextChain}`,
+                    nextGate: 'build-review-context',
+                    title: `Prepare '${reviewType}' review context.`,
+                    reason: `Required review '${reviewType}' review-context state is inconsistent for the current preflight. ${reviewerReadinessChain} ${reviewContextChain}`,
                     commands: [
                         buildCommand(
-                            'Build scoped diff',
-                            buildScopedDiffCommand({
-                                cliPrefix,
-                                reviewType,
-                                preflightCommandPath,
-                                outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
-                                metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
-                            })
+                            'Build review context',
+                            buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
                         )
                     ]
                 });
             }
             return buildResult({
                 ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'build-review-context',
-                title: `Prepare '${reviewType}' review context.`,
-                reason: !state || !state.contextExists
-                    ? `Required review '${reviewType}' has no canonical review-context artifact. ${reviewerReadinessChain} ${reviewContextChain}`
-                    : `Required review '${reviewType}' review-context artifact is stale for the current preflight.${contextDetailsSuffix} ${reviewerReadinessChain} ${reviewContextChain}`,
-                commands: [
-                    buildCommand(
-                        'Build review context',
-                        buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
-                    )
-                ]
+                status: preparationRoute.status,
+                nextGate: preparationRoute.nextGate,
+                title: preparationRoute.title,
+                reason: preparationRoute.reason,
+                commands: preparationRoute.commands
             });
         }
         const contextReviewerIdentity = state.contextReviewerIdentity || '';
