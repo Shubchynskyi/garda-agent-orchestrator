@@ -97,7 +97,7 @@ not the provider.
 
 ## Test Coverage by Provider
 
-The execution-path test suite (`tests/node/gates/review/provider-workflow-execution.test.ts`) validates
+The execution-path test suite (`tests/node/gates/shared/provider-workflow-execution.test.ts`) validates
 all supported provider entries across multiple dimensions.
 
 | Test Dimension | Coverage Shape |
@@ -118,7 +118,7 @@ Additional provider-relevant test suites:
 |---|---|---|
 | Cross-provider router matrix | `tests/node/materialization/cross-provider-router-matrix.test.ts` | Entrypoint canonicalization across supported provider entries and unique entrypoints |
 | Provider compliance validators | `tests/node/validators/provider-compliance.test.ts` | Managed-block and structure validation |
-| CLI provider routing | `tests/node/cli/commands/gates.test.ts` | `--provider` option dispatch |
+| CLI provider routing | `tests/node/cli/commands/gates/shared/gates.test.ts` | `--provider` option dispatch |
 
 ## Status Definitions
 
@@ -137,7 +137,7 @@ Additional provider-relevant test suites:
 | Bridge and skill-bridge profile definitions | `src/materialization/common.ts` |
 | Reviewer routing and delegation policy | `src/gates/review/reviewer-routing.ts` |
 | Delegation rules | `garda-agent-orchestrator/live/skills/orchestration/SKILL.md` |
-| Execution-path tests (T-011) | `tests/node/gates/review/provider-workflow-execution.test.ts` |
+| Execution-path tests (T-011) | `tests/node/gates/shared/provider-workflow-execution.test.ts` |
 | Cross-provider router tests | `tests/node/materialization/cross-provider-router-matrix.test.ts` |
 | Provider compliance tests | `tests/node/validators/provider-compliance.test.ts` |
 | Review capabilities config | `garda-agent-orchestrator/live/config/review-capabilities.json` |
