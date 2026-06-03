@@ -57,6 +57,77 @@ export interface PostReviewCloseoutRoutingOptions {
     completion: CompletionCloseoutOptions;
 }
 
+export interface PostReviewCloseoutRouteState {
+    requiredReviewsGatePassed: boolean;
+    zeroDiffNoReviewCloseout: boolean;
+    requiredReviewsCommand: string;
+    docImpactGatePassed: boolean;
+    docImpactCompatibilityHint: string;
+    docImpactCommand: string;
+    fullSuiteEnabled: boolean;
+    fullSuiteGatePassed: boolean;
+    fullSuiteNotRequiredForDocsOnly: boolean;
+    fullSuitePlacement: string;
+    fullSuiteConfigPath: string;
+    fullSuiteCommandText: string;
+    fullSuiteTimeoutForecastLine: string | null;
+    fullSuiteCommand: string;
+    projectMemoryRequired: boolean;
+    projectMemoryEvidenceCurrent: boolean;
+    projectMemoryVisibleSummaryLine: string;
+    projectMemoryAffectedMemoryFiles: readonly string[];
+    projectMemoryViolations: readonly string[];
+    projectMemoryCommand: string;
+    completionGatePassed: boolean;
+    completionCommand: string;
+}
+
+function closeoutCommand(label: string, command: string): CloseoutRoutingCommand {
+    return { label, command };
+}
+
+export function resolvePostReviewCloseoutRouteFromState(
+    state: PostReviewCloseoutRouteState
+): CloseoutRoutingRoute {
+    return resolvePostReviewCloseoutRoute({
+        requiredReviews: {
+            requiredReviewsGatePassed: state.requiredReviewsGatePassed,
+            zeroDiffNoReviewCloseout: state.zeroDiffNoReviewCloseout,
+            command: closeoutCommand('Run required reviews check', state.requiredReviewsCommand)
+        },
+        docImpact: {
+            docImpactGatePassed: state.docImpactGatePassed,
+            compatibilityHint: state.docImpactCompatibilityHint,
+            command: closeoutCommand('Run doc impact gate', state.docImpactCommand)
+        },
+        fullSuite: {
+            enabled: state.fullSuiteEnabled,
+            gatePassed: state.fullSuiteGatePassed,
+            notRequiredForDocsOnly: state.fullSuiteNotRequiredForDocsOnly,
+            placement: state.fullSuitePlacement,
+            configPath: state.fullSuiteConfigPath,
+            commandText: state.fullSuiteCommandText,
+            timeoutForecastLine: state.fullSuiteTimeoutForecastLine,
+            command: closeoutCommand(
+                state.fullSuiteNotRequiredForDocsOnly ? 'Record full-suite not required' : 'Run full-suite validation',
+                state.fullSuiteCommand
+            )
+        },
+        projectMemory: {
+            required: state.projectMemoryRequired,
+            evidenceCurrent: state.projectMemoryEvidenceCurrent,
+            visibleSummaryLine: state.projectMemoryVisibleSummaryLine,
+            affectedMemoryFiles: state.projectMemoryAffectedMemoryFiles,
+            violations: state.projectMemoryViolations,
+            command: closeoutCommand('Run project memory impact gate', state.projectMemoryCommand)
+        },
+        completion: {
+            completionGatePassed: state.completionGatePassed,
+            command: closeoutCommand('Run completion gate', state.completionCommand)
+        }
+    });
+}
+
 export function resolvePostReviewCloseoutRoute(
     options: PostReviewCloseoutRoutingOptions
 ): CloseoutRoutingRoute {
@@ -155,6 +226,30 @@ export interface CompletedCloseoutRoutingOptions {
     finalReportContractBlocker: string;
     finalReport: unknown | null;
     taskAuditCommand: CloseoutRoutingCommand;
+}
+
+export interface CompletedCloseoutRouteState {
+    postDoneDriftBlocked: boolean;
+    postDoneDriftReason: string;
+    finalReportContractReady: boolean;
+    finalReportContractBlocker: string;
+    finalReport: unknown | null;
+    taskAuditCommand: string;
+}
+
+export function resolveCompletedCloseoutRouteFromState(
+    state: CompletedCloseoutRouteState
+): CloseoutRoutingRoute {
+    return resolveCompletedCloseoutRoute({
+        postDoneDrift: {
+            blocked: state.postDoneDriftBlocked,
+            reason: state.postDoneDriftReason
+        },
+        finalReportContractReady: state.finalReportContractReady,
+        finalReportContractBlocker: state.finalReportContractBlocker,
+        finalReport: state.finalReport,
+        taskAuditCommand: closeoutCommand('Build final audit summary', state.taskAuditCommand)
+    });
 }
 
 export function resolveCompletedCloseoutRoute(

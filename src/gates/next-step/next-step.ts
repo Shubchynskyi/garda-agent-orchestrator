@@ -219,8 +219,8 @@ import {
     resolveStrictSequentialUpstreamReuseRoute
 } from './next-step-review-reuse-routing';
 import {
-    resolveCompletedCloseoutRoute,
-    resolvePostReviewCloseoutRoute
+    resolveCompletedCloseoutRouteFromState,
+    resolvePostReviewCloseoutRouteFromState
 } from './next-step-closeout-routing';
 import {
     resolveNextStepCompileGateRoute,
@@ -3298,15 +3298,13 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             )
             : { blocked: false, reason: 'No materialized final closeout artifact exists yet.' };
         const finalReport = readReadyFinalReportSummary(repoRoot, reviewsRoot, taskId, summary);
-        const completedCloseoutRoute = resolveCompletedCloseoutRoute({
-            postDoneDrift,
+        const completedCloseoutRoute = resolveCompletedCloseoutRouteFromState({
+            postDoneDriftBlocked: postDoneDrift.blocked,
+            postDoneDriftReason: postDoneDrift.reason,
             finalReportContractReady: summary.final_report_contract.status === 'READY',
             finalReportContractBlocker: summary.final_report_contract.blocker || '',
             finalReport,
-            taskAuditCommand: buildCommand(
-                'Build final audit summary',
-                `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
-            )
+            taskAuditCommand: `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
         });
         return buildResult({
             ...resultBase,
@@ -4755,61 +4753,36 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-    const postReviewCloseoutRoute = resolvePostReviewCloseoutRoute({
-        requiredReviews: {
-            requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
-            zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
-            command: buildCommand(
-                'Run required reviews check',
-                buildRequiredReviewsCheckCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
-            )
-        },
-        docImpact: {
-            docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
-            compatibilityHint: buildDocImpactCompatibilityHint(),
-            command: buildCommand(
-                'Run doc impact gate',
-                buildDocImpactCommand(
-                    cliPrefix,
-                    taskId,
-                    preflightCommandPath,
-                    preflight,
-                    repoRoot,
-                    effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
-                )
-            )
-        },
-        fullSuite: {
-            enabled: fullSuiteConfig.enabled,
-            gatePassed: fullSuiteGatePassed,
-            notRequiredForDocsOnly: fullSuiteNotRequiredForDocsOnly,
-            placement: fullSuiteConfig.placement,
-            configPath: fullSuiteSummary.config_path,
-            commandText: fullSuiteConfig.command,
-            timeoutForecastLine: fullSuiteTimeoutForecastLine,
-            command: buildCommand(
-                fullSuiteNotRequiredForDocsOnly ? 'Record full-suite not required' : 'Run full-suite validation',
-                fullSuiteCommand
-            )
-        },
-        projectMemory: {
-            required: projectMemoryEvidence.required,
-            evidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
-            visibleSummaryLine: projectMemoryEvidence.visible_summary_line,
-            affectedMemoryFiles: projectMemoryEvidence.affected_memory_files,
-            violations: projectMemoryEvidence.violations,
-            command: buildCommand(
-                'Run project memory impact gate',
-                buildProjectMemoryImpactCommand(cliPrefix, taskId, preflightCommandPath, projectMemorySummary)
-            )
-        },
-        completion: {
-            completionGatePassed: isGatePassed(summary, 'completion-gate'),
-            command: buildCommand(
-                'Run completion gate',
-                buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
-            )
-        }
+    const postReviewCloseoutRoute = resolvePostReviewCloseoutRouteFromState({
+        requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
+        zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
+        requiredReviewsCommand: buildRequiredReviewsCheckCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath),
+        docImpactGatePassed: isGatePassed(summary, 'doc-impact-gate'),
+        docImpactCompatibilityHint: buildDocImpactCompatibilityHint(),
+        docImpactCommand: buildDocImpactCommand(
+            cliPrefix,
+            taskId,
+            preflightCommandPath,
+            preflight,
+            repoRoot,
+            effectivePreflightWorkspaceReadiness.acceptedDocsOnlyDeltaFiles || []
+        ),
+        fullSuiteEnabled: fullSuiteConfig.enabled,
+        fullSuiteGatePassed,
+        fullSuiteNotRequiredForDocsOnly,
+        fullSuitePlacement: fullSuiteConfig.placement,
+        fullSuiteConfigPath: fullSuiteSummary.config_path,
+        fullSuiteCommandText: fullSuiteConfig.command,
+        fullSuiteTimeoutForecastLine,
+        fullSuiteCommand,
+        projectMemoryRequired: projectMemoryEvidence.required,
+        projectMemoryEvidenceCurrent: projectMemoryEvidence.evidence_status === 'CURRENT',
+        projectMemoryVisibleSummaryLine: projectMemoryEvidence.visible_summary_line,
+        projectMemoryAffectedMemoryFiles: projectMemoryEvidence.affected_memory_files,
+        projectMemoryViolations: projectMemoryEvidence.violations,
+        projectMemoryCommand: buildProjectMemoryImpactCommand(cliPrefix, taskId, preflightCommandPath, projectMemorySummary),
+        completionGatePassed: isGatePassed(summary, 'completion-gate'),
+        completionCommand: buildCompletionGateCommand(repoRoot, cliPrefix, taskId, preflightCommandPath, taskModePath)
     });
 
     return buildResult({
