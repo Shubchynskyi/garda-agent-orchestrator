@@ -1,0 +1,161 @@
+import { escapeHtml, formatDuration, formatNumber } from './common';
+import type { ReportTaskRow } from '../report-data-contract';
+
+export function renderTaskRow(task: ReportTaskRow, index: number): string {
+    const stats = task.detail.stats;
+    return [
+        `<tr data-task-index="${index}" tabindex="0">`,
+        `<td><span class="task-id">${escapeHtml(task.task_id)}</span></td>`,
+        `<td>${escapeHtml(task.status_token || task.status)}</td>`,
+        `<td>${escapeHtml(task.priority)}</td>`,
+        `<td>${escapeHtml(task.area)}</td>`,
+        `<td>${escapeHtml(task.title)}</td>`,
+        `<td>${escapeHtml(task.profile)}</td>`,
+        `<td>${task.detail.detail_status === 'skipped' ? 'skipped' : formatNumber(stats?.events_count)}</td>`,
+        `<td>${task.detail.detail_status === 'skipped' ? 'skipped' : formatDuration(stats?.wall_clock_seconds)}</td>`,
+        '</tr>'
+    ].join('');
+}
+
+export function renderTaskDetailTemplate(): string {
+    return [
+        '<template id="task-detail-template">',
+        '<section class="detail">',
+        '<div class="detail-head">',
+        '<div>',
+        '<p class="eyebrow">Task</p>',
+        '<h2 data-field="title"></h2>',
+        '</div>',
+        '<span class="pill" data-field="status"></span>',
+        '</div>',
+        '<div class="metrics">',
+        '<div data-metric="events"></div>',
+        '<div data-metric="passes"></div>',
+        '<div data-metric="fails"></div>',
+        '<div data-metric="reviews"></div>',
+        '<div data-metric="changed"></div>',
+        '<div data-metric="duration"></div>',
+        '<div data-metric="full-suite-state"></div>',
+        '<div data-metric="full-suite-duration"></div>',
+        '</div>',
+        '<div class="detail-grid">',
+        '<section>',
+        '<h3>Full-suite Validation</h3>',
+        '<div data-field="full-suite"></div>',
+        '</section>',
+        '<section>',
+        '<h3>Latest Cycle</h3>',
+        '<pre data-field="latest-cycle"></pre>',
+        '</section>',
+        '<section>',
+        '<h3>Artifacts</h3>',
+        '<ul data-field="artifacts"></ul>',
+        '</section>',
+        '</div>',
+        '<section>',
+        '<h3>Unavailable</h3>',
+        '<ul data-field="unavailable"></ul>',
+        '</section>',
+        '</section>',
+        '</template>'
+    ].join('');
+}
+
+export function renderTasksPanel(rows: ReportTaskRow[]): string {
+    return [
+        '<section class="panel active" id="tab-tasks" role="tabpanel">',
+        '<p class="notice">Static HTML report: read-only snapshot. Task details load from embedded report data; restore and workflow actions require <code>garda ui</code>.</p>',
+        '<div class="task-layout">',
+        '<div class="table-wrap">',
+        '<table>',
+        '<thead><tr><th>ID</th><th>Status</th><th>Priority</th><th>Area</th><th>Title</th><th>Profile</th><th>Events</th><th>Time</th></tr></thead>',
+        `<tbody>${rows.map(renderTaskRow).join('')}</tbody>`,
+        '</table>',
+        '</div>',
+        '<div id="task-detail"></div>',
+        '</div>',
+        '</section>'
+    ].join('');
+}
+
+export const STATIC_HTML_TASK_CLIENT_SCRIPT = `
+const tabs = Array.from(document.querySelectorAll('.tab'));
+for (const tab of tabs) {
+  tab.addEventListener('click', () => {
+    for (const item of tabs) item.setAttribute('aria-selected', String(item === tab));
+    for (const panel of document.querySelectorAll('.panel')) panel.classList.remove('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+}
+function text(value) { return value === null || value === undefined || value === '' ? '-' : String(value); }
+function toArtifactHref(pathValue) {
+  const value = text(pathValue).replace(/\\\\/g, '/');
+  if (/^[A-Za-z]:\\//.test(value)) return 'file:///' + encodeURI(value);
+  if (value.startsWith('/')) return 'file://' + encodeURI(value);
+  return '';
+}
+function metric(label, value) { return '<div class="metric"><span>' + label + '</span><strong>' + text(value) + '</strong></div>'; }
+function duration(seconds) {
+  if (typeof seconds !== 'number') return '-';
+  if (seconds < 60) return seconds + 's';
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? minutes + 'm' : minutes + 'm ' + rest + 's';
+}
+function safe(value) {
+  return text(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+function fullSuiteRows(fullSuite) {
+  if (!fullSuite) return '<p class="empty">-</p>';
+  const rows = [
+    ['Command', fullSuite.command],
+    ['Placement', fullSuite.placement],
+    ['Freshness', fullSuite.freshness],
+    ['Timeout forecast', fullSuite.timeout_forecast_label],
+    ['Evidence artifact', fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (missing)')],
+    ['Output artifact', fullSuite.output_artifact_path]
+  ];
+  const newline = String.fromCharCode(10);
+  const summary = (fullSuite.compact_summary || []).length > 0
+    ? '<h4>Summary</h4><pre>' + safe(fullSuite.compact_summary.join(newline)) + '</pre>'
+    : '';
+  return '<table><tbody>' + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(value) + '</td></tr>').join('') + '</tbody></table>' + summary;
+}
+function renderList(items, formatter) {
+  if (!items || items.length === 0) return '<li>none</li>';
+  return items.map(formatter).join('');
+}
+function showTask(index) {
+  const task = report.tasks_tab.rows[index];
+  const stats = task.detail.stats || {};
+  const template = document.getElementById('task-detail-template');
+  const node = template.content.cloneNode(true);
+  node.querySelector('[data-field="title"]').textContent = task.task_id + ' - ' + task.title;
+  node.querySelector('[data-field="status"]').textContent = task.status_token || task.status;
+  node.querySelector('[data-metric="events"]').innerHTML = metric('Events', stats.events_count);
+  node.querySelector('[data-metric="passes"]').innerHTML = metric('Gate Pass', stats.gate_pass_count);
+  node.querySelector('[data-metric="fails"]').innerHTML = metric('Gate Fail', stats.gate_fail_count);
+  node.querySelector('[data-metric="reviews"]').innerHTML = metric('Reviews', (stats.required_reviews || []).join(', ') || '-');
+  node.querySelector('[data-metric="changed"]').innerHTML = metric('Changed Lines', stats.changed_lines_total);
+  node.querySelector('[data-metric="duration"]').innerHTML = metric('Wall Time', duration(stats.wall_clock_seconds));
+  node.querySelector('[data-metric="full-suite-state"]').innerHTML = metric('Full-suite', task.detail.full_suite_validation && task.detail.full_suite_validation.state);
+  node.querySelector('[data-metric="full-suite-duration"]').innerHTML = metric('Full-suite Duration', task.detail.full_suite_validation && task.detail.full_suite_validation.duration_human);
+  node.querySelector('[data-field="full-suite"]').innerHTML = fullSuiteRows(task.detail.full_suite_validation);
+  node.querySelector('[data-field="latest-cycle"]').textContent = JSON.stringify(task.detail.latest_cycle_events || {}, null, 2);
+  node.querySelector('[data-field="artifacts"]').innerHTML = renderList((task.detail.artifact_links || []).filter(item => item.exists).slice(0, 12), item => {
+    const href = toArtifactHref(item.path);
+    const pathText = safe(item.path);
+    const link = href ? '<a href="' + safe(href) + '">' + pathText + '</a>' : pathText;
+    return '<li><code>' + safe(item.kind) + '</code> ' + link + '</li>';
+  });
+  node.querySelector('[data-field="unavailable"]').innerHTML = renderList(task.detail.unavailable || [], item => '<li><strong>' + safe(item.scope) + '</strong>: ' + safe(item.reason) + '</li>');
+  const detail = document.getElementById('task-detail');
+  detail.replaceChildren(node);
+  for (const row of document.querySelectorAll('tr[data-task-index]')) row.classList.toggle('selected', row.dataset.taskIndex === String(index));
+}
+for (const row of document.querySelectorAll('tr[data-task-index]')) {
+  row.addEventListener('click', () => showTask(Number(row.dataset.taskIndex)));
+  row.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') showTask(Number(row.dataset.taskIndex)); });
+}
+if (report.tasks_tab.rows.length > 0) showTask(0);
+`.trim();

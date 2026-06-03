@@ -68,7 +68,15 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
 
     assert.ok(html.includes('data-tab="tasks"'));
     assert.ok(html.includes('data-tab="workflow"'));
+    assert.ok(html.includes('data-tab="init-settings"'));
+    assert.ok(html.includes('data-tab="project-memory"'));
+    assert.ok(html.includes('data-tab="backups"'));
     assert.ok(html.includes('data-tab="instructions"'));
+    assert.ok(html.includes('id="tab-init-settings"'));
+    assert.ok(html.includes('id="tab-project-memory"'));
+    assert.ok(html.includes('id="tab-backups"'));
+    assert.ok(html.includes('read-only in static HTML'));
+    assert.ok(!html.includes('data-tab="actions"'));
     assert.ok(html.includes('Build &lt;HTML&gt; report'));
     assert.ok(html.includes('toArtifactHref(item.path)'));
     assert.ok(html.includes('<a href="'));
