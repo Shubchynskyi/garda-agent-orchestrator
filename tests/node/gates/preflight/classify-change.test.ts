@@ -846,6 +846,95 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.refactor, true);
         });
 
+        it('triggers refactor review for decomposition and split task intents', () => {
+            const decomposeResult = classifyChange({
+                normalizedFiles: ['src/ui-dashboard-html.ts'],
+                taskIntent: 'Decompose ui-dashboard-html into focused modules',
+                changedLinesTotal: 30,
+                additionsTotal: 20,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+            const splitResult = classifyChange({
+                normalizedFiles: ['src/ui-dashboard-html.ts'],
+                taskIntent: 'Split tab renderers out of ui-dashboard-html.ts',
+                changedLinesTotal: 30,
+                additionsTotal: 20,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+            const splitIntoModulesResult = classifyChange({
+                normalizedFiles: ['src/ui-dashboard-html.ts'],
+                taskIntent: 'Split ui-dashboard-html into focused modules',
+                changedLinesTotal: 30,
+                additionsTotal: 20,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+            const modularizeResult = classifyChange({
+                normalizedFiles: ['src/ui-dashboard-html.ts'],
+                taskIntent: 'Modularize dashboard rendering helpers',
+                changedLinesTotal: 30,
+                additionsTotal: 20,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            for (const result of [decomposeResult, splitResult, splitIntoModulesResult, modularizeResult]) {
+                assert.equal(result.triggers.refactor_intent, true);
+                assert.equal(result.triggers.refactor, true);
+                assert.equal(result.required_reviews.refactor, true);
+            }
+        });
+
+        it('does not trigger refactor review for unrelated split wording', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/node/fixtures/split-data.test.ts'],
+                taskIntent: 'Split test data fixtures across scenarios',
+                changedLinesTotal: 30,
+                additionsTotal: 20,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.triggers.refactor_intent, false);
+            assert.equal(result.triggers.refactor, false);
+            assert.equal(result.required_reviews.refactor, false);
+        });
+
+        it('does not trigger refactor review for split data into scenarios wording', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/node/fixtures/split-data.test.ts'],
+                taskIntent: 'Split test data into scenarios',
+                changedLinesTotal: 30,
+                additionsTotal: 20,
+                deletionsTotal: 10,
+                renameCount: 0,
+                detectionSource: 'git_auto',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.triggers.refactor_intent, false);
+            assert.equal(result.triggers.refactor, false);
+            assert.equal(result.required_reviews.refactor, false);
+        });
+
         it('triggers dependency review for package.json', () => {
             const result = classifyChange({
                 normalizedFiles: ['package.json'],

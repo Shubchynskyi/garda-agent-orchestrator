@@ -909,7 +909,9 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const sqlOrMigrationCount = normalizedFiles.filter((p: string) => testMatch(p, sqlOrMigration)).length;
     const onlySqlOrMigration = normalizedFiles.length > 0 && sqlOrMigrationCount === normalizedFiles.length;
 
-    const refactorIntentTriggered = /\b(refactor|cleanup|restructure|extract|rename|modularization|simplify)\b/i.test(taskIntent);
+    const refactorIntentTriggered = /\b(refactor|cleanup|restructure|extract|rename|modularization|modularize|decompose|simplify)\b/i.test(taskIntent)
+        || /\bsplit\b.{0,80}\b(module|modules|component|components|renderer|renderers|helper|helpers|class|classes|function|functions)\b.{0,80}\b(out|from)\b/i.test(taskIntent)
+        || /\bsplit\b.{0,80}\binto\b.{0,80}\b(module|modules|component|components|renderer|renderers|helper|helpers|class|classes|function|functions)\b/i.test(taskIntent);
     const codeLikeCount = normalizedFiles.filter((p: string) => testMatch(p, codeLike)).length;
     const runtimeCodeLikeCount = normalizedFiles.filter(
         (p: string) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true })
