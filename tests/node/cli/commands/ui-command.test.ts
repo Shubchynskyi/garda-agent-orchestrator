@@ -30,7 +30,7 @@ test('handleUi prints no-dependency localhost server help', async () => {
     assert.match(text, /--idle-minutes/);
     assert.match(text, /--idle-warning-seconds/);
     assert.match(text, /--no-idle-shutdown/);
-    assert.match(text, /--language en\|ru/);
+    assert.match(text, /--language en\|ru\|ar\|bn\|de/);
     assert.match(text, /allow-listed/i);
     assert.match(text, /Ctrl\+C/);
 });
@@ -62,8 +62,8 @@ test('handleUi rejects invalid idle settings', async () => {
 
 test('handleUi rejects unsupported language', async () => {
     await assert.rejects(
-        () => captureOutput(() => handleUi(['--language', 'de'], PACKAGE_JSON)),
-        /--language must be en or ru/
+        () => captureOutput(() => handleUi(['--language', 'xx'], PACKAGE_JSON)),
+        /--language must be one of:/
     );
 });
 
@@ -72,4 +72,5 @@ test('parseLanguage accepts supported UI languages and falls back to English by 
     assert.equal(parseLanguage('en'), 'en');
     assert.equal(parseLanguage('ru'), 'ru');
     assert.equal(parseLanguage('RU'), 'ru');
+    assert.equal(parseLanguage('de'), 'de');
 });

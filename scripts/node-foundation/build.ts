@@ -98,6 +98,22 @@ function runTsc(args: string[], repoRoot: string): void {
     }
 }
 
+function copyUiLanguagePacksFromSource(repoRoot: string, buildRoot: string): void {
+    const sourceDirectory = path.join(repoRoot, 'src', 'reports', 'ui', 'lang-packs');
+    const destinationDirectory = path.join(buildRoot, 'src', 'reports', 'ui', 'lang-packs');
+    if (!fs.existsSync(sourceDirectory)) {
+        throw new Error(`Missing UI language packs source directory: ${sourceDirectory}`);
+    }
+
+    fs.mkdirSync(destinationDirectory, { recursive: true });
+    for (const fileName of fs.readdirSync(sourceDirectory)) {
+        if (!/^garda-ui-.+\.json$/u.test(fileName)) {
+            continue;
+        }
+        fs.copyFileSync(path.join(sourceDirectory, fileName), path.join(destinationDirectory, fileName));
+    }
+}
+
 function copyScriptRuntimeSupportFiles(compiledRoot: string, repoRoot: string): void {
     const compiledScriptsRoot = path.join(compiledRoot, 'scripts', 'node-foundation');
     fs.mkdirSync(compiledScriptsRoot, { recursive: true });
@@ -309,6 +325,7 @@ export function buildNodeFoundation(): BuildResult {
 
         // Compile the maintained runtime/test/build graph into .node-build.
         runTsc(['-p', 'tsconfig.tests.json'], repoRoot);
+        copyUiLanguagePacksFromSource(repoRoot, buildRoot);
         copyScriptRuntimeSupportFiles(buildRoot, repoRoot);
         const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
 
@@ -345,6 +362,7 @@ export function buildPublishRuntime(): BuildResult {
         resetBuildRoot(buildRoot);
 
         runTsc(['-p', 'tsconfig.build.json'], repoRoot);
+        copyUiLanguagePacksFromSource(repoRoot, buildRoot);
         const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
 
         const srcBuildRoot = path.join(buildRoot, 'src');

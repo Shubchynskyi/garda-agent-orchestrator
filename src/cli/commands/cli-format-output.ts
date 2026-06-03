@@ -8,6 +8,7 @@ import {
     PRODUCT_ACRONYM_EXPANSION,
     PRODUCT_NAME
 } from '../../core/constants';
+import { formatLocalUiLanguageCliChoices } from '../../reports/ui/ui-i18n';
 import { formatStatusSnapshot, type StatusSnapshot as DetailedStatusSnapshot } from '../../validators/status';
 import { COMMAND_SUMMARY } from './cli-constants';
 import type {
@@ -610,7 +611,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
     ui: Object.freeze({
         summary: 'Start a localhost UI with lazy task-detail loading and optional allow-listed actions.',
         usage: Object.freeze([
-            `${PRIMARY_CLI_NAME} ui [--target-root PATH] [--port PORT] [--language en|ru] [--idle-minutes N] [--idle-warning-seconds N] [--no-idle-shutdown] [--read-only] [--actions]`,
+            `${PRIMARY_CLI_NAME} ui [--target-root PATH] [--port PORT] [--language ${formatLocalUiLanguageCliChoices()}] [--idle-minutes N] [--idle-warning-seconds N] [--no-idle-shutdown] [--read-only] [--actions]`,
             `${PRIMARY_CLI_NAME} ui --target-root "."`
         ]),
         examples: Object.freeze([
@@ -626,7 +627,7 @@ const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescriptor>> = O
             'The UI server binds only to 127.0.0.1 and prints a browser URL.',
             'The process stays in the foreground; stop it with Ctrl+C or the guarded Server Status stop action.',
             'Idle shutdown is server-owned by default: browser activity pings reset the timer, then a warning countdown appears before the process closes.',
-            'The UI chrome supports English and Russian with English fallback; commands, task IDs, config keys, enum values, paths, and raw output stay untranslated.',
+            'The UI chrome supports multiple browser-local languages with English fallback; commands, task IDs, config keys, enum values, paths, and raw output stay untranslated.',
             'After shutdown the page cannot launch a replacement server; rerun garda ui --target-root "." from a terminal.',
             'Task details are loaded on demand through read-only local JSON endpoints.',
             'By default the browser cannot run commands, mutate workflow state, or edit settings.',

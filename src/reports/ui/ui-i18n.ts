@@ -1,22 +1,20 @@
+import {
+    loadImportedUiLanguagePacks,
+    type ImportedUiLanguagePack,
+    type LocalUiLocalizedText,
+    type UiLanguagePackDescriptor
+} from './ui-language-pack-loader';
+
+export type { LocalUiLocalizedText };
+
 export const DEFAULT_LOCAL_UI_LANGUAGE = 'en';
 
-export const LOCAL_UI_LANGUAGES = Object.freeze([
+const CORE_LOCAL_UI_LANGUAGES = Object.freeze([
     { id: 'en', label: 'English', nativeLabel: 'English' },
     { id: 'ru', label: 'Russian', nativeLabel: 'Русский' }
-] as const);
+] as const satisfies readonly UiLanguagePackDescriptor[]);
 
-export type LocalUiLanguage = typeof LOCAL_UI_LANGUAGES[number]['id'];
-
-export interface LocalUiLocalizedText {
-    label?: string;
-    description?: string;
-    title?: string;
-    body?: string;
-    options?: Record<string, {
-        label: string;
-        description: string;
-    }>;
-}
+export type LocalUiLanguage = typeof CORE_LOCAL_UI_LANGUAGES[number]['id'] | string;
 
 const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     appTitle: 'Garda UI',
@@ -25,6 +23,30 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     workflowTab: 'Workflow Config',
     initSettingsTab: 'Init settings',
     projectMemoryTab: 'Project memory',
+    backupsTab: 'Backups',
+    backupsTabIntro: 'Lists rollback snapshots from the backup inventory. Guarded restore and auto-backup edits require `garda ui --actions`.',
+    backupsInventoryTitle: 'Backup inventory',
+    backupsEmpty: 'No backups in inventory.',
+    backupsSnapshotsRoot: 'Snapshots root',
+    backupRootPresent: 'present',
+    backupRootMissing: 'missing',
+    backupIdColumn: 'ID',
+    backupCreatedColumn: 'Created',
+    backupSizeColumn: 'Size',
+    backupReasonColumn: 'Reason',
+    backupStatusColumn: 'Health',
+    backupRestoreColumn: 'Restore',
+    backupReasonUpdate: 'update',
+    backupReasonScheduled: 'scheduled',
+    backupsActionsDisabled: 'Controlled actions are disabled.',
+    backupRestoreUnavailable: 'Restore unavailable for this backup.',
+    restoreBackup: 'Restore backup',
+    backupsAutoBackupTitle: 'Auto-backup',
+    backupAutoEnabled: 'Enabled',
+    backupAutoIntervalDays: 'Interval (days)',
+    backupAutoKeepLatest: 'Keep latest',
+    backupsAutoBackupHelp: 'Scheduled auto-backups use audited workflow settings. Preview shows the exact command before saving.',
+    backupsRestorePreviewHelp: 'Choose a backup and click Preview command to see the guarded restore command before running it.',
     instructionsTab: 'Instructions',
     actionsTab: 'Actions',
     noticeActionsEnabled: 'Task details are loaded on demand from the local server. The server is bound to 127.0.0.1 and stops when this CLI process exits. Controlled actions are enabled for allow-listed commands only.',
@@ -240,6 +262,29 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
 
 export type LocalUiTextKey = keyof typeof ENGLISH_LOCAL_UI_TEXT;
 
+const IMPORTED_UI_LANGUAGE_PACKS: readonly ImportedUiLanguagePack[] = loadImportedUiLanguagePacks(
+    Object.keys(ENGLISH_LOCAL_UI_TEXT)
+);
+
+export const LOCAL_UI_LANGUAGES: readonly UiLanguagePackDescriptor[] = Object.freeze([
+    ...CORE_LOCAL_UI_LANGUAGES,
+    ...IMPORTED_UI_LANGUAGE_PACKS.map((pack) => pack.language)
+]);
+
+function buildImportedLanguageMap<T>(
+    core: Readonly<Record<'en' | 'ru', T>>,
+    selector: (pack: ImportedUiLanguagePack) => T
+): Readonly<Record<string, T>> {
+    const merged: Record<string, T> = { ...core };
+    for (const pack of IMPORTED_UI_LANGUAGE_PACKS) {
+        merged[pack.language.id] = selector(pack);
+    }
+    return Object.freeze(merged);
+}
+
+const EMPTY_LOCALIZED_TEXT_MAP = Object.freeze({});
+const EMPTY_CATEGORY_TEXT_MAP = Object.freeze({});
+
 const RUSSIAN_LOCAL_UI_TEXT: Record<LocalUiTextKey, string> = Object.freeze({
     appTitle: 'Garda UI',
     loadingWorkspaceReport: 'Загрузка отчёта workspace...',
@@ -247,6 +292,30 @@ const RUSSIAN_LOCAL_UI_TEXT: Record<LocalUiTextKey, string> = Object.freeze({
     workflowTab: 'Рабочий конфиг',
     initSettingsTab: 'Init settings',
     projectMemoryTab: 'Память проекта',
+    backupsTab: 'Бэкапы',
+    backupsTabIntro: 'Показывает rollback-снимки из инвентаря бэкапов. Восстановление и правки auto-backup доступны только с `garda ui --actions`.',
+    backupsInventoryTitle: 'Инвентарь бэкапов',
+    backupsEmpty: 'В инвентаре нет бэкапов.',
+    backupsSnapshotsRoot: 'Корень снимков',
+    backupRootPresent: 'есть',
+    backupRootMissing: 'нет',
+    backupIdColumn: 'ID',
+    backupCreatedColumn: 'Создан',
+    backupSizeColumn: 'Размер',
+    backupReasonColumn: 'Причина',
+    backupStatusColumn: 'Состояние',
+    backupRestoreColumn: 'Восстановление',
+    backupReasonUpdate: 'обновление',
+    backupReasonScheduled: 'по расписанию',
+    backupsActionsDisabled: 'Управляемые действия отключены.',
+    backupRestoreUnavailable: 'Восстановление для этого бэкапа недоступно.',
+    restoreBackup: 'Восстановить бэкап',
+    backupsAutoBackupTitle: 'Auto-backup',
+    backupAutoEnabled: 'Включено',
+    backupAutoIntervalDays: 'Интервал (дней)',
+    backupAutoKeepLatest: 'Хранить последних',
+    backupsAutoBackupHelp: 'Плановые auto-backup используют audited workflow settings. Preview показывает точную команду перед сохранением.',
+    backupsRestorePreviewHelp: 'Выберите бэкап и нажмите Preview command, чтобы увидеть guarded restore перед запуском.',
     instructionsTab: 'Инструкции',
     actionsTab: 'Действия',
     noticeActionsEnabled: 'Детали задач загружаются по запросу с локального сервера. Сервер привязан к 127.0.0.1 и останавливается при завершении этого CLI-процесса. Управляемые действия включены только для allow-listed команд.',
@@ -460,8 +529,8 @@ const RUSSIAN_LOCAL_UI_TEXT: Record<LocalUiTextKey, string> = Object.freeze({
     artifactPath: 'Путь артефакта'
 });
 
-export const LOCAL_UI_SETTING_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
-    en: {},
+const CORE_LOCAL_UI_SETTING_TEXT = Object.freeze({
+    en: EMPTY_LOCALIZED_TEXT_MAP,
     ru: {
         'full-suite-enabled': {
             label: 'Обязательная полная проверка',
@@ -680,10 +749,15 @@ export const LOCAL_UI_SETTING_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Re
             }
         }
     }
-});
+} satisfies Readonly<Record<'en' | 'ru', Readonly<Record<string, LocalUiLocalizedText>>>>);
 
-export const LOCAL_UI_INIT_SETTING_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
-    en: {},
+export const LOCAL_UI_SETTING_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
+    CORE_LOCAL_UI_SETTING_TEXT,
+    () => EMPTY_LOCALIZED_TEXT_MAP
+);
+
+const CORE_LOCAL_UI_INIT_SETTING_TEXT = Object.freeze({
+    en: EMPTY_LOCALIZED_TEXT_MAP,
     ru: {
         AssistantLanguage: { label: 'Язык ассистента', description: 'На каком языке агент должен общаться с оператором.' },
         AssistantBrevity: { label: 'Подробность ответов', description: 'Насколько подробно агент отвечает в обычных сообщениях.' },
@@ -727,10 +801,15 @@ export const LOCAL_UI_INIT_SETTING_TEXT: Readonly<Record<LocalUiLanguage, Readon
         reinit: { title: 'Re-init workspace', description: 'Пересобирает generated Garda files из текущих init answers. Используется после изменения choices инициализации.' },
         'agent-init': { title: 'Агентский init', description: 'Записывает hard onboarding checkpoints: active agent files, project rules, skills prompt и готовность project memory.' }
     }
-});
+} satisfies Readonly<Record<'en' | 'ru', Readonly<Record<string, LocalUiLocalizedText>>>>);
 
-export const LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
-    en: {},
+export const LOCAL_UI_INIT_SETTING_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
+    CORE_LOCAL_UI_INIT_SETTING_TEXT,
+    (pack) => pack.LOCAL_UI_INIT_SETTING_TEXT
+);
+
+const CORE_LOCAL_UI_PROJECT_MEMORY_TEXT = Object.freeze({
+    en: EMPTY_LOCALIZED_TEXT_MAP,
     ru: {
         'garda-agent-orchestrator/live/docs/project-memory/README.md': { label: 'README.md', description: 'Индекс памяти, правила владения и порядок чтения.' },
         'garda-agent-orchestrator/live/docs/project-memory/compact.md': { label: 'compact.md', description: 'Короткая карта проекта и routing hints для старта задачи.' },
@@ -743,10 +822,15 @@ export const LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<LocalUiLanguage, Read
         'garda-agent-orchestrator/live/docs/project-memory/decisions.md': { label: 'decisions.md', description: 'Архитектурные и процессные решения с rationale.' },
         'garda-agent-orchestrator/live/docs/project-memory/risks.md': { label: 'risks.md', description: 'Known risks, fragile paths, security notes и compatibility constraints.' }
     }
-});
+} satisfies Readonly<Record<'en' | 'ru', Readonly<Record<string, LocalUiLocalizedText>>>>);
 
-export const LOCAL_UI_ACTION_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
-    en: {},
+export const LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
+    CORE_LOCAL_UI_PROJECT_MEMORY_TEXT,
+    (pack) => pack.LOCAL_UI_PROJECT_MEMORY_TEXT
+);
+
+const CORE_LOCAL_UI_ACTION_TEXT = Object.freeze({
+    en: EMPTY_LOCALIZED_TEXT_MAP,
     ru: {
         status: {
             label: 'Статус',
@@ -777,10 +861,15 @@ export const LOCAL_UI_ACTION_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Rec
             description: 'Убирает управляемые Garda root instruction файлы в runtime/switch/off и включает off-mode ignore block.'
         }
     }
-});
+} satisfies Readonly<Record<'en' | 'ru', Readonly<Record<string, LocalUiLocalizedText>>>>);
 
-export const LOCAL_UI_ACTION_CATEGORY_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Record<string, string>>>> = Object.freeze({
-    en: {},
+export const LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
+    CORE_LOCAL_UI_ACTION_TEXT,
+    (pack) => pack.LOCAL_UI_ACTION_TEXT
+);
+
+const CORE_LOCAL_UI_ACTION_CATEGORY_TEXT = Object.freeze({
+    en: EMPTY_CATEGORY_TEXT_MAP,
     ru: {
         Inspection: 'Проверка',
         Export: 'Экспорт',
@@ -788,10 +877,15 @@ export const LOCAL_UI_ACTION_CATEGORY_TEXT: Readonly<Record<LocalUiLanguage, Rea
         'Garda switch': 'Переключатель Garda',
         Workspace: 'Workspace'
     }
-});
+} satisfies Readonly<Record<'en' | 'ru', Readonly<Record<string, string>>>>);
 
-export const LOCAL_UI_INSTRUCTION_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
-    en: {},
+export const LOCAL_UI_ACTION_CATEGORY_TEXT: Readonly<Record<string, Readonly<Record<string, string>>>> = buildImportedLanguageMap(
+    CORE_LOCAL_UI_ACTION_CATEGORY_TEXT,
+    (pack) => pack.LOCAL_UI_ACTION_CATEGORY_TEXT
+);
+
+const CORE_LOCAL_UI_INSTRUCTION_TEXT = Object.freeze({
+    en: EMPTY_LOCALIZED_TEXT_MAP,
     ru: {
         'task-execution': {
             title: 'Выполнение задачи',
@@ -826,12 +920,24 @@ export const LOCAL_UI_INSTRUCTION_TEXT: Readonly<Record<LocalUiLanguage, Readonl
             body: 'Вкладка «Действия» содержит фиксированные workspace-команды: status, doctor, генерацию HTML-отчёта, очистку runtime и переключение Garda. Команды конкретной задачи находятся в деталях выбранной задачи.'
         }
     }
-});
+} satisfies Readonly<Record<'en' | 'ru', Readonly<Record<string, LocalUiLocalizedText>>>>);
 
-export const LOCAL_UI_TEXT: Readonly<Record<LocalUiLanguage, Readonly<Record<LocalUiTextKey, string>>>> = Object.freeze({
-    en: ENGLISH_LOCAL_UI_TEXT,
-    ru: RUSSIAN_LOCAL_UI_TEXT
-});
+export const LOCAL_UI_INSTRUCTION_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
+    CORE_LOCAL_UI_INSTRUCTION_TEXT,
+    (pack) => pack.LOCAL_UI_INSTRUCTION_TEXT
+);
+
+export const LOCAL_UI_TEXT: Readonly<Record<string, Readonly<Record<LocalUiTextKey, string>>>> = buildImportedLanguageMap(
+    {
+        en: ENGLISH_LOCAL_UI_TEXT,
+        ru: RUSSIAN_LOCAL_UI_TEXT
+    },
+    (pack) => pack.LOCAL_UI_TEXT as Readonly<Record<LocalUiTextKey, string>>
+);
+
+export function formatLocalUiLanguageCliChoices(): string {
+    return LOCAL_UI_LANGUAGES.map((language) => language.id).join('|');
+}
 
 export function isLocalUiLanguage(value: unknown): value is LocalUiLanguage {
     return typeof value === 'string'

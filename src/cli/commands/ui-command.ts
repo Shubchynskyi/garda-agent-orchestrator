@@ -9,7 +9,12 @@ import {
     formatLocalUiServerOutput,
     startLocalUiServer
 } from '../../reports/ui/local-ui-server';
-import { normalizeLocalUiLanguage } from '../../reports/ui/ui-i18n';
+import {
+    formatLocalUiLanguageCliChoices,
+    isLocalUiLanguage,
+    normalizeLocalUiLanguage,
+    type LocalUiLanguage
+} from '../../reports/ui/ui-i18n';
 
 const UI_COMMAND_DEFINITIONS = {
     '--target-root': { key: 'targetRoot', type: 'string' },
@@ -50,18 +55,18 @@ function parsePositiveNumber(value: unknown, flagName: string): number | null {
     return parsed;
 }
 
-export function parseLanguage(value: unknown): 'en' | 'ru' {
+export function parseLanguage(value: unknown): LocalUiLanguage {
     if (value === undefined || value === null) {
         return 'en';
     }
     if (typeof value !== 'string' || value.trim() === '') {
-        throw new Error('--language must be en or ru.');
+        throw new Error(`--language must be one of: ${formatLocalUiLanguageCliChoices()}.`);
     }
-    const normalized = normalizeLocalUiLanguage(value.trim().toLowerCase());
-    if (normalized !== value.trim().toLowerCase()) {
-        throw new Error('--language must be en or ru.');
+    const normalized = value.trim().toLowerCase();
+    if (!isLocalUiLanguage(normalized)) {
+        throw new Error(`--language must be one of: ${formatLocalUiLanguageCliChoices()}.`);
     }
-    return normalized;
+    return normalizeLocalUiLanguage(normalized);
 }
 
 export async function handleUi(commandArgv: string[], _packageJson: PackageJsonLike): Promise<void> {

@@ -11,7 +11,7 @@ import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 
 test('local UI language packs are complete and extensible by metadata', () => {
     assert.doesNotThrow(() => assertLocalUiLanguagePacksComplete());
-    assert.deepEqual(LOCAL_UI_LANGUAGES.map((language) => language.id), ['en', 'ru']);
+    assert.ok(LOCAL_UI_LANGUAGES.length >= 20);
     assert.deepEqual(
         Object.keys(LOCAL_UI_TEXT.en).sort(),
         Object.keys(LOCAL_UI_TEXT.ru).sort()
@@ -20,10 +20,10 @@ test('local UI language packs are complete and extensible by metadata', () => {
 
 test('local UI language fallback is English at runtime', () => {
     assert.equal(normalizeLocalUiLanguage('ru'), 'ru');
-    assert.equal(normalizeLocalUiLanguage('de'), 'en');
+    assert.equal(normalizeLocalUiLanguage('de'), 'de');
     assert.equal(normalizeLocalUiLanguage('__proto__'), 'en');
     assert.equal(normalizeLocalUiLanguage('toString'), 'en');
-    assert.equal(getLocalUiText('de').tasksTab, 'Tasks');
+    assert.equal(getLocalUiText('de').tasksTab, 'Aufgaben');
 });
 
 test('local UI renders Russian chrome while preserving machine surfaces', () => {

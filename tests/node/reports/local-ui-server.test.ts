@@ -167,6 +167,10 @@ function createFakeDocument(): {
         'workflow-tab',
         'init-settings-tab',
         'project-memory-tab',
+        'backups-tab',
+        'backups-settings',
+        'backups-table',
+        'backup-action-status',
         'instructions-tab',
         'actions-tab',
         'task-detail-panel'
@@ -176,10 +180,11 @@ function createFakeDocument(): {
     elements['workflow-tab'].hidden = true;
     elements['init-settings-tab'].hidden = true;
     elements['project-memory-tab'].hidden = true;
+    elements['backups-tab'].hidden = true;
     elements['instructions-tab'].hidden = true;
     elements['actions-tab'].hidden = true;
 
-    const navButtons = ['tasks-tab', 'workflow-tab', 'init-settings-tab', 'project-memory-tab', 'instructions-tab', 'actions-tab'].map((tabId, index) => {
+    const navButtons = ['tasks-tab', 'workflow-tab', 'init-settings-tab', 'project-memory-tab', 'backups-tab', 'instructions-tab', 'actions-tab'].map((tabId, index) => {
         const button = new FakeElement(`nav-${tabId}`, index === 0 ? ['active'] : []);
         button.dataset.tab = tabId;
         return button;
@@ -201,6 +206,7 @@ function createFakeDocument(): {
                     elements['workflow-tab'],
                     elements['init-settings-tab'],
                     elements['project-memory-tab'],
+                    elements['backups-tab'],
                     elements['instructions-tab'],
                     elements['actions-tab']
                 ];
@@ -407,7 +413,12 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(response.headers.get('content-type') || '', /^text\/html\b/u);
         const html = await response.text();
         assert.match(html, /data-tab="tasks-tab"/u);
+        assert.match(html, /data-tab="backups-tab"/u);
+        assert.match(html, /id="backups-tab"/u);
+        assert.match(html, /id="backups-table"/u);
+        assert.match(html, /id="backups-settings"/u);
         assert.match(html, /Workflow Config/u);
+        assert.match(html, /Backups/u);
         assert.match(html, /Instructions/u);
         assert.match(html, /Actions/u);
         assert.match(html, /Language/u);
