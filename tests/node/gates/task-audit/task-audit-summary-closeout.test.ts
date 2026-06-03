@@ -1137,7 +1137,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(!renderedReport.includes('Status: READY'));
         });
 
-        it('renders the latest actual review attempt duration and ignores reused materialization timings', () => {
+        it('renders all actual review attempt durations and ignores reused materialization timings', () => {
             const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
                 implementation_summary: {
                     review_verdicts: { code: 'REVIEW PASSED', test: 'TEST REVIEW PASSED' },
@@ -1162,9 +1162,8 @@ describe('gates/task-audit-summary', () => {
                 }
             }));
 
-            assert.ok(renderedReport.includes('code(1): passed (1m 10s)'));
+            assert.ok(renderedReport.includes('code(2): passed (1m 05s / 1m 10s)'));
             assert.ok(renderedReport.includes('test(1): passed (0m 42s)'));
-            assert.ok(!renderedReport.includes('1m 05s'));
             assert.ok(!renderedReport.includes('0m 08s'));
         });
 
@@ -1194,7 +1193,7 @@ describe('gates/task-audit-summary', () => {
             assert.ok(!renderedReport.includes('0m 01s'));
         });
 
-        it('renders only the latest review timing after a failed-then-passed review lifecycle', () => {
+        it('renders all fresh review timings after a failed-then-passed review lifecycle', () => {
             const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
                 implementation_summary: {
                     review_verdicts: { test: 'TEST REVIEW PASSED' },
@@ -1214,8 +1213,7 @@ describe('gates/task-audit-summary', () => {
             }));
 
             assert.ok(renderedReport.includes('Profile: strict'));
-            assert.ok(renderedReport.includes('test(1): passed (2m 05s)'));
-            assert.ok(!renderedReport.includes('0m 50s'));
+            assert.ok(renderedReport.includes('test(2): passed (0m 50s / 2m 05s)'));
             assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone$/u);
         });
 

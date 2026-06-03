@@ -130,10 +130,10 @@ function selectPreferredFinalUserReportTimingEntries(timingEntries: ReviewTiming
             && entry.delegation_to_result_ms >= 0
         ))
         .sort((left, right) => (
-            getReviewTimingAuditSortTimestamp(right.entry) - getReviewTimingAuditSortTimestamp(left.entry)
-            || right.index - left.index
+            getReviewTimingAuditSortTimestamp(left.entry) - getReviewTimingAuditSortTimestamp(right.entry)
+            || left.index - right.index
         ));
-    return eligibleEntries.length > 0 ? [eligibleEntries[0].entry] : [];
+    return eligibleEntries.map(({ entry }) => entry);
 }
 
 function normalizeFinalUserReportVerdict(value: string): string {
