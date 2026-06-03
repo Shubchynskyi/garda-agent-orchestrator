@@ -45,7 +45,7 @@ describe('gates/build-review-context excerpt selection and runtime identity', ()
             fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
             fs.mkdirSync(path.join(repoRoot, 'template', 'docs', 'agent-rules'), { recursive: true });
             fs.mkdirSync(path.join(repoRoot, 'src', 'cli', 'commands'), { recursive: true });
-            fs.mkdirSync(path.join(repoRoot, 'src', 'gates'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'src', 'gates', 'rule-pack'), { recursive: true });
             fs.mkdirSync(path.join(repoRoot, 'tests', 'node', 'cli', 'commands'), { recursive: true });
             runGit(repoRoot, ['init']);
             runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
@@ -56,7 +56,7 @@ describe('gates/build-review-context excerpt selection and runtime identity', ()
             fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'template', 'docs', 'agent-rules', '80-task-workflow.md'), '# Workflow\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'src', 'cli', 'commands', 'gate-command.ts'), 'export const beforeGate = true;\n', 'utf8');
-            fs.writeFileSync(path.join(repoRoot, 'src', 'gates', 'rule-pack.ts'), 'export const before = true;\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'src', 'gates', 'rule-pack', 'rule-pack.ts'), 'export const before = true;\n', 'utf8');
             fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.ts'), 'import assert from "node:assert/strict";\n', 'utf8');
             runGit(repoRoot, ['add', '.']);
             runGit(repoRoot, ['commit', '-m', 'baseline']);
@@ -68,7 +68,7 @@ describe('gates/build-review-context excerpt selection and runtime identity', ()
                 'utf8'
             );
             fs.writeFileSync(
-                path.join(repoRoot, 'src', 'gates', 'rule-pack.ts'),
+                path.join(repoRoot, 'src', 'gates', 'rule-pack', 'rule-pack.ts'),
                 'export function getPostPreflightRulePackRebindDecision() { return "api-priority-visible"; }\n',
                 'utf8'
             );
@@ -96,7 +96,7 @@ describe('gates/build-review-context excerpt selection and runtime identity', ()
                     'docs/cli-reference.md',
                     'template/docs/agent-rules/80-task-workflow.md',
                     'src/cli/commands/gate-command.ts',
-                    'src/gates/rule-pack.ts',
+                    'src/gates/rule-pack/rule-pack.ts',
                     'tests/node/cli/commands/gates.test.ts'
                 ],
                 required_reviews: { api: true },
@@ -114,7 +114,7 @@ describe('gates/build-review-context excerpt selection and runtime identity', ()
             });
 
             const promptArtifact = fs.readFileSync(result.rule_context.artifact_path, 'utf8');
-            const gateDiffIndex = promptArtifact.indexOf('diff --git a/src/gates/rule-pack.ts');
+            const gateDiffIndex = promptArtifact.indexOf('diff --git a/src/gates/rule-pack/rule-pack.ts');
             const cliDiffIndex = promptArtifact.indexOf('diff --git a/src/cli/commands/gate-command.ts');
             const docsDiffIndex = promptArtifact.indexOf('diff --git a/docs/cli-reference.md');
             const testDiffIndex = promptArtifact.indexOf('diff --git a/tests/node/cli/commands/gates.test.ts');

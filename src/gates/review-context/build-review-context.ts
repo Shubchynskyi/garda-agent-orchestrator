@@ -575,7 +575,7 @@ function getPromptDiffSectionPriority(reviewType: string, filePath: string): num
     if (reviewType !== 'api') {
         return 0;
     }
-    if (normalized === 'src/gates/rule-pack.ts') {
+    if (normalized === 'src/gates/rule-pack/rule-pack.ts') {
         return 0;
     }
     if (normalized.startsWith('src/cli/') || normalized.startsWith('src/compat/')) {
