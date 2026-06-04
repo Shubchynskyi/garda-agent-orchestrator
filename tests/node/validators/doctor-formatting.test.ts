@@ -318,8 +318,8 @@ test('formatDoctorResult includes non-blocking large module decomposition report
             next_step_module_budget: {
                 schema_version: 1,
                 mode: 'REPORT_ONLY',
-                coordinator_line_budget: 5000,
-                helper_line_budget: 1000,
+                coordinator_line_budget: 4500,
+                helper_line_budget: 700,
                 status: 'OVER_BUDGET',
                 total_module_count: 2,
                 total_lines: 2105,
@@ -330,7 +330,7 @@ test('formatDoctorResult includes non-blocking large module decomposition report
                     role: 'helper',
                     responsibility: 'review artifact, receipt, scoped-diff, and trust reads',
                     line_count: 1105,
-                    line_budget: 1000,
+                    line_budget: 700,
                     budget_status: 'OVER_BUDGET',
                     owner_tasks: [{
                         task_id: 'T-683-2',
@@ -344,7 +344,7 @@ test('formatDoctorResult includes non-blocking large module decomposition report
                     role: 'coordinator',
                     responsibility: 'public navigator coordinator and result assembly',
                     line_count: 1000,
-                    line_budget: 5000,
+                    line_budget: 4500,
                     budget_status: 'WITHIN_BUDGET',
                     owner_tasks: [{
                         task_id: 'T-683-1',
@@ -362,8 +362,8 @@ test('formatDoctorResult includes non-blocking large module decomposition report
     assert.ok(output.includes('Large Module Decomposition Report'));
     assert.ok(output.includes('Mode: REPORT_ONLY'));
     assert.ok(output.includes('Role: recurring size and responsibility signal'));
-    assert.ok(output.includes('Next-step module budget: status=OVER_BUDGET, modules=2, total_lines=2105, coordinator_budget=5000, helper_budget=1000, largest_helper=1105, over_budget=1'));
-    assert.ok(output.includes('src/gates/next-step/next-step-review-artifact-readers.ts: 1105/1000 lines role=helper status=OVER_BUDGET responsibility=review artifact, receipt, scoped-diff, and trust reads owner=T-683-2(🟩 DONE) follow_up=no exception=Report-only budget exception'));
+    assert.ok(output.includes('Next-step module budget: status=OVER_BUDGET, modules=2, total_lines=2105, coordinator_budget=4500, helper_budget=700, largest_helper=1105, over_budget=1'));
+    assert.ok(output.includes('src/gates/next-step/next-step-review-artifact-readers.ts: 1105/700 lines role=helper status=OVER_BUDGET responsibility=review artifact, receipt, scoped-diff, and trust reads owner=T-683-2(🟩 DONE) follow_up=no exception=Report-only budget exception'));
     assert.ok(output.includes('src/gates/next-step/next-step.ts: 900 lines owner=T-683(🟪 DECOMPOSED), T-683-1(🟦 TODO) follow_up=yes'));
     assert.ok(output.includes('tests/node/cli/commands/gates/review-result/gates-command-review-result-receipt.test.ts: 600 lines owner=unknown follow_up=no'));
     assert.ok(output.includes('src/gates/next-step/next-step.ts:10 function resolveNextStep spans 491 lines owner=T-683-1(🟦 TODO) follow_up=yes'));

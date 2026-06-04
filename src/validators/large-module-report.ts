@@ -99,8 +99,8 @@ interface FileScanEntry {
 
 const DEFAULT_FILE_LIMIT = 10;
 const DEFAULT_DECLARATION_LIMIT = 10;
-const NEXT_STEP_COORDINATOR_LINE_BUDGET = 5000;
-const NEXT_STEP_HELPER_LINE_BUDGET = 1000;
+const NEXT_STEP_COORDINATOR_LINE_BUDGET = 4500;
+const NEXT_STEP_HELPER_LINE_BUDGET = 700;
 const SCAN_ROOTS = ['src', 'tests', 'scripts', 'bin'];
 const IGNORED_ROOTS = [
     '.git',
@@ -324,7 +324,7 @@ function buildNextStepModuleBudget(
                     owner_tasks: entry.owner_tasks,
                     todo_follow_up_exists: entry.todo_follow_up_exists,
                     exception_reason: overBudget
-                        ? 'Report-only budget exception: keep a concrete decomposition follow-up before raising this threshold.'
+                        ? 'Report-only budget exception: keep a concrete decomposition follow-up before raising this diagnostic threshold.'
                         : null
                 };
             })

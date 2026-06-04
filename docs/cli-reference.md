@@ -103,6 +103,7 @@ Notes:
 - `doctor` also reports review-artifact lock health under `garda-agent-orchestrator/runtime/reviews/*.lock`, including owner metadata, stale-vs-live assessment, and remediation guidance.
 - `doctor --cleanup-stale-locks --dry-run` previews stale task-event locks and stale review-artifact locks that are safe to remove; rerun without `--dry-run` to delete only those proven-stale lock directories.
 - `doctor` reports task-history ledger scan counts when ledger files exist. Verified ledgers are the lightweight history record that allows healthy `DONE` tasks to move out of detailed runtime evidence later; incomplete, contradictory, or invalid ledgers keep the task out of ledger-only compaction.
+- `doctor` includes a report-only Large Module Decomposition Report. Its next-step diagnostic budgets are intentionally tighter than blocking policy gates (`coordinator_budget=4500`, `helper_budget=700`) so residual coordinator/helper growth is visible without failing doctor by itself.
 - `doctor explain <FAILURE_ID>` prints remediation steps for known failure IDs such as `TASK_MODE_NOT_ENTERED`, `COMPILE_GATE_FAILED`, and `TIMELINE_INCOMPLETE`.
 - `doctor explain --list` prints the current remediation database keys.
 - `doctor` uses the same runtime-consistency vocabulary as the operator runbook: canonical per-task JSONL, derived indexes, trusted protected manifest, and stale lock cleanup.

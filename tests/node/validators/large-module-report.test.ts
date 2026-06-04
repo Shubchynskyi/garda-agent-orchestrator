@@ -66,16 +66,47 @@ test('collectLargeModuleReport ranks source, test, and declaration size with tas
         assert.equal(report.next_step_module_budget.largest_helper_lines, 8);
         assert.equal(report.next_step_module_budget.modules[0].relative_path, 'src/gates/next-step/next-step.ts');
         assert.equal(report.next_step_module_budget.modules[0].role, 'coordinator');
-        assert.equal(report.next_step_module_budget.modules[0].line_budget, 5000);
+        assert.equal(report.next_step_module_budget.modules[0].line_budget, 4500);
         assert.equal(report.next_step_module_budget.modules[0].responsibility, 'public navigator coordinator and result assembly');
         assert.equal(report.next_step_module_budget.modules[0].todo_follow_up_exists, true);
         assert.equal(report.next_step_module_budget.modules[1].role, 'helper');
-        assert.equal(report.next_step_module_budget.modules[1].line_budget, 1000);
+        assert.equal(report.next_step_module_budget.modules[1].line_budget, 700);
         assert.equal(report.next_step_module_budget.modules[1].responsibility, 'next-step helper: example helper');
         assert.equal(
             report.top_source_files.some((entry) => entry.relative_path.includes('ignored.ts')),
             false
         );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('collectLargeModuleReport marks over-budget next-step modules with diagnostic exception reason', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'large-module-report-'));
+    try {
+        writeFile(
+            path.join(tmpDir, 'src', 'gates', 'next-step', 'next-step.ts'),
+            makeLines(4501, 'coordinator line')
+        );
+        writeFile(
+            path.join(tmpDir, 'src', 'gates', 'next-step', 'next-step-broad-helper.ts'),
+            makeLines(701, 'helper line')
+        );
+
+        const report = collectLargeModuleReport(tmpDir, { fileLimit: 5, declarationLimit: 5 });
+        const modules = new Map(
+            report.next_step_module_budget.modules.map((entry) => [entry.relative_path, entry])
+        );
+        const expectedReason = 'Report-only budget exception: keep a concrete decomposition follow-up before raising this diagnostic threshold.';
+
+        assert.equal(report.next_step_module_budget.status, 'OVER_BUDGET');
+        assert.equal(report.next_step_module_budget.over_budget_count, 2);
+        assert.equal(modules.get('src/gates/next-step/next-step.ts')?.line_budget, 4500);
+        assert.equal(modules.get('src/gates/next-step/next-step.ts')?.budget_status, 'OVER_BUDGET');
+        assert.equal(modules.get('src/gates/next-step/next-step.ts')?.exception_reason, expectedReason);
+        assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.line_budget, 700);
+        assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.budget_status, 'OVER_BUDGET');
+        assert.equal(modules.get('src/gates/next-step/next-step-broad-helper.ts')?.exception_reason, expectedReason);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

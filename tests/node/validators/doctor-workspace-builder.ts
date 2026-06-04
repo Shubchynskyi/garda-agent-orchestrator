@@ -189,8 +189,8 @@ export function buildFakeDoctorResult(overrides?: Record<string, unknown>): Doct
             next_step_module_budget: {
                 schema_version: 1,
                 mode: 'REPORT_ONLY',
-                coordinator_line_budget: 5000,
-                helper_line_budget: 1000,
+                coordinator_line_budget: 4500,
+                helper_line_budget: 700,
                 status: 'WITHIN_BUDGET',
                 total_module_count: 0,
                 total_lines: 0,
