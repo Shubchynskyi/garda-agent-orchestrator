@@ -5,12 +5,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { formatNextStepText, resolveNextStep } from '../../../../src/gates/next-step';
-import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
-import { buildTaskModeArtifact } from '../../../../src/gates/task-mode';
-import { buildRulePackArtifact } from '../../../../src/gates/rule-pack';
-import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
-import { buildEventIntegrityHash } from '../../../../src/gate-runtime/task-events-helpers';
+import { formatNextStepText, resolveNextStep } from './next-step-test-support';
+import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { buildTaskModeArtifact } from './next-step-test-support';
+import { buildRulePackArtifact } from './next-step-test-support';
+import { getWorkspaceSnapshot } from './next-step-test-support';
+import { buildEventIntegrityHash } from './next-step-test-support';
 import {
     REVIEW_CYCLE_CONTINUATION_EVENT,
     buildReviewCycleContinuationArtifact

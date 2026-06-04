@@ -4,8 +4,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { formatNextStepText, resolveNextStep } from '../../../../src/gates/next-step';
-import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+import { formatNextStepText, resolveNextStep } from './next-step-test-support';
+import { buildDefaultWorkflowConfig } from './next-step-test-support';
 
 const TASK_ID = 'T-CONTRACT-1';
 const TASK_TITLE = 'Pin next-step contract before refactor';

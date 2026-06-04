@@ -1,4 +1,4 @@
-﻿import { describe, it, afterEach } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -8,24 +8,24 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { initGitRepo } from '../git-fixtures';
 
-import { formatNextStepText, resolveNextStep } from '../../../../src/gates/next-step';
-import { getProviderRuntimeEnvironmentKeys } from '../../../../src/core/provider-registry';
+import { formatNextStepText, resolveNextStep } from './next-step-test-support';
+import { getProviderRuntimeEnvironmentKeys } from './next-step-test-support';
 import {
     recordFullSuiteValidationDuration,
     type FullSuiteValidationConfig
-} from '../../../../src/gates/full-suite/full-suite-validation';
+} from './next-step-test-support';
 import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
-import { getWorkspaceSnapshot } from '../../../../src/gates/compile/compile-gate';
-import { getWorkspaceSnapshotCached } from '../../../../src/gates/workspace/workspace-snapshot-cache';
-import { buildRulePackArtifact } from '../../../../src/gates/rule-pack';
-import { buildTaskModeArtifact } from '../../../../src/gates/task-mode';
-import { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from '../../../../src/gates/task-audit/task-audit-summary';
-import { assessProjectMemoryImpact } from '../../../../src/gates/project-memory-impact';
-import { buildEventIntegrityHash } from '../../../../src/gate-runtime/task-events-helpers';
-import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
-import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
-import { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
-import { buildStrictDecompositionDecisionArtifact } from '../../../../src/gates/task-mode/strict-decomposition-decision';
+import { getWorkspaceSnapshot } from './next-step-test-support';
+import { getWorkspaceSnapshotCached } from './next-step-test-support';
+import { buildRulePackArtifact } from './next-step-test-support';
+import { buildTaskModeArtifact } from './next-step-test-support';
+import { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from './next-step-test-support';
+import { assessProjectMemoryImpact } from './next-step-test-support';
+import { buildEventIntegrityHash } from './next-step-test-support';
+import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from './next-step-test-support';
+import { buildDomainScopeFingerprints } from './next-step-test-support';
+import { buildStrictDecompositionDecisionArtifact } from './next-step-test-support';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';

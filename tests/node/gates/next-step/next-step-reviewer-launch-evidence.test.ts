@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { buildEventIntegrityHash } from '../../../../src/gate-runtime/task-events-helpers';
+import { buildEventIntegrityHash } from './next-step-test-support';
 import type { ReviewArtifactState } from '../../../../src/gates/next-step/next-step-review-artifact-readers';
 import {
     buildProviderNativeReviewerLaunchTargetSummary,
