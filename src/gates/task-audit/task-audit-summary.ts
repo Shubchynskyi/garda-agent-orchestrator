@@ -23,14 +23,11 @@ import {
 import { evaluateHiddenReviewTimingTrust } from '../review/review-timing-trust';
 import {
     LEGACY_REVIEW_EXECUTION_POLICY_MODE,
-    buildReviewExecutionPolicySummaryLine,
     loadReviewExecutionPolicyConfig,
     resolveReviewExecutionPolicyModeFromPreflight,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
 import { getStatusSnapshot } from '../../validators';
-import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
-import { buildDomainScopeFingerprints } from '../scope/domain-scope-fingerprints';
 import {
     buildUnavailableRequiredReviewTrustSummary,
     type BlockerEntry,
@@ -45,7 +42,6 @@ import {
     type FinalReportContract,
     type GateOutcome,
     type ProfileReviewDecisionSummary,
-    parseOptionalNumber,
     buildReviewIntegrityAttestation,
     readDocImpactSummary,
     readReviewTrustSummary,
@@ -58,11 +54,8 @@ import {
     resolveReviewsRoot,
     safeReadJson
 } from './task-audit-summary-collectors';
-import { buildCommitCommandSuggestion } from './task-audit-summary-renderers';
-import {
-    buildTaskQueueStatusContract,
-    type TaskQueueStatusContract
-} from '../../core/task-queue-status-contract';
+import { buildCommitCommandSuggestion } from './task-audit-summary-commit-suggestion';
+import type { TaskQueueStatusContract } from '../../core/task-queue-status-contract';
 import {
     buildCompletionReviewOrderBlocker,
     buildLifecycleGateOutcomes,
@@ -82,8 +75,13 @@ import {
     collectEvidenceArtifacts,
     collectRequiredReviewBlockers
 } from './task-audit-summary-review-evidence';
-import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-project-memory';
-export { formatFinalCloseoutMarkdown, formatFinalUserReport, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
+import { buildFinalCloseoutArtifact } from './task-audit-summary-closeout-artifact';
+import {
+    readPreflightSummary,
+    readProfileReviewDecisions
+} from './task-audit-summary-preflight-collection';
+export { formatFinalCloseoutMarkdown, formatTaskAuditSummaryText } from './task-audit-summary-renderers';
+export { formatFinalUserReport } from './task-audit-summary-final-report';
 export { synchronizeFinalCloseoutArtifacts } from './task-audit-summary-closeout-sync';
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
@@ -222,18 +220,6 @@ export interface PointInTimeSnapshot {
     acquisition_policy?: CompletionGateFinalizationLockPolicy | null;
 }
 
-interface PreflightSummary {
-    path: string;
-    sha256: string | null;
-    raw: Record<string, unknown> | null;
-    changedFiles: string[];
-    changedFilesCount: number;
-    changedLinesTotal: number;
-    requiredReviews: Record<string, boolean>;
-    scopeCategory: string | null;
-    pathMode: string | null;
-}
-
 const REVIEW_TIMING_AUDIT_TYPES = [
     'code',
     'db',
@@ -245,100 +231,6 @@ const REVIEW_TIMING_AUDIT_TYPES = [
     'infra',
     'dependency'
 ] as const;
-
-function readPreflightSummary(reviewsRoot: string, taskId: string): PreflightSummary {
-    const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
-    const preflight = safeReadJson(preflightPath);
-    const requiredReviews: Record<string, boolean> = {};
-
-    if (preflight?.required_reviews && typeof preflight.required_reviews === 'object') {
-        for (const [key, value] of Object.entries(preflight.required_reviews as Record<string, unknown>)) {
-            requiredReviews[key] = value === true;
-        }
-    }
-
-    const changedFiles = Array.isArray(preflight?.changed_files)
-        ? preflight.changed_files.map((changedFile: unknown) => String(changedFile))
-        : [];
-    const metrics = preflight?.metrics && typeof preflight.metrics === 'object'
-        ? preflight.metrics as Record<string, unknown>
-        : null;
-
-    return {
-        path: preflightPath,
-        sha256: fs.existsSync(preflightPath) ? fileSha256(preflightPath) : null,
-        raw: preflight,
-        changedFiles,
-        changedFilesCount: changedFiles.length,
-        changedLinesTotal: metrics ? Number(metrics.changed_lines_total) || 0 : 0,
-        requiredReviews,
-        scopeCategory: typeof preflight?.scope_category === 'string' ? preflight.scope_category : null,
-        pathMode: typeof preflight?.mode === 'string' && preflight.mode.trim() ? preflight.mode.trim() : null
-    };
-}
-
-function readProfileReviewDecisions(
-    taskMode: Record<string, unknown> | null,
-    preflight: Record<string, unknown> | null,
-    scopeCategory: string | null
-): ProfileReviewDecisionSummary | null {
-    if (!taskMode || typeof taskMode.active_profile !== 'string' || !taskMode.active_profile) {
-        return null;
-    }
-
-    const baseSummary = {
-        profile_name: String(taskMode.active_profile || ''),
-        scope_category: scopeCategory
-    };
-    const guardrails = preflight?.profile_guardrails && typeof preflight.profile_guardrails === 'object'
-        ? preflight.profile_guardrails as Record<string, unknown>
-        : null;
-
-    if (!guardrails) {
-        return {
-            ...baseSummary,
-            guardrails_active: false,
-            lightening_eligible: false,
-            safety_floors_applied: [],
-            decisions: []
-        };
-    }
-
-    const decisions = Array.isArray(guardrails.decisions)
-        ? guardrails.decisions.flatMap((decision): Array<{ review_type: string; effective_value: boolean; decision: string }> => {
-            if (!decision || typeof decision !== 'object') {
-                return [];
-            }
-            const record = decision as Record<string, unknown>;
-            return [{
-                review_type: String(record.review_type || ''),
-                effective_value: record.effective_value === true,
-                decision: String(record.decision || '')
-            }];
-        })
-        : [];
-    const safetyFloorsApplied = Array.isArray(guardrails.safety_floors_applied)
-        ? guardrails.safety_floors_applied.map((entry) => String(entry))
-        : [];
-
-    return {
-        ...baseSummary,
-        guardrails_active: guardrails.guardrails_active === true,
-        lightening_eligible: guardrails.lightening_eligible === true,
-        safety_floors_applied: safetyFloorsApplied,
-        decisions
-    };
-}
-
-function readTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
-    const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
-        ? taskMode.planned_changed_files
-        : [];
-    return [...new Set(plannedChangedFiles
-        .map((entry) => toPosix(String(entry || '').trim()))
-        .filter(Boolean))]
-        .sort((left, right) => left.localeCompare(right));
-}
 
 function asAuditRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -1024,93 +916,36 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         commit_command_suggestion: commitCommandSuggestion,
         commit_question: commitQuestionText
     };
-    let closeoutScopeSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null = null;
-    if (changedFiles.length > 0) {
-        try {
-            closeoutScopeSnapshot = getWorkspaceSnapshotCached(repoRoot, 'explicit_changed_files', true, changedFiles, {
-                noCache: true,
-                readOnly: true
-            });
-        } catch {
-            closeoutScopeSnapshot = null;
-        }
-    }
-    const finalCloseout: FinalCloseoutArtifact = {
-        schema_version: 1,
-        event_source: 'task-audit-summary',
-        task_id: safeTaskId,
-        generated_utc: new Date().toISOString(),
-        audit_status: status,
-        status: finalReportContract.status,
-        blocker: finalReportContract.blocker,
-        artifact_state: finalReportContract.status === 'READY' ? 'PENDING' : 'NOT_READY',
-        cycle_binding: currentCycle
-            ? {
-                preflight_path: currentCycle.preflight_path,
-                preflight_sha256: currentCycle.preflight_sha256,
-                compile_gate_timestamp: currentCycle.compile_gate_timestamp
-            }
-            : null,
-        artifact_paths: {
-            json: toPosix(finalCloseoutJsonPath),
-            markdown: toPosix(finalCloseoutMarkdownPath),
-            final_user_report: toPosix(finalUserReportPath)
-        },
-        implementation_summary: {
-            requested_depth: parseOptionalNumber(taskMode?.requested_depth),
-            effective_depth: parseOptionalNumber(taskMode?.effective_depth),
-            path_mode: pathMode,
-            orchestrator_work: taskMode?.orchestrator_work === true,
-            workflow_config_work: taskMode?.workflow_config_work === true,
-            planned_changed_files: readTaskModePlannedChangedFiles(taskMode),
-            review_verdicts: reviewVerdicts,
-            docs_updated: docsSummary.decision === 'DOCS_UPDATED',
-            changed_files: changedFiles,
-            changed_files_sha256: closeoutScopeSnapshot?.changed_files_sha256 ?? null,
-            scope_content_sha256: closeoutScopeSnapshot?.scope_content_sha256 ?? null,
-            scope_sha256: closeoutScopeSnapshot?.scope_sha256 ?? null,
-            domain_scope_fingerprints: closeoutScopeSnapshot
-                ? buildDomainScopeFingerprints({
-                    repoRoot,
-                    detectionSource: closeoutScopeSnapshot.detection_source,
-                    includeUntracked: !!closeoutScopeSnapshot.include_untracked,
-                    changedFiles: closeoutScopeSnapshot.changed_files
-                })
-                : null,
-            changed_files_count: changedFilesCount,
-            changed_lines_total: changedLinesTotal,
-            scope_category: scopeCategory,
-            active_profile: typeof taskMode?.active_profile === 'string' && taskMode.active_profile.trim()
-                ? taskMode.active_profile.trim()
-                : null
-        },
-        review_trust: reviewTrustSummary,
-        review_timing_audit: reviewTimingAudit,
-        review_integrity_attestation: reviewIntegrityAttestation,
-        review_attempt_summary: reviewAttemptSummary,
-        optional_skills: optionalSkillsSummary,
-        workflow: {
-            mandatory_full_suite_enabled: fullSuiteValidationRequiredForLifecycle,
-            visible_summary_line: `Mandatory full-suite: ${fullSuiteValidationRequiredForLifecycle ? 'true' : 'false'}`,
-            review_execution_policy_mode: reviewExecutionPolicyMode,
-            review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(reviewExecutionPolicyMode)
-        },
-        docs: docsSummary,
-        project_memory: buildFinalCloseoutProjectMemorySummary(projectMemoryImpactEvidence),
-        token_economy: tokenEconomy,
-        task_queue_status_contract: buildTaskQueueStatusContract(safeTaskId),
-        agent_report: {
-            assistant_language: workspaceStatusSnapshot.assistantLanguage,
-            assistant_language_confirmed: workspaceStatusSnapshot.assistantLanguageConfirmed,
-            next_task_command: workspaceStatusSnapshot.readyForTasks
-                ? workspaceStatusSnapshot.recommendedNextCommand
-                : null,
-            latest_update_notice: workspaceStatusSnapshot.latestUpdateNotice
-        },
-        commit_command_template: commitCommandTemplate,
-        commit_command_suggestion: commitCommandSuggestion,
-        commit_question: finalReportContract.commit_question
-    };
+    const finalCloseout = buildFinalCloseoutArtifact({
+        repoRoot,
+        taskId: safeTaskId,
+        auditStatus: status,
+        finalReportContract,
+        finalCloseoutJsonPath,
+        finalCloseoutMarkdownPath,
+        finalUserReportPath,
+        currentCycle,
+        taskMode,
+        pathMode,
+        reviewVerdicts,
+        docsSummary,
+        changedFiles,
+        changedFilesCount,
+        changedLinesTotal,
+        scopeCategory,
+        reviewTrustSummary,
+        reviewTimingAudit,
+        reviewIntegrityAttestation,
+        reviewAttemptSummary,
+        optionalSkillsSummary,
+        fullSuiteValidationRequiredForLifecycle,
+        reviewExecutionPolicyMode,
+        projectMemoryImpactEvidence,
+        tokenEconomy,
+        workspaceStatusSnapshot,
+        commitCommandTemplate,
+        commitCommandSuggestion
+    });
 
     return {
         task_id: safeTaskId,
