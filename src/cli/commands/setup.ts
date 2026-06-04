@@ -60,7 +60,7 @@ import {
     writeAgentInitState
 } from '../../runtime/agent-init-state';
 import { withLifecycleOperationLockAsync } from '../../lifecycle/common';
-import { runContractMigrations } from '../../lifecycle/contract-migrations';
+import { readPreservableCompileGateCommandFromFile, runContractMigrations } from '../../lifecycle/contract-migrations';
 import { serializeInitAnswers } from '../../schemas/init-answers';
 import { runInstall } from '../../materialization/install';
 import { runInit } from '../../materialization/init';
@@ -373,6 +373,15 @@ export async function handleSetup(
         await withLifecycleOperationLockAsync(targetRoot, 'setup', async () => {
         const bundlePath = getBundlePath(targetRoot);
         const bundleHadMaterializedLiveBeforeSetup = hasMaterializedWorkflowConfigBaseline(bundlePath);
+        const preservedCompileGateCommand = options.dryRun
+            ? null
+            : readPreservableCompileGateCommandFromFile(path.join(
+                bundlePath,
+                'live',
+                'docs',
+                'agent-rules',
+                '40-commands.md'
+            ));
         const defaultInitAnswersPath = options.initAnswersPath || path.join(path.basename(bundlePath), 'runtime', 'init-answers.json');
         const promptedAnswers: SetupAnswers | null = canUseInteractivePrompts
             ? await collectSetupAnswersInteractively(
@@ -454,7 +463,7 @@ export async function handleSetup(
         }) as Record<string, unknown>;
 
         if (!options.dryRun) {
-            runContractMigrations({ rootPath: targetRoot });
+            runContractMigrations({ rootPath: targetRoot, preservedCompileGateCommand });
             writeProtectedControlPlaneManifest(targetRoot);
         }
 

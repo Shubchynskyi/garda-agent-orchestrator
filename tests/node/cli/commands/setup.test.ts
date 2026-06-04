@@ -69,6 +69,24 @@ function materializeProjectCommands(bundleRoot: string): void {
     fs.writeFileSync(commandsPath, content, 'utf8');
 }
 
+function extractMarkdownSection(content: string, heading: string): string {
+    const headingMatch = heading.match(/^(#+)\s+/);
+    assert.ok(headingMatch, `Heading must be markdown-formatted: ${heading}`);
+    const headingLevel = headingMatch[1].length;
+    const startPattern = new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
+    const startMatch = startPattern.exec(content);
+    assert.ok(startMatch, `Missing heading: ${heading}`);
+    const sectionStart = startMatch.index;
+    const searchStart = sectionStart + startMatch[0].length;
+    const remainder = content.slice(searchStart);
+    const nextHeadingPattern = new RegExp(`^#{1,${headingLevel}}\\s+`, 'm');
+    const nextHeadingMatch = nextHeadingPattern.exec(remainder);
+    const sectionEnd = nextHeadingMatch
+        ? searchStart + nextHeadingMatch.index
+        : content.length;
+    return content.slice(sectionStart, sectionEnd).trim();
+}
+
 function readInitReport(workspaceRoot: string): string {
     return fs.readFileSync(
         path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'init-report.md'),
@@ -439,6 +457,63 @@ test('handleSetup runs contract migrations before verify so stale live task work
 
         const protectedManifestEvidence = evaluateProtectedControlPlaneManifest(workspaceRoot, null, true);
         assert.equal(protectedManifestEvidence.status, 'MATCH', JSON.stringify(protectedManifestEvidence));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup preserves project-specific compile gate command during contract migration refresh', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-compile-gate-preserve-'));
+    const bundleRoot = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME);
+    const commandsPath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+        fs.writeFileSync(path.join(workspaceRoot, 'settings.gradle'), 'pluginManagement { repositories { gradlePluginPortal() } }\n', 'utf8');
+        fs.writeFileSync(path.join(workspaceRoot, 'build.gradle'), 'plugins { id "java" }\n', 'utf8');
+        fs.writeFileSync(path.join(workspaceRoot, 'gradlew.bat'), '@echo off\r\n', 'utf8');
+
+        await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        fs.writeFileSync(commandsPath, [
+            '# Commands',
+            '',
+            '## Agent Gates',
+            '```bash',
+            'node garda-agent-orchestrator/bin/garda.js gate classify-change --changed-file "src/example.ts"',
+            '```',
+            '',
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            '.\\gradlew.bat clean testClasses --console=plain',
+            '```',
+            '',
+            'Rules:',
+            '- First non-empty non-comment line from this block is the compile gate command.'
+        ].join('\n'), 'utf8');
+
+        await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const commandsContent = fs.readFileSync(commandsPath, 'utf8');
+        const compileSection = extractMarkdownSection(commandsContent, '### Compile Gate (Mandatory)');
+        assert.ok(compileSection.includes('.\\gradlew.bat clean testClasses --console=plain'));
+        assert.ok(!/```bash\r?\nnpm run build\r?\n```/.test(compileSection));
+        assert.ok(compileSection.includes('must be a compile/build/type-check command'));
+        assert.ok(compileSection.includes('Do not use full-suite test commands here'));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

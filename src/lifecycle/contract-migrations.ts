@@ -2,10 +2,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists, readTextFile } from '../core/filesystem';
 import { getTaskModeRuleSectionMigrations, RuleContractSectionMigration } from '../materialization/rule-contracts';
+import { validateCompileGateCommand } from '../gates/compile/compile-gate';
 
 export interface ContractMigrationResult {
     appliedCount: number;
     appliedFiles: string[];
+}
+
+export interface ContractMigrationOptions {
+    rootPath: string;
+    preservedCompileGateCommand?: string | null;
 }
 
 function escapeRegex(text: string): string {
@@ -75,6 +81,99 @@ function requiresExactSectionParity(migration: RuleContractSectionMigration): bo
     return migration.heading === '## Integrity Priority Rules';
 }
 
+function isCompileGateSectionMigration(migration: RuleContractSectionMigration): boolean {
+    return migration.heading === '### Compile Gate (Mandatory)'
+        && migration.liveRelativePath.endsWith('/live/docs/agent-rules/40-commands.md');
+}
+
+function extractFirstFenceCommand(sectionContent: string): string | null {
+    const lines = normalizeNewlines(sectionContent, '\n').split('\n');
+    let inFence = false;
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('```')) {
+            if (inFence) {
+                return null;
+            }
+            inFence = true;
+            continue;
+        }
+        if (!inFence || !trimmed || trimmed.startsWith('#')) {
+            continue;
+        }
+        return trimmed;
+    }
+    return null;
+}
+
+function isTemplateCompileGateCommand(command: string): boolean {
+    const normalized = command.trim();
+    return normalized === 'npm run build' || /^<[^>]+>$/.test(normalized);
+}
+
+function normalizePreservableCompileGateCommand(command: string | null | undefined, sourcePath: string): string | null {
+    const normalized = String(command || '').trim();
+    if (!normalized || isTemplateCompileGateCommand(normalized)) {
+        return null;
+    }
+
+    try {
+        validateCompileGateCommand(normalized, sourcePath);
+        return normalized;
+    } catch {
+        return null;
+    }
+}
+
+export function extractPreservableCompileGateCommandFromContent(
+    content: string,
+    sourcePath: string
+): string | null {
+    const bounds = getSectionBounds(content, '### Compile Gate (Mandatory)');
+    if (!bounds) {
+        return null;
+    }
+
+    return normalizePreservableCompileGateCommand(
+        extractFirstFenceCommand(content.slice(bounds.start, bounds.end)),
+        sourcePath
+    );
+}
+
+export function readPreservableCompileGateCommandFromFile(filePath: string): string | null {
+    if (!pathExists(filePath)) {
+        return null;
+    }
+    return extractPreservableCompileGateCommandFromContent(readTextFile(filePath), filePath);
+}
+
+function getPreservableCompileGateCommand(currentContent: string, migration: RuleContractSectionMigration, livePath: string): string | null {
+    const bounds = getSectionBounds(currentContent, migration.heading);
+    if (!bounds) {
+        return null;
+    }
+
+    return normalizePreservableCompileGateCommand(
+        extractFirstFenceCommand(currentContent.slice(bounds.start, bounds.end)),
+        livePath
+    );
+}
+
+function applyCompileGateCommandToSection(sectionContent: string, command: string): string {
+    const normalizedCommand = command.trim();
+    if (!normalizedCommand) {
+        return sectionContent;
+    }
+
+    const sectionPattern = /(^### Compile Gate \(Mandatory\)[\s\S]*?```[^\r\n]*(?:\r?\n))([\s\S]*?)(\r?\n```)/m;
+    const match = sectionPattern.exec(sectionContent);
+    if (!match) {
+        return sectionContent;
+    }
+
+    return sectionContent.replace(sectionPattern, `$1${normalizedCommand}$3`);
+}
+
 function replaceOrAppendSection(content: string, heading: string, replacement: string, newline: string): string {
     const normalizedReplacement = normalizeNewlines(replacement, newline).trimEnd();
     const bounds = getSectionBounds(content, heading);
@@ -98,7 +197,11 @@ function replaceOrAppendSection(content: string, heading: string, replacement: s
     return result;
 }
 
-function applySectionMigration(rootPath: string, migration: RuleContractSectionMigration): boolean {
+function applySectionMigration(
+    rootPath: string,
+    migration: RuleContractSectionMigration,
+    preservedCompileGateCommand: string | null
+): boolean {
     const livePath = path.join(rootPath, migration.liveRelativePath);
     if (!pathExists(livePath)) {
         return false;
@@ -111,7 +214,14 @@ function applySectionMigration(rootPath: string, migration: RuleContractSectionM
 
     const currentContent = readTextFile(livePath);
     const templateContent = readTextFile(templatePath);
-    const templateSection = extractSectionOrThrow(templateContent, migration.heading, templatePath);
+    let templateSection = extractSectionOrThrow(templateContent, migration.heading, templatePath);
+    if (isCompileGateSectionMigration(migration)) {
+        const preservedCommand = normalizePreservableCompileGateCommand(preservedCompileGateCommand, livePath)
+            ?? getPreservableCompileGateCommand(currentContent, migration, livePath);
+        if (preservedCommand) {
+            templateSection = applyCompileGateCommandToSection(templateSection, preservedCommand);
+        }
+    }
     if (!requiresExactSectionParity(migration)) {
         if (getMissingSectionSnippets(currentContent, migration).length === 0) {
             return false;
@@ -137,8 +247,9 @@ function applySectionMigration(rootPath: string, migration: RuleContractSectionM
     return true;
 }
 
-export function runContractMigrations(options: { rootPath: string }): ContractMigrationResult {
+export function runContractMigrations(options: ContractMigrationOptions): ContractMigrationResult {
     const rootPath = path.resolve(options.rootPath);
+    const preservedCompileGateCommand = options.preservedCompileGateCommand ?? null;
     const appliedFiles = new Set<string>();
     const orderedMigrations = [...getTaskModeRuleSectionMigrations()].sort((left, right) => {
         if (left.liveRelativePath !== right.liveRelativePath) {
@@ -151,7 +262,7 @@ export function runContractMigrations(options: { rootPath: string }): ContractMi
     });
 
     for (const migration of orderedMigrations) {
-        if (applySectionMigration(rootPath, migration)) {
+        if (applySectionMigration(rootPath, migration, preservedCompileGateCommand)) {
             appliedFiles.add(migration.liveRelativePath);
         }
     }

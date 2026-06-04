@@ -20,7 +20,8 @@ import {
     type MaterializationRunnerOptions,
     type VerifyRunnerOptions,
     type ManifestRunnerOptions,
-    type ContractMigrationResult
+    type ContractMigrationResult,
+    type ContractMigrationRunnerOptions
 } from './update-execution';
 import { collectUpdateAnnouncements } from './update-announcements';
 import { writeUpdateReport, buildUpdateResult } from './update-reporting';
@@ -59,7 +60,7 @@ interface RunUpdateOptions {
     materializationRunner?: ((options: MaterializationRunnerOptions) => Record<string, unknown> | void) | null;
     verifyRunner?: ((options: VerifyRunnerOptions) => unknown) | null;
     manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
-    contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;
+    contractMigrationRunner?: ((options: ContractMigrationRunnerOptions) => ContractMigrationResult) | null;
     trustContext?: UpdateTrustContext | null;
     lifecycleLockAlreadyHeld?: boolean;
 }

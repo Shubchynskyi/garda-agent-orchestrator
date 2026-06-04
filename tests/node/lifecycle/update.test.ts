@@ -1452,6 +1452,64 @@ describe('runUpdate', () => {
         }
     });
 
+    it('preserves existing project-specific compile gate command during contract migration', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            fs.writeFileSync(path.join(projectRoot, 'settings.gradle'), 'pluginManagement { repositories { gradlePluginPortal() } }\n', 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'build.gradle'), 'plugins { id "java" }\n', 'utf8');
+            fs.writeFileSync(path.join(projectRoot, 'gradlew.bat'), '@echo off\r\n', 'utf8');
+
+            const liveRuleDir = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
+            fs.mkdirSync(liveRuleDir, { recursive: true });
+            fs.writeFileSync(path.join(liveRuleDir, '40-commands.md'), [
+                '# Commands',
+                '',
+                '## Agent Gates',
+                '```bash',
+                'node garda-agent-orchestrator/bin/garda.js gate classify-change --changed-file "src/example.ts"',
+                '```',
+                '',
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                '.\\gradlew.bat clean testClasses --console=plain',
+                '```',
+                '',
+                'Rules:',
+                '- First non-empty non-comment line from this block is the compile gate command.'
+            ].join('\n'), 'utf8');
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true,
+                contractMigrationRunner: (options) => runContractMigrations(options)
+            });
+
+            assert.equal(result.installStatus, 'PASS');
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(result.contractMigrationStatus, 'PASS');
+            assert.deepEqual(result.contractMigrationFiles, [
+                'garda-agent-orchestrator/live/docs/agent-rules/40-commands.md'
+            ]);
+
+            const commandsContent = fs.readFileSync(path.join(liveRuleDir, '40-commands.md'), 'utf8');
+            const compileSection = extractMarkdownSection(commandsContent, '### Compile Gate (Mandatory)');
+            assert.ok(compileSection.includes('.\\gradlew.bat clean testClasses --console=plain'));
+            assert.ok(!/```bash\r?\nnpm run build\r?\n```/.test(compileSection));
+            assert.ok(compileSection.includes('must be a compile/build/type-check command'));
+            assert.ok(compileSection.includes('Do not use full-suite test commands here'));
+
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+            const compileGate = workflowConfig.compile_gate as Record<string, unknown>;
+            assert.equal(compileGate.command, '__COMPILE_GATE_COMMAND_UNCONFIGURED__');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('preserves project-memory user content across update', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {

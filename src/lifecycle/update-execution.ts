@@ -19,6 +19,7 @@ import {
 } from '../core/project-memory-rollout';
 import { restoreRollbackSnapshot } from './common';
 import { getLiveVersionPayload, type ResolvedUpdateSources } from './update-source';
+import { readPreservableCompileGateCommandFromFile } from './contract-migrations';
 
 export interface InstallRunnerOptions {
     targetRoot: string;
@@ -63,6 +64,11 @@ export interface ContractMigrationResult {
     appliedFiles?: string[];
 }
 
+export interface ContractMigrationRunnerOptions {
+    rootPath: string;
+    preservedCompileGateCommand?: string | null;
+}
+
 interface RollbackRecord {
     relativePath: string;
     existed: boolean;
@@ -74,7 +80,7 @@ export interface UpdatePipelineRunners {
     materializationRunner?: ((options: MaterializationRunnerOptions) => Record<string, unknown> | void) | null;
     verifyRunner?: ((options: VerifyRunnerOptions) => unknown) | null;
     manifestRunner?: ((options: ManifestRunnerOptions) => unknown) | null;
-    contractMigrationRunner?: ((options: { rootPath: string }) => ContractMigrationResult) | null;
+    contractMigrationRunner?: ((options: ContractMigrationRunnerOptions) => ContractMigrationResult) | null;
 }
 
 export interface UpdatePipelineStageResult {
@@ -223,6 +229,16 @@ export function executeUpdatePipelineStages(options: {
     let contractMigrationCount = 0;
     let contractMigrationFiles: string[] = [];
     let rollbackStatus = 'NOT_NEEDED';
+    const preservedCompileGateCommand = dryRun
+        ? null
+        : readPreservableCompileGateCommandFromFile(path.join(
+            normalizedTarget,
+            resolveBundleName(),
+            'live',
+            'docs',
+            'agent-rules',
+            '40-commands.md'
+        ));
 
     const expectedInvariantPaths = getExpectedBundleInvariantPaths(bundleRoot);
     let currentStage = 'INSTALL';
@@ -323,7 +339,10 @@ export function executeUpdatePipelineStages(options: {
 
             currentStage = 'CONTRACT_MIGRATIONS';
             if (contractMigrationRunner) {
-                const migResult = contractMigrationRunner({ rootPath: normalizedTarget });
+                const migResult = contractMigrationRunner({
+                    rootPath: normalizedTarget,
+                    preservedCompileGateCommand
+                });
                 contractMigrationCount = migResult.appliedCount || 0;
                 contractMigrationFiles = migResult.appliedFiles || [];
                 contractMigrationStatus = 'PASS';
