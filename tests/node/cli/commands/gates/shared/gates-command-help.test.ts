@@ -287,7 +287,18 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.ok(helpOutput.includes('Launch a real subagent using built-in tools'));
         assert.ok(helpOutput.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(helpOutput.includes('this is expected behavior in this repository'));
+        assert.ok(helpOutput.includes('--launch-input-sha256 takes ReviewerLaunchInputArtifactSha256'));
+        assert.ok(helpOutput.includes('launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields'));
+        assert.ok(helpOutput.includes('--launch-input-sha256 "<ReviewerLaunchInputArtifactSha256>"'));
+        assert.ok(!helpOutput.includes('--launch-input-artifact-sha256'));
         assert.ok(helpOutput.includes('complete-reviewer-launch only after the reviewer returns'));
+    });
+
+    it('explains pre-handoff reviewer identity in prepare launch help', () => {
+        const helpOutput = stripAnsi(buildGateHelpText('prepare-reviewer-launch', path.resolve('.')));
+
+        assert.ok(helpOutput.includes('provider/controller-assigned agent:<id>'));
+        assert.ok(helpOutput.includes('create or reserve a clean-context reviewer session before routing and preparing the handoff'));
     });
 
     it('does not treat --help as a standalone help request when it is a string option value', async () => {

@@ -62,7 +62,8 @@ export const REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS = Object.freeze([
     'delegation_started_at_utc=<gate-owned UTC timestamp recorded by record-reviewer-delegation-started>',
     'launched_at_utc=<same reviewer delegation start timestamp for compatibility>',
     'launch_input_mode=copy_paste_prompt or launch_artifact_path',
-    'launch_input_sha256=<sha256 of exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath>',
+    'launch_input_sha256=<ReviewerLaunchInputArtifactSha256 for launch_artifact_path, or CopyPasteReviewerLaunchPromptSha256>',
+    'launch_input_artifact_sha256=<artifact JSON field for ReviewerLaunchInputArtifactSha256 when launch_input_mode=launch_artifact_path>',
     'fresh_context=true, isolated_context=true, or fork_context=false'
 ]);
 
@@ -144,7 +145,7 @@ function buildReviewerLaunchCompletionHint(): string {
     return [
         'Completion hint:',
         '- Start from the prepared reviewer-launch artifact; do not search for or recompute its hashes.',
-        '- Attest the exact launch input: copy_paste_prompt uses CopyPasteReviewerLaunchPromptSha256; launch_artifact_path uses ReviewerLaunchInputArtifactPath and its prepared artifact sha256.',
+        '- Attest the exact launch input: copy_paste_prompt uses CopyPasteReviewerLaunchPromptSha256; launch_artifact_path uses ReviewerLaunchInputArtifactPath and ReviewerLaunchInputArtifactSha256. The CLI flag is --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields.',
         `- Required completed-launch updates: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}.`,
         `- Trust boundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`
     ].join('\n');

@@ -1447,6 +1447,8 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'record-reviewer-delegation-started');
         assert.ok(result.reason.includes('launch metadata'));
         assert.ok(result.reason.includes('Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff'));
+        assert.ok(result.reason.includes('pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256'));
+        assert.ok(result.reason.includes('do not invent a --launch-input-artifact-sha256 flag'));
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));
@@ -1463,7 +1465,81 @@ describe('gates/next-step', () => {
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
         assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchInputArtifactPath)}"`));
+        assert.ok(!result.commands[0].command.includes('--launch-input-artifact-sha256'));
         assert.ok(!result.commands[0].command.includes('--launched-at-utc'));
+    });
+
+    it('routes to complete-reviewer-launch with immutable launch input artifact evidence after delegation starts', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        const launchBindingSha256 = 'c'.repeat(64);
+        const preparedIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256
+        });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const copyPastePrompt = 'Delegated code reviewer launch prompt.';
+        const copyPastePromptSha256 = sha256Text(copyPastePrompt);
+        writeJson(launchArtifactPath, {
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch_preparation',
+            attestation_state: 'prepared',
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
+            prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            copy_paste_reviewer_launch_prompt: copyPastePrompt,
+            copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
+        });
+        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
+        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        writeJson(launchArtifactPath, {
+            ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            attestation_state: 'delegation_started',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-123',
+            delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_sha256: pinnedInputArtifactSha256,
+            launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
+            launch_input_artifact_sha256: pinnedInputArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: pinnedInputArtifactSha256,
+            reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256,
+            fork_context: false
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'complete-reviewer-launch', result.reason);
+        assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
+        assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
+        assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
+        assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${pinnedInputArtifactSha256}"`));
+        assert.ok(!result.commands[0].command.includes('--launch-input-artifact-sha256'));
     });
 
     it('routes to record-review-invocation after current completed launch metadata is present', () => {

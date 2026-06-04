@@ -358,7 +358,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
             const launchArtifactSha256 = fileSha256(launchArtifactPath);
             let launchInputArtifactPath: string | null = null;
             let launchInputArtifactSha256: string | null = null;
-            if (artifactState === 'prepared') {
+            if (artifactState === 'prepared' || artifactState === 'delegation_started') {
                 launchInputArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
                     repoRoot,
                     getArtifactStringField(

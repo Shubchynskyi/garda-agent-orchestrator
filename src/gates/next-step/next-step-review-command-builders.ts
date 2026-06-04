@@ -111,7 +111,7 @@ export function buildRecordReviewerDelegationStartedCommand(params: {
     launchInputArtifactSha256?: string | null;
 }): string {
     const launchInputArtifactSha256 = String(params.launchInputArtifactSha256 || '').trim()
-        || '<prepared-launch-artifact-sha256>';
+        || '<ReviewerLaunchInputArtifactSha256>';
     const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
         || params.launchArtifactPath;
     return [
@@ -142,7 +142,7 @@ export function buildCompleteReviewerLaunchCommand(params: {
     recordInvocation?: boolean;
 }): string {
     const launchInputArtifactSha256 = String(params.launchInputArtifactSha256 || '').trim()
-        || '<prepared-launch-artifact-sha256>';
+        || '<ReviewerLaunchInputArtifactSha256>';
     const launchInputArtifactPath = String(params.launchInputArtifactPath || '').trim()
         || params.launchArtifactPath;
     return [

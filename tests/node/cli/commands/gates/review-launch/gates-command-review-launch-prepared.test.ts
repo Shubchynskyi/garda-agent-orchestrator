@@ -133,8 +133,9 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchArtifact.after_launch_required_updates.provider_invocation_id_or_controller_invocation_id, '<actual delegated reviewer invocation id>');
         assert.equal(launchArtifact.after_launch_required_updates.launch_completed_at_utc, '<gate-owned ISO-8601 completion timestamp>');
         assert.equal(launchArtifact.after_launch_required_updates.launch_input_mode, 'launch_artifact_path or copy_paste_prompt');
-        assert.equal(launchArtifact.after_launch_required_updates.launch_input_sha256, '<prepared reviewer launch artifact sha256, or CopyPasteReviewerLaunchPromptSha256>');
+        assert.equal(launchArtifact.after_launch_required_updates.launch_input_sha256, '<ReviewerLaunchInputArtifactSha256 for launch_artifact_path, or CopyPasteReviewerLaunchPromptSha256>');
         assert.equal(launchArtifact.after_launch_required_updates.launch_input_artifact_path, '<ReviewerLaunchInputArtifactPath when launch_input_mode is launch_artifact_path>');
+        assert.equal(launchArtifact.after_launch_required_updates.launch_input_artifact_sha256, '<ReviewerLaunchInputArtifactSha256 when launch_input_mode is launch_artifact_path>');
         assert.equal(launchArtifact.after_launch_required_updates.copy_paste_reviewer_launch_prompt_sha256, copyPastePromptSha256);
         assert.equal(fs.existsSync(launchInputArtifactPath), true);
         const pinnedInputArtifactSha256 = String(launchArtifact.reviewer_launch_input_artifact_sha256);
@@ -185,6 +186,8 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchInputArtifactPath: ${launchInputArtifactPath.replace(/\\/g, '/')}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchInputArtifactSha256: ${fileSha256ForTest(launchInputArtifactPath)}`)));
         assert.ok(capturedLogs.some((line) => line.includes(`CopyPasteReviewerLaunchPromptSha256: ${copyPastePromptSha256}`)));
+        assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
+        assert.ok(capturedLogs.some((line) => line.includes('launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags')));
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionToken:')), false);
         assert.equal(capturedLogs.some((line) => line.includes('LaunchCompletionTokenSha256:')), false);
         assert.ok(capturedLogs.some((line) => line.includes('PreparedLaunchEventSha256:')));
@@ -193,6 +196,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('HandoffInstruction: Treat review context as an opaque handoff artifact')));
         assert.ok(capturedLogs.some((line) => line.includes('Do not open or summarize the generated review-context markdown')));
         assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
+        assert.ok(capturedLogs.some((line) => line.includes('launch_input_sha256=<ReviewerLaunchInputArtifactSha256 for launch_artifact_path, or CopyPasteReviewerLaunchPromptSha256>')));
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('CopyPasteReviewerLaunchPrompt:')));
@@ -209,6 +213,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath')));
+        assert.ok(capturedLogs.some((line) => line.includes('create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id>')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
@@ -712,6 +717,8 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             false
         );
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: existing reviewer launch metadata is current')));
+        assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
+        assert.ok(capturedLogs.some((line) => line.includes('create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id>')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
