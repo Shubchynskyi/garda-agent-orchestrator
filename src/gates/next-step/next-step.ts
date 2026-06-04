@@ -195,10 +195,11 @@ import {
     buildNextStepReviewLaunchPlan,
     describeBlockedReviewDependencies,
     getDownstreamReviewTypesFor,
-    shouldRunFullSuiteAfterCompileBeforeReviews,
-    shouldRunFullSuiteBeforeTestReview,
     toNextStepBlockedReviewLanes
 } from './next-step-review-launch-planner';
+import {
+    resolveNextStepFullSuiteValidationRoute
+} from './next-step-full-suite-routing';
 import {
     resolveDelegatedReviewReadinessRoute
 } from './next-step-review-readiness-routing';
@@ -3970,135 +3971,30 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
-    if (shouldRunFullSuiteAfterCompileBeforeReviews(
-        fullSuiteConfig.enabled,
-        fullSuiteConfig.placement,
-        fullSuiteNotRequiredForCurrentScope
-    )) {
-        if (fullSuiteGateStatus === 'FAIL') {
-            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-            if (fullSuiteTimedOutRetryAvailable) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'full-suite-validation',
-                    title: 'Retry full-suite validation with updated timeout forecast.',
-                    reason:
-                        `Full-suite validation timed out for the current compiled scope, and duration history now recommends a longer timeout. ` +
-                        `Rerun the configured full-suite command before launching independent reviewers. ` +
-                        `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
-                    commands: [
-                        buildCommand(
-                            'Retry full-suite validation',
-                            fullSuiteCommand
-                        )
-                    ]
-                });
-            }
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'implementation',
-                title: 'Fix full-suite failures before reviewer launch.',
-                reason:
-                    `Full-suite validation is configured for placement '${fullSuiteConfig.placement}' and already failed for the current compiled scope. ` +
-                    `Do not launch independent reviewers until the configured full-suite command passes; ` +
-                    `fix the failures, rerun compile-gate if implementation changed, then rerun full-suite-validation.`,
-                commands: [
-                    buildCommand(
-                        'Rerun navigator after fixing implementation',
-                        navigatorCommand
-                    )
-                ]
-            });
-        }
-        if (!fullSuiteGatePassed) {
-            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'full-suite-validation',
-                title: 'Run full-suite validation after compile before reviews.',
-                reason:
-                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path} with placement '${fullSuiteConfig.placement}'. ` +
-                    `Run it after compile-gate and before launching independent reviewers so suite failures fail fast on the same compiled scope. ` +
-                    `The final closeout can reuse this artifact only if no relevant task scope changes occur afterward. ` +
-                    `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
-                commands: [
-                    buildCommand(
-                        'Run full-suite validation',
-                        fullSuiteCommand
-                    )
-                ]
-            });
-        }
-    }
-
-    if (
-        shouldRunFullSuiteBeforeTestReview(
-            fullSuiteConfig.enabled,
-            fullSuiteConfig.placement,
-            fullSuiteNotRequiredForCurrentScope
-        )
-        && reviewLaunchPlan.next_review_type === 'test'
-    ) {
-        if (fullSuiteGateStatus === 'FAIL') {
-            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-            if (fullSuiteTimedOutRetryAvailable) {
-                return buildResult({
-                    ...resultBase,
-                    status: 'BLOCKED',
-                    nextGate: 'full-suite-validation',
-                    title: 'Retry full-suite validation with updated timeout forecast.',
-                    reason:
-                        `Full-suite validation timed out for the current compiled scope, and duration history now recommends a longer timeout. ` +
-                        `Rerun it before launching the mandatory test reviewer. ` +
-                        `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
-                    commands: [
-                        buildCommand(
-                            'Retry full-suite validation',
-                            fullSuiteCommand
-                        )
-                    ]
-                });
-            }
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'implementation',
-                title: 'Fix full-suite failures before launching test review.',
-                reason:
-                    `Full-suite validation is enabled and already failed for the current compiled scope. ` +
-                    `Do not launch the mandatory test reviewer until the configured full-suite command passes; ` +
-                    `fix the failures, rerun compile-gate if implementation changed, then rerun full-suite-validation.`,
-                commands: [
-                    buildCommand(
-                        'Rerun navigator after fixing implementation',
-                        navigatorCommand
-                    )
-                ]
-            });
-        }
-        if (!fullSuiteGatePassed) {
-            const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
-            return buildResult({
-                ...resultBase,
-                status: 'BLOCKED',
-                nextGate: 'full-suite-validation',
-                title: 'Run full-suite validation before test review.',
-                reason:
-                    `Effective workflow config enables full-suite validation at ${fullSuiteSummary.config_path} with placement '${fullSuiteConfig.placement}'. ` +
-                    `Run it before launching the mandatory test reviewer so suite failures fail fast on the same compiled scope. ` +
-                    `The final closeout can reuse this artifact only if no relevant task scope changes occur afterward. ` +
-                    `Command: ${fullSuiteConfig.command}. ${fullSuiteTimeoutForecastLine || ''}`.trim(),
-                commands: [
-                    buildCommand(
-                        'Run full-suite validation',
-                        fullSuiteCommand
-                    )
-                ]
-            });
-        }
+    const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+    const fullSuiteValidationRoute = resolveNextStepFullSuiteValidationRoute({
+        enabled: fullSuiteConfig.enabled,
+        placement: fullSuiteConfig.placement,
+        notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
+        gateStatus: fullSuiteGateStatus,
+        gatePassed: fullSuiteGatePassed,
+        timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
+        configPath: fullSuiteSummary.config_path,
+        commandText: fullSuiteConfig.command,
+        timeoutForecastLine: fullSuiteTimeoutForecastLine,
+        command: fullSuiteCommand,
+        navigatorCommand,
+        nextReviewType: reviewLaunchPlan.next_review_type
+    });
+    if (fullSuiteValidationRoute) {
+        return buildResult({
+            ...resultBase,
+            status: fullSuiteValidationRoute.status,
+            nextGate: fullSuiteValidationRoute.nextGate,
+            title: fullSuiteValidationRoute.title,
+            reason: fullSuiteValidationRoute.reason,
+            commands: fullSuiteValidationRoute.commands
+        });
     }
 
     if (reviewLaunchPlan.next_review_type) {
@@ -4752,7 +4648,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
     }
 
-    const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
     const postReviewCloseoutRoute = resolvePostReviewCloseoutRouteFromState({
         requiredReviewsGatePassed: isGatePassed(summary, 'required-reviews-check'),
         zeroDiffNoReviewCloseout: hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes),
