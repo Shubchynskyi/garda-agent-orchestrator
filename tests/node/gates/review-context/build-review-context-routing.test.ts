@@ -465,6 +465,104 @@ import {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('fails closed for missing task id and malformed manual-validation selector entries', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-selector-contract-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const manualValidationRoot = path.join(orchestratorRoot, 'runtime', 'manual-validation', 'T-089');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(manualValidationRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-089',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(manualValidationRoot, 'valid.log'), 'VALIDATION SECRET SHOULD NOT BE ATTACHED\n', 'utf8');
+
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                selected_logs: [
+                    {
+                        label: 'Missing task id selector',
+                        path: 'valid.log',
+                        command: './gradlew test',
+                        exit_code: 0,
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+            const missingTaskIdOutputPath = path.join(reviewsRoot, 'T-089-missing-task-id-test-review-context.json');
+            const missingTaskIdResult = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath: missingTaskIdOutputPath,
+                repoRoot
+            });
+
+            assert.equal(missingTaskIdResult.manual_validation?.selected_log_count, 0);
+            assert.ok(missingTaskIdResult.manual_validation?.warnings.some((warning: string) => warning.includes('selector task_id is required')));
+            assert.ok(!fs.readFileSync(missingTaskIdOutputPath.replace(/\.json$/, '.md'), 'utf8').includes('VALIDATION SECRET SHOULD NOT BE ATTACHED'));
+
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-089',
+                selected_logs: [
+                    'not-an-object',
+                    {
+                        label: 'Still valid after malformed entry',
+                        path: 'valid.log',
+                        command: './gradlew test',
+                        exit_code: 0,
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+            const malformedEntryOutputPath = path.join(reviewsRoot, 'T-089-malformed-entry-test-review-context.json');
+            const malformedEntryResult = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath: malformedEntryOutputPath,
+                repoRoot
+            });
+
+            assert.equal(malformedEntryResult.manual_validation?.selected_log_count, 1);
+            assert.ok(malformedEntryResult.manual_validation?.warnings.some((warning: string) => warning.includes('selected_logs[0] must be an object')));
+
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-089',
+                selected_logs: { path: 'valid.log' }
+            }, null, 2), 'utf8');
+            const malformedSelectorOutputPath = path.join(reviewsRoot, 'T-089-malformed-selector-test-review-context.json');
+            const malformedSelectorResult = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath: malformedSelectorOutputPath,
+                repoRoot
+            });
+
+            assert.equal(malformedSelectorResult.manual_validation?.selected_log_count, 0);
+            assert.ok(malformedSelectorResult.manual_validation?.warnings.some((warning: string) => warning.includes('selected_logs must be an array')));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
         it('attaches only a bounded tail for large manual-validation logs', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-large-log-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

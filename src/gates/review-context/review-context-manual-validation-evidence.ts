@@ -356,16 +356,32 @@ function selectedLogAppliesToReview(entry: Record<string, unknown>, reviewType: 
     return reviewTypes.length === 0 || reviewTypes.includes(reviewType.toLowerCase());
 }
 
-function normalizeSelectedLogs(selector: Record<string, unknown>): Record<string, unknown>[] {
+function normalizeSelectedLogs(selector: Record<string, unknown>): {
+    logs: Record<string, unknown>[];
+    warnings: string[];
+} {
+    const warnings: string[] = [];
     const rawLogs = Array.isArray(selector.selected_logs)
         ? selector.selected_logs
         : Array.isArray(selector.logs)
             ? selector.logs
             : [];
-    return rawLogs.flatMap((entry) => {
+    if (!Array.isArray(selector.selected_logs) && !Array.isArray(selector.logs)) {
+        const selectorHasSelectedLogs = Object.prototype.hasOwnProperty.call(selector, 'selected_logs');
+        const selectorHasLegacyLogs = Object.prototype.hasOwnProperty.call(selector, 'logs');
+        warnings.push(selectorHasSelectedLogs || selectorHasLegacyLogs
+            ? 'manual-validation selector selected_logs must be an array'
+            : 'manual-validation selector selected_logs is required and must be an array');
+    }
+    const logs = rawLogs.flatMap((entry, index) => {
         const record = asPlainRecord(entry);
-        return record ? [record] : [];
+        if (!record) {
+            warnings.push(`manual-validation selector selected_logs[${index}] must be an object`);
+            return [];
+        }
+        return [record];
     });
+    return { logs, warnings };
 }
 
 export function buildManualValidationEvidence(options: {
@@ -385,17 +401,28 @@ export function buildManualValidationEvidence(options: {
     let selector: Record<string, unknown> = {};
     if (selectorResolution.readablePath) {
         try {
-            selector = asPlainRecord(JSON.parse(fs.readFileSync(selectorResolution.readablePath, 'utf8'))) || {};
+            const parsedSelector = JSON.parse(fs.readFileSync(selectorResolution.readablePath, 'utf8'));
+            const selectorRecord = asPlainRecord(parsedSelector);
+            if (selectorRecord) {
+                selector = selectorRecord;
+            } else {
+                warnings.push('manual-validation selector must be a JSON object');
+            }
         } catch (error) {
             warnings.push(`manual-validation selector could not be parsed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
-    if (normalizeString(selector.task_id) && normalizeString(selector.task_id) !== options.taskId) {
+    const selectorTaskId = normalizeString(selector.task_id);
+    if (!selectorTaskId) {
+        warnings.push(`manual-validation selector task_id is required and must match ${options.taskId}`);
+    } else if (selectorTaskId !== options.taskId) {
         warnings.push(`manual-validation selector task_id does not match ${options.taskId}`);
     }
-    const selectorTaskIdMatches = !normalizeString(selector.task_id) || normalizeString(selector.task_id) === options.taskId;
+    const selectorTaskIdMatches = selectorTaskId === options.taskId;
+    const selectedLogs = normalizeSelectedLogs(selector);
+    warnings.push(...selectedLogs.warnings);
 
-    const logs = (selectorTaskIdMatches ? normalizeSelectedLogs(selector) : [])
+    const logs = (selectorTaskIdMatches ? selectedLogs.logs : [])
         .filter((entry) => selectedLogAppliesToReview(entry, options.reviewType))
         .flatMap((entry, index): ReviewContextManualValidationLogEvidence[] => {
             const command = normalizeString(entry.command);
