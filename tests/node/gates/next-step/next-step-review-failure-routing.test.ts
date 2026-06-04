@@ -1317,6 +1317,209 @@ describe('gates/next-step', () => {
         }
     });
 
+    it('routes evidence-only missing manual-validation failures to evidence refresh without implementation changes', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body:
+                'Reviewer could not validate the task because existing runtime/manual-validation/T-089 Gradle test and check logs were omitted from the handoff evidence. ' +
+                'The implementation diff itself was not reviewed as defective; refresh attached validation evidence and relaunch review.\n\n'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-evidence-refresh');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.title, /Refresh 'test' review evidence attachments/);
+        assert.match(result.reason, /missing attached validation evidence/);
+        assert.match(result.reason, /do not make fake implementation changes/);
+        assert.match(result.reason, /manual-validation evidence selector/);
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
+    it('routes template-shaped evidence-only validation failures to evidence refresh', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body: [
+                '## Validation Notes',
+                'Reviewer could not find attached runtime/manual-validation logs for this task.',
+                '',
+                '## Findings by Severity',
+                'None.',
+                '',
+                '## Deferred Findings',
+                'None.',
+                '',
+                '## Residual Risks',
+                'Manual validation evidence must be attached before a meaningful test review.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-evidence-refresh');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.reason, /missing attached validation evidence/);
+    });
+
+    it('routes evidence-only validation failures that use generic defect wording with empty findings', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body: [
+                '## Validation Notes',
+                'The only defect is missing runtime/manual-validation logs in the reviewer handoff.',
+                '',
+                '## Findings by Severity',
+                'None.',
+                '',
+                '## Deferred Findings',
+                'None.',
+                '',
+                '## Residual Risks',
+                'Manual validation evidence must be attached before a meaningful test review.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-evidence-refresh');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.reason, /missing attached validation evidence/);
+    });
+
+    it('routes findings-section-only missing manual-validation failures to evidence refresh', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body: [
+                '## Validation Notes',
+                'Review cannot be completed until manual validation logs are available.',
+                '',
+                '## Findings by Severity',
+                'Medium: missing runtime/manual-validation logs in the reviewer handoff.',
+                '',
+                '## Deferred Findings',
+                'None.',
+                '',
+                '## Residual Risks',
+                'None.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-evidence-refresh');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.reason, /missing attached validation evidence/);
+    });
+
+    it('routes missing manual-validation finding lines with benign no-other-findings wording to evidence refresh', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test', {
+            verdict: 'fail',
+            body: [
+                '## Validation Notes',
+                'Review cannot be completed until manual validation logs are available.',
+                '',
+                '## Findings by Severity',
+                'Medium: missing runtime/manual-validation logs in the reviewer handoff; no other findings.',
+                '',
+                '## Deferred Findings',
+                'None.',
+                '',
+                '## Residual Risks',
+                'None.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'review-evidence-refresh');
+        assert.equal(result.review.next_review_type, 'test');
+        assert.match(result.reason, /missing attached validation evidence/);
+    });
+
+    it('keeps real review findings that mention missing manual-validation evidence on implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- High: The failed-review classifier misroutes real implementation defects into review-evidence-refresh when missing manual-validation evidence is mentioned.',
+                '',
+                '## Evidence',
+                'The handoff also omitted runtime/manual-validation logs, but the implementation finding above is blocking.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Fix failed 'code' review findings/);
+        assert.match(result.reason, /Fix the findings/);
+        assert.ok(!result.commands[0].command.includes('review-evidence-refresh'));
+    });
+
+    it('keeps prose-only real defects that mention missing manual-validation evidence on implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security', {
+            verdict: 'fail',
+            body:
+                'The report also notes missing runtime/manual-validation logs. ' +
+                'The actual defect is that selected logs are read without bounded memory controls, so a task log can exhaust process memory before review context is built.\n\n'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'security');
+        assert.match(result.title, /Fix failed 'security' review findings/);
+        assert.ok(!result.commands[0].command.includes('review-evidence-refresh'));
+    });
+
     it('keeps real code-review failures on implementation remediation', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

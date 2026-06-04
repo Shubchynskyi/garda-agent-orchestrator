@@ -96,6 +96,20 @@ export function resolveFailedReviewRemediationRoute(
         };
     }
 
+    if (options.failureKind === 'missing-validation-evidence' && options.currentReviewRecordedEvidenceCurrent) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'review-evidence-refresh',
+            title: `Refresh '${options.reviewType}' review evidence attachments.`,
+            reason:
+                `Recorded '${options.reviewType}' review verdict is '${options.verdictToken}', ` +
+                `but the failure matches missing attached validation evidence (${options.failureReason || 'missing validation evidence'}). ` +
+                'Preserve the failed review artifact and receipt as audit evidence; do not edit them by hand and do not make fake implementation changes. ' +
+                'Refresh the task-scoped manual-validation evidence selector, rerun compile if required by the recovery chain, rebuild the failed review context, and launch a fresh reviewer before downstream reviews.',
+            commands: [options.commands.restartReviewCycle]
+        };
+    }
+
     if (options.currentReviewRecordedEvidenceCurrent) {
         const downstreamText = options.downstreamReviewTypes.length > 0
             ? ` Dependent reviews currently blocked by this failure: ${options.downstreamReviewTypes.join(', ')}.`

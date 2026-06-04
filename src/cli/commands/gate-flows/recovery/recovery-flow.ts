@@ -78,6 +78,21 @@ function ensureStepPassed(stepName: string, result: { outputLines: string[]; exi
     }
 }
 
+function getTaskManualValidationBoundaryFiles(taskId: string, currentChangedFiles: readonly string[]): string[] {
+    const taskManualValidationPath = gateHelpers.normalizePath(
+        path.join('garda-agent-orchestrator', 'runtime', 'manual-validation', taskId)
+    );
+    const deployedTaskManualValidationPath = gateHelpers.normalizePath(
+        path.join('runtime', 'manual-validation', taskId)
+    );
+    return normalizeChangedFiles(currentChangedFiles).filter((entry) => (
+        entry === taskManualValidationPath
+        || entry.startsWith(`${taskManualValidationPath}/`)
+        || entry === deployedTaskManualValidationPath
+        || entry.startsWith(`${deployedTaskManualValidationPath}/`)
+    ));
+}
+
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
@@ -238,7 +253,8 @@ export async function runRestartReviewCycleCommand(
     const allowedBoundaryFiles = [
         ...(previousTaskMode.dirty_workspace_baseline?.changed_files || []),
         taskModeArtifactRelativePath,
-        taskModeIndexRelativePath
+        taskModeIndexRelativePath,
+        ...getTaskManualValidationBoundaryFiles(resolvedTaskId, currentRemediationChangedFiles)
     ].filter(Boolean);
     const classificationConfig = getClassificationConfig(repoRoot);
     const scopeBoundary = assessReviewRemediationScopeBoundary(

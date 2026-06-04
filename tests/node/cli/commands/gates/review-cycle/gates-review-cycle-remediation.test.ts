@@ -334,7 +334,11 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             preflightPath,
             commandsPath,
             outputFiltersPath,
-            changedFiles: ['src/app.ts'],
+            changedFiles: [
+                'src/app.ts',
+                `garda-agent-orchestrator/runtime/manual-validation/${taskId}/gradle-test.log`,
+                `garda-agent-orchestrator/runtime/manual-validation/${taskId}/review-evidence.json`
+            ],
             emitMetrics: false
         });
         assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE);
@@ -376,6 +380,99 @@ describe('cli/commands/gates – review-cycle remediation suite', () => {
             && entry.taskId === taskId
             && entry.artifactType === 'review-remediation-cycle.json'
         )));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restart-review-cycle allows task-scoped manual-validation evidence refresh files', { concurrency: false }, async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903b-restart-review-cycle-manual-validation';
+        seedRemediationRepoBase(repoRoot);
+        writeReviewCapabilitiesConfig(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(repoRoot, 'restart-review-cycle-manual-validation');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Restart review cycle after refreshing manual validation evidence',
+            plannedChangedFiles: ['src/app.ts']
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Restart review cycle after refreshing manual validation evidence',
+            ['src/app.ts']
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+        const compileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(compileResult.exitCode, 0);
+
+        const manualValidationRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'manual-validation', taskId);
+        fs.mkdirSync(manualValidationRoot, { recursive: true });
+        fs.writeFileSync(path.join(manualValidationRoot, 'gradle-test.log'), 'BUILD SUCCESSFUL\n', 'utf8');
+        fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+            schema_version: 1,
+            task_id: taskId,
+            selected_logs: [
+                {
+                    path: 'gradle-test.log',
+                    command: './gradlew test',
+                    exit_code: 0,
+                    review_types: ['test']
+                }
+            ]
+        }, null, 2), 'utf8');
+
+        const restartResult = await runRestartReviewCycleCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            changedFiles: [
+                'src/app.ts',
+                `garda-agent-orchestrator/runtime/manual-validation/${taskId}/gradle-test.log`,
+                `garda-agent-orchestrator/runtime/manual-validation/${taskId}/review-evidence.json`
+            ],
+            impactAnalysis: [
+                'Reviewer finding: failed review could not inspect attached manual validation evidence for the test lane.',
+                'Intended fix: add task-scoped runtime/manual-validation selector and log artifacts for reviewer handoff.',
+                'Affected files/contracts: src/app.ts remains the scoped source file and garda-agent-orchestrator/runtime/manual-validation artifacts are attached evidence only.',
+                'API/runtime/artifact/test impact: runtime artifact impact is limited to reviewer evidence; tests are not changed by the selector refresh.',
+                'Possible side effects: review reuse must fail closed if the runtime evidence changes behavior or expands source scope.',
+                'Required targeted checks: compile gate, review context build, and manual-validation evidence handoff checks cover the refresh.',
+                'Scope or review-type changes: only the test evidence handoff is refreshed; source scope stays unchanged.',
+                'Related blockers/follow-up: no separate follow-up is needed for task-owned manual-validation evidence refresh.'
+            ].join(' '),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+
+        const remediationArtifact = JSON.parse(fs.readFileSync(
+            path.join(getReviewsRoot(repoRoot), `${taskId}-review-remediation-cycle.json`),
+            'utf8'
+        )) as Record<string, unknown>;
+        const remediationScope = remediationArtifact.remediation_scope as Record<string, unknown>;
+        assert.equal(remediationScope.status, 'OK');
+        assert.deepEqual(remediationScope.expanded_non_test_files, []);
+        assert.ok((remediationScope.current_changed_files as string[]).includes(
+            `garda-agent-orchestrator/runtime/manual-validation/${taskId}/review-evidence.json`
+        ));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

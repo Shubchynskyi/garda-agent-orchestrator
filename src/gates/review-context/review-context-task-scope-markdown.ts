@@ -9,6 +9,10 @@ import {
     buildFullSuiteValidationEvidenceMarkdown,
     type ReviewContextFullSuiteValidationEvidence
 } from './review-context-validation-evidence';
+import {
+    buildManualValidationEvidenceMarkdown,
+    type ReviewContextManualValidationEvidence
+} from './review-context-manual-validation-evidence';
 import { prioritizePromptDiffForReview } from './review-context-prompt-diff';
 import { type ReviewTreeState } from '../review/review-tree-state';
 import { normalizePath } from '../shared/helpers';
@@ -26,6 +30,7 @@ export function buildTaskScopeMarkdown(options: {
     gitDiff: GitDiffSummary;
     treeState: ReviewTreeState | null;
     fullSuiteValidation: ReviewContextFullSuiteValidationEvidence | null;
+    manualValidation: ReviewContextManualValidationEvidence | null;
     taskCriteria: ReviewContextTaskCriteria;
     rolePromptArtifactPath: string;
     promptTemplateArtifactPath: string;
@@ -111,6 +116,10 @@ export function buildTaskScopeMarkdown(options: {
     lines.push('');
     if (options.fullSuiteValidation) {
         lines.push(...buildFullSuiteValidationEvidenceMarkdown(options.fullSuiteValidation));
+        lines.push('');
+    }
+    if (options.manualValidation) {
+        lines.push(...buildManualValidationEvidenceMarkdown(options.manualValidation));
         lines.push('');
     }
     lines.push(...buildReviewerOutputContractMarkdown({

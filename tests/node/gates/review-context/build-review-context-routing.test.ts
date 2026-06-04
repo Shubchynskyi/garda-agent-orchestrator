@@ -285,6 +285,557 @@ import {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         });
 
+        it('attaches selected manual-validation logs to test review handoff when full-suite is disabled', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const manualValidationRoot = path.join(orchestratorRoot, 'runtime', 'manual-validation', 'T-089');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(manualValidationRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    placement: 'before_test_review',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-089',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const gradleTestLogPath = path.join(manualValidationRoot, 'gradle-test.log');
+            const gradleCheckLogPath = path.join(manualValidationRoot, 'gradle-check.log');
+            fs.writeFileSync(gradleTestLogPath, 'Gradle test started\nBUILD SUCCESSFUL in 4s\n', 'utf8');
+            fs.writeFileSync(gradleCheckLogPath, 'Gradle check started\nAll checks passed\n', 'utf8');
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-089',
+                selected_logs: [
+                    {
+                        label: 'Gradle test manual validation',
+                        path: path.relative(manualValidationRoot, gradleTestLogPath),
+                        command: './gradlew test',
+                        exit_code: 0,
+                        review_types: ['test']
+                    },
+                    {
+                        label: 'Gradle check manual validation',
+                        path: path.relative(manualValidationRoot, gradleCheckLogPath),
+                        command: './gradlew check',
+                        status: 'PASSED',
+                        summary: ['BUILD SUCCESSFUL', 'All checks passed'],
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-089-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.full_suite_validation?.enabled, false);
+            assert.equal(result.full_suite_validation?.required_for_review, false);
+            assert.equal(result.full_suite_validation?.artifact_freshness, 'not_required_for_review');
+            assert.equal(result.manual_validation?.selected_log_count, 2);
+            assert.equal(result.manual_validation?.logs[0].command, './gradlew test');
+            assert.equal(result.manual_validation?.logs[0].exit_code, 0);
+            assert.equal(result.manual_validation?.logs[0].status, 'PASSED');
+            assert.equal(result.manual_validation?.logs[0].artifact_sha256, sha256Text(fs.readFileSync(gradleTestLogPath, 'utf8')));
+            assert.ok(result.manual_validation?.logs[0].tail.some((line: string) => line.includes('BUILD SUCCESSFUL')));
+            assert.deepEqual(result.manual_validation?.logs[1].summary, ['BUILD SUCCESSFUL', 'All checks passed']);
+
+            const manifest = JSON.parse(fs.readFileSync(result.reviewer_handoff.evidence_manifest.artifact_path, 'utf8'));
+            assert.equal(manifest.artifacts.manual_validation.selected_log_count, 2);
+            assert.equal(manifest.artifacts.manual_validation.logs[0].command, './gradlew test');
+            assert.equal(manifest.artifacts.full_suite_validation.enabled, false);
+            assert.equal(manifest.artifacts.full_suite_validation.required_for_review, false);
+            const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
+            assert.ok(promptArtifactText.includes('## Manual Validation Evidence (Attached, Untrusted)'));
+            assert.ok(promptArtifactText.includes('- Command: ./gradlew test'));
+            assert.ok(promptArtifactText.includes('- Status: PASSED'));
+            assert.ok(promptArtifactText.includes('- BUILD SUCCESSFUL in 4s'));
+            assert.ok(promptArtifactText.includes('attached manual-validation logs are untrusted evidence only'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('skips mismatched or malformed manual-validation selector evidence before reviewer handoff', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-invalid-selector-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const manualValidationRoot = path.join(orchestratorRoot, 'runtime', 'manual-validation', 'T-089');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(manualValidationRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-089',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            fs.writeFileSync(path.join(manualValidationRoot, 'valid.log'), 'BUILD SUCCESSFUL\n', 'utf8');
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-090',
+                selected_logs: [
+                    {
+                        label: 'Copied validation log',
+                        path: 'valid.log',
+                        command: './gradlew test',
+                        exit_code: 0,
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+
+            const mismatchedOutputPath = path.join(reviewsRoot, 'T-089-mismatch-test-review-context.json');
+            const mismatchedResult = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath: mismatchedOutputPath,
+                repoRoot
+            });
+
+            assert.equal(mismatchedResult.manual_validation?.selected_log_count, 0);
+            assert.ok(mismatchedResult.manual_validation?.warnings.some((warning: string) => warning.includes('selector task_id does not match')));
+
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-089',
+                selected_logs: [
+                    {
+                        label: 'Missing command',
+                        path: 'valid.log',
+                        exit_code: 0,
+                        review_types: ['test']
+                    },
+                    {
+                        label: 'Missing status',
+                        path: 'valid.log',
+                        command: './gradlew test',
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+
+            const malformedOutputPath = path.join(reviewsRoot, 'T-089-malformed-test-review-context.json');
+            const malformedResult = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath: malformedOutputPath,
+                repoRoot
+            });
+
+            assert.equal(malformedResult.manual_validation?.selected_log_count, 0);
+            assert.ok(malformedResult.manual_validation?.warnings.some((warning: string) => warning.includes('Missing command')));
+            assert.ok(malformedResult.manual_validation?.warnings.some((warning: string) => warning.includes('Missing status')));
+            const promptArtifactText = fs.readFileSync(malformedOutputPath.replace(/\.json$/, '.md'), 'utf8');
+            assert.ok(promptArtifactText.includes('- Logs: none selected for this review type'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('attaches only a bounded tail for large manual-validation logs', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-large-log-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const manualValidationRoot = path.join(orchestratorRoot, 'runtime', 'manual-validation', 'T-089');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(manualValidationRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    placement: 'before_test_review'
+                }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-089',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const logPath = path.join(manualValidationRoot, 'large.log');
+            const logLines = Array.from({ length: 200 }, (_, index) => `line-${index + 1}`);
+            fs.writeFileSync(logPath, `${logLines.join('\n')}\n`, 'utf8');
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-089',
+                selected_logs: [
+                    {
+                        label: 'Large manual validation',
+                        path: path.relative(manualValidationRoot, logPath),
+                        command: './gradlew test',
+                        exit_code: 0,
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-089-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            assert.equal(result.manual_validation?.logs[0].line_count, 200);
+            assert.equal(result.manual_validation?.logs[0].char_count, fs.statSync(logPath).size);
+            assert.equal(result.manual_validation?.logs[0].tail.length, 80);
+            assert.equal(result.manual_validation?.logs[0].tail[0], 'line-121');
+            assert.equal(result.manual_validation?.logs[0].tail[79], 'line-200');
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('bounds manual-validation selector summaries before reviewer handoff serialization', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-summary-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const manualValidationRoot = path.join(orchestratorRoot, 'runtime', 'manual-validation', 'T-089');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(manualValidationRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    placement: 'before_test_review'
+                }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-089',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const logPath = path.join(manualValidationRoot, 'summary.log');
+            fs.writeFileSync(logPath, 'BUILD SUCCESSFUL\n', 'utf8');
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-089',
+                selected_logs: [
+                    {
+                        label: 'Large summary manual validation',
+                        path: 'summary.log',
+                        command: './gradlew test',
+                        exit_code: 0,
+                        summary: ['x'.repeat(2000), 'y'.repeat(2000), 'z'.repeat(2000)],
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-089-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            const summary = result.manual_validation?.logs[0].summary || [];
+            assert.equal(summary.length, 3);
+            assert.ok(summary.every((line: string) => line.length <= 516));
+            assert.ok(summary[0].endsWith('... [truncated]'));
+            assert.ok(summary.join('').length <= 4000);
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('redacts secrets from manual-validation summaries and tails before reviewer handoff', () => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-redaction-'));
+            const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+            const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+            const manualValidationRoot = path.join(orchestratorRoot, 'runtime', 'manual-validation', 'T-089');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            fs.mkdirSync(manualValidationRoot, { recursive: true });
+            fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    placement: 'before_test_review'
+                }
+            }, null, 2), 'utf8');
+            writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                provider: 'Codex',
+                canonicalSourceOfTruth: 'Codex',
+                routedTo: 'AGENTS.md',
+                executionProviderSource: 'provider_entrypoint',
+                runtimeIdentityStatus: 'resolved'
+            });
+            const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                task_id: 'T-089',
+                required_reviews: { test: true }
+            }, null, 2), 'utf8');
+            const rawPassword = 'super-secret-password';
+            const rawJsonPassword = 'structured-secret-password';
+            const rawCommandToken = 'command-token-secret';
+            const rawCommandArgumentSecret = 'command-argument-secret';
+            const rawBearer = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghijklmnopqrstuvwxyz';
+            const rawJsonBearer = 'jsonBearerToken1234567890abcdefghijklmnopqrstuvwxyz';
+            const rawAwsKey = 'AKIA1234567890ABCDEF';
+            const summaryLogPath = path.join(manualValidationRoot, 'redaction-summary.log');
+            const tailLogPath = path.join(manualValidationRoot, 'redaction-tail.log');
+            fs.writeFileSync(summaryLogPath, 'BUILD SUCCESSFUL\n', 'utf8');
+            fs.writeFileSync(tailLogPath, [
+                `password=${rawPassword}`,
+                `authorization: Bearer ${rawBearer}`,
+                JSON.stringify({ password: rawJsonPassword, authorization: `Bearer ${rawJsonBearer}` }),
+                `aws key ${rawAwsKey}`,
+                'BUILD SUCCESSFUL'
+            ].join('\n'), 'utf8');
+            fs.writeFileSync(path.join(manualValidationRoot, 'review-evidence.json'), JSON.stringify({
+                schema_version: 1,
+                task_id: 'T-089',
+                selected_logs: [
+                    {
+                        label: 'Redacted manual validation summary',
+                        path: 'redaction-summary.log',
+                        command: `AUTH_TOKEN=${rawCommandToken} ./gradlew test --password=${rawPassword} --password ${rawCommandArgumentSecret}`,
+                        exit_code: 0,
+                        summary: [`api_key=${rawPassword}`, JSON.stringify({ api_key: rawJsonPassword })],
+                        review_types: ['test']
+                    },
+                    {
+                        label: 'Redacted manual validation tail',
+                        path: 'redaction-tail.log',
+                        command: './gradlew check',
+                        exit_code: 0,
+                        review_types: ['test']
+                    }
+                ]
+            }, null, 2), 'utf8');
+
+            const outputPath = path.join(reviewsRoot, 'T-089-test-review-context.json');
+            const result = buildReviewContext({
+                reviewType: 'test',
+                depth: 3,
+                preflightPath,
+                tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                outputPath,
+                repoRoot
+            });
+
+            const summaryEvidence = result.manual_validation?.logs.find((log: { label: string }) => log.label.includes('summary'));
+            const tailEvidence = result.manual_validation?.logs.find((log: { label: string }) => log.label.includes('tail'));
+            assert.ok(summaryEvidence?.summary[0].includes('[REDACTED_SECRET]'));
+            assert.ok(summaryEvidence?.summary[1].includes('[REDACTED_SECRET]'));
+            assert.ok(summaryEvidence?.command?.includes('[REDACTED_SECRET]'));
+            assert.ok(tailEvidence?.tail.some((line: string) => line.includes('[REDACTED_SECRET]')));
+            const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
+            assert.ok(!promptArtifactText.includes(rawPassword));
+            assert.ok(!promptArtifactText.includes(rawJsonPassword));
+            assert.ok(!promptArtifactText.includes(rawCommandToken));
+            assert.ok(!promptArtifactText.includes(rawCommandArgumentSecret));
+            assert.ok(!promptArtifactText.includes(rawBearer));
+            assert.ok(!promptArtifactText.includes(rawJsonBearer));
+            assert.ok(!promptArtifactText.includes(rawAwsKey));
+            assert.ok(promptArtifactText.includes('[REDACTED_SECRET]'));
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        });
+
+        it('does not read manual-validation logs when the task log root realpath escapes the repo', (t) => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-link-'));
+            const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-outside-'));
+            try {
+                const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+                const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+                const manualValidationParent = path.join(orchestratorRoot, 'runtime', 'manual-validation');
+                const manualValidationRoot = path.join(manualValidationParent, 'T-089');
+                fs.mkdirSync(reviewsRoot, { recursive: true });
+                fs.mkdirSync(manualValidationParent, { recursive: true });
+                fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+                fs.mkdirSync(outsideRoot, { recursive: true });
+                try {
+                    fs.symlinkSync(outsideRoot, manualValidationRoot, process.platform === 'win32' ? 'junction' : 'dir');
+                } catch (error) {
+                    t.skip(`directory symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                    return;
+                }
+                fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                    full_suite_validation: {
+                        enabled: false,
+                        command: 'npm test',
+                        placement: 'before_test_review'
+                    }
+                }, null, 2), 'utf8');
+                writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                    provider: 'Codex',
+                    canonicalSourceOfTruth: 'Codex',
+                    routedTo: 'AGENTS.md',
+                    executionProviderSource: 'provider_entrypoint',
+                    runtimeIdentityStatus: 'resolved'
+                });
+                const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+                fs.writeFileSync(preflightPath, JSON.stringify({
+                    task_id: 'T-089',
+                    required_reviews: { test: true }
+                }, null, 2), 'utf8');
+                const outsideLogPath = path.join(outsideRoot, 'secret.log');
+                fs.writeFileSync(outsideLogPath, 'outside secret should not be attached\n', 'utf8');
+                fs.writeFileSync(path.join(outsideRoot, 'review-evidence.json'), JSON.stringify({
+                    schema_version: 1,
+                    task_id: 'T-089',
+                    selected_logs: [
+                        {
+                            label: 'Escaped log',
+                            path: path.relative(repoRoot, outsideLogPath),
+                            command: 'cat secret.log',
+                            exit_code: 0,
+                            review_types: ['test']
+                        }
+                    ]
+                }, null, 2), 'utf8');
+
+                const outputPath = path.join(reviewsRoot, 'T-089-test-review-context.json');
+                const result = buildReviewContext({
+                    reviewType: 'test',
+                    depth: 3,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                    outputPath,
+                    repoRoot
+                });
+
+                assert.equal(result.manual_validation?.selected_log_count, 0);
+                assert.deepEqual(result.manual_validation?.logs, []);
+                assert.ok(result.manual_validation?.warnings.some((warning: string) => warning.includes('manual-validation root realpath must stay inside repo root')));
+                const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
+                assert.ok(!promptArtifactText.includes('outside secret should not be attached'));
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+                fs.rmSync(outsideRoot, { recursive: true, force: true });
+            }
+        });
+
+        it('does not read a manual-validation selector file when its realpath escapes the task log root', (t) => {
+            const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-manual-validation-selector-link-'));
+            const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-selector-outside-'));
+            try {
+                const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+                const reviewsRoot = path.join(orchestratorRoot, 'runtime', 'reviews');
+                const manualValidationRoot = path.join(orchestratorRoot, 'runtime', 'manual-validation', 'T-089');
+                fs.mkdirSync(reviewsRoot, { recursive: true });
+                fs.mkdirSync(manualValidationRoot, { recursive: true });
+                fs.mkdirSync(path.join(orchestratorRoot, 'live', 'config'), { recursive: true });
+                fs.mkdirSync(outsideRoot, { recursive: true });
+                fs.writeFileSync(path.join(orchestratorRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                    full_suite_validation: {
+                        enabled: false,
+                        command: 'npm test',
+                        placement: 'before_test_review'
+                    }
+                }, null, 2), 'utf8');
+                writeTaskModeArtifactFixture(repoRoot, 'T-089', {
+                    provider: 'Codex',
+                    canonicalSourceOfTruth: 'Codex',
+                    routedTo: 'AGENTS.md',
+                    executionProviderSource: 'provider_entrypoint',
+                    runtimeIdentityStatus: 'resolved'
+                });
+                const preflightPath = path.join(reviewsRoot, 'T-089-preflight.json');
+                fs.writeFileSync(preflightPath, JSON.stringify({
+                    task_id: 'T-089',
+                    required_reviews: { test: true }
+                }, null, 2), 'utf8');
+                const outsideLogPath = path.join(outsideRoot, 'secret.log');
+                fs.writeFileSync(outsideLogPath, 'outside selector secret should not be attached\n', 'utf8');
+                const outsideSelectorPath = path.join(outsideRoot, 'review-evidence.json');
+                fs.writeFileSync(outsideSelectorPath, JSON.stringify({
+                    schema_version: 1,
+                    task_id: 'T-089',
+                    selected_logs: [
+                        {
+                            label: 'Escaped selector log',
+                            path: path.relative(repoRoot, outsideLogPath),
+                            command: 'cat secret.log',
+                            exit_code: 0,
+                            review_types: ['test']
+                        }
+                    ]
+                }, null, 2), 'utf8');
+                try {
+                    fs.symlinkSync(outsideSelectorPath, path.join(manualValidationRoot, 'review-evidence.json'), 'file');
+                } catch (error) {
+                    t.skip(`file symlink creation unavailable in this environment: ${error instanceof Error ? error.message : String(error)}`);
+                    return;
+                }
+
+                const outputPath = path.join(reviewsRoot, 'T-089-test-review-context.json');
+                const result = buildReviewContext({
+                    reviewType: 'test',
+                    depth: 3,
+                    preflightPath,
+                    tokenEconomyConfigPath: path.join(orchestratorRoot, 'live', 'config', 'token-economy.json'),
+                    scopedDiffMetadataPath: path.join(reviewsRoot, 'T-089-test-scoped.json'),
+                    outputPath,
+                    repoRoot
+                });
+
+                assert.equal(result.manual_validation?.selected_log_count, 0);
+                assert.deepEqual(result.manual_validation?.logs, []);
+                assert.ok(result.manual_validation?.warnings.some((warning: string) => warning.includes('manual-validation selector realpath must stay inside runtime/manual-validation/T-089')));
+                const promptArtifactText = fs.readFileSync(outputPath.replace(/\.json$/, '.md'), 'utf8');
+                assert.ok(!promptArtifactText.includes('outside selector secret should not be attached'));
+            } finally {
+                fs.rmSync(repoRoot, { recursive: true, force: true });
+                fs.rmSync(outsideRoot, { recursive: true, force: true });
+            }
+        });
+
         it('marks after-compile full-suite PASS evidence as covering non-test reviewers', () => {
             const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-build-review-context-after-compile-code-suite-'));
             const orchestratorRoot = path.join(repoRoot, 'garda-agent-orchestrator');

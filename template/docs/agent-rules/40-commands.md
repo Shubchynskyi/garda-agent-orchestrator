@@ -63,6 +63,14 @@ exit "$status"
 Rules:
 - Print only the exit code, full log path, and a bounded tail or summary in chat.
 - Keep full stdout/stderr in the task-owned runtime log for audit.
+- To attach selected logs to reviewer handoff, create
+  `garda-agent-orchestrator/runtime/manual-validation/$taskId/review-evidence.json`
+  with explicit `selected_logs` entries. Each entry must include `path`,
+  `command`, and either `exit_code` or `status`; relative `path` values are
+  resolved from `runtime/manual-validation/$taskId`; optional `review_types`
+  scopes the log to specific reviewer lanes.
+- Reviewer context reads only this explicit selector; it must not auto-scan
+  every runtime log.
 - Do not use this pattern to hide failures; preserve the original exit code.
 - Do not use this pattern for mandatory lifecycle gates, which already own output
   filtering and evidence materialization.

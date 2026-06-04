@@ -112,6 +112,7 @@ describe('gates/review-context-artifacts', () => {
             gitDiff,
             compileGateEvidence: { status: 'PASSED' },
             fullSuiteValidationEvidence: { status: 'PASSED' },
+            manualValidationEvidence: { selected_log_count: 1 },
             taskEvidence
         });
 
@@ -140,6 +141,7 @@ describe('gates/review-context-artifacts', () => {
         assert.equal(artifacts.scoped_diff.diff_sha256, sha256Text(gitDiff.diff || ''));
         assert.deepEqual(artifacts.compile_gate, { status: 'PASSED' });
         assert.deepEqual(artifacts.full_suite_validation, { status: 'PASSED' });
+        assert.deepEqual(artifacts.manual_validation, { selected_log_count: 1 });
 
         assert.ok(result.evidenceManifestText.endsWith('\n'));
         assert.equal(result.evidenceManifestSha256, sha256Text(result.evidenceManifestText));
