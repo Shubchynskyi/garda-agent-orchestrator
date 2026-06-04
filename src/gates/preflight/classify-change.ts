@@ -33,6 +33,13 @@ import {
     buildGeneratedRuntimeArtifactHygieneWarnings,
     splitGeneratedRuntimeControlPlaneArtifacts
 } from '../shared/generated-runtime-artifacts';
+import { hasRefactorIntent } from './classify-change-intent';
+import {
+    buildRefactorHeuristicReasons,
+    isPerformanceHeuristicTriggered
+} from './classify-change-heuristics';
+import { buildRequiredReviews } from './classify-change-required-reviews';
+import { detectPathTriggers } from './classify-change-path-detection';
 
 interface TriggerConfig {
     db: string[];
@@ -546,10 +553,6 @@ function isStrongDatabaseChangedScope(pathValue: string, sqlOrMigrationRegexes: 
     });
 }
 
-function hasPerformanceSensitiveCacheIntent(taskIntent: string): boolean {
-    return /\b(ttl|time-to-live|expir(?:y|ation|e)|evict(?:ion)?|lru|lfu|hit[-\s]?rate|miss[-\s]?rate|warm(?:up|-up)?|latency|throughput|performance|perf|benchmark|profil(?:e|ing)|redis|memcached|hot[-\s]?path|memory|size[-\s]?limit)\b/i.test(taskIntent);
-}
-
 function isOrdinaryOrchestratorCacheMaintenancePath(pathValue: string): boolean {
     const normalizedPath = normalizePath(pathValue).replace(/^garda-agent-orchestrator\//, '');
     return normalizedPath === 'src/gates/workspace/workspace-snapshot-cache.ts'
@@ -850,10 +853,6 @@ export function classifyChange(options: ClassifyChangeOptions) {
     const reviewExecutionPolicyMode = options.reviewExecutionPolicyMode;
 
     const runtimeRoots = classificationConfig.runtime_roots;
-    const fastPathRoots = classificationConfig.fast_path_roots;
-    const fastPathAllowed = classificationConfig.fast_path_allowed_regexes;
-    const fastPathSensitive = classificationConfig.fast_path_sensitive_regexes;
-    const sqlOrMigration = classificationConfig.sql_or_migration_regexes;
     const codeLike = classificationConfig.code_like_regexes;
 
     const testMatch = (p: string, regexes: string[]) => matchAnyRegex(p, regexes, {
@@ -861,118 +860,77 @@ export function classifyChange(options: ClassifyChangeOptions) {
         caseInsensitive: true
     });
 
-    const runtimeChanged = normalizedFiles.some((p: string) => matchesConfiguredRoot(p, runtimeRoots, {
-        allowNestedRoot: true
-    }));
-    const runtimeCodeChanged = normalizedFiles.some((p: string) => matchesConfiguredRoot(p, runtimeRoots, {
-        allowNestedRoot: true
-    }) && testMatch(p, codeLike) && !testMatch(p, classificationConfig.test_trigger_regexes));
-
-    const protectedControlPlaneFiles = normalizedFiles.filter((p: string) => testPathPrefix(p, classificationConfig.protected_control_plane_roots));
-    const protectedControlPlaneChanged = protectedControlPlaneFiles.length > 0;
-    const protectedControlPlaneDocsOnly = normalizedFiles.length > 0
-        && protectedControlPlaneFiles.length === normalizedFiles.length
-        && protectedControlPlaneFiles.every((p: string) => isProtectedControlPlaneDocumentationSurfacePath(p, classificationConfig));
-
-    const dbStrongChangedFiles = normalizedFiles.filter((p: string) => (
-        isStrongDatabaseChangedScope(p, sqlOrMigration, classificationConfig.db_trigger_regexes)
-    ));
-    const dbWeakSignalFiles = normalizedFiles.filter((p: string) => (
-        dbStrongChangedFiles.indexOf(p) === -1
-        && isConfiguredWeakDatabaseSignal(p, classificationConfig.db_trigger_regexes)
-    ));
-    const dbProjectEvidence = collectDatabaseProjectEvidence(options.repoRoot, normalizedFiles);
-    const dbTriggered = dbStrongChangedFiles.length > 0
-        || (dbWeakSignalFiles.length > 0 && dbProjectEvidence.length > 0);
-    const securityTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.security_trigger_regexes));
-    const apiTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.api_trigger_regexes));
-    const dependencyTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.dependency_trigger_regexes));
-    const infraTriggered = normalizedFiles.some((p: string) => testMatch(p, classificationConfig.infra_trigger_regexes));
-    const ordinaryDocPathMatches = getSafeOrdinaryDocPathMatches(normalizedFiles, classificationConfig);
-    const ordinaryDocPathMatchedFiles = [...new Set(ordinaryDocPathMatches.map((entry) => entry.path))].sort();
-    const safeOrdinaryDocFiles = ordinaryDocPathMatchedFiles;
-    const testOrdinaryDocSuppressedFiles = safeOrdinaryDocFiles.filter((p: string) => testMatch(p, classificationConfig.test_trigger_regexes));
-    const testTriggered = normalizedFiles.some((p: string) => (
-        testMatch(p, classificationConfig.test_trigger_regexes)
-        && !safeOrdinaryDocFiles.includes(p)
-    ));
-    const performancePathMatchedFiles = normalizedFiles.filter((p: string) => testMatch(p, classificationConfig.performance_trigger_regexes));
-    const ordinaryCacheMaintenanceFiles = performancePathMatchedFiles.filter(isOrdinaryOrchestratorCacheMaintenancePath);
-    const performanceCacheIntent = ordinaryCacheMaintenanceFiles.length > 0 && hasPerformanceSensitiveCacheIntent(taskIntent);
-    const performancePathTriggeredFiles = performancePathMatchedFiles.filter((p: string) => (
-        !isOrdinaryOrchestratorCacheMaintenancePath(p) || performanceCacheIntent
-    ));
-    const performanceCacheSuppressedFiles = performanceCacheIntent
-        ? []
-        : ordinaryCacheMaintenanceFiles;
-    const performancePathTriggered = performancePathTriggeredFiles.length > 0;
-    const sqlOrMigrationCount = normalizedFiles.filter((p: string) => testMatch(p, sqlOrMigration)).length;
-    const onlySqlOrMigration = normalizedFiles.length > 0 && sqlOrMigrationCount === normalizedFiles.length;
-
-    const refactorIntentTriggered = /\b(refactor|cleanup|restructure|extract|rename|modularization|modularize|decompose|simplify)\b/i.test(taskIntent)
-        || /\bsplit\b.{0,80}\b(module|modules|component|components|renderer|renderers|helper|helpers|class|classes|function|functions)\b.{0,80}\b(out|from)\b/i.test(taskIntent)
-        || /\bsplit\b.{0,80}\binto\b.{0,80}\b(module|modules|component|components|renderer|renderers|helper|helpers|class|classes|function|functions)\b/i.test(taskIntent);
-    const codeLikeCount = normalizedFiles.filter((p: string) => testMatch(p, codeLike)).length;
-    const runtimeCodeLikeCount = normalizedFiles.filter(
-        (p: string) => matchesConfiguredRoot(p, runtimeRoots, { allowNestedRoot: true })
-            && testMatch(p, codeLike)
-            && !testMatch(p, classificationConfig.test_trigger_regexes)
-    ).length;
-
-    const refactorHeuristicReasons = [];
-    if (runtimeChanged && normalizedFiles.length > 0) {
-        const renameRatio = normalizedFiles.length > 0 ? Math.round((renameCount / normalizedFiles.length) * 10000) / 10000 : 0;
-        if (normalizedFiles.length >= 2 && renameRatio >= 0.4) {
-            refactorHeuristicReasons.push('rename_ratio_high');
+    const pathTriggers = detectPathTriggers({
+        normalizedFiles,
+        repoRoot: options.repoRoot,
+        taskIntent,
+        classificationConfig,
+        callbacks: {
+            testMatch,
+            testPathPrefix,
+            matchesConfiguredRoot,
+            isProtectedControlPlaneDocumentationSurfacePath,
+            isStrongDatabaseChangedScope,
+            isConfiguredWeakDatabaseSignal,
+            collectDatabaseProjectEvidence,
+            getSafeOrdinaryDocPathMatches,
+            isOrdinaryOrchestratorCacheMaintenancePath
         }
-        const totalChurn = additionsTotal + deletionsTotal;
-        const deltaBalanceThreshold = Math.max(20, Math.floor(totalChurn * 0.15));
-        const balancedChurn = Math.abs(additionsTotal - deletionsTotal) <= deltaBalanceThreshold;
-        if (runtimeCodeLikeCount >= 3 && totalChurn >= 80 && balancedChurn && !dbTriggered && !securityTriggered) {
-            refactorHeuristicReasons.push('balanced_structural_churn');
-        }
-    }
+    });
+
+    const refactorIntentTriggered = hasRefactorIntent(taskIntent);
+    const refactorHeuristicReasons = buildRefactorHeuristicReasons({
+        runtimeChanged: pathTriggers.runtimeChanged,
+        normalizedFilesCount: normalizedFiles.length,
+        renameCount,
+        additionsTotal,
+        deletionsTotal,
+        runtimeCodeLikeCount: pathTriggers.runtimeCodeLikeCount,
+        dbTriggered: pathTriggers.dbTriggered,
+        securityTriggered: pathTriggers.securityTriggered
+    });
     const refactorHeuristicTriggered = refactorHeuristicReasons.length > 0;
     const refactorTriggered = refactorIntentTriggered || refactorHeuristicTriggered;
 
-    const performanceHeuristicTriggered = (
-        !performancePathTriggered
-        && (apiTriggered || (dbTriggered && runtimeCodeChanged))
-        && !onlySqlOrMigration
-        && changedLinesTotal >= performanceHeuristicMinLines
-    );
-    const performanceTriggered = performancePathTriggered || performanceHeuristicTriggered;
-
-    const allUnderFastRoots = normalizedFiles.length > 0 && normalizedFiles.every((p: string) => matchesConfiguredRoot(p, fastPathRoots, {
-        semanticPackageMatch: true
-    }));
-    const allFastAllowedTypes = normalizedFiles.length > 0 && normalizedFiles.every((p: string) => testMatch(p, fastPathAllowed));
-    const hasFastSensitiveMatch = normalizedFiles.some((p: string) => testMatch(p, fastPathSensitive));
+    const performanceHeuristicTriggered = isPerformanceHeuristicTriggered({
+        performancePathTriggered: pathTriggers.performancePathTriggered,
+        apiTriggered: pathTriggers.apiTriggered,
+        dbTriggered: pathTriggers.dbTriggered,
+        runtimeCodeChanged: pathTriggers.runtimeCodeChanged,
+        onlySqlOrMigration: pathTriggers.onlySqlOrMigration,
+        changedLinesTotal,
+        performanceHeuristicMinLines
+    });
+    const performanceTriggered = pathTriggers.performancePathTriggered || performanceHeuristicTriggered;
 
     const fastPathEligible = (
-        runtimeChanged
-        && allUnderFastRoots
-        && allFastAllowedTypes
-        && !hasFastSensitiveMatch
+        pathTriggers.runtimeChanged
+        && pathTriggers.allUnderFastRoots
+        && pathTriggers.allFastAllowedTypes
+        && !pathTriggers.hasFastSensitiveMatch
         && normalizedFiles.length <= fastPathMaxFiles
         && changedLinesTotal <= fastPathMaxChangedLines
     );
 
     let mode = 'FULL_PATH';
-    if (fastPathEligible && !dbTriggered && !securityTriggered && !refactorTriggered
-        && !apiTriggered && !dependencyTriggered && !infraTriggered && !performanceTriggered) {
+    if (fastPathEligible && !pathTriggers.dbTriggered && !pathTriggers.securityTriggered && !refactorTriggered
+        && !pathTriggers.apiTriggered && !pathTriggers.dependencyTriggered && !pathTriggers.infraTriggered && !performanceTriggered) {
         mode = 'FAST_PATH';
     }
 
-    const requiredCodeReview = runtimeCodeChanged && mode === 'FULL_PATH';
-    const requiredDbReview = dbTriggered;
-    const requiredSecurityReview = securityTriggered;
-    const requiredRefactorReview = refactorTriggered;
-    const requiredApiReview = apiTriggered && !!reviewCapabilities.api;
-    const requiredTestReview = testTriggered && !!reviewCapabilities.test;
-    const requiredPerformanceReview = performanceTriggered && !!reviewCapabilities.performance;
-    const requiredInfraReview = infraTriggered && !!reviewCapabilities.infra;
-    const requiredDependencyReview = dependencyTriggered && !!reviewCapabilities.dependency;
+    const requiredReviews = buildRequiredReviews({
+        runtimeCodeChanged: pathTriggers.runtimeCodeChanged,
+        mode,
+        dbTriggered: pathTriggers.dbTriggered,
+        securityTriggered: pathTriggers.securityTriggered,
+        refactorTriggered,
+        apiTriggered: pathTriggers.apiTriggered,
+        testTriggered: pathTriggers.testTriggered,
+        performanceTriggered,
+        infraTriggered: pathTriggers.infraTriggered,
+        dependencyTriggered: pathTriggers.dependencyTriggered,
+        reviewCapabilities
+    });
     const zeroDiffDetected = normalizedFiles.length === 0 && changedLinesTotal === 0;
 
     const scopeClassification = classifyScopeCategory(normalizedFiles, codeLike, runtimeRoots, {
@@ -1000,57 +958,47 @@ export function classifyChange(options: ClassifyChangeOptions) {
             additions_total: additionsTotal,
             deletions_total: deletionsTotal,
             rename_count: renameCount,
-            code_like_changed_count: codeLikeCount,
-            runtime_code_like_changed_count: runtimeCodeLikeCount,
+            code_like_changed_count: pathTriggers.codeLikeCount,
+            runtime_code_like_changed_count: pathTriggers.runtimeCodeLikeCount,
             review_capabilities: reviewCapabilities,
             fast_path_max_files: fastPathMaxFiles,
             fast_path_max_changed_lines: fastPathMaxChangedLines,
             performance_heuristic_min_lines: performanceHeuristicMinLines
         },
         triggers: {
-            runtime_changed: runtimeChanged,
-            runtime_code_changed: runtimeCodeChanged,
-            protected_control_plane_changed: protectedControlPlaneChanged,
-            protected_control_plane_docs_only: protectedControlPlaneDocsOnly,
-            changed_protected_files: protectedControlPlaneFiles,
-            db: dbTriggered,
-            db_strong_changed_files: dbStrongChangedFiles,
-            db_weak_signal_files: dbWeakSignalFiles,
-            db_project_evidence: dbProjectEvidence,
-            security: securityTriggered,
-            api: apiTriggered,
-            test: testTriggered,
+            runtime_changed: pathTriggers.runtimeChanged,
+            runtime_code_changed: pathTriggers.runtimeCodeChanged,
+            protected_control_plane_changed: pathTriggers.protectedControlPlaneChanged,
+            protected_control_plane_docs_only: pathTriggers.protectedControlPlaneDocsOnly,
+            changed_protected_files: pathTriggers.protectedControlPlaneFiles,
+            db: pathTriggers.dbTriggered,
+            db_strong_changed_files: pathTriggers.dbStrongChangedFiles,
+            db_weak_signal_files: pathTriggers.dbWeakSignalFiles,
+            db_project_evidence: pathTriggers.dbProjectEvidence,
+            security: pathTriggers.securityTriggered,
+            api: pathTriggers.apiTriggered,
+            test: pathTriggers.testTriggered,
             performance: performanceTriggered,
-            infra: infraTriggered,
-            dependency: dependencyTriggered,
+            infra: pathTriggers.infraTriggered,
+            dependency: pathTriggers.dependencyTriggered,
             refactor: refactorTriggered,
             refactor_intent: refactorIntentTriggered,
             refactor_heuristic: refactorHeuristicTriggered,
             refactor_heuristic_reasons: refactorHeuristicReasons,
-            ordinary_doc_path_matches: ordinaryDocPathMatches,
-            ordinary_doc_path_matched_files: ordinaryDocPathMatchedFiles,
+            ordinary_doc_path_matches: pathTriggers.ordinaryDocPathMatches,
+            ordinary_doc_path_matched_files: pathTriggers.ordinaryDocPathMatchedFiles,
             ordinary_doc_path_patterns: classificationConfig.ordinary_doc_paths,
-            test_ordinary_doc_suppressed_files: testOrdinaryDocSuppressedFiles,
-            performance_path_changed_files: performancePathTriggeredFiles,
-            performance_cache_candidate_files: ordinaryCacheMaintenanceFiles,
-            performance_cache_intent: performanceCacheIntent,
-            performance_cache_suppressed_files: performanceCacheSuppressedFiles,
+            test_ordinary_doc_suppressed_files: pathTriggers.testOrdinaryDocSuppressedFiles,
+            performance_path_changed_files: pathTriggers.performancePathTriggeredFiles,
+            performance_cache_candidate_files: pathTriggers.ordinaryCacheMaintenanceFiles,
+            performance_cache_intent: pathTriggers.performanceCacheIntent,
+            performance_cache_suppressed_files: pathTriggers.performanceCacheSuppressedFiles,
             performance_heuristic: performanceHeuristicTriggered,
             fast_path_eligible: fastPathEligible,
-            fast_path_sensitive_match: hasFastSensitiveMatch,
+            fast_path_sensitive_match: pathTriggers.hasFastSensitiveMatch,
             ignored_generated_runtime_files: ignoredGeneratedRuntimeFiles
         },
-        required_reviews: {
-            code: requiredCodeReview,
-            db: requiredDbReview,
-            security: requiredSecurityReview,
-            refactor: requiredRefactorReview,
-            api: requiredApiReview,
-            test: requiredTestReview,
-            performance: requiredPerformanceReview,
-            infra: requiredInfraReview,
-            dependency: requiredDependencyReview
-        },
+        required_reviews: requiredReviews,
         review_execution_policy: reviewExecutionPolicyMode
             ? {
                 mode: reviewExecutionPolicyMode,
