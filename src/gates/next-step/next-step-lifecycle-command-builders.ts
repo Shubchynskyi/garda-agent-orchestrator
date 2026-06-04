@@ -42,6 +42,13 @@ function getNumberField(source: Record<string, unknown> | null, field: string, f
     return Number.isInteger(value) ? String(value) : fallback;
 }
 
+function buildProtectedOperatorConfirmationCommandParts(): string[] {
+    return [
+        '--operator-confirmed yes',
+        '--operator-confirmed-at-utc "<ISO-8601 timestamp>"'
+    ];
+}
+
 export function quoteProviderForCommand(provider: string | null): string {
     if (provider) {
         return quoteCommandValue(provider);
@@ -92,6 +99,7 @@ export function buildOrchestratorWorkRestartCommand(
         parts.push(`--routed-to ${quoteCommandValue(routedTo)}`);
     }
     parts.push('--orchestrator-work');
+    parts.push(...buildProtectedOperatorConfirmationCommandParts());
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];

@@ -247,6 +247,13 @@ export function quotePowerShellCliValue(value: string): string {
     return `"${String(value).replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '`"')}"`;
 }
 
+function buildProtectedOperatorConfirmationCommandParts(): string[] {
+    return [
+        '--operator-confirmed yes',
+        '--operator-confirmed-at-utc "<ISO-8601 timestamp>"'
+    ];
+}
+
 export function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
     repoRoot: string;
     taskId: string;
@@ -274,6 +281,7 @@ export function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
     if (includeWorkflowConfigWork) {
         parts.push('--workflow-config-work');
     }
+    parts.push(...buildProtectedOperatorConfirmationCommandParts());
     if (params.taskModeEvidence.start_banner) {
         parts.push(`--start-banner ${quotePowerShellCliValue(params.taskModeEvidence.start_banner)}`);
     }

@@ -1283,7 +1283,8 @@ describe('gates/next-step protected recovery', () => {
         assert.equal(result.next_gate, 'enter-task-mode');
         assert.ok(result.reason.includes('--orchestrator-work'));
         assert.ok(result.commands[0].command.includes('--orchestrator-work'));
-        assert.ok(!result.commands[0].command.includes('--operator-confirmed yes'));
+        assert.ok(result.commands[0].command.includes('--operator-confirmed yes'));
+        assert.ok(result.commands[0].command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
     });
 
     it('blocks app-workspace protected control-plane recovery when garda self-guard is on', () => {
@@ -1354,7 +1355,8 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(result.reason.includes('PREFLIGHT_FAILED'));
         assert.notEqual(result.commands[0].command, forgedRecoveryCommand);
         assert.ok(result.commands[0].command.includes('--orchestrator-work'));
-        assert.ok(!result.commands[0].command.includes('--operator-confirmed yes'));
+        assert.ok(result.commands[0].command.includes('--operator-confirmed yes'));
+        assert.ok(result.commands[0].command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(result.commands[0].command.includes(`--task-id "${TASK_ID}"`));
         assert.ok(result.commands[0].command.includes('--planned-changed-file "src/gates/next-step.ts"'));
         assert.ok(!result.commands[0].command.includes('T-EVIL'));
@@ -1400,6 +1402,8 @@ describe('gates/next-step protected recovery', () => {
 
         assert.equal(result.next_gate, 'enter-task-mode');
         assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(command.includes('--planned-changed-file "src/app.ts"'));
         assert.ok(!command.includes('--planned-changed-file "src/stale-planned.ts"'));
         assert.ok(!command.includes('T-EVIL'));

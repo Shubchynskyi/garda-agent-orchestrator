@@ -289,7 +289,8 @@ describe('cli/commands/gates — task-start', () => {
                 'i'
             )
         );
-        assert.ok(!error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -397,7 +398,8 @@ describe('cli/commands/gates — task-start', () => {
                 'i'
             )
         );
-        assert.ok(!error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.equal(fs.existsSync(artifactPath), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -431,7 +433,8 @@ describe('cli/commands/gates — task-start', () => {
             )
         );
         assert.equal((error.message.match(/--planned-changed-file /g) || []).length, 2);
-        assert.ok(!error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -908,6 +908,8 @@ describe('cli/commands/gates', () => {
 
         assert.ok(error);
         assert.ok(error.message.includes('--orchestrator-work'));
+        assert.ok(error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(error.message.includes(protectedFile));
         assert.ok(error.message.includes('Suggested command:'));
         assert.ok(error.message.includes(`--planned-changed-file "${protectedFile}"`));
@@ -1426,6 +1428,8 @@ describe('cli/commands/gates', () => {
 
         assert.ok(error);
         assert.ok(error.message.includes('--orchestrator-work'));
+        assert.ok(error.message.includes('--operator-confirmed yes'));
+        assert.ok(error.message.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
         assert.ok(error.message.includes('Suggested command:'));
         assert.ok(error.message.includes(`--planned-changed-file "${protectedFile}"`));
         assert.ok(error.message.includes(`--planned-changed-file "${nonProtectedFile}"`));

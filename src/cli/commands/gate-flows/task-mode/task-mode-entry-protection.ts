@@ -59,6 +59,13 @@ export interface AssertTaskModeProtectedEntryAllowedOptions {
     taskQueueMetadata: TaskQueueMetadataForProtectedEntry | null;
 }
 
+function buildProtectedOperatorConfirmationCommandParts(): string[] {
+    return [
+        '--operator-confirmed yes',
+        '--operator-confirmed-at-utc "<ISO-8601 timestamp>"'
+    ];
+}
+
 export function buildOrchestratorWorkHandoffCommand(
     repoRoot: string,
     taskId: string,
@@ -78,6 +85,7 @@ export function buildOrchestratorWorkHandoffCommand(
     if (includeWorkflowConfigWork) {
         parts.push('--workflow-config-work');
     }
+    parts.push(...buildProtectedOperatorConfirmationCommandParts());
     const startBanner = String(options.startBanner || '').trim();
     if (startBanner) {
         parts.push(`--start-banner ${quotePowerShellCliValue(startBanner)}`);
