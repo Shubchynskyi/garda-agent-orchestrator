@@ -9,9 +9,11 @@ import {
 } from '../../core/constants';
 import type {
     NextStepCommand,
-    NextStepProjectMemorySummary,
     NextStepResult
 } from './';
+import type {
+    NextStepProjectMemorySummary
+} from './next-step-doc-closeout-readiness';
 
 export function buildCommand(label: string, command: string): NextStepCommand {
     return { label, command };
