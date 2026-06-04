@@ -1,25 +1,19 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-    buildReviewReceiptReviewerProvenance
-} from '../../../../gate-runtime/review-context';
-import {
+    buildReviewReceiptReviewerProvenance,
+    assertReviewLifecycleGuard,
+    assertReviewTreeStateFresh,
     assertValidTaskId,
-    taskEventAppendHasBlockingFailure
-} from '../../../../gate-runtime/task-events';
-import { fileSha256 } from '../../../../gate-runtime/hash';
-import {
-    emitReviewerDelegationStartedEventAsync
-} from '../../../../gate-runtime/lifecycle-events';
-import {
+    emitReviewerDelegationStartedEventAsync,
+    fileSha256,
+    gateHelpers,
+    normalizePath,
+    resolveCanonicalReviewContextPath,
+    resolveReviewerPromptArtifactBinding,
+    taskEventAppendHasBlockingFailure,
     writeReviewArtifactJson
-} from '../../../../gate-runtime/review-artifacts';
-import * as gateHelpers from '../../../../gates/shared/helpers';
-import { normalizePath } from '../../../../gates/shared/helpers';
-import { resolveCanonicalReviewContextPath } from '../../../../gates/review-context/review-context-paths';
-import { assertReviewTreeStateFresh } from '../../../../gates/review/review-tree-state';
-import { resolveReviewerPromptArtifactBinding } from '../../../../gates/review/review-prompt-artifact';
-import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
+} from './review-launch-entrypoints';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import {
     type ParsedOptionsRecord

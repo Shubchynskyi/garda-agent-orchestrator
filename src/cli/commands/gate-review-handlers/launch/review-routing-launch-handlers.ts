@@ -2,25 +2,19 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     applyReviewerRoutingMetadata,
-    normalizeCompatibilityReviewerExecutionMode,
-    restoreReviewerRoutingMetadata
-} from '../../../../gate-runtime/review-context';
-import {
     assertValidTaskId,
+    assertRequiredUpstreamReviewDependencies,
+    assertReviewLifecycleGuard,
+    assertReviewTreeStateFresh,
+    emitReviewerDelegationRoutedEventAsync,
+    fileSha256,
+    gateHelpers,
+    normalizeCompatibilityReviewerExecutionMode,
+    normalizePath,
+    resolveCanonicalReviewContextPath,
+    restoreReviewerRoutingMetadata,
     taskEventAppendHasBlockingFailure
-} from '../../../../gate-runtime/task-events';
-import { fileSha256 } from '../../../../gate-runtime/hash';
-import {
-    emitReviewerDelegationRoutedEventAsync
-} from '../../../../gate-runtime/lifecycle-events';
-import * as gateHelpers from '../../../../gates/shared/helpers';
-import { normalizePath } from '../../../../gates/shared/helpers';
-import {
-    assertRequiredUpstreamReviewDependencies
-} from '../../../../gates/review/review-dependencies';
-import { resolveCanonicalReviewContextPath } from '../../../../gates/review-context/review-context-paths';
-import { assertReviewTreeStateFresh } from '../../../../gates/review/review-tree-state';
-import { assertReviewLifecycleGuard } from '../../../../gates/review/review-lifecycle-guard';
+} from './review-launch-entrypoints';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import {
     type ParsedOptionsRecord

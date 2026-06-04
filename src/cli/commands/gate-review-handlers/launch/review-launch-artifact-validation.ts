@@ -1,14 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-    normalizeCompatibilityReviewerExecutionMode
-} from '../../../../gate-runtime/review-context';
-import { fileSha256 } from '../../../../gate-runtime/hash';
-import * as gateHelpers from '../../../../gates/shared/helpers';
-import { normalizePath } from '../../../../gates/shared/helpers';
-import {
+    fileSha256,
+    gateHelpers,
+    normalizeCompatibilityReviewerExecutionMode,
+    normalizePath,
     type ReviewDependencyTimelineEvent
-} from '../../../../gates/review/review-dependencies';
+} from './review-launch-entrypoints';
 import {
     isTaskOwnedReviewTempPath
 } from '../../gates-artifacts';
