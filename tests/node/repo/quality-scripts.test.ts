@@ -161,3 +161,49 @@ test('package.json exposes focused test shard scripts for targeted validation', 
     // test:full must rebuild before running to keep it self-contained
     assert.match(scripts['test:full'], /build.js node-foundation/);
 });
+
+test('package.json exposes diagnostic rerun aliases for heavy logical test domains', () => {
+    const scripts = getScripts();
+
+    const requiredDiagnosticAliases = {
+        'test:diag:next-step': [
+            'tests/node/gates/next-step',
+            'tests/node/cli/commands/gates/shared/gates-next-step.test.ts'
+        ],
+        'test:diag:review-context': [
+            'tests/node/gates/review-context',
+            'tests/node/gate-runtime/review-context.test.ts',
+            'tests/node/cli/commands/gates/review-context'
+        ],
+        'test:diag:required-reviews': [
+            'tests/node/gates/required-reviews',
+            'tests/node/cli/commands/gates/required-reviews',
+            'tests/node/cli/commands/gates/review-launch',
+            'tests/node/cli/commands/gates/review-result',
+            'tests/node/cli/commands/gates/review-reuse'
+        ],
+        'test:diag:preflight': [
+            'tests/node/gates/preflight',
+            'tests/node/gate-runtime/budget-preflight.test.ts',
+            'tests/node/gates/diagnostics/shell-smoke-preflight.test.ts',
+            'tests/node/cli/commands/gates/preflight'
+        ],
+        'test:diag:task-audit': [
+            'tests/node/gates/task-audit',
+            'tests/node/cli/commands/task-audit-human-format.test.ts'
+        ],
+        'test:diag:ui-i18n': ['tests/node/reports/ui-i18n.test.ts', 'tests/node/reports/ui-language-packs.test.ts']
+    };
+
+    for (const [scriptName, requiredTargets] of Object.entries(requiredDiagnosticAliases)) {
+        const command = scripts[scriptName];
+        assert.equal(typeof command, 'string', `package.json must define '${scriptName}'`);
+        assert.match(command, /^node scripts\/node-foundation\/build-scripts\.cjs test\.js /);
+        for (const target of requiredTargets) {
+            assert.ok(command.includes(target), `'${scriptName}' must include '${target}'`);
+        }
+    }
+
+    assert.doesNotMatch(scripts.test, /test:diag:/, 'diagnostic aliases must not change npm test semantics');
+    assert.doesNotMatch(scripts['test:full'], /test:diag:/, 'diagnostic aliases must not change test:full semantics');
+});
