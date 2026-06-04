@@ -2,6 +2,7 @@ import {
     describe,
     it,
     assert,
+    childProcess,
     fs,
     path,
     runBuildReviewContextCommand,
@@ -30,6 +31,7 @@ import {
     seedTaskQueue,
     writeCompilePassEvidence,
     writePreflight,
+    runGit,
     getReviewTreeStateSha256FromFixtureContext
 } from './gates-review-reuse-fixtures';
 
@@ -921,6 +923,132 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         assert.deepEqual(reviewScopeFingerprint.review_reuse_neutral_config_files, [workflowConfigRelativePath]);
         assert.equal(codeScopeFingerprint.non_test_changed_files.includes(workflowConfigRelativePath), false);
         assert.equal(reviewScopeFingerprint.review_relevant_changed_files.includes(workflowConfigRelativePath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('keeps task-owned manual-validation evidence out of non-test code scope but not generic review scope', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904a-manual-validation-neutral-reuse';
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Qwen');
+        initializeGitRepo(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const app = 1;\n', 'utf8');
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Reuse non-test reviews after manual-validation evidence refresh'
+        });
+
+        const priorPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts'],
+            metrics: { changed_lines_total: 2 }
+        }, `${taskId}-prior-preflight.json`);
+        const codeReviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        seedReusableReviewEvidence(
+            repoRoot,
+            taskId,
+            'code',
+            'REVIEW PASSED',
+            priorPreflightPath,
+            codeReviewContextPath,
+            'agent:code-reviewer'
+        );
+        const priorPreflight = JSON.parse(fs.readFileSync(priorPreflightPath, 'utf8')) as Record<string, unknown>;
+        const priorCodeScope = computeReviewReuseCodeScopeFingerprint('code', priorPreflight, repoRoot);
+        const priorReviewScope = computeReviewRelevantScopeFingerprint(priorPreflight, repoRoot);
+        const evidencePath = `garda-agent-orchestrator/runtime/manual-validation/${taskId}/review-evidence.json`;
+        const selectorPath = `garda-agent-orchestrator/runtime/manual-validation/${taskId}/selector.json`;
+        const logPath = `garda-agent-orchestrator/runtime/manual-validation/${taskId}/gradle-test.log`;
+        fs.mkdirSync(path.dirname(path.join(repoRoot, evidencePath)), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, evidencePath), JSON.stringify({ task_id: taskId }) + '\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, selectorPath), JSON.stringify({ files: [logPath] }) + '\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, logPath), 'BUILD SUCCESSFUL\n', 'utf8');
+
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', evidencePath, selectorPath, logPath],
+            metrics: { changed_lines_total: 4 }
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        const codeScopeFingerprint = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+        const reviewScopeFingerprint = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+        assert.deepEqual(codeScopeFingerprint.review_reuse_neutral_evidence_files, [logPath, evidencePath, selectorPath]);
+        assert.deepEqual(reviewScopeFingerprint.review_reuse_neutral_evidence_files, []);
+        assert.equal(codeScopeFingerprint.non_test_changed_files.includes(evidencePath), false);
+        assert.equal(codeScopeFingerprint.non_test_changed_files.includes(selectorPath), false);
+        assert.equal(codeScopeFingerprint.non_test_changed_files.includes(logPath), false);
+        assert.equal(reviewScopeFingerprint.review_relevant_changed_files.includes(evidencePath), true);
+        assert.equal(reviewScopeFingerprint.review_relevant_changed_files.includes(selectorPath), true);
+        assert.equal(reviewScopeFingerprint.review_relevant_changed_files.includes(logPath), true);
+        assert.equal(codeScopeFingerprint.code_scope_sha256, priorCodeScope.code_scope_sha256);
+        assert.notEqual(reviewScopeFingerprint.review_scope_sha256, priorReviewScope.review_scope_sha256);
+
+        writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+        const codeBuild = await runBuildReviewContextCommand({
+            repoRoot,
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            outputPath: codeReviewContextPath
+        });
+        assert.equal(codeBuild.reusedReviewEvidence, true);
+        assert.ok(codeBuild.outputLines.includes('ReviewReuseDecision: accepted'));
+        assert.ok(codeBuild.outputLines.some((line) => line.startsWith('ReviewReuseReason: accepted:')));
+
+        const otherTaskSelectorPath = 'garda-agent-orchestrator/runtime/manual-validation/T-OTHER/review-evidence.json';
+        const otherTaskPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', otherTaskSelectorPath],
+            metrics: { changed_lines_total: 4 }
+        }, `${taskId}-other-task-preflight.json`);
+        const otherTaskPreflight = JSON.parse(fs.readFileSync(otherTaskPreflightPath, 'utf8')) as Record<string, unknown>;
+        const otherTaskCodeScope = computeReviewReuseCodeScopeFingerprint('code', otherTaskPreflight, repoRoot);
+
+        assert.deepEqual(otherTaskCodeScope.review_reuse_neutral_evidence_files, []);
+        assert.equal(otherTaskCodeScope.non_test_changed_files.includes(otherTaskSelectorPath), true);
+        assert.notEqual(otherTaskCodeScope.code_scope_sha256, priorCodeScope.code_scope_sha256);
+
+        const symlinkPath = selectorPath;
+        const symlinkBlob = childProcess.spawnSync('git', ['hash-object', '-w', '--stdin'], {
+            cwd: repoRoot,
+            input: 'src/app.ts',
+            encoding: 'utf8',
+            windowsHide: true
+        });
+        assert.equal(symlinkBlob.status, 0, symlinkBlob.stderr);
+        runGit(repoRoot, [
+            'update-index',
+            '--add',
+            '--cacheinfo',
+            `120000,${String(symlinkBlob.stdout || '').trim()},${symlinkPath}`
+        ]);
+        const symlinkPreflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_staged_only',
+            changed_files: ['src/app.ts', symlinkPath],
+            metrics: { changed_lines_total: 4 }
+        }, `${taskId}-symlink-preflight.json`);
+        const symlinkPreflight = JSON.parse(fs.readFileSync(symlinkPreflightPath, 'utf8')) as Record<string, unknown>;
+        const symlinkCodeScope = computeReviewReuseCodeScopeFingerprint('code', symlinkPreflight, repoRoot);
+
+        assert.deepEqual(symlinkCodeScope.review_reuse_neutral_evidence_files, []);
+        assert.equal(symlinkCodeScope.non_test_changed_files.includes(symlinkPath), true);
+        assert.notEqual(symlinkCodeScope.code_scope_sha256, priorCodeScope.code_scope_sha256);
+
+        const escapedTailPath = `garda-agent-orchestrator/runtime/manual-validation/${taskId}/nested/../escaped.log`;
+        fs.writeFileSync(path.join(repoRoot, escapedTailPath), 'BUILD SUCCESSFUL\n', 'utf8');
+        const escapedTailPreflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/app.ts', escapedTailPath],
+            metrics: { changed_lines_total: 4 }
+        }, `${taskId}-escaped-tail-preflight.json`);
+        const escapedTailPreflight = JSON.parse(
+            fs.readFileSync(escapedTailPreflightPath, 'utf8')
+        ) as Record<string, unknown>;
+        const escapedTailCodeScope = computeReviewReuseCodeScopeFingerprint('code', escapedTailPreflight, repoRoot);
+
+        assert.deepEqual(escapedTailCodeScope.review_reuse_neutral_evidence_files, []);
+        assert.equal(escapedTailCodeScope.non_test_changed_files.includes(escapedTailPath), true);
+        assert.notEqual(escapedTailCodeScope.code_scope_sha256, priorCodeScope.code_scope_sha256);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -16,6 +16,7 @@ export interface CodeReviewScopeFingerprint {
     docs_only_changed_files: string[];
     performance_support_changed_files: string[];
     review_reuse_neutral_config_files: string[];
+    review_reuse_neutral_evidence_files: string[];
     missing_non_test_files: string[];
     code_scope_sha256: string | null;
     test_only: boolean;
@@ -27,6 +28,7 @@ export interface ReviewRelevantScopeFingerprint {
     review_relevant_changed_files: string[];
     docs_only_changed_files: string[];
     review_reuse_neutral_config_files: string[];
+    review_reuse_neutral_evidence_files: string[];
     missing_review_relevant_files: string[];
     review_scope_sha256: string | null;
     docs_only: boolean;
@@ -321,6 +323,53 @@ function collectReviewReuseNeutralConfigFiles(
         .sort();
 }
 
+function getTaskOwnedManualValidationEvidenceTail(preflight: Record<string, unknown>, filePath: string): string | null {
+    const taskId = String(preflight.task_id || '').trim();
+    if (!taskId) {
+        return null;
+    }
+    const normalizedPath = normalizePath(filePath);
+    const matchedPrefix = [
+        `garda-agent-orchestrator/runtime/manual-validation/${taskId}/`,
+        `runtime/manual-validation/${taskId}/`
+    ].find((prefix) => normalizedPath.startsWith(prefix));
+    return matchedPrefix ? normalizedPath.slice(matchedPrefix.length) : null;
+}
+
+function isAllowedManualValidationEvidenceTail(tail: string): boolean {
+    return (
+        tail === 'review-evidence.json'
+        || tail === 'selector.json'
+        || (/^[A-Za-z0-9._-]+\.log$/).test(tail)
+    );
+}
+
+function collectReviewReuseNeutralEvidenceFiles(
+    preflight: Record<string, unknown>,
+    repoRoot: string,
+    allChangedFiles: readonly string[]
+): string[] {
+    return allChangedFiles
+        .filter((filePath) => {
+            const tail = getTaskOwnedManualValidationEvidenceTail(preflight, filePath);
+            if (!tail || !isAllowedManualValidationEvidenceTail(tail)) {
+                return false;
+            }
+            if (usesStagedContent(preflight)) {
+                const stagedFingerprint = getStagedBlobFingerprint(repoRoot, filePath);
+                if (stagedFingerprint) {
+                    const stagedMode = stagedFingerprint.split(':')[1];
+                    return stagedMode === '100644' || stagedMode === '100755';
+                }
+                if (getDetectionSource(preflight) === 'git_staged_only') {
+                    return false;
+                }
+            }
+            return getSafeWorktreePathState(repoRoot, filePath).status === 'file';
+        })
+        .sort();
+}
+
 function getStagedBlobFingerprint(repoRoot: string, relativePath: string): string | null {
     try {
         const result = childProcess.spawnSync('git', ['ls-files', '-s', '--', `:(literal)${relativePath}`], {
@@ -431,11 +480,14 @@ function computeCodeReviewScopeFingerprintInternal(
         options.excludeNonRuntimePerformanceSupportFiles ? performanceSupportChangedFiles : []
     );
     const reviewReuseNeutralConfigSet = new Set(reviewReuseNeutralConfigFiles);
+    const reviewReuseNeutralEvidenceFiles = collectReviewReuseNeutralEvidenceFiles(preflight, repoRoot, allChangedFiles);
+    const reviewReuseNeutralEvidenceSet = new Set(reviewReuseNeutralEvidenceFiles);
     const nonTestChangedFiles = allChangedFiles.filter((filePath) => (
         !testChangedFiles.includes(filePath)
         && !docsOnlyChangedFiles.includes(filePath)
         && !performanceSupportSet.has(filePath)
         && !reviewReuseNeutralConfigSet.has(filePath)
+        && !reviewReuseNeutralEvidenceSet.has(filePath)
     ));
     const sortedNonTestFiles = [...nonTestChangedFiles].sort();
     const missingNonTestFiles: string[] = [];
@@ -453,6 +505,7 @@ function computeCodeReviewScopeFingerprintInternal(
         docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
         performance_support_changed_files: [...performanceSupportChangedFiles].sort(),
         review_reuse_neutral_config_files: reviewReuseNeutralConfigFiles,
+        review_reuse_neutral_evidence_files: reviewReuseNeutralEvidenceFiles,
         missing_non_test_files: missingNonTestFiles,
         code_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         test_only: sortedNonTestFiles.length === 0 && testChangedFiles.length === allChangedFiles.length,
@@ -511,6 +564,7 @@ export function computeReviewRelevantScopeFingerprint(
         review_relevant_changed_files: sortedReviewRelevantFiles,
         docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
         review_reuse_neutral_config_files: reviewReuseNeutralConfigFiles,
+        review_reuse_neutral_evidence_files: [],
         missing_review_relevant_files: missingReviewRelevantFiles,
         review_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         docs_only: sortedReviewRelevantFiles.length === 0 && docsOnlyChangedFiles.length === allChangedFiles.length
