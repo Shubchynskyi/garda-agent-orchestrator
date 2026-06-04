@@ -2202,10 +2202,12 @@ function buildOrchestratorWorkRestartCommand(
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
-    const mergedPlannedChangedFiles = [...new Set([
-        ...plannedChangedFiles,
-        ...additionalPlannedChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
-    ])].sort();
+    const currentChangedFiles = additionalPlannedChangedFiles
+        .map((entry) => normalizePath(entry))
+        .filter(Boolean);
+    const mergedPlannedChangedFiles = [...new Set(
+        currentChangedFiles.length > 0 ? currentChangedFiles : plannedChangedFiles
+    )].sort();
     for (const plannedChangedFile of mergedPlannedChangedFiles) {
         parts.push(`--planned-changed-file ${quoteCommandValue(plannedChangedFile)}`);
     }
