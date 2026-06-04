@@ -30,18 +30,20 @@ export interface WorkflowSettingDefinition {
     editable?: boolean;
 }
 
-const BOOLEAN_OPTIONS: WorkflowSettingOption[] = [
-    {
-        value: 'true',
-        label: 'On',
-        description: 'The guard or workflow feature is active.'
-    },
-    {
-        value: 'false',
-        label: 'Off',
-        description: 'The guard or workflow feature is disabled.'
-    }
-];
+function booleanOptions(onDescription: string, offDescription: string): WorkflowSettingOption[] {
+    return [
+        {
+            value: 'true',
+            label: 'On',
+            description: onDescription
+        },
+        {
+            value: 'false',
+            label: 'Off',
+            description: offDescription
+        }
+    ];
+}
 
 const fullSuitePlacementOptions: WorkflowSettingOption[] = FULL_SUITE_VALIDATION_PLACEMENTS.map((placement) => {
     switch (placement) {
@@ -190,7 +192,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Controls whether the configured full-suite test command is part of the task lifecycle.',
         flag: '--full-suite-enabled',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'The configured full-suite command is required in the task lifecycle.',
+            'The full-suite gate is skipped unless another workflow path requires it.'
+        )
     },
     {
         id: 'full-suite-command',
@@ -269,7 +274,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Warns or blocks when a task is too large for the configured profile budget.',
         flag: '--scope-budget-enabled',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Scope budget checks warn or block when a task exceeds the configured profile budget.',
+            'Scope budget limits are not enforced for task-size decisions.'
+        )
     },
     {
         id: 'scope-budget-action',
@@ -341,7 +349,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Detects repeated non-test review loops before they consume too much work.',
         flag: '--review-cycle-enabled',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Repeated non-test review loops are detected before closeout continues.',
+            'Review-cycle pressure is not checked by this guard.'
+        )
     },
     {
         id: 'review-cycle-action',
@@ -391,7 +402,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Allows review-cycle pressure to emit an auto-split prompt when the action is BLOCK_FOR_OPERATOR_DECISION. It has no blocking effect while action is WARN_ONLY.',
         flag: '--review-cycle-auto-split-enabled',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Review-cycle pressure can emit the auto-split prompt when the action is BLOCK_FOR_OPERATOR_DECISION.',
+            'Review-cycle pressure never emits the auto-split prompt.'
+        )
     },
     {
         id: 'project-memory-enabled',
@@ -400,7 +414,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Controls whether closeout checks project-memory impact.',
         flag: '--project-memory-enabled',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Closeout checks whether project-memory impact evidence is needed.',
+            'Closeout does not run project-memory maintenance checks.'
+        )
     },
     {
         id: 'project-memory-mode',
@@ -418,7 +435,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Runs project-memory maintenance before the final completion step.',
         flag: '--project-memory-run-before-final-closeout',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Project-memory maintenance runs before the final completion step.',
+            'Project-memory maintenance is not inserted before final closeout.'
+        )
     },
     {
         id: 'project-memory-require-user-approval-for-writes',
@@ -427,7 +447,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Requires explicit user approval before the workflow writes project-memory files.',
         flag: '--project-memory-require-user-approval-for-writes',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Project-memory writes require explicit user approval before the workflow writes files.',
+            'Project-memory writes can proceed under the configured maintenance mode without an extra approval step.'
+        )
     },
     {
         id: 'project-memory-max-compact-summary-chars',
@@ -467,7 +490,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Allows confirmed task reset/discard mutations.',
         flag: '--task-reset-enabled',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Confirmed task reset and discard commands are available through guarded paths.',
+            'Task reset and discard mutations are unavailable.'
+        )
     },
     {
         id: 'auto-backup-enabled',
@@ -476,7 +502,10 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         description: 'Allows the daily maintenance trigger to create scheduled rollback backups when due.',
         flag: '--auto-backup-enabled',
         value_type: 'boolean',
-        options: BOOLEAN_OPTIONS
+        options: booleanOptions(
+            'Daily maintenance may create scheduled rollback backups when the interval is due.',
+            'Daily maintenance will not create scheduled rollback backups.'
+        )
     },
     {
         id: 'auto-backup-interval-days',

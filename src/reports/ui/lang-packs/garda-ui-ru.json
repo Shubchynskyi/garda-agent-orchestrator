@@ -9,10 +9,10 @@
     "loadingWorkspaceReport": "Загрузка отчёта workspace...",
     "tasksTab": "Задачи",
     "workflowTab": "Рабочий конфиг",
-    "initSettingsTab": "Init settings",
+    "initSettingsTab": "Настройки инициализации",
     "projectMemoryTab": "Память проекта",
     "backupsTab": "Бэкапы",
-    "backupsTabIntro": "Показывает rollback-снимки из инвентаря бэкапов. Восстановление и правки auto-backup доступны только с `garda ui --actions`.",
+    "backupsTabIntro": "Вкладка Backups показывает rollback-снимки из инвентаря бэкапов, настройки auto-backup из workflow config и guarded restore actions, когда UI-сервер запущен с `--actions`.",
     "backupsInventoryTitle": "Инвентарь бэкапов",
     "backupsEmpty": "В инвентаре нет бэкапов.",
     "backupsSnapshotsRoot": "Корень снимков",
@@ -33,7 +33,7 @@
     "backupAutoEnabled": "Включено",
     "backupAutoIntervalDays": "Интервал (дней)",
     "backupAutoKeepLatest": "Хранить последних",
-    "backupsAutoBackupHelp": "Плановые auto-backup используют audited workflow settings. Preview показывает точную команду перед сохранением.",
+    "backupsAutoBackupHelp": "Если auto-backup включён, daily maintenance может создавать плановые rollback backups, когда подошёл интервал. Preview показывает точную команду перед сохранением.",
     "backupsRestorePreviewHelp": "Выберите бэкап и нажмите Preview command, чтобы увидеть guarded restore перед запуском.",
     "instructionsTab": "Инструкции",
     "actionsTab": "Действия",
@@ -208,7 +208,7 @@
     "serverUnavailableTail": "в терминале.",
     "actionsDisabled": "Действия отключены. Перезапустите с",
     "actionsDisabledTail": "чтобы показать разрешённые команды.",
-    "actionsIntro": "Действия workspace — это фиксированные команды Garda. Команды конкретной задачи находятся в деталях этой задачи.",
+    "actionsIntro": "Действия workspace — это фиксированные команды Garda. Команды конкретной задачи находятся в деталях этой задачи; backup restore commands находятся во вкладке Backups.",
     "actionsTaskMoved": "Откройте задачу на вкладке «Задачи», чтобы увидеть next-step, stats и events команды.",
     "mutatingAction": "Вносит изменения в workspace или runtime.",
     "htmlReportMutation": "Создаёт или обновляет HTML-отчёт в runtime/reports.",
@@ -450,6 +450,18 @@
       "label": "Команды reset/discard задач",
       "description": "Разрешает подтверждённые мутации reset или discard для задач."
     },
+    "auto-backup-enabled": {
+      "label": "Плановые auto-backup",
+      "description": "Разрешает daily maintenance создавать плановые rollback backups, когда подошёл интервал."
+    },
+    "auto-backup-interval-days": {
+      "label": "Интервал auto-backup",
+      "description": "Минимальное число дней между успешными плановыми backups."
+    },
+    "auto-backup-keep-latest": {
+      "label": "Хранение auto-backup",
+      "description": "Сколько последних backups оставить после создания планового backup."
+    },
     "garda-self-guard": {
       "label": "Защита control-plane Garda",
       "description": "Определяет, могут ли агенты напрямую входить в защищённую control-plane работу Garda.",
@@ -495,8 +507,8 @@
       "description": "Оставляет неканонические provider entrypoints редиректами, когда это возможно."
     },
     "CollectedVia": {
-      "label": "Как собраны ответы",
-      "description": "Каким способом были получены init answers."
+      "label": "Источник init answers",
+      "description": "Показывает provenance init answers: `AGENT_INIT_PROMPT.md`, `CLI_INTERACTIVE` или `CLI_NONINTERACTIVE`."
     },
     "ActiveAgentFiles": {
       "label": "Активные agent files",
@@ -732,16 +744,20 @@
       "body": "Вкладка «Рабочий конфиг» показывает человеческое название, реальный параметр в скобках, понятные опции и команду изменения. Сохранение запускает audited `garda workflow set`, если UI стартовал с `--actions`."
     },
     "init-settings": {
-      "title": "Init settings",
-      "body": "Вкладка «Init settings» показывает текущие init answers, hard checkpoints агентского init и две основные команды: re-init для пересборки generated files и agent-init для завершения onboarding."
+      "title": "Настройки инициализации",
+      "body": "Вкладка «Настройки инициализации» показывает текущие init answers, hard checkpoints агентского init и две основные команды: re-init для пересборки generated files и agent-init для завершения onboarding."
     },
     "project-memory": {
       "title": "Память проекта",
       "body": "Вкладка «Память проекта» показывает текущий режим memory maintenance, состояние project memory из agent-init, read-first файлы и содержимое durable memory files."
     },
+    "backups": {
+      "title": "Бэкапы",
+      "body": "Вкладка Backups показывает rollback-снимки из инвентаря бэкапов, настройки auto-backup из workflow config и guarded restore actions, когда UI-сервер запущен с `--actions`."
+    },
     "workspace-actions": {
       "title": "Действия workspace",
-      "body": "Вкладка «Действия» содержит фиксированные workspace-команды: status, doctor, генерацию HTML-отчёта, очистку runtime и переключение Garda. Команды конкретной задачи находятся в деталях выбранной задачи."
+      "body": "Вкладка «Действия» содержит фиксированные workspace-команды: status, doctor, генерацию HTML-отчёта, очистку runtime и переключение Garda. Команды конкретной задачи находятся в деталях выбранной задачи; backup restore commands находятся только во вкладке Backups."
     }
   }
 }

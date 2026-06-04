@@ -45,7 +45,7 @@ export function buildInstructionEntries(): ReportInstructionEntry[] {
         {
             id: 'workspace-actions',
             title: 'Workspace actions',
-            body: 'The Actions tab is for fixed workspace commands such as status, doctor, HTML report generation, and runtime cleanup. Task-specific commands are shown in the selected task details.'
+            body: 'The Actions tab is for fixed workspace commands such as status, doctor, HTML report generation, and runtime cleanup. Task-specific commands are shown in the selected task details; backup restore commands are shown only in the Backups tab.'
         }
     ];
 }

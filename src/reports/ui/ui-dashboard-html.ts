@@ -2,6 +2,7 @@ import {
     buildDashboardClientScript,
     renderDashboardBodyMarkup,
     renderDashboardPlanModalMarkup,
+    UI_DASHBOARD_POLISH_STYLES,
     UI_DASHBOARD_STYLES
 } from './dashboard';
 import {
@@ -28,6 +29,7 @@ export function renderLocalUiHtml(actionsEnabled: boolean, actionToken: string, 
 <title>${text.appTitle}</title>
 <style>
 ${UI_DASHBOARD_STYLES}
+${UI_DASHBOARD_POLISH_STYLES}
 </style>
 </head>
 <body>

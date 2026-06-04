@@ -8,6 +8,7 @@ import {
 } from '../../../src/core/project-memory';
 import {
     LOCAL_UI_LANGUAGES,
+    LOCAL_UI_INIT_SETTING_TEXT,
     LOCAL_UI_PROJECT_MEMORY_TEXT,
     LOCAL_UI_SETTING_TEXT,
     LOCAL_UI_TEXT,
@@ -43,8 +44,21 @@ test('imported UI language packs are registered beside built-in English', () => 
 
 test('Russian UI language is loaded from the language pack without source-embedded translations', () => {
     assert.equal(getLocalUiText('ru').tasksTab, 'Задачи');
+    assert.equal(getLocalUiText('ru').initSettingsTab, 'Настройки инициализации');
     assert.equal(getLocalUiText('ru').taskQueueStatus, 'Статус в очереди');
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-enabled'].label, 'Обязательная полная проверка');
+    assert.match(getLocalUiText('ru').backupsTabIntro, /workflow config/u);
+    assert.match(LOCAL_UI_SETTING_TEXT.ru['auto-backup-enabled'].description || '', /daily maintenance/u);
+    assert.match(LOCAL_UI_SETTING_TEXT.uk['auto-backup-enabled'].description || '', /daily maintenance/u);
+    assert.match(LOCAL_UI_INIT_SETTING_TEXT.ru['CollectedVia'].description || '', /CLI_NONINTERACTIVE/u);
+    assert.match(LOCAL_UI_INIT_SETTING_TEXT.uk['CollectedVia'].description || '', /CLI_NONINTERACTIVE/u);
+    assert.equal(getLocalUiText('uk').tasksTab, 'Задачі');
+    assert.equal(getLocalUiText('uk').initSettingsTab, 'Параметри ініціалізації');
+    assert.equal(getLocalUiText('uk').workflowTab, 'Конфігурація workflow');
+    assert.equal(getLocalUiText('uk').gardaSwitchState, 'Стан');
+    assert.equal(getLocalUiText('uk').run, 'Запустити');
+    assert.doesNotMatch(getLocalUiText('uk').guardedEditorHelp, /^Changes use/u);
+    assert.doesNotMatch(getLocalUiText('uk').actionsIntro, /Task-specific commands live/u);
 
     const uiSourceRoot = path.join(process.cwd(), 'src', 'reports', 'ui');
     for (const sourcePath of collectTypeScriptFiles(uiSourceRoot)) {

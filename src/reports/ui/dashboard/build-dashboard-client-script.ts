@@ -5,6 +5,7 @@ import { UI_DASHBOARD_CLIENT_INIT_SETTINGS } from './dashboard-client-init-setti
 import { UI_DASHBOARD_CLIENT_BACKUPS } from './dashboard-client-backups';
 import { UI_DASHBOARD_CLIENT_INSTRUCTIONS } from './dashboard-client-instructions';
 import { UI_DASHBOARD_CLIENT_PROJECT_MEMORY } from './dashboard-client-project-memory';
+import { UI_DASHBOARD_CLIENT_POLISH } from './dashboard-client-polish';
 import { UI_DASHBOARD_CLIENT_SESSION_ACTIONS } from './dashboard-client-session-actions';
 import { UI_DASHBOARD_CLIENT_TASK_DETAIL } from './dashboard-client-task-detail';
 import { UI_DASHBOARD_CLIENT_TASKS } from './dashboard-client-tasks';
@@ -21,6 +22,7 @@ export function buildDashboardClientScript(options: DashboardClientPreludeOption
         UI_DASHBOARD_CLIENT_BACKUPS,
         UI_DASHBOARD_CLIENT_INSTRUCTIONS,
         UI_DASHBOARD_CLIENT_SESSION_ACTIONS,
+        UI_DASHBOARD_CLIENT_POLISH,
         UI_DASHBOARD_CLIENT_TASK_DETAIL,
         UI_DASHBOARD_CLIENT_BOOTSTRAP
     ].join('\n');

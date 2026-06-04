@@ -80,6 +80,7 @@ class FakeElement {
             && selector !== 'button[data-action-id]'
             && selector !== 'button[data-setting-id]'
             && selector !== 'button[data-task-action-id]'
+            && selector !== 'button[data-backup-action-id]'
             && selector !== 'button[data-instruction-tab]') {
             return [];
         }
@@ -90,9 +91,11 @@ class FakeElement {
                 : selector === 'button[data-action-id]'
                     ? 'action-id'
                     : selector === 'button[data-setting-id]'
-                        ? 'setting-id'
-                        : selector === 'button[data-task-action-id]'
-                            ? 'task-action-id'
+                    ? 'setting-id'
+                    : selector === 'button[data-task-action-id]'
+                        ? 'task-action-id'
+                        : selector === 'button[data-backup-action-id]'
+                            ? 'backup-action-id'
                             : 'instruction-tab';
             const dataKey = selector === 'button[data-task-id]'
                 ? 'taskId'
@@ -102,7 +105,9 @@ class FakeElement {
                         ? 'settingId'
                         : selector === 'button[data-task-action-id]'
                             ? 'taskActionId'
-                            : 'instructionTab';
+                            : selector === 'button[data-backup-action-id]'
+                                ? 'backupActionId'
+                                : 'instructionTab';
             const modePattern = /data-action-mode="([^"]+)"/u;
             const settingModePattern = /data-setting-mode="([^"]+)"/u;
             const taskActionModePattern = /data-task-action-mode="([^"]+)"/u;
@@ -435,6 +440,9 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /api\/session/u);
         assert.match(html, /\.tab-buttons \{[^}]*flex-wrap: wrap/u);
         assert.match(html, /\.tab-buttons button\.active \{[^}]*background: var\(--ok\)/u);
+        assert.match(html, /\.language-compact \.visually-hidden \{[^}]*position: static/u);
+        assert.match(html, /\.session-action-row button \{[^}]*flex: 1 1 138px/u);
+        assert.match(html, /\.tab-buttons button \{[^}]*white-space: normal/u);
         assert.match(html, /\.session-compact \{[^}]*flex-direction: column/u);
         assert.match(html, /\.session-status-line/u);
         assert.match(html, /\.setting-buttons button, \.action-buttons button, \.switch-buttons button, #tasks button\[data-task-id\] \{[^}]*width: 138px/u);
@@ -518,6 +526,26 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     {
                         title: 'Read-only',
                         body: 'No mutations'
+                    }
+                ]
+            },
+            backups_tab: {
+                snapshots_root: 'garda-agent-orchestrator/runtime/update-rollbacks',
+                snapshots_root_exists: true,
+                auto_backup: {
+                    enabled: true,
+                    interval_days: 7,
+                    keep_latest: 10
+                },
+                unavailable: [],
+                rows: [
+                    {
+                        id: 'update-20260101-120000-000',
+                        created_at: '2026-01-01T12:00:00.000Z',
+                        size_human: '12 KB',
+                        reason: 'update',
+                        health: 'AVAILABLE',
+                        health_message: null
                     }
                 ]
             }
@@ -618,6 +646,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     mutates: false,
                     requires_confirmation: false,
                     confirmation_phrase: null
+                },
+                {
+                    id: 'backup-restore:update-20260101-120000-000',
+                    category: 'Backups',
+                    label: 'Restore backup update-20260101-120000-000',
+                    description: 'Restore workspace state from backup snapshot.',
+                    command: 'node bin/garda.js rollback --snapshot-path runtime/update-rollbacks/update-20260101-120000-000 --target-root "."',
+                    mutates: true,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: true,
+                    confirmation_phrase: 'RESTORE BACKUP update-20260101-120000-000'
                 }
             ]
         };
@@ -653,6 +693,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         };
 
         const storedLanguageCalls: Array<[string, string]> = [];
+        let sessionFetchFails = false;
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
             window: {
@@ -667,7 +708,11 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
             },
             setInterval: () => 1,
             clearInterval: () => undefined,
-            fetch: async (url: string) => ({
+            fetch: async (url: string, options?: { method?: string }) => {
+                if (sessionFetchFails && (url === '/api/session' || url === '/api/session/activity' || url === '/api/session/shutdown')) {
+                    throw new Error('session unavailable');
+                }
+                return ({
                 ok: true,
                 status: 200,
                 json: async () => {
@@ -678,6 +723,14 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         return report;
                     }
                     if (url === '/api/actions') {
+                        if (options?.method === 'POST') {
+                            return {
+                                action_id: 'backup-restore:update-20260101-120000-000',
+                                status: 'previewed',
+                                command: 'node bin/garda.js rollback --snapshot-path runtime/update-rollbacks/update-20260101-120000-000 --target-root "."',
+                                audit_path: 'runtime/ui-actions/audit.jsonl'
+                            };
+                        }
                         return actions;
                     }
                     if (url === '/api/settings') {
@@ -694,7 +747,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     }
                     return detail;
                 }
-            })
+                });
+            }
         });
         await flushPromises();
 
@@ -735,6 +789,15 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full_suite_validation\.green_summary_max_lines/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
         assert.match(fakeDocument.elements.actions.innerHTML, /node bin\/garda\.js status/u);
+        assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /backup-restore/u);
+        assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /rollback --snapshot-path/u);
+        assert.match(fakeDocument.elements['backups-table'].innerHTML, /data-backup-action-id="backup-restore:update-20260101-120000-000"/u);
+        const backupPreviewButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
+            .find((button) => button.dataset.backupActionId === 'backup-restore:update-20260101-120000-000' && button.dataset.actionMode === 'preview');
+        assert.ok(backupPreviewButton);
+        await backupPreviewButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /rollback --snapshot-path/u);
         assert.match(fakeDocument.elements['garda-switch-panel'].innerHTML, /Switch action is hidden/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-on"/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-off"/u);
@@ -775,6 +838,13 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /События/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Статус full-suite/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
+
+        sessionFetchFails = true;
+        await fakeDocument.elements['session-activity'].dispatch('click');
+        await flushPromises();
+        assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /Выключение через|Shutdown in/u);
+        assert.match(fakeDocument.elements['session-summary'].innerHTML, /сервер недоступен|server is unavailable/u);
+        assert.equal(fakeDocument.elements['session-countdown'].value, '0');
     } finally {
         await server.close();
     }
