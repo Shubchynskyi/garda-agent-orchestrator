@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../src/core/task-md-table';
+import { formatActiveTaskQueueTable, parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../src/core/task-md-table';
 import { buildTaskQueueStatusContract } from '../../../src/core/task-queue-status-contract';
 
 test('parseTaskMdTableRow keeps escaped pipes inside a single cell', () => {
@@ -19,6 +19,40 @@ test('replaceTaskMdTableCell updates one cell without disturbing escaped pipes e
     const updated = replaceTaskMdTableCell(row, 1, ' DONE ');
 
     assert.equal(updated, '| T-001 | DONE | P1 | area | title | me | 2026-01-01 | default | note with escaped \\| pipe |');
+});
+
+test('formatActiveTaskQueueTable reflows only the canonical upper Active Queue table', () => {
+    const content = [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| T-1 | 🟦 TODO | P1 | area | Short | me | 2026-06-04 | balanced | keep escaped \\| pipe |',
+        '| T-2222 | 🟨 IN_PROGRESS | P2 | longer-area | Much longer title | agent | 2026-06-04 | strict | keep row order |',
+        '',
+        '## Блок очереди',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| RU-1 | untouched | P1 | ru | lower table | me | 2026-06-04 | balanced | stays compact |'
+    ].join('\n');
+
+    const formatted = formatActiveTaskQueueTable(content);
+
+    assert.match(formatted, /\| T-1\s+\| 🟦 TODO\s+\| P1\s+\| area\s+\| Short\s+\| me\s+\| 2026-06-04 \| balanced \| keep escaped \\\| pipe \|/);
+    assert.match(formatted, /\| T-2222 \| 🟨 IN_PROGRESS \| P2\s+\| longer-area \| Much longer title \| agent \| 2026-06-04 \| strict\s+\| keep row order\s+\|/);
+    assert.ok(formatted.includes('## Блок очереди\n| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |'));
+});
+
+test('formatActiveTaskQueueTable leaves non-canonical tables unchanged', () => {
+    const content = [
+        '## Active Queue',
+        '| ID | Status | Extra |',
+        '|---|---|---|',
+        '| T-001 | TODO | custom |'
+    ].join('\n');
+
+    assert.equal(formatActiveTaskQueueTable(content), content);
 });
 
 test('buildTaskQueueStatusContract blocks agent-authored lifecycle status edits but allows non-status content', () => {

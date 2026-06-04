@@ -21,6 +21,7 @@
 
 ### Task Workflow And Closeout
 - Stale preflight, compile, rule-pack, review-context, review-gate, and full-suite evidence now routes through narrower recovery chains instead of retrying stale gates.
+- `TASK.md` Active Queue preservation and gate-owned status sync now reflow the canonical 9-column table into a deterministic IDEA-compatible Markdown shape while preserving row values and lower local planning blocks.
 - Successful `completion-gate` output now explicitly routes agents back to `next-step` and the `task-audit-summary` closeout before final report or commit-permission flow.
 - Final closeout and commit guidance now suppress commit commands when no tracked committable changes remain.
 - Task reset, split-required, decomposed parent routing, and one-shot review-cycle continuation are now gate-owned runtime evidence instead of ad hoc `TASK.md` or workflow-config edits.

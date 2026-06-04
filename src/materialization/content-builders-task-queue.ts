@@ -1,4 +1,5 @@
 import { normalizeLineEndings } from '../core/line-endings';
+import { formatActiveTaskQueueTable } from '../core/task-md-table';
 import {
     extractManagedBlockFromContent,
     MANAGED_END,
@@ -62,7 +63,7 @@ export function setTaskQueueRowsInManagedBlock(managedBlock: string, rows: strin
 
     const prefix = range.rowsStartIndex > 0 ? range.lines.slice(0, range.rowsStartIndex) : [];
     const suffix = range.rowsEndIndex < range.lines.length ? range.lines.slice(range.rowsEndIndex) : [];
-    return [...prefix, ...rows, ...suffix].join('\n');
+    return formatActiveTaskQueueTable([...prefix, ...rows, ...suffix].join('\n'));
 }
 
 export function hasLegacyDepthColumn(managedBlock: string): boolean {

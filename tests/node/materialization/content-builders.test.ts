@@ -227,7 +227,7 @@ describe('buildTaskContentWithExistingQueue', () => {
 
         assert.ok(result);
         assert.ok(result!.includes('Canonical instructions entrypoint for orchestration: `AGENTS.md`.'));
-        assert.ok(result!.includes('| T-237 | 🟦 TODO | P0 | reliability | Keep live queue | gpt-5.4 | 2026-04-24 | balanced | preserve me |'));
+        assert.match(result!, /\| T-237 \| 🟦 TODO \| P0\s+\| reliability \| Keep live queue \| gpt-5\.4 \| 2026-04-24 \| balanced \| preserve me \|/);
         assert.ok(result!.includes('## Блок очереди'));
         assert.ok(result!.includes('- `T-237` — сохранить нижний блок.'));
         assert.ok(result!.includes(MANAGED_END));
@@ -270,10 +270,45 @@ describe('buildTaskContentWithExistingQueue', () => {
 
         assert.ok(result!.startsWith('preface\n'));
         assert.ok(result!.includes('New header.'));
-        assert.ok(result!.includes('| T-OLD | DONE | P1 | area | old | me | 2026-01-01 | default | old |'));
+        assert.match(result!, /\| T-OLD \| DONE\s+\| P1\s+\| area \| old\s+\| me\s+\| 2026-01-01 \| default \| old\s+\|/);
         assert.ok(result!.includes('## User Notes'));
         assert.ok(result!.includes('keep this'));
         assert.ok(!result!.includes('T-NEW'));
+    });
+
+    it('reflows preserved Active Queue rows into one IDEA-compatible table', () => {
+        const template = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-NEW | TODO | P1 | area | new | me | 2026-01-01 | default | new |',
+            MANAGED_END,
+            ''
+        ].join('\n');
+        const existing = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-703 | 🟦 TODO | P3 | task-queue/active-queue-formatting | Keep TASK.md table valid | gpt-5.4 | 2026-06-04 | balanced | preserve escaped \\| pipe |',
+            '| T-704 | 🟪 DECOMPOSED | P2 | refactor | Parent | gpt-5.4 | 2026-06-04 | strict | preserve order |',
+            MANAGED_END,
+            '',
+            '## Блок очереди',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|'
+        ].join('\n');
+
+        const result = buildTaskContentWithExistingQueue(template, existing);
+
+        assert.match(result!, /\| T-703 \| 🟦 TODO\s+\| P3\s+\| task-queue\/active-queue-formatting \| Keep TASK\.md table valid \| gpt-5\.4 \| 2026-06-04 \| balanced \| preserve escaped \\\| pipe \|/);
+        assert.match(result!, /\| T-704 \| 🟪 DECOMPOSED \| P2\s+\| refactor\s+\| Parent\s+\| gpt-5\.4 \| 2026-06-04 \| strict\s+\| preserve order\s+\|/);
+        assert.ok(result!.includes('## Блок очереди\n| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |'));
     });
 });
 

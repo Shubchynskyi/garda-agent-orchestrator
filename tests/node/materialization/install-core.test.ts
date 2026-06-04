@@ -408,9 +408,9 @@ describe('runInstall — core deploy and invariants', () => {
 
             const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
             assert.ok(result.filesAligned > 0, 'TASK.md should be synced in place');
-            assert.ok(taskContent.includes('| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |'));
+            assert.match(taskContent, /\| ID\s+\| Status\s+\| Priority \| Area\s+\| Title\s+\| Owner \| Updated\s+\| Profile \| Notes\s+\|/);
             assert.ok(!taskContent.includes('| ID | Status | Priority | Area | Title | Owner | Updated | Depth | Notes |'));
-            assert.ok(taskContent.includes('| T-777 | 🟨 IN_PROGRESS | P1 | legacy | Keep migrated row | me | 2026-01-01 | default |'));
+            assert.match(taskContent, /\| T-777 \| 🟨 IN_PROGRESS \| P1\s+\| legacy \| Keep migrated row \| me\s+\| 2026-01-01 \| default \| requested_depth=2; preserved-note \|/);
             assert.ok(taskContent.includes('requested_depth=2; preserved-note'));
             assert.ok(!taskContent.includes('| T-777 | 🟨 IN_PROGRESS | P1 | legacy | Keep migrated row | me | 2026-01-01 | 2 | preserved-note |'));
             assert.ok(taskContent.includes('## User Notes'));
@@ -467,7 +467,7 @@ describe('runInstall — core deploy and invariants', () => {
             const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
             assert.ok(result.filesAligned > 0, 'TASK.md should be synced in place');
             assert.ok(taskContent.includes('Canonical instructions entrypoint for orchestration: `CLAUDE.md`.'));
-            assert.ok(taskContent.includes('| T-237 | 🟦 TODO | P0 | reliability | Keep live queue | gpt-5.4 | 2026-04-24 | balanced | preserve me |'));
+            assert.match(taskContent, /\| T-237 \| 🟦 TODO \| P0\s+\| reliability \| Keep live queue \| gpt-5\.4 \| 2026-04-24 \| balanced \| preserve me \|/);
             assert.ok(taskContent.includes('## Блок очереди'));
             assert.ok(taskContent.includes('- `T-237` — нижний блок должен сохраниться.'));
             assert.ok(taskContent.includes('garda-agent-orchestrator:managed-end'));

@@ -328,7 +328,7 @@ describe('runUpdate', () => {
             assert.equal(result.installStatus, 'PASS');
             const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
             assert.ok(taskContent.includes('Canonical instructions entrypoint for orchestration: `CLAUDE.md`.'));
-            assert.ok(taskContent.includes('| T-237 | 🟦 TODO | P0 | reliability | Keep live queue | gpt-5.4 | 2026-04-24 | balanced | preserve me |'));
+            assert.match(taskContent, /\| T-237 \| 🟦 TODO \| P0\s+\| reliability \| Keep live queue \| gpt-5\.4 \| 2026-04-24 \| balanced \| preserve me \|/);
             assert.ok(taskContent.includes('## Блок очереди'));
             assert.ok(taskContent.includes('- `T-237` — нижний блок должен сохраниться.'));
             assert.ok(taskContent.includes('garda-agent-orchestrator:managed-end'));

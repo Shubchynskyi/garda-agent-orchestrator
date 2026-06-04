@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { syncTaskQueueStatus } from '../../../../../../src/cli/commands/gate-flows/task/task-queue-sync';
+import { syncTaskQueueStatus, syncTaskQueueStatusDetailed } from '../../../../../../src/cli/commands/gate-flows/task/task-queue-sync';
 import {
     handleEnterTaskMode
 } from '../../../../../../src/cli/commands/gate-task-handlers';
@@ -160,6 +160,36 @@ function readTaskQueueStatusFromTaskFile(repoRoot: string, taskId: string): stri
     }
     return null;
 }
+
+it('status sync reflows the canonical Active Queue table after updating status', () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-703-format-sync';
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        `| ${taskId} | 🟦 TODO | P1 | queue | Short | agent | 2026-06-04 | balanced | preserve escaped \\| pipe |`,
+        '| T-703-other | 🟨 IN_PROGRESS | P2 | task-queue/active-queue-formatting | Longer title | gpt-5.4 | 2026-06-04 | balanced | preserve row order |',
+        '',
+        '## Блок очереди',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| RU-1 | untouched | P1 | ru | lower table | me | 2026-06-04 | balanced | stays compact |'
+    ].join('\n'), 'utf8');
+
+    const result = syncTaskQueueStatusDetailed(repoRoot, taskId, 'IN_PROGRESS');
+    const updated = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+    assert.equal(result.outcome, 'updated');
+    assert.equal(result.previous_status, 'TODO');
+    assert.match(updated, new RegExp(`\\| ${taskId}\\s+\\| 🟨 IN_PROGRESS \\| P1\\s+\\| queue\\s+\\| Short\\s+\\| agent\\s+\\| 2026-06-04 \\| balanced \\| preserve escaped \\\\\\\\| pipe \\|`));
+    assert.match(updated, /\| T-703-other\s+\| 🟨 IN_PROGRESS \| P2\s+\| task-queue\/active-queue-formatting \| Longer title \| gpt-5\.4 \| 2026-06-04 \| balanced \| preserve row order\s+\|/);
+    assert.ok(updated.includes('## Блок очереди\n| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |'));
+
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+});
 
 function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');

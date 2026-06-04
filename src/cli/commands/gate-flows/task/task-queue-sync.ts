@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { formatTaskQueueStatusCell, normalizeTaskQueueStatusCell, readTaskQueueStatusToken } from '../../../../core/active-task-state';
 import { buildTaskQueueStatusContract, type TaskQueueStatusContract } from '../../../../core/task-queue-status-contract';
-import { parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../../core/task-md-table';
+import { formatActiveTaskQueueTable, parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../../core/task-md-table';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 
 function getErrorMessage(error: unknown): string {
@@ -145,7 +145,10 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
                 };
             }
 
-            if (!changed) {
+            const nextContent = formatActiveTaskQueueTable(lines.join(newline));
+            const formatChanged = nextContent !== originalContent;
+
+            if (!changed && !formatChanged) {
                 return {
                     outcome: 'already_synced',
                     task_path: gateHelpers.normalizePath(taskPath),
@@ -158,7 +161,7 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             }
 
             try {
-                fs.writeFileSync(taskPath, lines.join(newline), 'utf8');
+                fs.writeFileSync(taskPath, nextContent, 'utf8');
             } catch (error: unknown) {
                 return {
                     outcome: 'write_failed',
