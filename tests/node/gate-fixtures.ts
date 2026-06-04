@@ -5,6 +5,7 @@ import {
     createTempRepo,
     getOrchestratorRoot,
     getReviewsRoot,
+    removeTempRepoWithRetry,
     seedRuleFiles
 } from './cli/commands/gate-test-repo-bootstrap';
 import {
@@ -101,7 +102,7 @@ export function createGateFixture(options: GateFixtureOptions = {}): GateFixture
         reviewsRoot: getReviewsRoot(repoRoot),
         taskId,
         cleanup() {
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            removeTempRepoWithRetry(repoRoot);
         }
     };
 }

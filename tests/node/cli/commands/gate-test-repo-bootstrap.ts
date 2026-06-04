@@ -13,6 +13,53 @@ import * as childProcess from 'node:child_process';
 
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 
+const TRANSIENT_CLEANUP_ERROR_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
+const DEFAULT_CLEANUP_RETRY_DELAYS_MS = [25, 50, 100, 200];
+
+interface RemoveTempRepoOptions {
+    readonly rmSync?: typeof fs.rmSync;
+    readonly retryDelaysMs?: readonly number[];
+}
+
+function getErrorCode(error: unknown): string {
+    return String((error as NodeJS.ErrnoException | undefined)?.code || '');
+}
+
+function sleepSync(delayMs: number): void {
+    if (delayMs <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+function isTransientCleanupError(error: unknown): boolean {
+    return TRANSIENT_CLEANUP_ERROR_CODES.has(getErrorCode(error));
+}
+
+export function removeTempRepoWithRetry(root: string, options: RemoveTempRepoOptions = {}): void {
+    const rmSync = options.rmSync || fs.rmSync;
+    const retryDelaysMs = options.retryDelaysMs || DEFAULT_CLEANUP_RETRY_DELAYS_MS;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+        try {
+            rmSync(root, { recursive: true, force: true });
+            return;
+        } catch (error) {
+            if (!isTransientCleanupError(error)) {
+                throw error;
+            }
+            lastError = error;
+            if (attempt === retryDelaysMs.length) {
+                break;
+            }
+            sleepSync(retryDelaysMs[attempt] || 0);
+        }
+    }
+
+    throw lastError;
+}
+
 
 export function getReviewsRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
@@ -79,7 +126,7 @@ export function createWindowsBatchNodeFixture(
     return {
         batchPath,
         cleanup() {
-            fs.rmSync(root, { recursive: true, force: true });
+            removeTempRepoWithRetry(root);
         }
     };
 }
@@ -117,7 +164,7 @@ export function createDependentValidationFixture(): {
         sourcePath,
         lockPath,
         nestedCwd,
-        cleanup: () => fs.rmSync(repoRoot, { recursive: true, force: true })
+        cleanup: () => removeTempRepoWithRetry(repoRoot)
     };
 }
 

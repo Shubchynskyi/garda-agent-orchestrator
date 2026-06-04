@@ -45,6 +45,7 @@ import * as childProcess from 'node:child_process';
 
 import {
     createTempRepo,
+    removeTempRepoWithRetry,
     createWindowsBatchNodeFixture,
     createDependentValidationFixture,
     writeReviewCapabilitiesConfig,
@@ -801,7 +802,7 @@ describe('cli/commands/gates', () => {
                 || (event.details as Record<string, unknown> | null)?.trigger_reason !== 'optional_task_skill'
             )));
         } finally {
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            removeTempRepoWithRetry(repoRoot);
         }
     });
 
@@ -838,7 +839,7 @@ describe('cli/commands/gates', () => {
             assert.equal(result.exitCode, EXIT_GATE_FAILURE);
             assert.match(result.errors.join('\n'), /current preflight artifact hash/i);
         } finally {
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            removeTempRepoWithRetry(repoRoot);
         }
     });
 
@@ -884,7 +885,7 @@ describe('cli/commands/gates', () => {
             assert.equal(result.exitCode, EXIT_GATE_FAILURE);
             assert.match(result.errors.join('\n'), /current task summary hash/i);
         } finally {
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            removeTempRepoWithRetry(repoRoot);
         }
     });
 
@@ -956,7 +957,7 @@ describe('cli/commands/gates', () => {
         assert.equal(evidence.status, 'PASSED');
         assert.equal(evidence.selected_budget_tier, 'tight');
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        removeTempRepoWithRetry(repoRoot);
     });
 
     it('logs terminal task events with reviewer scratch cleanup and command audit', () => {
@@ -1036,7 +1037,7 @@ describe('cli/commands/gates', () => {
             assert.equal(fs.existsSync(staleForeignReviewOutputPath), false);
             assert.equal(fs.existsSync(unattributedStaleReviewOutputPath), true);
 
-            fs.rmSync(repoRoot, { recursive: true, force: true });
+            removeTempRepoWithRetry(repoRoot);
         }
     });
 
@@ -1069,7 +1070,7 @@ describe('cli/commands/gates', () => {
             );
         }
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        removeTempRepoWithRetry(repoRoot);
     });
 
     it('build-review-context blocks downstream test review until current-cycle code review is recorded', async () => {
@@ -1292,7 +1293,7 @@ describe('cli/commands/gates', () => {
         assert.ok(codeReviewRecordedIndex >= 0);
         assert.ok(testReviewPhaseIndex > codeReviewRecordedIndex);
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        removeTempRepoWithRetry(repoRoot);
     });
 
     it('build-review-context keeps downstream test review blocked when upstream code review is not gate-eligible', async () => {
@@ -1455,7 +1456,7 @@ describe('cli/commands/gates', () => {
         assert.equal(fs.existsSync(testReviewArtifactPath), false);
         assert.equal(fs.existsSync(testReviewReceiptPath), false);
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        removeTempRepoWithRetry(repoRoot);
     });
 
     it('build-review-context accepts upstream code review evidence recorded with an explicit custom review-context path', async () => {
@@ -1687,6 +1688,6 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.status, 'PASSED', JSON.stringify(completionResult, null, 2));
         assert.equal(completionResult.outcome, 'PASS');
 
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        removeTempRepoWithRetry(repoRoot);
     });
 });

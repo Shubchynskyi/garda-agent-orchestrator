@@ -15,6 +15,7 @@ export {
     getOrchestratorRoot,
     seedRuleFiles,
     createTempRepo,
+    removeTempRepoWithRetry,
     createWindowsBatchNodeFixture,
     createDependentValidationFixture,
     writeNodeFoundationManifest,
