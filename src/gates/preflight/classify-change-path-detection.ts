@@ -1,5 +1,5 @@
 import type { OrdinaryDocPathMatch } from '../../core/ordinary-doc-paths';
-import type { ResolvedClassificationConfig } from './classify-change';
+import type { ResolvedClassificationConfig } from './classify-change-config';
 import { hasPerformanceSensitiveCacheIntent } from './classify-change-intent';
 
 interface MatchConfiguredRootOptions {
