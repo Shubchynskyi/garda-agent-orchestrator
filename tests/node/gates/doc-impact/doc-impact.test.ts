@@ -25,6 +25,18 @@ function createPreflight(tmpDir: string, overrides: Record<string, unknown> = {}
     return filePath;
 }
 
+function writeInternalChangelogEvidence(repoRoot: string, taskId = 'T-001'): void {
+    const filePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'changes', 'CHANGELOG.md');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `# Internal Changelog\n\n- ${taskId}: internal runtime behavior documented.\n`, 'utf8');
+}
+
+function writeProjectMemoryEvidence(repoRoot: string, taskId = 'T-001'): void {
+    const filePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'compact.md');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `# Compact Memory\n\n- ${taskId}: internal runtime behavior documented.\n`, 'utf8');
+}
+
 describe('gates/doc-impact', () => {
     describe('assessDocImpact', () => {
         it('passes with valid DOCS_UPDATED decision', () => {
@@ -100,6 +112,149 @@ describe('gates/doc-impact', () => {
             });
             assert.equal(result.status, 'FAILED');
             assert.ok(result.violations.some(v => v.includes('non-empty docs_updated')));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('passes internal-only behavior change with internal changelog evidence and no docs_updated', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            writeInternalChangelogEvidence(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'NO_DOC_UPDATES',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                internalChangelogUpdated: true,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'Internal runtime behavior is documented in the internal changelog.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.deepEqual(result.docs_updated, []);
+            assert.equal(result.behavior_changed, true);
+            assert.equal(result.changelog_updated, false);
+            assert.equal(result.internal_changelog_updated, true);
+            assert.deepEqual(result.violations, []);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('passes internal-only behavior change with project memory evidence and no docs_updated', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            writeProjectMemoryEvidence(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'NO_DOC_UPDATES',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                projectMemoryUpdated: true,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'Internal runtime behavior is documented in durable project memory.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.deepEqual(result.docs_updated, []);
+            assert.equal(result.behavior_changed, true);
+            assert.equal(result.changelog_updated, false);
+            assert.equal(result.project_memory_updated, true);
+            assert.deepEqual(result.violations, []);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('fails internal-only behavior change when internal evidence flags have no durable task evidence', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'NO_DOC_UPDATES',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                internalChangelogUpdated: true,
+                projectMemoryUpdated: true,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'Internal runtime behavior claims evidence without durable task files.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some(v => v.includes('InternalChangelogUpdated=true requires task-scoped durable evidence')));
+            assert.ok(result.violations.some(v => v.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')));
+            assert.ok(result.violations.some(v => v.includes('BehaviorChanged=true requires Decision=DOCS_UPDATED or internal closeout evidence.')));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('fails internal-only behavior change when durable evidence belongs to a different task', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            writeInternalChangelogEvidence(tmpDir, 'T-999');
+            writeProjectMemoryEvidence(tmpDir, 'T-999');
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'NO_DOC_UPDATES',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                internalChangelogUpdated: true,
+                projectMemoryUpdated: true,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'Internal runtime behavior claims stale evidence from another task.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some(v => v.includes("InternalChangelogUpdated=true requires task-scoped durable evidence")));
+            assert.ok(result.violations.some(v => v.includes("ProjectMemoryUpdated=true requires task-scoped durable evidence")));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('still fails DOCS_UPDATED without user-facing docs even when internal evidence exists', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            writeInternalChangelogEvidence(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'DOCS_UPDATED',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                internalChangelogUpdated: true,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'Internal changelog exists but DOCS_UPDATED still needs user-facing docs.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some(v => v.includes('Decision DOCS_UPDATED requires non-empty docs_updated list.')));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('still fails user-facing behavior docs without changelog even when internal evidence exists', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            writeInternalChangelogEvidence(tmpDir);
+            writeProjectMemoryEvidence(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'DOCS_UPDATED',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                internalChangelogUpdated: true,
+                projectMemoryUpdated: true,
+                sensitiveReviewed: false,
+                docsUpdated: ['README.md'],
+                rationale: 'User-facing behavior docs still require user-facing changelog evidence.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some(v => v.includes('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence.')));
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
@@ -262,8 +417,8 @@ describe('gates/doc-impact', () => {
             });
             assert.equal(result.status, 'FAILED');
             assert.ok(result.violations.some(v => v.includes('NO_DOC_UPDATES is incompatible with BehaviorChanged=true')));
-            // Also produces the cross-rule "BehaviorChanged=true requires Decision=DOCS_UPDATED"
-            assert.ok(result.violations.some(v => v.includes('BehaviorChanged=true requires Decision=DOCS_UPDATED')));
+            assert.ok(result.violations.some(v => v.includes('BehaviorChanged=true requires Decision=DOCS_UPDATED or internal closeout evidence')));
+            assert.ok(result.violations.some(v => v.includes('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence')));
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 

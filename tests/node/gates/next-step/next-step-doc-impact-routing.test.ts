@@ -1401,7 +1401,9 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false'));
         assert.ok(result.reason.includes('changelog/docs maintenance only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true'));
         assert.ok(result.reason.includes('changelog plus implementation scope -> next-step defaults to --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
-        assert.ok(result.reason.includes('behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
+        assert.ok(result.reason.includes('user-facing behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
+        assert.ok(result.reason.includes('internal-only runtime behavior changed -> --decision "NO_DOC_UPDATES" --behavior-changed true'));
+        assert.ok(result.reason.includes('--internal-changelog-updated true and/or --project-memory-updated true'));
         assert.ok(result.commands[0].command.includes('--behavior-changed true'));
     });
 

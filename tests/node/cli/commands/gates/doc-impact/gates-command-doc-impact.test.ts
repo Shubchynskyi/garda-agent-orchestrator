@@ -18,6 +18,18 @@ import {
     getReviewsRoot
 } from '../../gate-test-helpers';
 
+function writeInternalChangelogEvidence(repoRoot: string, taskId: string): void {
+    const filePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'changes', 'CHANGELOG.md');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `# Internal Changelog\n\n- ${taskId}: internal runtime behavior documented.\n`, 'utf8');
+}
+
+function writeProjectMemoryEvidence(repoRoot: string, taskId: string): void {
+    const filePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'compact.md');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, `# Compact Memory\n\n- ${taskId}: internal runtime behavior documented.\n`, 'utf8');
+}
+
 describe('cli/commands/gates doc-impact', () => {
     it('passes doc-impact gate and writes artifact', () => {
         const repoRoot = createTempRepo();
@@ -52,6 +64,8 @@ describe('cli/commands/gates doc-impact', () => {
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         const preflightPath = writePreflight(repoRoot, taskId);
+        writeInternalChangelogEvidence(repoRoot, taskId);
+        writeProjectMemoryEvidence(repoRoot, taskId);
 
         const result = runDocImpactGateCommand({
             repoRoot,
@@ -76,8 +90,129 @@ describe('cli/commands/gates doc-impact', () => {
         assert.equal(artifact.project_memory_updated, true);
         assert.deepEqual(artifact.internal_closeout_evidence, {
             internal_changelog_updated: true,
-            project_memory_updated: true
+            project_memory_updated: true,
+            internal_changelog_path: 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md',
+            internal_changelog_sha256: artifact.internal_closeout_evidence.internal_changelog_sha256,
+            project_memory_files: artifact.internal_closeout_evidence.project_memory_files
         });
+        assert.equal(artifact.internal_closeout_evidence.project_memory_files.length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('accepts internal-only behavior changes documented by internal closeout evidence', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-internal-behavior';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        writeInternalChangelogEvidence(repoRoot, taskId);
+        writeProjectMemoryEvidence(repoRoot, taskId);
+
+        const result = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: true,
+            changelogUpdated: false,
+            internalChangelogUpdated: true,
+            projectMemoryUpdated: true,
+            rationale: 'Internal runtime behavior is documented in internal changelog and project memory.',
+            emitMetrics: false
+        });
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-doc-impact.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.outputLines[0], 'DOC_IMPACT_GATE_PASSED');
+        assert.equal(artifact.decision, 'NO_DOC_UPDATES');
+        assert.equal(artifact.behavior_changed, true);
+        assert.equal(artifact.changelog_updated, false);
+        assert.equal(artifact.internal_changelog_updated, true);
+        assert.equal(artifact.project_memory_updated, true);
+        assert.deepEqual(artifact.docs_updated, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects internal-only behavior evidence flags without durable task evidence', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-internal-bare-flags';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+
+        const result = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: true,
+            changelogUpdated: false,
+            internalChangelogUpdated: true,
+            projectMemoryUpdated: true,
+            rationale: 'Internal runtime behavior claims evidence without durable task files.',
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(result.outputLines.some((line) => line.includes('InternalChangelogUpdated=true requires task-scoped durable evidence')));
+        assert.ok(result.outputLines.some((line) => line.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects internal-only behavior evidence files that belong to another task', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-internal-stale-evidence';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        writeInternalChangelogEvidence(repoRoot, 'T-999');
+        writeProjectMemoryEvidence(repoRoot, 'T-999');
+
+        const result = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: true,
+            changelogUpdated: false,
+            internalChangelogUpdated: true,
+            projectMemoryUpdated: true,
+            rationale: 'Internal runtime behavior claims stale evidence from another task.',
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(result.outputLines.some((line) => line.includes('InternalChangelogUpdated=true requires task-scoped durable evidence')));
+        assert.ok(result.outputLines.some((line) => line.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects undocumented behavior changes without user-facing or internal evidence', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-undocumented-behavior';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+
+        const result = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: true,
+            changelogUpdated: false,
+            rationale: 'Behavior changed but no durable documentation evidence is present.',
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(result.outputLines.some((line) => line.includes('internal closeout evidence')));
+        assert.ok(result.outputLines.some((line) => line.includes('NO_DOC_UPDATES is incompatible with BehaviorChanged=true')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -132,7 +267,36 @@ describe('cli/commands/gates doc-impact', () => {
         });
 
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
-        assert.ok(result.outputLines.some((line) => line.includes('BehaviorChanged=true requires ChangelogUpdated=true.')));
+        assert.ok(result.outputLines.some((line) => line.includes('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence.')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects user-facing behavior docs without changelog even when internal evidence exists', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-user-docs-internal-evidence';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        writeInternalChangelogEvidence(repoRoot, taskId);
+        writeProjectMemoryEvidence(repoRoot, taskId);
+
+        const result = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'DOCS_UPDATED',
+            behaviorChanged: true,
+            changelogUpdated: false,
+            internalChangelogUpdated: true,
+            projectMemoryUpdated: true,
+            docsUpdated: ['docs/cli-reference.md'],
+            rationale: 'User-facing behavior changed and docs were updated.',
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.ok(result.outputLines.some((line) => line.includes('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence.')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -415,7 +415,8 @@ export function buildDocImpactCompatibilityHint(): string {
         'docs only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated false plus --docs-updated for each user-facing doc;',
         'changelog/docs maintenance only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true plus --docs-updated "CHANGELOG.md";',
         'changelog plus implementation scope -> next-step defaults to --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true;',
-        'behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true plus docs/changelog evidence.'
+        'user-facing behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true plus docs/changelog evidence;',
+        'internal-only runtime behavior changed -> --decision "NO_DOC_UPDATES" --behavior-changed true plus --internal-changelog-updated true and/or --project-memory-updated true.'
     ].join(' ');
 }
 

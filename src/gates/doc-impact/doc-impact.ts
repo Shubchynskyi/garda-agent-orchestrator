@@ -108,6 +108,59 @@ function describeInternalCloseoutEvidencePath(input: string, repoRoot?: string):
     return normalized;
 }
 
+const INTERNAL_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
+const PROJECT_MEMORY_ROOT = 'garda-agent-orchestrator/live/docs/project-memory';
+
+function readTaskScopedFileEvidence(filePath: string, taskId: string): { path: string; sha256: string | null } | null {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+        return null;
+    }
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (!content.trim() || (taskId && !content.includes(taskId))) {
+        return null;
+    }
+    return {
+        path: normalizePath(filePath),
+        sha256: fileSha256(filePath)
+    };
+}
+
+function collectTaskScopedProjectMemoryEvidence(
+    directoryPath: string,
+    taskId: string,
+    maxFiles = 25
+): Array<{ path: string; sha256: string | null }> {
+    if (!fs.existsSync(directoryPath) || !fs.statSync(directoryPath).isDirectory()) {
+        return [];
+    }
+    const evidence: Array<{ path: string; sha256: string | null }> = [];
+    const visit = (currentPath: string): void => {
+        if (evidence.length >= maxFiles) return;
+        const entries = fs.readdirSync(currentPath, { withFileTypes: true })
+            .sort((a, b) => a.name.localeCompare(b.name));
+        for (const entry of entries) {
+            if (evidence.length >= maxFiles) return;
+            const childPath = path.join(currentPath, entry.name);
+            if (entry.isDirectory()) {
+                visit(childPath);
+                continue;
+            }
+            if (!entry.isFile()) continue;
+            const fileEvidence = readTaskScopedFileEvidence(childPath, taskId);
+            if (fileEvidence) evidence.push(fileEvidence);
+        }
+    };
+    visit(directoryPath);
+    return evidence;
+}
+
+function hasInternalBehaviorEvidence(options: {
+    internalChangelogUpdated: boolean;
+    projectMemoryUpdated: boolean;
+}): boolean {
+    return options.internalChangelogUpdated || options.projectMemoryUpdated;
+}
+
 /**
  * Run doc-impact gate assessment.
  * Produces the canonical doc-impact gate output shape.
@@ -126,6 +179,15 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     const validated = validatePreflightForDocImpact(preflightPath, taskId);
     const resolvedTaskId = validated.resolved_task_id;
     const errors = [...validated.errors];
+    const normalizedRepoRoot = options.repoRoot ? path.resolve(options.repoRoot) : '';
+    const internalChangelogEvidencePath = normalizedRepoRoot ? path.join(normalizedRepoRoot, INTERNAL_CHANGELOG_PATH) : '';
+    const projectMemoryEvidenceRoot = normalizedRepoRoot ? path.join(normalizedRepoRoot, PROJECT_MEMORY_ROOT) : '';
+    const internalChangelogEvidence = internalChangelogUpdated && internalChangelogEvidencePath
+        ? readTaskScopedFileEvidence(internalChangelogEvidencePath, resolvedTaskId || '')
+        : null;
+    const projectMemoryEvidence = projectMemoryUpdated && projectMemoryEvidenceRoot
+        ? collectTaskScopedProjectMemoryEvidence(projectMemoryEvidenceRoot, resolvedTaskId || '')
+        : [];
 
     const sensitiveTriggersFired = [];
     const preflightObj = validated.preflight || {};
@@ -144,6 +206,23 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     if (!rationale || rationale.length < 12) {
         errors.push('Rationale is required (>= 12 chars).');
     }
+    const internalBehaviorEvidencePresent = hasInternalBehaviorEvidence({
+        internalChangelogUpdated,
+        projectMemoryUpdated
+    });
+    const internalBehaviorEvidenceMaterialized = (!!internalChangelogEvidence || projectMemoryEvidence.length > 0);
+    const internalOnlyBehaviorEvidencePresent = decision === 'NO_DOC_UPDATES' && internalBehaviorEvidencePresent;
+    const internalOnlyBehaviorEvidenceMaterialized = internalOnlyBehaviorEvidencePresent && internalBehaviorEvidenceMaterialized;
+    if (internalChangelogUpdated && !internalChangelogEvidence) {
+        errors.push(
+            `InternalChangelogUpdated=true requires task-scoped durable evidence in ${INTERNAL_CHANGELOG_PATH} containing task id '${resolvedTaskId || taskId}'.`
+        );
+    }
+    if (projectMemoryUpdated && projectMemoryEvidence.length === 0) {
+        errors.push(
+            `ProjectMemoryUpdated=true requires task-scoped durable evidence under ${PROJECT_MEMORY_ROOT} containing task id '${resolvedTaskId || taskId}'.`
+        );
+    }
     if (decision === 'DOCS_UPDATED' && !docsUpdated.length) {
         errors.push('Decision DOCS_UPDATED requires non-empty docs_updated list.');
     }
@@ -154,15 +233,16 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
             internalCloseoutDocsUpdated.map((entry) => describeInternalCloseoutEvidencePath(entry, options.repoRoot)).join(', ') + '.'
         );
     }
-    if (behaviorChanged && decision !== 'DOCS_UPDATED') {
-        errors.push('BehaviorChanged=true requires Decision=DOCS_UPDATED.');
+    if (behaviorChanged && decision !== 'DOCS_UPDATED' && !internalOnlyBehaviorEvidenceMaterialized) {
+        errors.push('BehaviorChanged=true requires Decision=DOCS_UPDATED or internal closeout evidence.');
     }
-    if (behaviorChanged && !changelogUpdated) {
-        errors.push('BehaviorChanged=true requires ChangelogUpdated=true.');
+    if (behaviorChanged && !changelogUpdated && !internalOnlyBehaviorEvidenceMaterialized) {
+        errors.push('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence.');
     }
 
     // NO_DOC_UPDATES contract: docs_updated, changelog_updated, and
-    // behavior_changed must all be unset / false.
+    // behavior_changed must all be unset / false unless behavior is documented
+    // through explicit internal closeout evidence.
     if (decision === 'NO_DOC_UPDATES') {
         if (docsUpdated.length > 0) {
             errors.push('Decision NO_DOC_UPDATES is incompatible with a non-empty docs_updated list.');
@@ -170,7 +250,7 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
         if (changelogUpdated) {
             errors.push('Decision NO_DOC_UPDATES is incompatible with ChangelogUpdated=true.');
         }
-        if (behaviorChanged) {
+        if (behaviorChanged && !internalOnlyBehaviorEvidenceMaterialized) {
             errors.push('Decision NO_DOC_UPDATES is incompatible with BehaviorChanged=true.');
         }
     }
@@ -201,7 +281,15 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
         project_memory_updated: projectMemoryUpdated,
         internal_closeout_evidence: {
             internal_changelog_updated: internalChangelogUpdated,
-            project_memory_updated: projectMemoryUpdated
+            project_memory_updated: projectMemoryUpdated,
+            internal_changelog_path: internalChangelogEvidence
+                ? normalizeDocImpactInputPath(internalChangelogEvidence.path, options.repoRoot)
+                : null,
+            internal_changelog_sha256: internalChangelogEvidence?.sha256 || null,
+            project_memory_files: projectMemoryEvidence.map((entry) => ({
+                path: normalizeDocImpactInputPath(entry.path, options.repoRoot),
+                sha256: entry.sha256
+            }))
         },
         sensitive_triggers_detected: sensitiveTriggersFired,
         sensitive_scope_reviewed: sensitiveReviewed,
