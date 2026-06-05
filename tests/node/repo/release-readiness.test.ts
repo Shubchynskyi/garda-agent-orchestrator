@@ -74,6 +74,8 @@ function buildPackageJson(): string {
             'validate:release': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && npm run test:packaging && npm run validate:clean-worktree',
             'validate:release:fast': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality:fast && npm run test:packaging && npm run validate:clean-worktree',
             'release:preflight': 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release',
+            'archive:source': 'node scripts/node-foundation/build-scripts.cjs archive-release.js source',
+            'archive:evidence': 'node scripts/node-foundation/build-scripts.cjs archive-release.js evidence',
             prepack: 'npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create',
             'test:unit': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core',
             'test:gates': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates',

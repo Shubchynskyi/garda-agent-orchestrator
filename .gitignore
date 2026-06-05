@@ -29,6 +29,7 @@ testResults.xml
 tsc-errors-full.txt
 tsc-target-errors.txt
 coverage/
+release-archives/
 
 # Local repo-only scripts and workspace state
 scripts/test/

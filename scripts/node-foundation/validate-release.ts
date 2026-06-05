@@ -623,6 +623,8 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
     const validateReadiness = scripts['validate:release-readiness'] || '';
     const releaseSmoke = scripts['test:release-smoke'] || '';
     const releasePreflight = scripts['release:preflight'] || '';
+    const archiveSource = scripts['archive:source'] || '';
+    const archiveEvidence = scripts['archive:evidence'] || '';
     const quality = scripts.quality || '';
     const prepack = scripts.prepack || '';
     const manifestText = readTextFileIfExists(path.join(normalizedRoot, 'MANIFEST.md')) || '';
@@ -677,6 +679,19 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
             `validate:release-readiness=${validateReadiness || 'missing'}`,
             `test:release-smoke=${releaseSmoke || 'missing'}`,
             `release:preflight=${releasePreflight || 'missing'}`
+        ]
+    );
+
+    pushCheck(
+        checks,
+        violations,
+        'release-archives',
+        'release handoff exposes separate source and evidence archive commands',
+        archiveSource === 'node scripts/node-foundation/build-scripts.cjs archive-release.js source' &&
+            archiveEvidence === 'node scripts/node-foundation/build-scripts.cjs archive-release.js evidence',
+        [
+            `archive:source=${archiveSource || 'missing'}`,
+            `archive:evidence=${archiveEvidence || 'missing'}`
         ]
     );
 

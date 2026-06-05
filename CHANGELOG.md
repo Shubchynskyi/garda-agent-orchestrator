@@ -61,6 +61,7 @@
 - Release validation now checks the sourceful distribution contract: published packages include the compiled runtime, canonical TypeScript source, templates, package metadata, and the public documentation surface needed by README/HOW_TO links.
 - `release:preflight` now runs a short `test:release-smoke` runtime-contract suite after static readiness and before the expensive full release proof.
 - Coverage scripts now use an explicit `c8` source-boundary config with `all=true`, reporting unexecuted maintained source while excluding generated build, coverage, runtime, dependency, and test trees.
+- Release handoff archives now have separate `archive:source` and `archive:evidence` commands so clean source snapshots stay separate from generated proof artifacts and runtime reports.
 - Package and bundle parity checks were tightened so releases can detect stale source, dist, template, package, and runtime-referenced documentation content before handoff.
 - Embedded bundle parity validation now reports skipped status instead of an OK status when no parity items are checked.
 - Documentation was aligned with the current Node runtime support, provider wording, lock-cleanup behavior, package files surface, and source-checkout build contract.
