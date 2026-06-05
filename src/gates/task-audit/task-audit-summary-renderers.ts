@@ -261,7 +261,8 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
             for (const d of prd.decisions) {
                 const marker = d.decision === 'safety_floor_enforced' ? '[!]'
                     : d.decision === 'lightened_by_profile' ? '[-]'
-                        : '[=]';
+                        : d.decision === 'domain_triggered' || d.decision === 'preflight_required' ? '[+]'
+                            : '[=]';
                 lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision})`);
             }
         }

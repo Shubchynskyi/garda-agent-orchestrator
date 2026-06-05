@@ -722,6 +722,50 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change keeps profile diagnostics aligned when test-only refactor intent requires refactor review', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-test-only-refactor-intent.json');
+        const taskId = 'T-930-strict-test-only-refactor-intent';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        const taskSummary = 'Refactor review parity diagnostics for test fixture changes';
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['tests/node/cli/commands/gates-review-reuse-stale-evidence.test.ts'],
+            taskId,
+            taskIntent: taskSummary,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.scope_category, 'test-only');
+        assert.equal(payload.triggers.refactor_intent, true);
+        assert.equal(payload.required_reviews.refactor, true);
+        assert.equal(payload.required_reviews.test, true);
+        const refactorDecision = payload.profile_guardrails.decisions.find(
+            (entry: Record<string, unknown>) => entry.review_type === 'refactor'
+        );
+        assert.equal(refactorDecision?.effective_value, true);
+        assert.equal(refactorDecision?.decision, 'preflight_required');
+        assert.match(String(refactorDecision?.reason || ''), /required_reviews\.refactor=true/);
+        assert.deepEqual(payload.budget_forecast.required_reviews, ['refactor', 'test']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change ignores generated runtime artifacts for test-only review routing', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-generated-runtime-artifacts.json');

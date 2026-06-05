@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCommitCommandSuggestion } from '../../../../src/gates/task-audit/task-audit-summary-renderers';
+import {
+    buildCommitCommandSuggestion,
+    formatTaskAuditSummaryText
+} from '../../../../src/gates/task-audit/task-audit-summary-renderers';
+import { formatProfileGuardrailDiagnostics } from '../../../../src/policy/profile-resolver';
 
 describe('buildCommitCommandSuggestion', () => {
     it('returns human-commit command when commit guard is ON', () => {
@@ -86,5 +90,112 @@ describe('buildCommitCommandSuggestion', () => {
         const result = buildCommitCommandSuggestion(changedFiles, metadata, false);
 
         assert.equal(result.suggestion, 'git commit -m "<type>(<scope>): <summary>"');
+    });
+});
+
+describe('profile review decision rendering', () => {
+    it('renders preflight_required decisions as positive task-audit profile diagnostics', () => {
+        const text = formatTaskAuditSummaryText({
+            task_id: 'T-715',
+            generated_utc: '2026-06-05T00:00:00.000Z',
+            status: 'INCOMPLETE',
+            events_count: 0,
+            first_event_utc: null,
+            last_event_utc: null,
+            integrity_status: 'PASS',
+            gates: [],
+            changed_files: ['tests/example.test.ts'],
+            changed_files_count: 1,
+            changed_lines_total: 8,
+            required_reviews: { refactor: true, test: true },
+            scope_category: 'test-only',
+            profile_review_decisions: {
+                profile_name: 'strict',
+                scope_category: 'test-only',
+                guardrails_active: false,
+                lightening_eligible: true,
+                safety_floors_applied: [],
+                decisions: [
+                    { review_type: 'refactor', effective_value: true, decision: 'preflight_required' },
+                    { review_type: 'test', effective_value: true, decision: 'capability_default' }
+                ]
+            },
+            evidence: [],
+            blockers: [],
+            point_in_time_snapshot: { status: 'STABLE', gate: null, message: null, recommended_action: null, lock_path: null },
+            final_report_contract: {
+                status: 'NOT_READY',
+                blocker: null,
+                required_order: [],
+                implementation_summary_requirements: [],
+                commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_command_suggestion: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_question: 'Do you want me to commit now? (yes/no)'
+            },
+            final_closeout: {
+                schema_version: 1,
+                event_source: 'task-audit-summary',
+                task_id: 'T-715',
+                generated_utc: '2026-06-05T00:00:00.000Z',
+                status: 'INCOMPLETE',
+                artifact_state: 'NOT_READY',
+                artifact_paths: {
+                    json: 'runtime/reviews/T-715-final-closeout.json',
+                    markdown: 'runtime/reviews/T-715-final-closeout.md'
+                },
+                blockers: [],
+                evidence: [],
+                changed_files: ['tests/example.test.ts'],
+                changed_files_count: 1,
+                changed_lines_total: 8,
+                required_reviews: { refactor: true, test: true },
+                implementation_summary: {
+                    requested_depth: 2,
+                    effective_depth: 2,
+                    path_mode: 'FULL_PATH',
+                    review_verdicts: {},
+                    docs_updated: false,
+                    changed_files_count: 1,
+                    changed_lines_total: 8,
+                    scope_category: 'test-only',
+                    active_profile: 'strict'
+                },
+                optional_skills: null,
+                docs: null,
+                token_economy: null,
+                commit_command_template: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_command_suggestion: 'git commit -m "<type>(<scope>): <summary>"',
+                commit_question: 'Do you want me to commit now? (yes/no)'
+            }
+        } as any);
+
+        assert.ok(text.includes('RequiredReviews: refactor, test'));
+        assert.ok(text.includes('ProfileReviewDecisions:'));
+        assert.ok(text.includes('  [+] refactor: true (preflight_required)'));
+        assert.ok(!text.includes('  [=] refactor: true (preflight_required)'));
+    });
+
+    it('renders preflight_required decisions as positive profile guardrail diagnostics', () => {
+        const text = formatProfileGuardrailDiagnostics({
+            scope_category: 'test-only',
+            is_code_changing_task: false,
+            profile_name: 'strict',
+            guardrails_active: false,
+            lightening_eligible: true,
+            zero_diff_no_reviewable_scope: false,
+            safety_floors_applied: [],
+            decisions: [
+                {
+                    review_type: 'refactor',
+                    profile_wanted: true,
+                    effective_value: true,
+                    decision: 'preflight_required',
+                    reason: 'refactor review kept because preflight required_reviews.refactor=true'
+                }
+            ]
+        });
+
+        assert.ok(text.includes('  [+] refactor: true (preflight_required)'));
+        assert.ok(!text.includes('  [=] refactor: true (preflight_required)'));
     });
 });

@@ -63,6 +63,40 @@ import {
 
 type ClassificationResult = ReturnType<typeof classifyChange>;
 
+function reconcileProfileGuardrailsWithRequiredReviews(
+    guardrails: unknown,
+    requiredReviews: Record<string, boolean>
+): unknown {
+    if (!guardrails || typeof guardrails !== 'object' || Array.isArray(guardrails)) {
+        return guardrails;
+    }
+    const guardrailRecord = guardrails as Record<string, unknown>;
+    if (!Array.isArray(guardrailRecord.decisions)) {
+        return guardrails;
+    }
+
+    return {
+        ...guardrailRecord,
+        decisions: guardrailRecord.decisions.map((decision) => {
+            if (!decision || typeof decision !== 'object' || Array.isArray(decision)) {
+                return decision;
+            }
+            const decisionRecord = decision as Record<string, unknown>;
+            const reviewType = typeof decisionRecord.review_type === 'string' ? decisionRecord.review_type : '';
+            if (!reviewType || requiredReviews[reviewType] !== true || decisionRecord.effective_value === true) {
+                return decision;
+            }
+
+            return {
+                ...decisionRecord,
+                effective_value: true,
+                decision: 'preflight_required',
+                reason: `${reviewType} review kept because preflight required_reviews.${reviewType}=true; profile diagnostics must match lifecycle review requirements`
+            };
+        })
+    };
+}
+
 export interface ClassifyChangeCommandOptions {
     repoRoot?: string;
     changedFiles?: unknown;
@@ -241,7 +275,6 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 );
                 effectiveTaskPolicy = resolvedProfile.effective_policy;
                 (result as Record<string, unknown>).profile_selection = resolvedProfile.selection;
-                (result as Record<string, unknown>).profile_guardrails = effectiveTaskPolicy.guardrail_diagnostics;
 
                 const guardrailDecisions = new Map(
                     (effectiveTaskPolicy.guardrail_diagnostics?.decisions || []).map((decision) => [decision.review_type, decision])
@@ -264,6 +297,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         (result.required_reviews as Record<string, boolean>)[reviewType] = false;
                     }
                 }
+                (result as Record<string, unknown>).profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
+                    effectiveTaskPolicy.guardrail_diagnostics,
+                    result.required_reviews as Record<string, boolean>
+                );
             } catch (error: unknown) {
                 preflightErrors.push(error instanceof Error ? error.message : String(error));
             }

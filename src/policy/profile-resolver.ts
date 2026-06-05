@@ -154,6 +154,7 @@ export interface ProfileReviewDecision {
         | 'capability_default'
         | 'lightened_by_profile'
         | 'domain_triggered'
+        | 'preflight_required'
         | 'zero_diff_no_reviewable_scope'
         | 'not_applicable_no_domain_surface';
     reason: string;
@@ -541,7 +542,7 @@ export function formatProfileGuardrailDiagnostics(result: ProfileGuardrailResult
     for (const d of result.decisions) {
         const marker = d.decision === 'safety_floor_enforced' ? '[!]'
             : d.decision === 'lightened_by_profile' || d.decision === 'not_applicable_no_domain_surface' ? '[-]'
-                : d.decision === 'domain_triggered' ? '[+]'
+                : d.decision === 'domain_triggered' || d.decision === 'preflight_required' ? '[+]'
                     : '[=]';
         lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision}) — ${d.reason}`);
     }
