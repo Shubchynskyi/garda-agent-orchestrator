@@ -806,6 +806,27 @@ function buildResult(params: {
     };
 }
 
+function buildFinalCloseoutMissingArtifacts(
+    repoRoot: string,
+    reviewsRoot: string,
+    taskId: string,
+    paths: {
+        finalCloseoutJsonPath: string;
+        finalCloseoutMarkdownPath: string;
+    }
+): NextStepArtifactState[] {
+    const finalUserReportPath = path.join(reviewsRoot, `${taskId}-final-user-report.md`);
+    return [
+        { key: 'final-closeout-json', path: paths.finalCloseoutJsonPath },
+        { key: 'final-closeout-markdown', path: paths.finalCloseoutMarkdownPath },
+        { key: 'final-user-report', path: finalUserReportPath }
+    ].map((artifact) => ({
+        key: artifact.key,
+        path: toRepoDisplayPath(repoRoot, artifact.path),
+        exists: fs.existsSync(artifact.path)
+    }));
+}
+
 function buildInvalidationImpactSummary(params: {
     status: NextStepStatus;
     nextGate: string | null;
@@ -1372,6 +1393,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             finalReport,
             taskAuditCommand: `${cliPrefix} gate task-audit-summary --task-id "${taskId}" --repo-root "."`
         });
+        const finalCloseoutMissingArtifacts = buildFinalCloseoutMissingArtifacts(repoRoot, reviewsRoot, taskId, {
+            finalCloseoutJsonPath: readinessArtifacts.paths.finalCloseoutJsonPath,
+            finalCloseoutMarkdownPath: readinessArtifacts.paths.finalCloseoutMarkdownPath
+        });
         return buildResult({
             ...resultBase,
             status: completedCloseoutRoute.status,
@@ -1379,6 +1404,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             title: completedCloseoutRoute.title,
             reason: completedCloseoutRoute.reason,
             commands: completedCloseoutRoute.commands,
+            missingArtifacts: completedCloseoutRoute.status === 'DONE' ? [] : finalCloseoutMissingArtifacts,
             finalReport: completedCloseoutRoute.finalReport as NextStepFinalReportSummary | null
         });
     }

@@ -1701,6 +1701,33 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'task-audit-summary');
         assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
         assert.match(result.reason, /final closeout artifacts are not materialized/i);
+        assert.deepEqual(
+            result.missing_artifacts.map((artifact) => artifact.key),
+            ['final-closeout-json', 'final-closeout-markdown', 'final-user-report']
+        );
+    });
+
+    it('reports final closeout artifacts when source runtime remediation wraps completed tasks', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        seedSourceCheckoutRuntime(repoRoot, true);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'source-runtime-remediation');
+        assert.equal(result.commands[0].command, 'npm run build');
+        assert.ok(result.reason.includes("intended gate 'task-audit-summary'"));
+        assert.ok(result.reason.includes('gate task-audit-summary'));
+        assert.deepEqual(
+            result.missing_artifacts.map((artifact) => artifact.key),
+            ['final-closeout-json', 'final-closeout-markdown', 'final-user-report']
+        );
     });
 
     it('keeps current completed DONE rows ready for task-audit-summary until final closeout is materialized', () => {
@@ -1871,6 +1898,11 @@ describe('gates/next-step', () => {
             assert.equal(result.final_report, null, tamper);
             assert.ok(result.commands[0].command.includes('gate task-audit-summary'), tamper);
             assert.match(result.reason, /final closeout artifacts are not materialized yet/i, tamper);
+            assert.deepEqual(
+                result.missing_artifacts.map((artifact) => artifact.key),
+                ['final-closeout-json', 'final-closeout-markdown', 'final-user-report'],
+                tamper
+            );
         }
     });
 
@@ -1899,6 +1931,10 @@ describe('gates/next-step', () => {
         assert.equal(result.commands.length, 1);
         assert.ok(result.commands[0].command.includes('gate task-audit-summary'));
         assert.match(result.reason, /final closeout artifacts are not materialized yet/i);
+        assert.deepEqual(
+            result.missing_artifacts.map((artifact) => artifact.key),
+            ['final-closeout-json', 'final-closeout-markdown', 'final-user-report']
+        );
     });
 
     it('keeps completed tasks ready for task-audit-summary even when the workspace is clean after commit', () => {
