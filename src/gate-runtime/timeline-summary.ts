@@ -10,6 +10,7 @@ import { inspectTaskEventFile } from './task-events';
 import { withFilesystemLock } from './task-events-locking';
 import { detectCodeChanged } from '../gates/preflight/preflight-code-change';
 import { loadFullSuiteValidationConfig } from '../gates/full-suite/full-suite-validation';
+import { parseTaskIdJsonlFileName } from '../core/task-ids';
 
 const SUMMARY_VERSION = 2;
 const SUMMARY_FILE_NAME = '.timeline-summary.json';
@@ -473,9 +474,8 @@ export function pruneTimelineSummaryEntries(eventsRoot: string): void {
 
 function listTimelineJsonlFiles(eventsRoot: string): string[] {
     try {
-        return fs.readdirSync(eventsRoot).filter(
-            (name: string) => name.endsWith('.jsonl') && name !== 'all-tasks.jsonl'
-        );
+        return fs.readdirSync(eventsRoot)
+            .filter((name: string) => parseTaskIdJsonlFileName(name) !== null);
     } catch {
         return [];
     }
@@ -524,7 +524,8 @@ export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimel
     const warnings: string[] = [];
 
     for (const fileName of files) {
-        const taskId = fileName.replace(/\.jsonl$/i, '');
+        const taskId = parseTaskIdJsonlFileName(fileName);
+        if (!taskId) continue;
         const timelinePath = path.join(eventsRoot, fileName);
         const cached = summary?.entries[taskId] ?? null;
 
@@ -584,7 +585,8 @@ export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimel
     const warnings: string[] = [];
 
     for (const fileName of files) {
-        const taskId = fileName.replace(/\.jsonl$/i, '');
+        const taskId = parseTaskIdJsonlFileName(fileName);
+        if (!taskId) continue;
         const timelinePath = path.join(eventsRoot, fileName);
         const cached = summary?.entries[taskId] ?? null;
 

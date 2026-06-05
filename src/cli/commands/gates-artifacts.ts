@@ -143,20 +143,23 @@ function parseReviewTempFileNameOwnership(fileName: string): ReviewTempOwnership
     const normalizedLowerFileName = normalizedFileName.toLowerCase();
     for (const reviewType of REVIEW_TEMP_REVIEW_TYPES) {
         for (const marker of [`-${reviewType}-`, `-${reviewType}.`]) {
-            const markerIndex = normalizedLowerFileName.indexOf(marker);
-            if (markerIndex <= 0) {
-                continue;
+            let searchFromIndex = normalizedLowerFileName.length;
+            while (searchFromIndex > 0) {
+                const markerIndex = normalizedLowerFileName.lastIndexOf(marker, searchFromIndex - 1);
+                if (markerIndex <= 0) {
+                    break;
+                }
+                const candidateTaskId = normalizedFileName.slice(0, markerIndex);
+                const candidateTaskIdKey = normalizeTaskIdForComparison(candidateTaskId);
+                if (candidateTaskIdKey) {
+                    return {
+                        task_id: candidateTaskId,
+                        task_id_key: candidateTaskIdKey,
+                        review_type: reviewType
+                    };
+                }
+                searchFromIndex = markerIndex;
             }
-            const candidateTaskId = normalizedFileName.slice(0, markerIndex);
-            const candidateTaskIdKey = normalizeTaskIdForComparison(candidateTaskId);
-            if (!candidateTaskIdKey) {
-                continue;
-            }
-            return {
-                task_id: candidateTaskId,
-                task_id_key: candidateTaskIdKey,
-                review_type: reviewType
-            };
         }
     }
 
@@ -271,12 +274,18 @@ function resolveReviewTempActiveTaskIdKeys(repoRoot: string, currentTaskId: stri
 }
 
 function isReviewTempPathOwnedByAnyTask(reviewTempRoot: string, candidatePath: string, taskIdKeys: ReadonlySet<string>): boolean {
-    for (const taskIdKey of taskIdKeys) {
-        if (isReviewTempPathOwnedByTask(reviewTempRoot, candidatePath, taskIdKey)) {
-            return true;
-        }
+    const ownership = inspectReviewTempOwnership(reviewTempRoot, candidatePath);
+    if (ownership.task_id_key && taskIdKeys.has(ownership.task_id_key)) {
+        return true;
     }
-    return false;
+
+    const relativeSegments = getReviewTempRelativeSegments(reviewTempRoot, candidatePath);
+    if (relativeSegments.some((segment) => taskIdKeys.has(segment.toLowerCase()))) {
+        return true;
+    }
+
+    const basename = path.basename(candidatePath).toLowerCase();
+    return [...taskIdKeys].some((taskIdKey) => basename.startsWith(`${taskIdKey}-`));
 }
 
 function isReviewTempFileStale(candidatePath: string, nowMs: number): boolean {

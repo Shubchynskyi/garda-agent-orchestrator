@@ -42,6 +42,7 @@ import {
     handleStandardFlags,
     resolveTargetRoot
 } from './workspace-helpers';
+import { parseTaskIdJsonlFileName } from '../../core/task-ids';
 
 type RepairAction = 'inspect' | 'rebuild-indexes' | 'protected-manifest' | 'locks';
 
@@ -137,8 +138,8 @@ function listTaskEventTaskIds(eventsRoot: string): string[] {
             return [];
         }
         return fs.readdirSync(eventsRoot)
-            .filter((entry) => entry.endsWith('.jsonl') && entry !== 'all-tasks.jsonl')
-            .map((entry) => entry.replace(/\.jsonl$/i, ''))
+            .map((entry) => parseTaskIdJsonlFileName(entry))
+            .filter((taskId): taskId is string => taskId !== null)
             .sort();
     } catch {
         return [];

@@ -10,6 +10,7 @@ import {
     appendMandatoryTaskEvent,
     appendMandatoryTaskEventAsync,
     appendTaskEvent,
+    appendTaskEventAsync,
     buildEventIntegrityHash,
     inspectTaskEventFile,
     normalizeTaskEventPublicRecord,
@@ -28,7 +29,9 @@ const requireFromTest = createRequire(__filename);
 
 test('assertValidTaskId accepts valid IDs', () => {
     assert.equal(assertValidTaskId('T-001'), 'T-001');
-    assert.equal(assertValidTaskId('my_task.v2'), 'my_task.v2');
+    assert.equal(assertValidTaskId('T-704-1'), 'T-704-1');
+    assert.equal(assertValidTaskId('T-CLI-ART'), 'T-CLI-ART');
+    assert.equal(assertValidTaskId('T-608-1-1-2'), 'T-608-1-1-2');
     assert.equal(assertValidTaskId('  T-001  '), 'T-001');
 });
 
@@ -38,8 +41,14 @@ test('assertValidTaskId rejects empty', () => {
 });
 
 test('assertValidTaskId rejects invalid chars', () => {
-    assert.throws(() => assertValidTaskId('task with spaces'), /invalid characters/);
-    assert.throws(() => assertValidTaskId('task/slash'), /invalid characters/);
+    assert.throws(() => assertValidTaskId('task with spaces'), /semantic pattern/);
+    assert.throws(() => assertValidTaskId('task/slash'), /semantic pattern/);
+});
+
+test('assertValidTaskId rejects non-semantic and reserved runtime names', () => {
+    for (const invalidTaskId of ['--help', 'all-tasks', '.', '..', '.hidden', '-T-001', 'timeline-summary', '.timeline-summary', 'index', 'my_task.v2']) {
+        assert.throws(() => assertValidTaskId(invalidTaskId), /semantic pattern|reserved/);
+    }
 });
 
 test('assertValidTaskId rejects too-long IDs', () => {
@@ -399,6 +408,40 @@ test('appendTaskEvent creates chain with correct integrity', () => {
         // Also verify all-tasks.jsonl
         const allTasksFile = path.join(orchestratorRoot, 'runtime', 'task-events', 'all-tasks.jsonl');
         assert.ok(fs.existsSync(allTasksFile));
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEvent rejects invalid task ids before writing task or aggregate timelines', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-invalid-task-id-'));
+    try {
+        assert.throws(
+            () => appendTaskEvent(tempDir, '--help', 'PLAN_CREATED', 'INFO', 'Invalid task id', {}, { passThru: true }),
+            /semantic pattern/
+        );
+
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        assert.equal(fs.existsSync(eventsRoot), false);
+        assert.equal(fs.existsSync(path.join(eventsRoot, '--help.jsonl')), false);
+        assert.equal(fs.existsSync(path.join(eventsRoot, 'all-tasks.jsonl')), false);
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+});
+
+test('appendTaskEventAsync rejects invalid task ids before writing task or aggregate timelines', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-append-async-invalid-task-id-'));
+    try {
+        await assert.rejects(
+            () => appendTaskEventAsync(tempDir, '.hidden', 'PLAN_CREATED', 'INFO', 'Invalid task id', {}, { passThru: true }),
+            /semantic pattern/
+        );
+
+        const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+        assert.equal(fs.existsSync(eventsRoot), false);
+        assert.equal(fs.existsSync(path.join(eventsRoot, '.hidden.jsonl')), false);
+        assert.equal(fs.existsSync(path.join(eventsRoot, 'all-tasks.jsonl')), false);
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }

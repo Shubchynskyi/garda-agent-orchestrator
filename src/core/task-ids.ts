@@ -1,6 +1,93 @@
 export const TASK_ID_MAX_LENGTH = 128;
-export const TASK_ID_ALLOWED_PATTERN = /^[A-Za-z0-9._-]+$/u;
-export const TASK_ID_CHARACTER_PATTERN = /^[A-Za-z0-9._-]$/u;
+export const TASK_ID_ALLOWED_PATTERN = /^T-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/u;
+export const TASK_ID_CHARACTER_PATTERN = /^[A-Za-z0-9-]$/u;
+export const RESERVED_TASK_EVENT_TIMELINE_NAMES = new Set<string>([
+    'all-tasks',
+    '.timeline-summary',
+    'timeline-summary',
+    'index'
+]);
+
+// Known artifact type suffixes used to split task-id from artifact-type.
+// Ordered longest-first so greedy suffix matching selects the right boundary.
+export const KNOWN_REVIEW_ARTIFACT_SUFFIXES: readonly string[] = Object.freeze([
+    '-review-remediation-cycle.json',
+    '-review-cycle-auto-split-prompt.md',
+    '-strict-decomposition-decision.json',
+    '-optional-skill-selection.json',
+    '-dependency-review-context.json',
+    '-performance-review-context.json',
+    '-security-review-context.json',
+    '-refactor-review-context.json',
+    '-infra-review-context.json',
+    '-code-review-context.json',
+    '-test-review-context.json',
+    '-api-review-context.json',
+    '-db-review-context.json',
+    '-dependency-receipt.json',
+    '-performance-receipt.json',
+    '-security-receipt.json',
+    '-refactor-receipt.json',
+    '-dependency-review-output.md',
+    '-performance-review-output.md',
+    '-security-review-output.md',
+    '-refactor-review-output.md',
+    '-command-timeout.json',
+    '-completion-gate.json',
+    '-full-suite-validation.json',
+    '-full-suite-output.log',
+    '-split-required.json',
+    '-final-closeout.json',
+    '-final-closeout.md',
+    '-infra-receipt.json',
+    '-infra-review-output.md',
+    '-code-receipt.json',
+    '-code-review-output.md',
+    '-test-receipt.json',
+    '-test-review-output.md',
+    '-compile-output.log',
+    '-compile-gate.json',
+    '-api-receipt.json',
+    '-api-review-output.md',
+    '-db-receipt.json',
+    '-db-review-output.md',
+    '-review-gate.json',
+    '-shell-smoke.json',
+    '-doc-impact.json',
+    '-task-mode.json',
+    '-handshake.json',
+    '-preflight.json',
+    '-rule-pack.json',
+    '-no-op.json',
+    '-reset-report.json',
+    '-dependency-scoped.json',
+    '-performance-scoped.json',
+    '-security-scoped.json',
+    '-refactor-scoped.json',
+    '-infra-scoped.json',
+    '-code-scoped.json',
+    '-test-scoped.json',
+    '-api-scoped.json',
+    '-db-scoped.json',
+    '-dependency-scoped.diff',
+    '-performance-scoped.diff',
+    '-security-scoped.diff',
+    '-refactor-scoped.diff',
+    '-infra-scoped.diff',
+    '-code-scoped.diff',
+    '-test-scoped.diff',
+    '-api-scoped.diff',
+    '-db-scoped.diff',
+    '-dependency.md',
+    '-performance.md',
+    '-security.md',
+    '-refactor.md',
+    '-infra.md',
+    '-code.md',
+    '-test.md',
+    '-api.md',
+    '-db.md'
+]);
 
 export function assertCanonicalTaskId(value: unknown): string {
     if (!value || !String(value).trim()) {
@@ -10,8 +97,11 @@ export function assertCanonicalTaskId(value: unknown): string {
     if (taskId.length > TASK_ID_MAX_LENGTH) {
         throw new Error('TaskId must be 128 characters or fewer.');
     }
+    if (RESERVED_TASK_EVENT_TIMELINE_NAMES.has(taskId.toLowerCase())) {
+        throw new Error(`TaskId '${taskId}' is reserved for runtime task-event indexes.`);
+    }
     if (!TASK_ID_ALLOWED_PATTERN.test(taskId)) {
-        throw new Error(`TaskId '${taskId}' contains invalid characters. Allowed pattern: ^[A-Za-z0-9._-]+$`);
+        throw new Error(`TaskId '${taskId}' must match semantic pattern: T-<segment>(-<segment>)* where each segment is alphanumeric.`);
     }
     return taskId;
 }
@@ -34,7 +124,7 @@ export function escapeRegExpLiteral(value: string): string {
 }
 
 export function buildExactTaskIdReferencePattern(taskId: string): RegExp {
-    return new RegExp(`(^|[^A-Za-z0-9._-])${escapeRegExpLiteral(taskId)}(?=$|[^A-Za-z0-9._-])`, 'u');
+    return new RegExp(`(^|[^A-Za-z0-9-])${escapeRegExpLiteral(taskId)}(?=$|[^A-Za-z0-9-])`, 'u');
 }
 
 export function parseTaskIdJsonlFileName(fileName: string): string | null {
@@ -73,6 +163,11 @@ export function parseConventionalReviewArtifactTaskId(fileName: string): string 
 }
 
 export function parseStructuredTaskArtifactTaskId(fileName: string): string | null {
+    const knownTaskId = parseKnownReviewArtifactTaskId(fileName, KNOWN_REVIEW_ARTIFACT_SUFFIXES);
+    if (knownTaskId) {
+        return knownTaskId;
+    }
+
     const stem = fileName
         .replace(/\.gz$/iu, '')
         .replace(/\.[A-Za-z0-9]+$/u, '');
@@ -81,7 +176,7 @@ export function parseStructuredTaskArtifactTaskId(fileName: string): string | nu
         return null;
     }
     const second = segments[1]?.trim();
-    if (!second || !/^[A-Za-z0-9._]+$/u.test(second)) {
+    if (!second || !/^\d[A-Za-z0-9]*$/u.test(second)) {
         return null;
     }
     const taskSegments = ['T', second];

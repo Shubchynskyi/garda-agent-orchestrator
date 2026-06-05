@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
+import { KNOWN_REVIEW_ARTIFACT_SUFFIXES } from '../core/task-ids';
 import { inspectFilesystemLock, withFilesystemLock } from './task-events-locking';
 
 // Bounded metadata cache for runtime/reviews artifacts.
@@ -15,85 +16,7 @@ const DEFAULT_INDEX_LOCK_STALE_MS = 30 * 1000;
 const SELF_WRITE_MARKER_TOLERANCE_MS = 0.01;
 const inProcessReviewTransactionSnapshots = new Map<string, { depth: number; index: ReviewsIndex }>();
 
-// Known artifact type suffixes used to split task-id from artifact-type.
-// Ordered longest-first so greedy suffix matching selects the right boundary.
-export const KNOWN_SUFFIXES: readonly string[] = Object.freeze([
-    '-review-remediation-cycle.json',
-    '-review-cycle-auto-split-prompt.md',
-    '-strict-decomposition-decision.json',
-    '-optional-skill-selection.json',
-    '-dependency-review-context.json',
-    '-performance-review-context.json',
-    '-security-review-context.json',
-    '-refactor-review-context.json',
-    '-infra-review-context.json',
-    '-code-review-context.json',
-    '-test-review-context.json',
-    '-api-review-context.json',
-    '-db-review-context.json',
-    '-dependency-receipt.json',
-    '-performance-receipt.json',
-    '-security-receipt.json',
-    '-refactor-receipt.json',
-    '-dependency-review-output.md',
-    '-performance-review-output.md',
-    '-security-review-output.md',
-    '-refactor-review-output.md',
-    '-command-timeout.json',
-    '-completion-gate.json',
-    '-full-suite-validation.json',
-    '-full-suite-output.log',
-    '-split-required.json',
-    '-final-closeout.json',
-    '-final-closeout.md',
-    '-infra-receipt.json',
-    '-infra-review-output.md',
-    '-code-receipt.json',
-    '-code-review-output.md',
-    '-test-receipt.json',
-    '-test-review-output.md',
-    '-compile-output.log',
-    '-compile-gate.json',
-    '-api-receipt.json',
-    '-api-review-output.md',
-    '-db-receipt.json',
-    '-db-review-output.md',
-    '-review-gate.json',
-    '-shell-smoke.json',
-    '-doc-impact.json',
-    '-task-mode.json',
-    '-handshake.json',
-    '-preflight.json',
-    '-rule-pack.json',
-    '-dependency-scoped.json',
-    '-performance-scoped.json',
-    '-security-scoped.json',
-    '-refactor-scoped.json',
-    '-infra-scoped.json',
-    '-code-scoped.json',
-    '-test-scoped.json',
-    '-api-scoped.json',
-    '-db-scoped.json',
-    '-dependency-scoped.diff',
-    '-performance-scoped.diff',
-    '-security-scoped.diff',
-    '-refactor-scoped.diff',
-    '-infra-scoped.diff',
-    '-code-scoped.diff',
-    '-test-scoped.diff',
-    '-api-scoped.diff',
-    '-db-scoped.diff',
-    '-dependency.md',
-    '-performance.md',
-    '-no-op.json',
-    '-security.md',
-    '-refactor.md',
-    '-infra.md',
-    '-code.md',
-    '-test.md',
-    '-api.md',
-    '-db.md'
-]);
+export const KNOWN_SUFFIXES = KNOWN_REVIEW_ARTIFACT_SUFFIXES;
 
 export interface ReviewsIndexEntry {
     fileName: string;

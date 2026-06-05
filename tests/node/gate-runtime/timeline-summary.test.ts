@@ -685,6 +685,19 @@ describe('gate-runtime/timeline-summary', () => {
             const result = collectTimelineSummaryForStatus(bundlePath);
             assert.equal(result.taskCount, 0);
         });
+
+        it('ignores invalid and reserved timeline file names', () => {
+            const bundlePath = tempDir;
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsRoot, { recursive: true });
+            for (const fileName of ['--help.jsonl', '.hidden.jsonl', '-T-001.jsonl', 'timeline-summary.jsonl', '.timeline-summary.jsonl', 'index.jsonl']) {
+                fs.writeFileSync(path.join(eventsRoot, fileName), 'data\n', 'utf8');
+            }
+
+            const result = collectTimelineSummaryForStatus(bundlePath);
+            assert.equal(result.taskCount, 0);
+            assert.deepEqual(result.warnings, []);
+        });
     });
 
     describe('collectTimelineSummaryForDoctor', () => {
@@ -725,6 +738,19 @@ describe('gate-runtime/timeline-summary', () => {
             assert.equal(result.evidence.length, 1);
             assert.equal(result.evidence[0].task_id, 'T-001');
             assert.equal(result.evidence[0].completeness_status, 'COMPLETE');
+        });
+
+        it('ignores invalid and reserved timeline file names', () => {
+            const bundlePath = tempDir;
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+            fs.mkdirSync(eventsRoot, { recursive: true });
+            for (const fileName of ['--help.jsonl', '.hidden.jsonl', '-T-001.jsonl', 'timeline-summary.jsonl', '.timeline-summary.jsonl', 'index.jsonl']) {
+                fs.writeFileSync(path.join(eventsRoot, fileName), 'data\n', 'utf8');
+            }
+
+            const result = collectTimelineSummaryForDoctor(bundlePath);
+            assert.deepEqual(result.evidence, []);
+            assert.deepEqual(result.warnings, []);
         });
 
         it('warns about integrity failures from cache', () => {

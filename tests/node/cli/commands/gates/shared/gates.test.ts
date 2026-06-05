@@ -963,7 +963,7 @@ describe('cli/commands/gates', () => {
     it('logs terminal task events with reviewer scratch cleanup and command audit', () => {
         for (const eventType of ['TASK_DONE', 'TASK_BLOCKED'] as const) {
             const repoRoot = createTempRepo();
-            const taskId = `T-904-${eventType.toLowerCase()}`;
+            const taskId = `T-904-${eventType.toLowerCase().replace(/_/gu, '-')}`;
             const activeForeignTaskId = 'T-foreign-active';
             const staleForeignTaskId = 'T-foreign-stale';
             const reviewsRoot = getReviewsRoot(repoRoot);
@@ -974,6 +974,8 @@ describe('cli/commands/gates', () => {
             const activeForeignReviewOutputPath = path.join(reviewTempRoot, 'session-1', activeForeignTaskId, 'code', 'review-output.md');
             const staleForeignReviewOutputPath = path.join(reviewTempRoot, `${staleForeignTaskId}-code-output.md`);
             const unattributedStaleReviewOutputPath = path.join(reviewTempRoot, 'session-42', 'review-output.md');
+            const reviewTypeSegmentTaskId = 'T-904-security';
+            const reviewTypeSegmentOutputPath = path.join(reviewTempRoot, `${reviewTypeSegmentTaskId}-security-output.md`);
             fs.mkdirSync(path.dirname(stagedReviewOutputPath), { recursive: true });
             fs.mkdirSync(path.dirname(activeForeignReviewOutputPath), { recursive: true });
             fs.mkdirSync(path.dirname(unattributedStaleReviewOutputPath), { recursive: true });
@@ -982,11 +984,18 @@ describe('cli/commands/gates', () => {
             fs.writeFileSync(activeForeignReviewOutputPath, 'keep active foreign reviewer output\n', 'utf8');
             fs.writeFileSync(staleForeignReviewOutputPath, 'delete stale foreign reviewer output\n', 'utf8');
             fs.writeFileSync(unattributedStaleReviewOutputPath, 'retain unattributed stale reviewer output\n', 'utf8');
+            fs.writeFileSync(reviewTypeSegmentOutputPath, 'retain sibling task reviewer output with review-type segment\n', 'utf8');
             ageFixturePath(activeForeignReviewOutputPath, 25 * 60 * 60 * 1000);
             ageFixturePath(staleForeignReviewOutputPath, 25 * 60 * 60 * 1000);
             ageFixturePath(unattributedStaleReviewOutputPath, 25 * 60 * 60 * 1000);
+            ageFixturePath(reviewTypeSegmentOutputPath, 25 * 60 * 60 * 1000);
             appendTaskEvent(getOrchestratorRoot(repoRoot), activeForeignTaskId, 'TASK_MODE_ENTERED', 'PASS', 'foreign task started', {});
             appendTaskEvent(getOrchestratorRoot(repoRoot), activeForeignTaskId, 'STATUS_CHANGED', 'INFO', 'foreign task entered review', {
+                previous_status: 'IN_PROGRESS',
+                new_status: 'IN_REVIEW'
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), reviewTypeSegmentTaskId, 'TASK_MODE_ENTERED', 'PASS', 'sibling task started', {});
+            appendTaskEvent(getOrchestratorRoot(repoRoot), reviewTypeSegmentTaskId, 'STATUS_CHANGED', 'INFO', 'sibling task entered review', {
                 previous_status: 'IN_PROGRESS',
                 new_status: 'IN_REVIEW'
             });
@@ -995,7 +1004,8 @@ describe('cli/commands/gates', () => {
                 '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
                 `| ${taskId} | IN_REVIEW | P1 | test | Current review task | unassigned | 2026-03-28 | default | fixture |`,
                 `| ${activeForeignTaskId} | DONE | P1 | test | Active foreign review task with stale queue status | unassigned | 2026-03-28 | default | fixture |`,
-                `| ${staleForeignTaskId} | DONE | P1 | test | Stale foreign review task | unassigned | 2026-03-28 | default | fixture |`
+                `| ${staleForeignTaskId} | DONE | P1 | test | Stale foreign review task | unassigned | 2026-03-28 | default | fixture |`,
+                `| ${reviewTypeSegmentTaskId} | DONE | P1 | test | Review-type segment active sibling with stale queue status | unassigned | 2026-03-28 | default | fixture |`
             ].join('\n'), 'utf8');
             const compileOutputPath = path.join(reviewsRoot, `${taskId}-compile-output.log`);
             fs.writeFileSync(compileOutputPath, 'temporary compile output\n', 'utf8');
@@ -1020,14 +1030,21 @@ describe('cli/commands/gates', () => {
             assert.equal(payload.status, 'TASK_EVENT_LOGGED');
             assert.equal(payload.command_policy_audit.warning_count > 0, true);
             assert.equal(payload.terminal_log_cleanup.deleted_paths.length, 1);
-            assert.equal(payload.terminal_review_temp_cleanup.deleted_paths.length, 2);
+            assert.deepEqual(
+                payload.terminal_review_temp_cleanup.deleted_paths,
+                [
+                    stagedReviewOutputPath.replace(/\\/g, '/'),
+                    staleForeignReviewOutputPath.replace(/\\/g, '/')
+                ].sort()
+            );
             assert.equal(payload.terminal_review_temp_cleanup.stale_deleted_paths.length, 1);
             assert.deepEqual(
                 payload.terminal_review_temp_cleanup.retained_paths,
                 [
                     activeForeignReviewOutputPath.replace(/\\/g, '/'),
                     foreignReviewOutputPath.replace(/\\/g, '/'),
-                    unattributedStaleReviewOutputPath.replace(/\\/g, '/')
+                    unattributedStaleReviewOutputPath.replace(/\\/g, '/'),
+                    reviewTypeSegmentOutputPath.replace(/\\/g, '/')
                 ].sort()
             );
             assert.equal(fs.existsSync(compileOutputPath), false);
@@ -1036,6 +1053,7 @@ describe('cli/commands/gates', () => {
             assert.equal(fs.existsSync(activeForeignReviewOutputPath), true);
             assert.equal(fs.existsSync(staleForeignReviewOutputPath), false);
             assert.equal(fs.existsSync(unattributedStaleReviewOutputPath), true);
+            assert.equal(fs.existsSync(reviewTypeSegmentOutputPath), true);
 
             removeTempRepoWithRetry(repoRoot);
         }

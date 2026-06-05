@@ -256,14 +256,14 @@ describe('runTaskResetCommand — validation', () => {
     it('throws for task ID with spaces', () => {
         assert.throws(
             () => runTaskResetCommand({ taskId: 'T-001 child', repoRoot: '.', confirm: true }),
-            /contains invalid characters/
+            /semantic pattern/
         );
     });
 
     it('throws for task ID with path separators', () => {
         assert.throws(
             () => runTaskResetCommand({ taskId: 'T-001/child', repoRoot: '.', confirm: true }),
-            /contains invalid characters/
+            /semantic pattern/
         );
     });
 
@@ -754,19 +754,20 @@ describe('runTaskResetCommand — RESET_COMPLETE', () => {
         }
     });
 
-    it('normalizes task ID to uppercase T-NNN', () => {
+    it('rejects lowercase task ID aliases instead of normalizing them', () => {
         const { repoRoot, eventsRoot, reviewsRoot } = buildFakeRepo({ taskId: 'T-001' });
         try {
-            const result = runTaskResetCommand({
-                taskId: 't-001',
-                repoRoot,
-                eventsRoot,
-                reviewsRoot,
-                confirm: true,
-                discard: true
-            });
-            assert.equal(result.taskId, 'T-001');
-            assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.throws(
+                () => runTaskResetCommand({
+                    taskId: 't-001',
+                    repoRoot,
+                    eventsRoot,
+                    reviewsRoot,
+                    confirm: true,
+                    discard: true
+                }),
+                /semantic pattern/
+            );
         } finally {
             cleanup(repoRoot);
         }
