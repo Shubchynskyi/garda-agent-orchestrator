@@ -24,6 +24,13 @@ function getDevDependencies(): Record<string, string> {
     return pkg.devDependencies as Record<string, string>;
 }
 
+function getC8Config(): Record<string, unknown> {
+    const pkg = readPackageJson();
+    assert.equal(typeof pkg.c8, 'object');
+    assert.notEqual(pkg.c8, null);
+    return pkg.c8 as Record<string, unknown>;
+}
+
 function readTextRepoFile(relativePath: string): string {
     return fs.readFileSync(path.join(getRepoRoot(), relativePath), 'utf8');
 }
@@ -70,8 +77,8 @@ test('package quality scripts expose lint, coverage, audit, and composed release
     assert.match(scripts.lint, /"tests\/node\/\*\*\/\*\.ts"/);
     assert.match(scripts.lint, /"scripts\/node-foundation\/\*\*\/\*\.ts"/);
 
-    assert.match(scripts.coverage, /^c8 /);
-    assert.match(scripts.coverage, /npm test/);
+    assert.equal(scripts.coverage, 'c8 npm test');
+    assert.equal(scripts['coverage:fast'], 'c8 npm run test:fast');
     assert.doesNotMatch(scripts.coverage, /--check-coverage/);
 
     assert.equal(scripts['audit:prod'], 'npm audit --omit=dev');
@@ -95,6 +102,34 @@ test('package quality scripts expose lint, coverage, audit, and composed release
     assert.equal(scripts['release:preflight'], 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release');
     assert.match(scripts.prepack, /^npm run validate:clean-worktree && npm run build:publish-runtime/);
     assert.match(scripts.prepack, /&& npm run validate:clean-worktree && node scripts\/package-legacy-entrypoint-compat\.cjs create$/);
+});
+
+test('coverage configuration measures maintained source boundaries without generated trees', () => {
+    const c8 = getC8Config();
+
+    assert.equal(c8.all, true);
+    assert.deepEqual(c8.reporter, ['text', 'lcov']);
+    assert.deepEqual(c8.include, [
+        '.node-build/src/**/*.js',
+        '.node-build/scripts/node-foundation/**/*.js',
+        'src/**/*.ts',
+        'scripts/**/*.ts',
+        'scripts/**/*.cjs',
+        'bin/**/*.js'
+    ]);
+    assert.deepEqual(c8.exclude, [
+        'coverage/**',
+        'dist/**',
+        '.node-build/tests/**',
+        '.scripts-build/**',
+        'garda-agent-orchestrator/**',
+        'node_modules/**',
+        'tests/**'
+    ]);
+    assert.equal(c8.excludeAfterRemap, true);
+
+    const tsconfigTests = JSON.parse(readTextRepoFile('tsconfig.tests.json')) as { compilerOptions?: Record<string, unknown> };
+    assert.equal(tsconfigTests.compilerOptions?.sourceMap, true);
 });
 
 test('quality script dependencies and eslint config are present', () => {

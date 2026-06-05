@@ -45,8 +45,8 @@
     "validate:clean-worktree": "node scripts/node-foundation/build-scripts.cjs validate-release.js clean-worktree",
     "validate:release-readiness": "node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness",
     "lint": "eslint \"src/**/*.ts\" \"tests/node/**/*.ts\" \"scripts/node-foundation/**/*.ts\"",
-    "coverage": "c8 --reporter=text --reporter=lcov npm test",
-    "coverage:fast": "c8 --reporter=text --reporter=lcov npm run test:fast",
+    "coverage": "c8 npm test",
+    "coverage:fast": "c8 npm run test:fast",
     "audit:prod": "npm audit --omit=dev",
     "audit:all": "npm audit",
     "quality": "npm run typecheck && npm run lint && npm run coverage && npm run audit:prod",
@@ -97,6 +97,31 @@
   },
   "overrides": {
     "brace-expansion": "5.0.6"
+  },
+  "c8": {
+    "all": true,
+    "reporter": [
+      "text",
+      "lcov"
+    ],
+    "include": [
+      ".node-build/src/**/*.js",
+      ".node-build/scripts/node-foundation/**/*.js",
+      "src/**/*.ts",
+      "scripts/**/*.ts",
+      "scripts/**/*.cjs",
+      "bin/**/*.js"
+    ],
+    "exclude": [
+      "coverage/**",
+      "dist/**",
+      ".node-build/tests/**",
+      ".scripts-build/**",
+      "garda-agent-orchestrator/**",
+      "node_modules/**",
+      "tests/**"
+    ],
+    "excludeAfterRemap": true
   },
   "engines": {
     "node": "^22.13.0 || >=24.0.0"

@@ -41,6 +41,7 @@ export interface RepoCliSyncFsLike {
 
 const DEFAULT_REPO_CLI_SYNC_FS: RepoCliSyncFsLike = fs;
 const SCRIPT_RUNTIME_SUPPORT_FILES = Object.freeze(['build-root-lock.cjs']);
+const SOURCE_MAPPING_URL_COMMENT_RE = /(\r?\n)\/\/# sourceMappingURL=[^\r\n]+\.map\s*$/u;
 
 export function getRepoRoot(): string {
     let current = __dirname;
@@ -174,11 +175,20 @@ function fileContentMatches(filePath: string, expectedContent: Buffer, fileSyste
     return currentContent !== null && Buffer.compare(currentContent, expectedContent) === 0;
 }
 
+function normalizeRepoCliEntrypointContent(content: Buffer): Buffer {
+    const text = content.toString('utf8');
+    const normalized = text.replace(SOURCE_MAPPING_URL_COMMENT_RE, '$1');
+    return normalized === text ? content : Buffer.from(normalized, 'utf8');
+}
+
 function ensureExecutableMode(filePath: string, fileSystem: RepoCliSyncFsLike): void {
+    if (process.platform === 'win32') {
+        return;
+    }
     try {
         fileSystem.chmodSync(filePath, 0o755);
     } catch {
-        // Best-effort on Windows.
+        // Best-effort on filesystems that do not support POSIX modes.
     }
 }
 
@@ -294,7 +304,10 @@ export function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string, fi
 
     // Fast no-op path: skip lock acquisition when entrypoint is already up-to-date
     const compiledCliContentForCheck = readFileIfExists(primaryCompiledPath, fileSystem);
-    if (compiledCliContentForCheck !== null && fileContentMatches(repoCliPath, compiledCliContentForCheck, fileSystem)) {
+    const desiredCliContentForCheck = compiledCliContentForCheck === null
+        ? null
+        : normalizeRepoCliEntrypointContent(compiledCliContentForCheck);
+    if (desiredCliContentForCheck !== null && fileContentMatches(repoCliPath, desiredCliContentForCheck, fileSystem)) {
         ensureExecutableMode(repoCliPath, fileSystem);
         return repoCliPath;
     }
@@ -303,7 +316,7 @@ export function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string, fi
     fileSystem.mkdirSync(path.dirname(repoCliPath), { recursive: true });
     acquireRepoCliSyncLock(repoCliLockPath, fileSystem);
     try {
-        const compiledCliContent = fileSystem.readFileSync(primaryCompiledPath);
+        const compiledCliContent = normalizeRepoCliEntrypointContent(fileSystem.readFileSync(primaryCompiledPath));
         replaceRepoCliEntrypoint(repoCliPath, compiledCliContent, fileSystem);
     } finally {
         releaseRepoCliSyncLock(repoCliLockPath, fileSystem);

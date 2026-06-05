@@ -14,7 +14,7 @@
     "outDir": ".node-build",
     "rootDir": ".",
     "declaration": false,
-    "sourceMap": false,
+    "sourceMap": true,
     "resolveJsonModule": true
   },
   "include": [

@@ -101,6 +101,22 @@ test('syncRepoCliEntrypoint tolerates transient EBUSY when peer already updated 
     }
 });
 
+test('syncRepoCliEntrypoint strips test-build source map footer from repo launcher', () => {
+    const fixture = createRepoCliFixture();
+    const mappedContent = `${fixture.desiredContent}//# sourceMappingURL=garda.js.map\n`;
+
+    try {
+        writeTextFile(path.join(fixture.compiledRoot, 'src', 'bin', 'garda.js'), mappedContent);
+
+        const repoCliPath = syncRepoCliEntrypoint(fixture.compiledRoot, fixture.repoRoot);
+
+        assert.equal(repoCliPath, fixture.repoCliPath);
+        assert.equal(fs.readFileSync(fixture.repoCliPath, 'utf8'), fixture.desiredContent);
+    } finally {
+        fs.rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('syncRepoCliEntrypoint serializes concurrent workers without leaving temp files', async () => {
     const fixture = createRepoCliFixture();
     const buildModulePath = path.resolve(__dirname, '../../../scripts/node-foundation/build.js');

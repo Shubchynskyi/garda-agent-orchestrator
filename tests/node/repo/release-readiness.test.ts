@@ -66,8 +66,8 @@ function buildPackageJson(): string {
             'validate:release-readiness': 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness',
             'test:release-smoke': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts tests/node/packaging/pack-smoke.test.ts',
             lint: 'eslint "src/**/*.ts" "tests/node/**/*.ts" "scripts/node-foundation/**/*.ts"',
-            coverage: 'c8 --reporter=text --reporter=lcov npm test',
-            'coverage:fast': 'c8 --reporter=text --reporter=lcov npm run test:fast',
+            coverage: 'c8 npm test',
+            'coverage:fast': 'c8 npm run test:fast',
             'audit:prod': 'npm audit --omit=dev',
             quality: 'npm run typecheck && npm run lint && npm run coverage && npm run audit:prod',
             'quality:fast': 'npm run typecheck && npm run lint && npm run coverage:fast && npm run audit:prod',
@@ -83,6 +83,13 @@ function buildPackageJson(): string {
             'test:packaging': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/packaging/pack-smoke.test.ts',
             'test:full': 'node scripts/node-foundation/build-scripts.cjs test.js',
             'test:fast': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core'
+        },
+        c8: {
+            all: true,
+            reporter: ['text', 'lcov'],
+            include: ['.node-build/src/**/*.js', '.node-build/scripts/node-foundation/**/*.js', 'src/**/*.ts', 'scripts/**/*.ts', 'scripts/**/*.cjs', 'bin/**/*.js'],
+            exclude: ['coverage/**', 'dist/**', '.node-build/tests/**', '.scripts-build/**', 'garda-agent-orchestrator/**', 'node_modules/**', 'tests/**'],
+            excludeAfterRemap: true
         },
         files: [
             'bin',
