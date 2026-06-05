@@ -245,11 +245,27 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256
     });
+    const reviewOutputAttemptSha256 = stringSha256(JSON.stringify({
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: reviewerExecutionMode,
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: contextSha256,
+        routing_event_sha256: routingEventProvenance.event_sha256,
+        routing_event_task_sequence: routingEventProvenance.task_sequence,
+        reviewer_prompt_sha256: reviewerPromptSha256,
+        role_prompt_sha256: handoffBindings.rolePromptSha256 || null,
+        prompt_template_sha256: handoffBindings.promptTemplateSha256,
+        output_template_sha256: handoffBindings.outputTemplateSha256,
+        evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
+        review_tree_state_sha256: reviewTreeStateSha256 || null,
+        launch_binding_sha256: launchBindingSha256
+    }));
     let supersededLaunchArtifact: SupersededReviewerLaunchArtifactSnapshot | null = null;
     if (existingArtifact) {
         const existingEvidenceType = getStringField(existingArtifact, 'evidence_type', 'artifact_type');
         const existingAttestationState = getStringField(existingArtifact, 'attestation_state', 'attestationState');
-        const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath);
+        const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath, reviewOutputAttemptSha256);
         const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
             repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
             reviewType,
@@ -377,7 +393,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         reviewContextPath: contextPath,
         reviewerLaunchArtifactPath: launchArtifactPath
     });
-    const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath);
+    const reviewOutputPath = resolveReviewerDraftOutputPath(launchArtifactPath, reviewOutputAttemptSha256);
     const copyPasteReviewerLaunchPrompt = buildCopyPasteReviewerLaunchPrompt({
         repoRoot: toReviewerHandoffAbsolutePath(repoRoot, repoRoot),
         reviewType,
@@ -406,6 +422,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         'output_template_sha256',
         'evidence_manifest_sha256',
         'copy_paste_reviewer_launch_prompt_sha256',
+        'review_output_attempt_sha256',
         'review_tree_state_sha256',
         'launch_binding_sha256',
         'prepared_launch_event_sha256',
@@ -442,6 +459,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         evidence_manifest_path: normalizePath(handoffBindings.evidenceManifestPath),
         evidence_manifest_sha256: handoffBindings.evidenceManifestSha256,
         review_output_path: normalizePath(reviewOutputPath),
+        review_output_attempt_sha256: reviewOutputAttemptSha256,
         reviewer_launch_artifact_path: normalizePath(launchArtifactPath),
         reviewer_launch_input_artifact_path: normalizePath(launchInputArtifactPath),
         copy_paste_reviewer_launch_prompt: copyPasteReviewerLaunchPrompt,

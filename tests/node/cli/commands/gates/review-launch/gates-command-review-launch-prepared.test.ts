@@ -31,7 +31,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
         const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
         const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
-        const reviewOutputPath = path.join(path.dirname(launchArtifactPath), 'review-output.md');
+        const legacyReviewOutputPath = path.join(path.dirname(launchArtifactPath), 'review-output.md');
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -63,6 +63,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(observedExitCode, 0);
         assert.equal(fs.existsSync(launchArtifactPath), true);
         const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const reviewOutputPath = String(launchArtifact.review_output_path);
         assert.equal(launchArtifact.schema_version, 1);
         assert.equal(launchArtifact.evidence_type, 'delegated_reviewer_launch_preparation');
         assert.equal(launchArtifact.attestation_state, 'prepared');
@@ -78,7 +79,11 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.equal(launchArtifact.prompt_template_path, fixture.promptTemplatePath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.output_template_path, fixture.outputTemplatePath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.evidence_manifest_path, fixture.evidenceManifestPath.replace(/\\/g, '/'));
-        assert.equal(launchArtifact.review_output_path, reviewOutputPath.replace(/\\/g, '/'));
+        assert.match(path.basename(reviewOutputPath), /^review-output-[0-9a-f]{16}\.md$/);
+        assert.notEqual(reviewOutputPath, legacyReviewOutputPath.replace(/\\/g, '/'));
+        assert.equal(launchArtifact.review_output_path, reviewOutputPath);
+        assert.equal(typeof launchArtifact.review_output_attempt_sha256, 'string');
+        assert.match(launchArtifact.review_output_attempt_sha256, /^[0-9a-f]{64}$/);
         assert.equal(launchArtifact.reviewer_launch_artifact_path, launchArtifactPath.replace(/\\/g, '/'));
         assert.equal(launchArtifact.reviewer_launch_input_artifact_path, launchInputArtifactPath.replace(/\\/g, '/'));
         const rolePromptSha256 = createHash('sha256').update(fs.readFileSync(fixture.rolePromptPath)).digest('hex');
@@ -150,6 +155,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
             'output_template_sha256',
             'evidence_manifest_sha256',
             'copy_paste_reviewer_launch_prompt_sha256',
+            'review_output_attempt_sha256',
             'review_tree_state_sha256',
             'launch_binding_sha256',
             'prepared_launch_event_sha256',
@@ -660,6 +666,75 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('prepare-reviewer-launch gives a fresh reviewer attempt a distinct review output path', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-718-reviewer-output-attempt';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+
+        const firstPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(firstPrepare.exitCode, 0, firstPrepare.errors.join('\n'));
+        const firstArtifactText = fs.readFileSync(launchArtifactPath, 'utf8');
+        const firstArtifactSha256 = createHash('sha256').update(firstArtifactText, 'utf8').digest('hex');
+        const firstArtifact = JSON.parse(firstArtifactText);
+        const firstReviewOutputPath = String(firstArtifact.review_output_path);
+        const staleReviewOutputText = '# code review Output Template\n\n## Validation Notes\nfirst attempt\n';
+        fs.writeFileSync(firstReviewOutputPath, staleReviewOutputText, 'utf8');
+
+        const replacementReviewerIdentity = 'agent:test-reviewer-retry';
+        const reroute = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', replacementReviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(reroute.exitCode, 0, reroute.errors.join('\n'));
+
+        const secondPrepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', replacementReviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(secondPrepare.exitCode, 0, secondPrepare.errors.join('\n'));
+
+        const secondArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const secondReviewOutputPath = String(secondArtifact.review_output_path);
+        assert.match(path.basename(secondReviewOutputPath), /^review-output-[0-9a-f]{16}\.md$/);
+        assert.notEqual(secondReviewOutputPath, firstReviewOutputPath);
+        assert.equal(fs.readFileSync(firstReviewOutputPath, 'utf8'), staleReviewOutputText);
+        assert.equal(fs.existsSync(secondReviewOutputPath), false);
+        assert.ok(String(secondArtifact.copy_paste_reviewer_launch_prompt).includes(secondReviewOutputPath));
+        assert.equal(String(secondArtifact.copy_paste_reviewer_launch_prompt).includes(firstReviewOutputPath), false);
+        assert.equal(secondArtifact.superseded_launch_artifact.artifact_sha256, firstArtifactSha256);
+        assert.equal(
+            fs.existsSync(String(secondArtifact.superseded_launch_artifact.snapshot_path).replace(/\//g, path.sep)),
+            true
+        );
+        assert.ok(
+            secondArtifact.superseded_launch_artifact.mismatches.includes('reviewer_identity mismatch'),
+            secondArtifact.superseded_launch_artifact.superseded_reason
+        );
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('prepare-reviewer-launch leaves current prepared launch metadata unchanged', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-266-prepare-launch-current';
@@ -762,10 +837,13 @@ describe('cli/commands/gates review launch prepared metadata', () => {
 
         assert.equal(await runPrepare(), 0);
         const refreshedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
-        assert.equal(
+        assert.match(path.basename(String(refreshedArtifact.review_output_path)), /^review-output-[0-9a-f]{16}\.md$/);
+        assert.notEqual(
             refreshedArtifact.review_output_path,
             path.join(path.dirname(launchArtifactPath), 'review-output.md').replace(/\\/g, '/')
         );
+        assert.equal(typeof refreshedArtifact.review_output_attempt_sha256, 'string');
+        assert.match(refreshedArtifact.review_output_attempt_sha256, /^[0-9a-f]{64}$/);
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('First open and read RolePromptPath:'));
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Then open and read PromptTemplatePath:'));
         assert.ok(String(refreshedArtifact.copy_paste_reviewer_launch_prompt).includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.'));

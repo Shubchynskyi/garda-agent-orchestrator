@@ -112,8 +112,15 @@ export function buildRecordReviewResultCommand(options: {
     return commandParts.join(' ');
 }
 
-export function resolveReviewerDraftOutputPath(reviewerLaunchArtifactPath: string): string {
-    return path.join(path.dirname(reviewerLaunchArtifactPath), 'review-output.md');
+export function resolveReviewerDraftOutputPath(
+    reviewerLaunchArtifactPath: string,
+    reviewOutputAttemptSha256?: string | null
+): string {
+    const normalizedAttemptSha256 = String(reviewOutputAttemptSha256 || '').trim().toLowerCase();
+    const attemptSuffix = /^[0-9a-f]{64}$/.test(normalizedAttemptSha256)
+        ? `-${normalizedAttemptSha256.slice(0, 16)}`
+        : '';
+    return path.join(path.dirname(reviewerLaunchArtifactPath), `review-output${attemptSuffix}.md`);
 }
 
 export function buildCopyPasteReviewerLaunchPrompt(options: {
