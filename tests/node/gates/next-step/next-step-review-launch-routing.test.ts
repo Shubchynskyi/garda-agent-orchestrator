@@ -1450,6 +1450,8 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256'));
         assert.ok(result.reason.includes('do not invent a --launch-input-artifact-sha256 flag'));
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
+        assert.ok(result.reason.includes('Provider-owned placeholders in the command are only --provider-invocation-id and --attestation-source'));
+        assert.ok(result.reason.includes('Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed'));
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));
         assert.ok(result.reason.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
@@ -1461,6 +1463,8 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
         assert.equal(result.commands[0].label, 'Record delegated reviewer start');
         assert.ok(result.commands[0].command.includes('gate record-reviewer-delegation-started'));
+        assert.ok(result.commands[0].command.includes('--provider-invocation-id "<provider-owned invocation id from delegated reviewer launch result>"'));
+        assert.ok(result.commands[0].command.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
         assert.ok(result.commands[0].command.includes('--launch-input-mode "launch_artifact_path"'));
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
@@ -1536,6 +1540,7 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'complete-reviewer-launch', result.reason);
         assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        assert.ok(result.commands[0].command.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
         assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${pinnedInputArtifactSha256}"`));

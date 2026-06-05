@@ -287,6 +287,9 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.ok(helpOutput.includes('Launch a real subagent using built-in tools'));
         assert.ok(helpOutput.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(helpOutput.includes('this is expected behavior in this repository'));
+        assert.ok(helpOutput.includes('Provider-owned placeholders are --provider-invocation-id and --attestation-source'));
+        assert.ok(helpOutput.includes('--provider-invocation-id "<provider-owned invocation id from delegated reviewer launch result>"'));
+        assert.ok(helpOutput.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
         assert.ok(helpOutput.includes('--launch-input-sha256 takes ReviewerLaunchInputArtifactSha256'));
         assert.ok(helpOutput.includes('launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields'));
         assert.ok(helpOutput.includes('--launch-input-sha256 "<ReviewerLaunchInputArtifactSha256>"'));

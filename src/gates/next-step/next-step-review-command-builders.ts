@@ -8,6 +8,9 @@ import {
     toRepoDisplayPath
 } from './next-step-command-formatters';
 
+const PROVIDER_INVOCATION_ID_PLACEHOLDER = '<provider-owned invocation id from delegated reviewer launch result>';
+const PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER = '<provider-owned attestation source from delegated reviewer launch result>';
+
 export function buildTaskModePathCommandParts(
     repoRoot: string,
     taskId: string,
@@ -121,8 +124,8 @@ export function buildRecordReviewerDelegationStartedCommand(params: {
         '--reviewer-execution-mode "delegated_subagent"',
         `--reviewer-identity "${params.reviewerIdentity}"`,
         `--reviewer-launch-artifact-path "${params.launchArtifactPath}"`,
-        '--provider-invocation-id "<actual-invocation-id>"',
-        '--attestation-source "<provider-source>"',
+        `--provider-invocation-id "${PROVIDER_INVOCATION_ID_PLACEHOLDER}"`,
+        `--attestation-source "${PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER}"`,
         '--launch-input-mode "launch_artifact_path"',
         `--launch-input-artifact-path "${launchInputArtifactPath}"`,
         `--launch-input-sha256 "${launchInputArtifactSha256}"`,
@@ -152,7 +155,7 @@ export function buildCompleteReviewerLaunchCommand(params: {
         '--reviewer-execution-mode "delegated_subagent"',
         `--reviewer-identity "${params.reviewerIdentity}"`,
         `--reviewer-launch-artifact-path "${params.launchArtifactPath}"`,
-        '--attestation-source "<provider-source>"',
+        `--attestation-source "${PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER}"`,
         '--launch-input-mode "launch_artifact_path"',
         `--launch-input-artifact-path "${launchInputArtifactPath}"`,
         `--launch-input-sha256 "${launchInputArtifactSha256}"`,
