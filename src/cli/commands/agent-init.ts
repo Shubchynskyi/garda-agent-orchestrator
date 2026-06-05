@@ -4,7 +4,7 @@ import { buildFullSuiteDisabledGuidance } from '../../core/onboarding-contract';
 import { runAgentInit } from '../../lifecycle/agent-init';
 import { getNodeBundleCliCommand } from '../../materialization/command-constants';
 import { getStatusSnapshot } from '../../validators/status';
-import { buildProfileAwareNextLine } from '../../validators/task-command';
+import { buildProfileAwareQueueNextLine } from '../../validators/task-command';
 import {
     buildAgentReportBlock,
     buildGuardedCommandHelpText,
@@ -79,7 +79,7 @@ export function buildAgentInitOutput(result: ReturnType<typeof runAgentInit>): s
 
 export function buildAgentInitNextStep(result: ReturnType<typeof runAgentInit>): string {
     if (result.readyForTasks) {
-        return buildProfileAwareNextLine(result.bundleRoot || '', undefined, getNodeBundleCliCommand());
+        return buildProfileAwareQueueNextLine(result.targetRoot, result.bundleRoot || '', getNodeBundleCliCommand());
     }
 
     const blockers: string[] = [];

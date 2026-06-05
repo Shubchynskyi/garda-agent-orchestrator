@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
@@ -26,6 +27,35 @@ test('formatDoctorResult shows PASS for clean doctor', () => {
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.includes('Doctor: PASSED'));
     assert.ok(output.includes('Next: Execute task T-001'));
+});
+
+test('formatDoctorResult does not default to T-001 when TASK.md has no executable active-queue tasks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doctor-no-task-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            [
+                '# TASK.md',
+                '',
+                '## Active Queue',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-711 | 🟩 DONE | P2 | workflow | Done task | codex | 2026-06-05 | strict | done |',
+                '| T-708 | 🟪 DECOMPOSED | P2 | refactor | Parent task | codex | 2026-06-05 | strict | use children |',
+                '| T-721 | 🟥 BLOCKED | P0 | runtime | Blocked task | codex | 2026-06-05 | strict | blocked |',
+                ''
+            ].join('\n'),
+            'utf8'
+        );
+        const fakeResult = buildFakeDoctorResult({ targetRoot: tmpDir });
+        const output = formatDoctorResult(fakeResult);
+
+        assert.ok(output.includes('Doctor: PASSED'));
+        assert.ok(output.includes('Next: No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.'));
+        assert.ok(!output.includes('Next: Execute task T-001'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 

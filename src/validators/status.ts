@@ -34,7 +34,7 @@ import {
     formatToxinSummaryLines,
     type ToxinStatusSummary
 } from '../runtime/toxin-metrics';
-import { buildProfileAwareExecuteTaskNextCommand } from './task-command';
+import { resolveProfileAwareExecuteTaskRecommendation } from './task-command';
 import {
     assessProtectedManifest,
     type ProtectedManifestAssessment
@@ -471,7 +471,7 @@ function buildRecommendedNextCommand(options: {
     } = options;
 
     if (readyForTasks) {
-        return buildProfileAwareExecuteTaskNextCommand(bundlePath);
+        return resolveProfileAwareExecuteTaskRecommendation(resolvedTargetRoot, bundlePath);
     }
     if (parityResult.isStale && parityResult.remediation) {
         return parityResult.remediation;

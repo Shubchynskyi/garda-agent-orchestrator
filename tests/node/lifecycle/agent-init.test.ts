@@ -67,6 +67,18 @@ function makeCompliantEntrypoint(name: string): string {
     ].join('\n');
 }
 
+function makeActiveQueueTaskMd(rows: readonly string[]): string {
+    return [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        ...rows,
+        ''
+    ].join('\n');
+}
+
 test('runAgentInit writes finalized init answers and agent-init state', () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-'));
     const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
@@ -145,6 +157,56 @@ test('runAgentInit writes finalized init answers and agent-init state', () => {
         const nextStepLine = buildAgentInitNextStep(result);
         assert.ok(nextStepLine.includes('node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."'));
         assert.ok(!nextStepLine.includes('node bin/garda.js profile current|list|use|create --target-root "."'));
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildAgentInitNextStep does not default to T-001 when active queue has no executable tasks', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-no-task-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeText(
+            path.join(workspaceRoot, 'TASK.md'),
+            makeActiveQueueTaskMd([
+                '| T-711 | 🟩 DONE | P2 | workflow | Done task | codex | 2026-06-05 | strict | done |',
+                '| T-708 | 🟪 DECOMPOSED | P2 | refactor | Parent task | codex | 2026-06-05 | strict | use children |'
+            ])
+        );
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_INTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
+
+        const result = runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        const nextStepLine = buildAgentInitNextStep(result);
+        assert.ok(nextStepLine.includes('Next: No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.'));
+        assert.ok(!nextStepLine.includes('Execute task T-001'));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

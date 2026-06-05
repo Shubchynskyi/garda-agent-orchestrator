@@ -5,7 +5,7 @@ import { getBundlePath } from './workspace-layout';
 import {
     formatProviderComplianceDetail
 } from './provider-compliance';
-import { buildProfileAwareNextLine } from './task-command';
+import { buildProfileAwareQueueNextLine } from './task-command';
 import type { DoctorResult } from './doctor';
 
 const ANSI_RED = '\x1b[31m';
@@ -579,7 +579,7 @@ export function formatDoctorResult(result: DoctorResult): string {
 
     if (result.passed) {
         lines.push('Doctor: PASSED');
-        lines.push(buildProfileAwareNextLine(getBundlePath(result.targetRoot), undefined, `node ${resolveBundleName()}/bin/garda.js`));
+        lines.push(buildProfileAwareQueueNextLine(result.targetRoot, getBundlePath(result.targetRoot), `node ${resolveBundleName()}/bin/garda.js`));
     }
     else { lines.push('Doctor: FAIL'); lines.push('Resolve listed issues and rerun doctor.'); }
     return lines.join('\n');

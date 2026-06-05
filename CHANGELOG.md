@@ -31,6 +31,7 @@
 ### Reviews And Validation
 - Mandatory reviews require delegated fresh-context reviewer evidence with explicit routing, launch, invocation, receipt, and cleanup telemetry.
 - `garda doctor` now includes a report-only large-module decomposition section that highlights the largest source/test files, large declarations, and matching open follow-up tasks.
+- Ready-state task recommendations in `garda status`, `garda doctor`, and `agent-init` now resolve the first executable task from the canonical `TASK.md` Active Queue instead of falling back to `T-001`; terminal-only queues now print a clear no-executable-task message.
 - Antigravity generated instructions now explicitly stop instead of fabricating independent review artifacts when no real provider sub-agent launch tool is available.
 - Reviewer handoffs now include prompt/template/evidence/output paths plus exact verdict-token guidance, reducing malformed review outputs.
 - Reviewer launch handoffs now use an immutable `ReviewerLaunchInputArtifactPath` for artifact-path mode, keeping the prepared input hash separate from the later completed launch artifact hash.

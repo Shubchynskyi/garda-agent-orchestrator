@@ -73,6 +73,18 @@ function writeProfilesConfig(bundlePath: string, profileConfig: { active_profile
     );
 }
 
+function makeActiveQueueTaskMd(rows: readonly string[]): string {
+    return [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        ...rows,
+        ''
+    ].join('\n');
+}
+
 function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options: Record<string, unknown> = {}) {
     const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
     const runtimePath = path.join(bundlePath, 'runtime');
@@ -90,7 +102,9 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
         ActiveAgentFiles: activeAgentFiles
     }));
     writeStatusFixtureFile(path.join(bundlePath, 'live', 'USAGE.md'), '# Usage\n');
-    writeStatusFixtureFile(path.join(tmpDir, 'TASK.md'), '# Tasks\n');
+    writeStatusFixtureFile(path.join(tmpDir, 'TASK.md'), typeof options.taskMdContent === 'string'
+        ? options.taskMdContent
+        : '# Tasks\n');
     writeStatusFixtureFile(path.join(liveRulesPath, '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
 
     // Create entrypoint files and shared router for compliance checks.
@@ -477,6 +491,130 @@ test('getStatusSnapshot marks workspace ready only after AGENT_INIT_PROMPT initi
         assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.agentInitializationPendingReason, null);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot recommends the first executable task from TASK.md active queue', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-711 | 🟩 DONE | P2 | workflow | Done task | codex | 2026-06-05 | strict | done |',
+                '| T-708 | 🟪 DECOMPOSED | P2 | refactor | Parent task | codex | 2026-06-05 | strict | use children |',
+                '| T-721 | 🟥 BLOCKED | P0 | runtime | Blocked task | codex | 2026-06-05 | strict | blocked |',
+                '| T-722 | 🟦 TODO | P0 | validators | Resolve status recommendation | codex | 2026-06-05 | strict | next |',
+                '| T-723 | 🟦 TODO | P1 | release | Later task | codex | 2026-06-05 | strict | later |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.readyForTasks, true);
+        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-722 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot ignores T-001 outside the active queue ID column', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-722 | 🟦 TODO | P0 | validators | Do not pick T-001 from title | codex | 2026-06-05 | strict | T-001 appears only in notes |',
+                '| T-723 | 🟦 TODO | P1 | release | Later task | codex | 2026-06-05 | strict | later |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.readyForTasks, true);
+        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-722 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+        assert.ok(!snapshot.recommendedNextCommand.includes('T-001'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot does not default to T-001 when active queue has no executable tasks', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-711 | 🟩 DONE | P2 | workflow | Done task | codex | 2026-06-05 | strict | done |',
+                '| T-708 | 🟪 DECOMPOSED | P2 | refactor | Parent task | codex | 2026-06-05 | strict | use children |',
+                '| T-721 | 🟥 BLOCKED | P0 | runtime | Blocked task | codex | 2026-06-05 | strict | blocked |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.readyForTasks, true);
+        assert.equal(snapshot.recommendedNextCommand, 'No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.');
+        assert.ok(!snapshot.recommendedNextCommand.includes('T-001'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot does not default to T-001 when active queue table is empty', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.readyForTasks, true);
+        assert.equal(snapshot.recommendedNextCommand, 'No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.');
+        assert.ok(!snapshot.recommendedNextCommand.includes('T-001'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
