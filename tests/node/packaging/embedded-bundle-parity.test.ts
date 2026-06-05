@@ -74,8 +74,11 @@ test('validateEmbeddedBundleParity allows omitted generated bundle', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-embedded-parity-omitted-'));
     try {
         const result = validateEmbeddedBundleParity(repoRoot);
-        assert.equal(result.passed, true, formatEmbeddedBundleParityResult(result));
+        const output = formatEmbeddedBundleParityResult(result);
+        assert.equal(result.passed, true, output);
         assert.equal(result.bundlePresent, false);
+        assert.match(output, /RELEASE_EMBEDDED_BUNDLE_PARITY_SKIPPED/);
+        assert.doesNotMatch(output, /RELEASE_EMBEDDED_BUNDLE_PARITY_OK/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -89,11 +92,32 @@ test('validateEmbeddedBundleParity treats gitignored generated bundle as omitted
         writeFile(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), 'console.log("stale ignored bundle");\n');
 
         const result = validateEmbeddedBundleParity(repoRoot);
+        const output = formatEmbeddedBundleParityResult(result);
 
-        assert.equal(result.passed, true, formatEmbeddedBundleParityResult(result));
+        assert.equal(result.passed, true, output);
         assert.equal(result.bundlePresent, true);
         assert.equal(result.bundleIgnoredByGit, true);
         assert.equal(result.items.length, 0);
+        assert.match(output, /RELEASE_EMBEDDED_BUNDLE_PARITY_SKIPPED/);
+        assert.doesNotMatch(output, /RELEASE_EMBEDDED_BUNDLE_PARITY_OK/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('formatEmbeddedBundleParityResult reports skipped parity when no items are checked', () => {
+    const repoRoot = createParityFixture();
+    try {
+        const result = validateEmbeddedBundleParity(repoRoot, []);
+        const output = formatEmbeddedBundleParityResult(result);
+
+        assert.equal(result.passed, true, output);
+        assert.equal(result.bundlePresent, true);
+        assert.equal(result.items.length, 0);
+        assert.match(output, /RELEASE_EMBEDDED_BUNDLE_PARITY_SKIPPED/);
+        assert.doesNotMatch(output, /RELEASE_EMBEDDED_BUNDLE_PARITY_OK/);
+        assert.match(output, /ParityStatus: SKIPPED \(no embedded bundle parity items checked\)/);
+        assert.match(output, /CheckedItems: 0/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

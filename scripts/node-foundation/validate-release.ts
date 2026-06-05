@@ -1061,6 +1061,7 @@ export function formatReleaseVersionParityResult(result: ReleaseVersionParityRes
 
 export function formatEmbeddedBundleParityResult(result: EmbeddedBundleParityResult): string {
     const lines: string[] = [];
+    const checkedItemCount = result.bundlePresent && !result.bundleIgnoredByGit ? result.checkedItems.length : 0;
 
     if (!result.passed) {
         lines.push('RELEASE_EMBEDDED_BUNDLE_PARITY_FAILED');
@@ -1074,7 +1075,6 @@ export function formatEmbeddedBundleParityResult(result: EmbeddedBundleParityRes
         return lines.join('\n');
     }
 
-    lines.push('RELEASE_EMBEDDED_BUNDLE_PARITY_OK');
     lines.push(`RepoRoot: ${result.repoRoot}`);
     lines.push(`BundleRoot: ${result.bundleRoot}`);
     if (result.bundleIgnoredByGit) {
@@ -1082,7 +1082,13 @@ export function formatEmbeddedBundleParityResult(result: EmbeddedBundleParityRes
     } else {
         lines.push(`BundlePresent: ${result.bundlePresent ? 'yes' : 'no (generated artifact omitted)'}`);
     }
-    lines.push(`CheckedItems: ${result.bundlePresent && !result.bundleIgnoredByGit ? result.checkedItems.length : 0}`);
+    if (checkedItemCount === 0) {
+        lines.unshift('RELEASE_EMBEDDED_BUNDLE_PARITY_SKIPPED');
+        lines.push('ParityStatus: SKIPPED (no embedded bundle parity items checked)');
+    } else {
+        lines.unshift('RELEASE_EMBEDDED_BUNDLE_PARITY_OK');
+    }
+    lines.push(`CheckedItems: ${checkedItemCount}`);
     return lines.join('\n');
 }
 
