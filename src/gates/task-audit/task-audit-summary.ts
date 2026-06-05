@@ -525,6 +525,27 @@ function readReviewExecutionPolicyModeFromCurrentCycleTimeline(
     return null;
 }
 
+function filterNotRequiredEvidenceArtifacts(
+    evidence: EvidenceArtifact[],
+    options: {
+        fullSuiteRequired: boolean;
+        completionGatePassed: boolean;
+    }
+): EvidenceArtifact[] {
+    return evidence.filter((artifact) => {
+        if (artifact.exists) {
+            return true;
+        }
+        if (!options.fullSuiteRequired && artifact.kind === 'full-suite-validation') {
+            return false;
+        }
+        if (options.completionGatePassed && artifact.kind === 'completion-gate') {
+            return false;
+        }
+        return true;
+    });
+}
+
 export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAuditSummaryResult {
     const repoRoot = path.resolve(options.repoRoot);
     const safeTaskId = assertValidTaskId(options.taskId);
@@ -645,13 +666,16 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
             events,
             currentCycle
         );
-        const evidence = collectEvidenceArtifacts(
+        const evidence = filterNotRequiredEvidenceArtifacts(collectEvidenceArtifacts(
             repoRoot,
             reviewsRoot,
             safeTaskId,
             taskEventFile,
             projectMemoryImpactEvidence
-        );
+        ), {
+            fullSuiteRequired: fullSuiteValidationRequiredForLifecycle,
+            completionGatePassed: hasCompletionPass
+        });
         const reviewGate = safeReadJson(reviewGatePath);
         const reviewVerdicts = readReviewVerdicts(requiredReviews, reviewGate);
         const receiptReviewTrustSummary = readReviewTrustSummary(

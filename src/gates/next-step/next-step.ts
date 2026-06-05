@@ -827,6 +827,24 @@ function buildFinalCloseoutMissingArtifacts(
     }));
 }
 
+function filterNotRequiredCoreMissingArtifacts(
+    missingArtifacts: NextStepArtifactState[],
+    options: {
+        fullSuiteRequired: boolean;
+        completionGatePassed: boolean;
+    }
+): NextStepArtifactState[] {
+    return missingArtifacts.filter((artifact) => {
+        if (!options.fullSuiteRequired && artifact.key === 'full-suite-validation') {
+            return false;
+        }
+        if (options.completionGatePassed && artifact.key === 'completion-gate') {
+            return false;
+        }
+        return true;
+    });
+}
+
 function buildInvalidationImpactSummary(params: {
     status: NextStepStatus;
     nextGate: string | null;
@@ -1197,12 +1215,16 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             projectMemoryEvidence.required ? projectMemoryEvidence.artifact_path : null
         )
     );
+    const filteredMissingArtifacts = filterNotRequiredCoreMissingArtifacts(coreArtifacts.missing, {
+        fullSuiteRequired: fullSuiteConfig.enabled && !fullSuiteNotRequiredForCurrentScope,
+        completionGatePassed: isGatePassed(summary, 'completion-gate')
+    });
 
     const sourceRuntimeStaleness = detectSourceCheckoutRuntimeStaleness(repoRoot);
     const resultBase = {
         taskId,
         navigatorCommand,
-        missingArtifacts: coreArtifacts.missing,
+        missingArtifacts: filteredMissingArtifacts,
         presentArtifacts: coreArtifacts.present,
         fullSuite: fullSuiteSummary,
         projectMemory: projectMemorySummary,
@@ -1437,7 +1459,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             title: doneRoute.title,
             reason: doneRoute.reason,
             commands: doneRoute.commands,
-            missingArtifacts: doneRoute.status === 'DONE' ? [] : coreArtifacts.missing,
+            missingArtifacts: doneRoute.status === 'DONE' ? [] : filteredMissingArtifacts,
             presentArtifacts: coreArtifacts.present,
             finalReport: null
         });

@@ -784,9 +784,43 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_report_contract.status, 'READY');
             assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
             assert.equal(result.blockers.some((blocker) => blocker.gate === 'full-suite-validation'), false);
+            assert.equal(result.evidence.some((entry) => entry.kind === 'full-suite-validation' && !entry.exists), false);
+            assert.equal(result.evidence.some((entry) => entry.kind === 'completion-gate' && !entry.exists), false);
             assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: false');
             assert.equal(result.final_closeout.workflow?.review_execution_policy_mode, 'code_first_optional');
             assert.equal(result.final_closeout.workflow?.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
+        });
+
+        it('omits zero-diff not-required full-suite and passed completion from absent evidence diagnostics', () => {
+            writeWorkflowConfig(tmpDir, true);
+            writePassedLifecycle(eventsDir, TASK_ID);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: [],
+                metrics: { changed_lines_total: 0 },
+                required_reviews: {},
+                scope_category: 'empty',
+                zero_diff_guard: {
+                    zero_diff_detected: true,
+                    status: 'BASELINE_ONLY',
+                    completion_requires_audited_no_op: true
+                },
+                profile_guardrails: {
+                    zero_diff_no_reviewable_scope: true
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.status, 'PASS');
+            assert.equal(result.gates.some((gate) => gate.gate === 'full-suite-validation'), false);
+            assert.equal(result.evidence.some((entry) => entry.kind === 'full-suite-validation' && !entry.exists), false);
+            assert.equal(result.evidence.some((entry) => entry.kind === 'completion-gate' && !entry.exists), false);
+            assert.equal(result.final_closeout.workflow?.visible_summary_line, 'Mandatory full-suite: false');
         });
 
         it('requires full-suite again when an older skipped event is followed by a newer compile cycle', () => {

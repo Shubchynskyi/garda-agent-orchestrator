@@ -1563,6 +1563,50 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'required-reviews-check');
         assert.equal(result.title, 'Validate zero-diff no-review closeout.');
         assert.ok(result.commands[0].command.includes('gate required-reviews-check'));
+        assert.equal(result.missing_artifacts.some((artifact) => artifact.key === 'full-suite-validation'), false);
+        assert.equal(result.missing_artifacts.some((artifact) => artifact.key === 'completion-gate'), true);
+    });
+
+    it('omits passed completion and not-required full-suite from zero-diff closeout diagnostics', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'strict_sequential'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        preflight.profile_guardrails = {
+            zero_diff_no_reviewable_scope: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+        writeNoOpEvidence(repoRoot, TASK_ID, preflightPath);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'task-audit-summary');
+        assert.deepEqual(
+            result.missing_artifacts.map((artifact) => artifact.key),
+            ['final-closeout-json', 'final-closeout-markdown', 'final-user-report']
+        );
     });
 
     it('routes stale zero-diff no-op evidence back to record-no-op', () => {
