@@ -302,6 +302,8 @@ describe('cli/commands/gates command help and syntax remediation', () => {
 
         assert.ok(helpOutput.includes('provider/controller-assigned agent:<id>'));
         assert.ok(helpOutput.includes('create or reserve a clean-context reviewer session before routing and preparing the handoff'));
+        assert.ok(helpOutput.includes('resume the same session and send the exact ReviewerLaunchInputArtifactPath'));
+        assert.ok(helpOutput.includes('standby completion is expected provider handshake noise, not review evidence'));
     });
 
     it('does not treat --help as a standalone help request when it is a string option value', async () => {

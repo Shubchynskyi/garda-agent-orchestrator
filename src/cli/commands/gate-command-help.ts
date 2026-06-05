@@ -327,7 +327,7 @@ function buildReviewGateHelpEntries(
         },
         'prepare-reviewer-launch': {
             ...createSingleUsageEntry(
-                'Prepare task-owned delegated reviewer launch metadata from the current routing event and review context; this is not completed invocation evidence. The reviewer identity is the provider/controller-assigned agent:<id>, so controllers may need to create or reserve a clean-context reviewer session before routing and preparing the handoff.',
+                'Prepare task-owned delegated reviewer launch metadata from the current routing event and review context; this is not completed invocation evidence. The reviewer identity is the provider/controller-assigned agent:<id>, so controllers may need to create or reserve a clean-context reviewer session before routing and preparing the handoff. If that session reaches standby before launch input exists, resume the same session and send the exact ReviewerLaunchInputArtifactPath after prepare-reviewer-launch; the standby completion is expected provider handshake noise, not review evidence.',
                 `${cliPrefix} gate prepare-reviewer-launch --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent:...>" --reviewer-launch-artifact-path "${buildBundleRelativePath(bundleName, `runtime/tmp/reviews/${TASK_ID_PLACEHOLDER}/<review-type>/reviewer-launch.json`)}" --repo-root "."`,
                 true
             )

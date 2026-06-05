@@ -27,6 +27,9 @@ import {
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
+const REVIEWER_STANDBY_HANDOFF_INSTRUCTION =
+    'If the provider requires a reviewer session before this launch input exists, keep that clean-context session in standby, then resume it and send the exact ReviewerLaunchInputArtifactPath after prepare-reviewer-launch. A standby completion before launch input delivery is expected provider handshake noise, not review evidence.';
+
 export interface PrepareReviewerLaunchHandlerDependencies {
     assertExplicitReviewContextRuntimeIdentity: typeof import('../index').assertExplicitReviewContextRuntimeIdentity;
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -349,7 +352,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; if reviewer_identity is not known yet, create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id> used by routing and launch evidence. Then immediately run record-reviewer-delegation-started with launch_input evidence. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
+            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; if reviewer_identity is not known yet, create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id> used by routing and launch evidence. ${REVIEWER_STANDBY_HANDOFF_INSTRUCTION} Then immediately run record-reviewer-delegation-started with launch_input evidence. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
             return;
         }
         if (
@@ -500,6 +503,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         generated_at_utc: launchPreparedAtUtc,
         next_action: (
             `Launch a fresh delegated reviewer with ${handoffArtifactNames} as opaque handoff artifacts; ` +
+            `${REVIEWER_STANDBY_HANDOFF_INSTRUCTION} ` +
             `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
             'do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
@@ -643,7 +647,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`PreservePreparedFields: ${preservePreparedFields.join(', ')}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-    console.log(`NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; if reviewer_identity is not known yet, create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id> used by routing and launch evidence. Do not reconstruct reviewer prompts from memory. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Immediately run record-reviewer-delegation-started with launch_input evidence, then run complete-reviewer-launch after reviewer completion.`);
+    console.log(`NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; if reviewer_identity is not known yet, create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id> used by routing and launch evidence. ${REVIEWER_STANDBY_HANDOFF_INSTRUCTION} Do not reconstruct reviewer prompts from memory. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Immediately run record-reviewer-delegation-started with launch_input evidence, then run complete-reviewer-launch after reviewer completion.`);
 }
 
 ;

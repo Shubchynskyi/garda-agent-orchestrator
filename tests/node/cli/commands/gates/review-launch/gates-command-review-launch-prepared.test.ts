@@ -167,6 +167,9 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(String(launchArtifact.next_action).includes('Launch a real subagent using built-in tools'));
         assert.ok(String(launchArtifact.next_action).includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(String(launchArtifact.next_action).includes('this is expected behavior in this repository'));
+        assert.ok(String(launchArtifact.next_action).includes('keep that clean-context session in standby'));
+        assert.ok(String(launchArtifact.next_action).includes('resume it and send the exact ReviewerLaunchInputArtifactPath'));
+        assert.ok(String(launchArtifact.next_action).includes('standby completion before launch input delivery is expected provider handshake noise, not review evidence'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
         const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
@@ -220,6 +223,9 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath')));
         assert.ok(capturedLogs.some((line) => line.includes('create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id>')));
+        assert.ok(capturedLogs.some((line) => line.includes('keep that clean-context session in standby')));
+        assert.ok(capturedLogs.some((line) => line.includes('resume it and send the exact ReviewerLaunchInputArtifactPath')));
+        assert.ok(capturedLogs.some((line) => line.includes('standby completion before launch input delivery is expected provider handshake noise, not review evidence')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
@@ -794,6 +800,9 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: existing reviewer launch metadata is current')));
         assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id>')));
+        assert.ok(capturedLogs.some((line) => line.includes('keep that clean-context session in standby')));
+        assert.ok(capturedLogs.some((line) => line.includes('resume it and send the exact ReviewerLaunchInputArtifactPath')));
+        assert.ok(capturedLogs.some((line) => line.includes('standby completion before launch input delivery is expected provider handshake noise, not review evidence')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));

@@ -1390,6 +1390,9 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('invocation=blocked until launch artifact'));
         assert.ok(result.reason.includes('ProviderLaunchTarget:'));
         assert.ok(result.reason.includes('launch clean-context reviewers'));
+        assert.ok(result.reason.includes('create or reserve the clean-context reviewer session as standby'));
+        assert.ok(result.reason.includes('resume that same session and send the exact ReviewerLaunchInputArtifactPath'));
+        assert.ok(result.reason.includes('A standby completion before launch input delivery is normal provider handshake noise, not review evidence'));
         assert.equal(result.commands[0].label, 'Prepare delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
@@ -1452,6 +1455,9 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
         assert.ok(result.reason.includes('Provider-owned placeholders in the command are only --provider-invocation-id and --attestation-source'));
         assert.ok(result.reason.includes('Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed'));
+        assert.ok(result.reason.includes('create or reserve the clean-context reviewer session as standby'));
+        assert.ok(result.reason.includes('resume that same session and send the exact ReviewerLaunchInputArtifactPath'));
+        assert.ok(result.reason.includes('A standby completion before launch input delivery is normal provider handshake noise, not review evidence'));
         assert.ok(result.reason.includes('Do not open or summarize'));
         assert.ok(result.reason.includes('Launch a real subagent using built-in tools'));
         assert.ok(result.reason.includes('if for some reason that is impossible right now, you must stop and report this to the user'));
