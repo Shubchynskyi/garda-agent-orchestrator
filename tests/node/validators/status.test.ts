@@ -529,6 +529,37 @@ test('getStatusSnapshot recommends the first executable task from TASK.md active
     }
 });
 
+test('getStatusSnapshot recommends an in-progress task before a later todo task', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-722-F1 | 🟨 IN_PROGRESS | P2 | tests | Resume current recommendation test | codex | 2026-06-05 | balanced | first executable row |',
+                '| T-723 | 🟦 TODO | P1 | release | Later task | codex | 2026-06-05 | strict | later TODO row |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.readyForTasks, true);
+        assert.equal(snapshot.recommendedNextCommand, 'Execute task T-722-F1 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+        assert.ok(!snapshot.recommendedNextCommand.includes('T-723'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getStatusSnapshot ignores T-001 outside the active queue ID column', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {
