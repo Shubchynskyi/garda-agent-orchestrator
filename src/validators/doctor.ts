@@ -52,6 +52,7 @@ import {
     collectLargeModuleReport,
     type LargeModuleReport
 } from './large-module-report';
+import { readTaskQueueStatusMap } from './task-status-map';
 
 // Re-export extracted collectors for backward compatibility
 export { checkRuntimeMismatch, nodeVersionSatisfiesRange, type RuntimeMismatchEvidence } from './doctor-runtime';
@@ -275,7 +276,9 @@ export function runDoctor(options: DoctorOptions): DoctorResult {
         allowSourceCheckoutInfo: true
     });
 
-    const timelineScan = collectTimelineSummaryForDoctor(bundlePath);
+    const taskPath = path.join(targetRoot, 'TASK.md');
+    const taskStatuses = readTaskQueueStatusMap(taskPath, pathExists(taskPath));
+    const timelineScan = collectTimelineSummaryForDoctor(bundlePath, { taskStatuses });
 
     const lockEvidence = collectLockHealth({
         bundlePath: bundlePath,

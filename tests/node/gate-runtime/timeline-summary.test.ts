@@ -24,6 +24,7 @@ import {
     acquireFilesystemLock,
     releaseFilesystemLock
 } from '../../../src/gate-runtime/task-events-locking';
+import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 
 function createTempDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'timeline-summary-test-'));
@@ -80,6 +81,36 @@ const ALL_MANDATORY_CODE_CHANGE = [
 ];
 
 function writeTimeline(dirPath: string, taskId: string, eventTypes: string[]): string {
+    const eventsDir = path.join(dirPath, 'runtime', 'task-events');
+    fs.mkdirSync(eventsDir, { recursive: true });
+    const timelinePath = path.join(eventsDir, `${taskId}.jsonl`);
+    let previousEventSha256: string | null = null;
+    const lines = eventTypes.map((et, index) => {
+        const event: Record<string, unknown> = {
+            timestamp_utc: new Date().toISOString(),
+            task_id: taskId,
+            event_type: et,
+            outcome: 'PASS',
+            actor: 'gate',
+            message: 'test',
+            details: {},
+            integrity: {
+                schema_version: 1,
+                task_sequence: index + 1,
+                prev_event_sha256: previousEventSha256,
+                event_sha256: ''
+            }
+        };
+        const eventSha256 = buildEventIntegrityHash(event);
+        (event.integrity as Record<string, unknown>).event_sha256 = eventSha256;
+        previousEventSha256 = eventSha256;
+        return JSON.stringify(event);
+    });
+    fs.writeFileSync(timelinePath, lines.join('\n') + '\n', 'utf8');
+    return timelinePath;
+}
+
+function writeLegacyTimeline(dirPath: string, taskId: string, eventTypes: string[]): string {
     const eventsDir = path.join(dirPath, 'runtime', 'task-events');
     fs.mkdirSync(eventsDir, { recursive: true });
     const timelinePath = path.join(eventsDir, `${taskId}.jsonl`);
@@ -616,7 +647,7 @@ describe('gate-runtime/timeline-summary', () => {
             const result = collectTimelineSummaryForStatus(bundlePath);
             assert.equal(result.taskCount, 1);
             assert.equal(result.healthy, 0);
-            assert.ok(result.warnings.some(w => w.includes('Incomplete timeline')));
+            assert.ok(result.warnings.some(w => w.includes('INCOMPLETE timeline')));
         });
 
         it('falls back to full read when summary cache is missing', () => {
@@ -673,7 +704,7 @@ describe('gate-runtime/timeline-summary', () => {
             const result = collectTimelineSummaryForStatus(bundlePath);
             assert.equal(result.taskCount, 1);
             assert.equal(result.healthy, 0);
-            assert.ok(result.warnings.some(w => w.includes('Empty timeline')));
+            assert.ok(result.warnings.some(w => w.includes('INVALID timeline: T-001.jsonl')));
         });
 
         it('ignores all-tasks.jsonl', () => {
@@ -686,7 +717,7 @@ describe('gate-runtime/timeline-summary', () => {
             assert.equal(result.taskCount, 0);
         });
 
-        it('ignores invalid and reserved timeline file names', () => {
+        it('classifies invalid timeline file names and ignores reserved indexes', () => {
             const bundlePath = tempDir;
             const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
             fs.mkdirSync(eventsRoot, { recursive: true });
@@ -696,7 +727,12 @@ describe('gate-runtime/timeline-summary', () => {
 
             const result = collectTimelineSummaryForStatus(bundlePath);
             assert.equal(result.taskCount, 0);
-            assert.deepEqual(result.warnings, []);
+            assert.equal(result.healthy, 0);
+            assert.equal(result.warnings.length, 3);
+            assert.ok(result.warnings.some(w => w.includes('INVALID timeline file: --help.jsonl')));
+            assert.ok(result.warnings.some(w => w.includes('invalid task id')));
+            assert.ok(result.warnings.every(w => !w.includes('next-step')));
+            assert.ok(result.warnings.every(w => !w.includes('timeline-summary.jsonl')));
         });
     });
 
@@ -715,7 +751,7 @@ describe('gate-runtime/timeline-summary', () => {
 
         it('returns detailed evidence from summary cache', () => {
             const bundlePath = tempDir;
-            writeTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
+            writeLegacyTimeline(tempDir, 'T-001', ALL_MANDATORY_NON_CODE);
             const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
 
             updateTimelineSummaryForTask(eventsRoot, 'T-001', false);
@@ -740,7 +776,7 @@ describe('gate-runtime/timeline-summary', () => {
             assert.equal(result.evidence[0].completeness_status, 'COMPLETE');
         });
 
-        it('ignores invalid and reserved timeline file names', () => {
+        it('classifies invalid timeline file names and ignores reserved indexes', () => {
             const bundlePath = tempDir;
             const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
             fs.mkdirSync(eventsRoot, { recursive: true });
@@ -750,7 +786,10 @@ describe('gate-runtime/timeline-summary', () => {
 
             const result = collectTimelineSummaryForDoctor(bundlePath);
             assert.deepEqual(result.evidence, []);
-            assert.deepEqual(result.warnings, []);
+            assert.equal(result.warnings.length, 3);
+            assert.ok(result.warnings.some(w => w.includes('INVALID timeline file: --help.jsonl')));
+            assert.ok(result.warnings.every(w => !w.includes('next-step')));
+            assert.ok(result.warnings.every(w => !w.includes('timeline-summary.jsonl')));
         });
 
         it('warns about integrity failures from cache', () => {

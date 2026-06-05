@@ -12,6 +12,7 @@ import {
 } from '../../../src/validators';
 import { buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
 import { writeProtectedControlPlaneManifest } from '../../../src/gates/shared/helpers';
+import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 
 const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
@@ -145,6 +146,26 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
             JSON.stringify(agentInitState)
         );
     }
+}
+
+function writeIntegrityTaskModeEvent(timelinePath: string, taskId: string, message = 'Task mode entered.') {
+    const taskModeEvent: Record<string, unknown> = {
+        timestamp_utc: '2026-03-28T10:00:00.000Z',
+        task_id: taskId,
+        event_type: 'TASK_MODE_ENTERED',
+        outcome: 'PASS',
+        actor: 'gate',
+        message,
+        details: {},
+        integrity: {
+            schema_version: 1,
+            task_sequence: 1,
+            prev_event_sha256: null,
+            event_sha256: ''
+        }
+    };
+    (taskModeEvent.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(taskModeEvent);
+    writeStatusFixtureFile(timelinePath, JSON.stringify(taskModeEvent) + '\n');
 }
 
 function seedMatchingSourceCheckoutParity(tmpDir: string) {
@@ -1022,22 +1043,171 @@ test('getStatusSnapshot warns about incomplete task timelines', () => {
 
         const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
         const timelinePath = path.join(bundlePath, 'runtime', 'task-events', 'T-001.jsonl');
-        writeStatusFixtureFile(timelinePath, JSON.stringify({
+        const taskModeEvent: Record<string, unknown> = {
             timestamp_utc: '2026-03-28T10:00:00.000Z',
             task_id: 'T-001',
             event_type: 'TASK_MODE_ENTERED',
             outcome: 'PASS',
             actor: 'gate',
             message: 'Task mode entered.',
-            details: {}
-        }) + '\n');
+            details: {},
+            integrity: {
+                schema_version: 1,
+                task_sequence: 1,
+                prev_event_sha256: null,
+                event_sha256: ''
+            }
+        };
+        (taskModeEvent.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(taskModeEvent);
+        writeStatusFixtureFile(timelinePath, JSON.stringify(taskModeEvent) + '\n');
 
         const snapshot = getStatusSnapshot(tmpDir);
         const output = formatStatusSnapshot(snapshot);
         assert.equal(snapshot.timelineTaskCount, 1);
         assert.equal(snapshot.timelineHealthy, 0);
-        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('Incomplete timeline: T-001.jsonl')));
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('INCOMPLETE timeline: T-001.jsonl')));
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('Repair: resume T-001 with node bin/garda.js next-step "T-001" --repo-root "."')));
         assert.ok(output.includes('TaskTimelines: 0/1 complete'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatStatusSnapshot shows invalid timeline warnings even when no canonical timelines exist', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+        writeStatusFixtureFile(path.join(eventsRoot, '--help.jsonl'), 'not a canonical timeline\n');
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        const output = formatStatusSnapshot(snapshot);
+        assert.equal(snapshot.timelineTaskCount, 0);
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('INVALID timeline file: --help.jsonl')));
+        assert.ok(output.includes('TaskTimelines: 0/0 complete'));
+        assert.ok(output.includes('Warning: INVALID timeline file: --help.jsonl'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot distinguishes active blocked incomplete timelines from abandoned incomplete timelines', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-020 | 🟥 BLOCKED | P1 | runtime | Active blocker | codex | 2026-06-05 | strict | blocked_reason_code=EXTERNAL |',
+                '| T-CLI-ART | 🟥 BLOCKED | P1 | runtime | Alphanumeric blocker | codex | 2026-06-05 | strict | blocked_reason_code=EXTERNAL |',
+                '| T-021 | 🟨 IN_PROGRESS | P1 | runtime | Abandoned partial | codex | 2026-06-05 | strict | partial lifecycle |'
+            ]),
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+        writeIntegrityTaskModeEvent(path.join(eventsRoot, 'T-020.jsonl'), 'T-020');
+        writeIntegrityTaskModeEvent(path.join(eventsRoot, 'T-CLI-ART.jsonl'), 'T-CLI-ART');
+        writeIntegrityTaskModeEvent(path.join(eventsRoot, 'T-021.jsonl'), 'T-021');
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.timelineTaskCount, 3);
+        assert.equal(snapshot.timelineHealthy, 0);
+        assert.ok(snapshot.timelineWarnings.some((warning) =>
+            warning.includes('INCOMPLETE timeline: T-020.jsonl')
+            && warning.includes('Repair: resolve the active BLOCKED task state for T-020 in TASK.md')
+        ));
+        assert.ok(snapshot.timelineWarnings.some((warning) =>
+            warning.includes('INCOMPLETE timeline: T-CLI-ART.jsonl')
+            && warning.includes('Repair: resolve the active BLOCKED task state for T-CLI-ART in TASK.md')
+        ));
+        assert.ok(snapshot.timelineWarnings.some((warning) =>
+            warning.includes('INCOMPLETE timeline: T-021.jsonl')
+            && warning.includes('Repair: resume T-021 with node bin/garda.js next-step "T-021" --repo-root "."')
+        ));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getStatusSnapshot classifies invalid legacy and integrity-failed task timelines with repair guidance', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
+        writeStatusFixtureFile(path.join(eventsRoot, 'T-010.jsonl'), '{ not json }\n');
+        writeStatusFixtureFile(path.join(eventsRoot, 'T-011.jsonl'), JSON.stringify({
+            timestamp_utc: '2026-03-28T10:00:00.000Z',
+            task_id: 'T-011',
+            event_type: 'TASK_MODE_ENTERED',
+            outcome: 'PASS',
+            actor: 'gate',
+            message: 'Legacy task mode entered.',
+            details: {}
+        }) + '\n');
+        writeStatusFixtureFile(path.join(eventsRoot, 'T-012.jsonl'), JSON.stringify({
+            timestamp_utc: '2026-03-28T10:00:00.000Z',
+            task_id: 'T-012',
+            event_type: 'TASK_MODE_ENTERED',
+            outcome: 'PASS',
+            actor: 'gate',
+            message: 'Task mode entered.',
+            details: {},
+            integrity: {
+                schema_version: 1,
+                task_sequence: 1,
+                prev_event_sha256: null,
+                event_sha256: '0'.repeat(64)
+            }
+        }) + '\n');
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.timelineTaskCount, 3);
+        assert.equal(snapshot.timelineHealthy, 0);
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('INVALID timeline: T-010.jsonl')));
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('LEGACY timeline: T-011.jsonl')));
+        assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('INTEGRITY_FAILED timeline: T-012.jsonl')));
+        assert.equal(snapshot.timelineWarnings.filter((warning) => warning.includes('Repair:')).length, 3);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

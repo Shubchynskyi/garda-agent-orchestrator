@@ -6,10 +6,12 @@ import * as path from 'node:path';
 
 import {
     formatDoctorResult,
-    formatDoctorResultCompact
+    formatDoctorResultCompact,
+    runDoctor
 } from '../../../src/validators/doctor';
 import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
 import { buildFakeDoctorResult, createDoctorWorkspace, DEFAULT_NEW_EVIDENCE } from './doctor-workspace-builder';
+import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 
 // formatDoctorResult: verify + manifest output
 
@@ -104,15 +106,111 @@ test('formatDoctorResult includes timeline completeness warnings', () => {
             integrity_event_count: 5,
             violations: []
         }],
-        timelineWarnings: ['Timeline completeness INCOMPLETE for T-004: REVIEW_PHASE_STARTED, COMPLETION_GATE_PASSED']
+        timelineWarnings: [
+            'INCOMPLETE timeline: T-004.jsonl (REVIEW_PHASE_STARTED; COMPLETION_GATE_PASSED). Repair: resume T-004 with node bin/garda.js next-step "T-004" --repo-root "." and complete the missing lifecycle gates'
+        ]
     });
 
     const output = formatDoctorResult(fakeResult);
     assert.ok(output.includes('Timeline Evidence'));
     assert.ok(output.includes('T-004: integrity=PASS, completeness=INCOMPLETE'));
     assert.ok(output.includes('Timeline Warnings'));
+    assert.ok(output.includes('INCOMPLETE timeline: T-004.jsonl'));
+    assert.ok(output.includes('Repair: resume T-004'));
     assert.ok(output.includes('REVIEW_PHASE_STARTED'));
     assert.ok(output.includes('Doctor: FAIL'));
+});
+
+test('runDoctor uses TASK.md status to classify active blocked incomplete timelines', () => {
+    const workspace = createDoctorWorkspace({
+        manifestContent: [
+            '- MANIFEST.md',
+            '- VERSION',
+            '- package.json',
+            '- bin/garda.js',
+            '- live/docs/agent-rules/00-core.md',
+            '- live/config/review-capabilities.json',
+            '- live/config/paths.json',
+            '- live/config/token-economy.json',
+            '- live/config/output-filters.json',
+            '- live/config/skill-packs.json',
+            '- live/config/skills-index.json',
+            '- live/config/skills-headlines.json',
+            '- live/config/garda.config.json',
+            '- runtime/init-answers.json'
+        ].join('\n') + '\n'
+    });
+    try {
+        fs.writeFileSync(
+            path.join(workspace.tmpDir, 'TASK.md'),
+            [
+                '# TASK.md',
+                '',
+                '## Active Queue',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-CLI-ART | 🟥 BLOCKED | P1 | runtime | Active blocker | codex | 2026-06-05 | strict | blocked_reason_code=EXTERNAL |',
+                ''
+            ].join('\n'),
+            'utf8'
+        );
+        fs.writeFileSync(path.join(workspace.bundlePath, 'VERSION'), '1.0.0\n', 'utf8');
+        fs.writeFileSync(path.join(workspace.bundlePath, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }), 'utf8');
+        fs.mkdirSync(path.join(workspace.bundlePath, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(workspace.bundlePath, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        fs.mkdirSync(path.join(workspace.bundlePath, 'live', 'docs', 'agent-rules'), { recursive: true });
+        fs.writeFileSync(path.join(workspace.bundlePath, 'live', 'docs', 'agent-rules', '00-core.md'), '# Core\n', 'utf8');
+        const configDir = path.join(workspace.bundlePath, 'live', 'config');
+        fs.mkdirSync(configDir, { recursive: true });
+        for (const name of [
+            'review-capabilities.json',
+            'paths.json',
+            'token-economy.json',
+            'output-filters.json',
+            'skill-packs.json',
+            'skills-index.json',
+            'skills-headlines.json',
+            'garda.config.json'
+        ]) {
+            fs.writeFileSync(path.join(configDir, name), '{}\n', 'utf8');
+        }
+        const runtimeDir = path.join(workspace.bundlePath, 'runtime');
+        fs.mkdirSync(runtimeDir, { recursive: true });
+        fs.writeFileSync(path.join(runtimeDir, 'init-answers.json'), JSON.stringify({ SourceOfTruth: 'Codex' }), 'utf8');
+
+        const timelineEvent: Record<string, unknown> = {
+            timestamp_utc: '2026-03-28T10:00:00.000Z',
+            task_id: 'T-CLI-ART',
+            event_type: 'TASK_MODE_ENTERED',
+            outcome: 'PASS',
+            actor: 'gate',
+            message: 'Task mode entered.',
+            details: {},
+            integrity: {
+                schema_version: 1,
+                task_sequence: 1,
+                prev_event_sha256: null,
+                event_sha256: ''
+            }
+        };
+        (timelineEvent.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(timelineEvent);
+        const timelinePath = path.join(runtimeDir, 'task-events', 'T-CLI-ART.jsonl');
+        fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+        fs.writeFileSync(timelinePath, JSON.stringify(timelineEvent) + '\n', 'utf8');
+
+        const result = runDoctor({
+            targetRoot: workspace.tmpDir,
+            sourceOfTruth: 'Codex',
+            activeAgentFiles: []
+        });
+
+        assert.ok(result.timelineWarnings.some((warning) =>
+            warning.includes('INCOMPLETE timeline: T-CLI-ART.jsonl')
+            && warning.includes('Repair: resolve the active BLOCKED task state for T-CLI-ART in TASK.md')
+        ));
+    } finally {
+        workspace.cleanup();
+    }
 });
 
 test('formatDoctorResult prints failure summary before detailed evidence', () => {

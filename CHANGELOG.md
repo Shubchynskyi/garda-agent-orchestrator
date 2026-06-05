@@ -47,6 +47,7 @@
 - Compile-gate command selection can now be configured through `workflow-config.json`, `garda workflow set --compile-gate-command`, and the local UI settings editor, while unconfigured workspaces keep the legacy `40-commands.md` fallback.
 - Full-suite validation, docs-only scopes, ordinary docs, and test-only deltas now have clearer routing so unnecessary expensive review/test cycles are avoided without weakening freshness checks.
 - Full-suite timeout guidance now accounts for recent high-watermark runtime instead of relying only on averages, and external timeout cleanup now terminates child process trees more reliably.
+- Task timeline diagnostics in `garda status`, `garda doctor`, and `repair rebuild-indexes` now distinguish invalid filenames, legacy incomplete histories, active incomplete blockers, and integrity failures with more specific repair guidance.
 
 ### Cleanup And Runtime Retention
 - `garda html` now handles large runtime histories more quickly by rendering lazy or bounded task details by default.

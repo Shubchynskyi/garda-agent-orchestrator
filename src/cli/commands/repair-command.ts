@@ -43,6 +43,7 @@ import {
     resolveTargetRoot
 } from './workspace-helpers';
 import { parseTaskIdJsonlFileName } from '../../core/task-ids';
+import { RESERVED_TASK_EVENT_TIMELINE_NAMES } from '../../core/task-ids';
 
 type RepairAction = 'inspect' | 'rebuild-indexes' | 'protected-manifest' | 'locks';
 
@@ -82,6 +83,8 @@ export interface RepairRebuildIndexesResult {
     bundleRoot: string;
     dryRun: boolean;
     task_event_files: number;
+    invalid_task_event_files: string[];
+    invalid_task_event_file_actions: RepairInvalidTaskEventFileAction[];
     timeline_summary_path: string;
     timeline_summary_entries_before: number;
     timeline_summary_entries_after: number;
@@ -91,6 +94,12 @@ export interface RepairRebuildIndexesResult {
     reviews_index_status: string;
     reviews_index_entries_after: number;
     warnings: string[];
+}
+
+export interface RepairInvalidTaskEventFileAction {
+    path: string;
+    action: 'ignore_invalid_task_id' | 'quarantine_candidate';
+    reason: string;
 }
 
 export interface RepairProtectedManifestResult {
@@ -144,6 +153,39 @@ function listTaskEventTaskIds(eventsRoot: string): string[] {
     } catch {
         return [];
     }
+}
+
+function isReservedTaskEventJsonlFile(fileName: string): boolean {
+    if (!fileName.endsWith('.jsonl')) {
+        return false;
+    }
+    const stem = fileName.slice(0, -'.jsonl'.length).trim().toLowerCase();
+    return RESERVED_TASK_EVENT_TIMELINE_NAMES.has(stem);
+}
+
+function listInvalidTaskEventJsonlFiles(eventsRoot: string): string[] {
+    try {
+        if (!fs.existsSync(eventsRoot) || !fs.statSync(eventsRoot).isDirectory()) {
+            return [];
+        }
+        return fs.readdirSync(eventsRoot)
+            .filter((entry) =>
+                entry.endsWith('.jsonl')
+                && !isReservedTaskEventJsonlFile(entry)
+                && parseTaskIdJsonlFileName(entry) === null
+            )
+            .sort();
+    } catch {
+        return [];
+    }
+}
+
+function buildInvalidTaskEventFileActions(eventsRoot: string, fileNames: string[]): RepairInvalidTaskEventFileAction[] {
+    return fileNames.map((fileName) => ({
+        path: path.join(eventsRoot, fileName).replace(/\\/g, '/'),
+        action: 'quarantine_candidate',
+        reason: `Invalid task-event timeline filename '${fileName}' does not map to a canonical task id; repair rebuild-indexes ignores it so valid histories remain untouched.`
+    }));
 }
 
 function readTimelineEntryCount(eventsRoot: string): number {
@@ -213,6 +255,8 @@ export function runRepairRebuildIndexes(targetRoot: string, confirm: boolean): R
     const eventsRoot = getTaskEventsRoot(bundleRoot);
     const reviewsRoot = getReviewsRoot(bundleRoot);
     const taskIds = listTaskEventTaskIds(eventsRoot);
+    const invalidTaskEventFiles = listInvalidTaskEventJsonlFiles(eventsRoot);
+    const invalidTaskEventFileActions = buildInvalidTaskEventFileActions(eventsRoot, invalidTaskEventFiles);
     const beforeTimelineEntries = readTimelineEntryCount(eventsRoot);
     const rebuiltTasks: string[] = [];
     const failedTasks: string[] = [];
@@ -242,6 +286,8 @@ export function runRepairRebuildIndexes(targetRoot: string, confirm: boolean): R
         bundleRoot,
         dryRun: !confirm,
         task_event_files: taskIds.length,
+        invalid_task_event_files: invalidTaskEventFiles,
+        invalid_task_event_file_actions: invalidTaskEventFileActions,
         timeline_summary_path: getTimelineSummaryPath(eventsRoot).replace(/\\/g, '/'),
         timeline_summary_entries_before: beforeTimelineEntries,
         timeline_summary_entries_after: confirm ? readTimelineEntryCount(eventsRoot) : beforeTimelineEntries,
@@ -336,6 +382,12 @@ function printRebuildIndexesResult(result: RepairRebuildIndexesResult): void {
         'reviews_index_status',
         'reviews_index_entries_after'
     ]);
+    if (result.invalid_task_event_file_actions.length > 0) {
+        console.log(yellow(`Invalid task-event timeline proposals: ${result.invalid_task_event_file_actions.length}`));
+        for (const action of result.invalid_task_event_file_actions) {
+            console.log(`  - ${action.action}: ${action.path} (${action.reason})`);
+        }
+    }
     if (result.warnings.length > 0) {
         console.log(yellow(`Warnings: ${result.warnings.length}`));
         for (const warning of result.warnings) {

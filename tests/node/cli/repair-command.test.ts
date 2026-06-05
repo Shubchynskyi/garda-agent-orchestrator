@@ -151,6 +151,39 @@ test('repair rebuild-indexes is dry-run by default and rebuilds only with confir
     }
 });
 
+test('repair rebuild-indexes dry-run proposes quarantine for invalid task ids without touching valid histories', () => {
+    const fixture = makeRepairFixture();
+    try {
+        const eventsRoot = path.join(fixture.bundleRoot, 'runtime', 'task-events');
+        const validTimelinePath = path.join(eventsRoot, 'T-002.jsonl');
+        const invalidTimelinePath = path.join(eventsRoot, '--help.jsonl');
+        const reservedIndexPath = path.join(eventsRoot, 'timeline-summary.jsonl');
+        fs.writeFileSync(validTimelinePath, '', 'utf8');
+        fs.writeFileSync(invalidTimelinePath, 'not a task timeline\n', 'utf8');
+        fs.writeFileSync(reservedIndexPath, 'derived index\n', 'utf8');
+
+        const dryRun = runRepairRebuildIndexes(fixture.root, false);
+        assert.equal(dryRun.dryRun, true);
+        assert.equal(dryRun.task_event_files, 2);
+        assert.deepEqual(dryRun.invalid_task_event_files, ['--help.jsonl']);
+        assert.equal(dryRun.invalid_task_event_file_actions.length, 1);
+        assert.equal(dryRun.invalid_task_event_file_actions[0].action, 'quarantine_candidate');
+        assert.match(dryRun.invalid_task_event_file_actions[0].reason, /valid histories remain untouched/);
+        assert.equal(fs.existsSync(validTimelinePath), true);
+        assert.equal(fs.existsSync(invalidTimelinePath), true);
+        assert.equal(fs.existsSync(reservedIndexPath), true);
+
+        const applied = runRepairRebuildIndexes(fixture.root, true);
+        assert.equal(applied.dryRun, false);
+        assert.deepEqual(applied.invalid_task_event_files, ['--help.jsonl']);
+        assert.equal(fs.existsSync(validTimelinePath), true);
+        assert.equal(fs.existsSync(invalidTimelinePath), true);
+        assert.equal(fs.existsSync(reservedIndexPath), true);
+    } finally {
+        fixture.cleanup();
+    }
+});
+
 test('repair protected-manifest previews before writing trusted manifest', () => {
     const fixture = makeRepairFixture();
     try {

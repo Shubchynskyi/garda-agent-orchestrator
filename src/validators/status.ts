@@ -39,6 +39,7 @@ import {
     assessProtectedManifest,
     type ProtectedManifestAssessment
 } from './protected-manifest-assessment';
+import { readTaskQueueStatusMap } from './task-status-map';
 
 type InitAnswers = ReturnType<typeof validateInitAnswers>;
 
@@ -393,7 +394,11 @@ function readProtectedManifestEvidence(
     }
 }
 
-function readTimelineSummary(bundlePath: string, bundlePresent: boolean): TimelineSummary {
+function readTimelineSummary(
+    bundlePath: string,
+    bundlePresent: boolean,
+    taskStatuses: ReadonlyMap<string, string>
+): TimelineSummary {
     if (!bundlePresent) {
         return {
             taskCount: 0,
@@ -401,7 +406,7 @@ function readTimelineSummary(bundlePath: string, bundlePresent: boolean): Timeli
             warnings: []
         };
     }
-    return collectTimelineSummaryForStatus(bundlePath);
+    return collectTimelineSummaryForStatus(bundlePath, { taskStatuses });
 }
 
 function readActiveProfile(bundlePath: string, bundlePresent: boolean): string | null {
@@ -629,7 +634,7 @@ function buildPendingCheckpointLine(snapshot: StatusSnapshot): string | null {
 }
 
 function appendTimelineLines(lines: string[], snapshot: StatusSnapshot): void {
-    if (snapshot.timelineTaskCount === 0) {
+    if (snapshot.timelineTaskCount === 0 && snapshot.timelineWarnings.length === 0) {
         return;
     }
 
@@ -743,7 +748,8 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     const activeAgentFilesValue = currentActiveAgentFiles.length > 0
         ? currentActiveAgentFiles.join(', ')
         : null;
-    const timelineSummary = readTimelineSummary(bundlePath, bundlePresent);
+    const taskStatuses = readTaskQueueStatusMap(taskPath, taskPresent);
+    const timelineSummary = readTimelineSummary(bundlePath, bundlePresent, taskStatuses);
     const activeProfile = readActiveProfile(bundlePath, bundlePresent);
     const toxinMetricsSummary = readToxinMetricsSummary(resolvedTargetRoot, bundlePath, bundlePresent);
     const mandatoryFullSuiteEnabled = bundlePresent ? readMandatoryFullSuiteEnabled(bundlePath) : null;

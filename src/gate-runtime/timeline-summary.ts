@@ -10,7 +10,7 @@ import { inspectTaskEventFile } from './task-events';
 import { withFilesystemLock } from './task-events-locking';
 import { detectCodeChanged } from '../gates/preflight/preflight-code-change';
 import { loadFullSuiteValidationConfig } from '../gates/full-suite/full-suite-validation';
-import { parseTaskIdJsonlFileName } from '../core/task-ids';
+import { parseTaskIdJsonlFileName, RESERVED_TASK_EVENT_TIMELINE_NAMES } from '../core/task-ids';
 
 const SUMMARY_VERSION = 2;
 const SUMMARY_FILE_NAME = '.timeline-summary.json';
@@ -62,6 +62,10 @@ export interface StatusTimelineSummary {
     warnings: string[];
 }
 
+export interface TimelineSummaryCollectionOptions {
+    taskStatuses?: ReadonlyMap<string, string>;
+}
+
 export interface DoctorTimelineEvidence {
     task_id: string;
     timeline_path: string;
@@ -77,6 +81,19 @@ export interface DoctorTimelineEvidence {
 export interface DoctorTimelineSummary {
     evidence: DoctorTimelineEvidence[];
     warnings: string[];
+}
+
+type TimelineIssueKind = 'INVALID' | 'LEGACY' | 'INCOMPLETE' | 'INTEGRITY_FAILED';
+
+interface TimelineIssueInput {
+    taskId: string;
+    fileName: string;
+    timelinePath: string;
+    taskStatus?: string | null;
+    integrityStatus: string;
+    completenessStatus: string;
+    eventsMissing: string[];
+    integrityViolations: string[];
 }
 
 export function getTimelineSummaryPath(eventsRoot: string): string {
@@ -472,10 +489,18 @@ export function pruneTimelineSummaryEntries(eventsRoot: string): void {
     }
 }
 
+function isReservedTimelineJsonlFile(fileName: string): boolean {
+    if (!fileName.endsWith('.jsonl')) {
+        return false;
+    }
+    const stem = fileName.slice(0, -'.jsonl'.length).trim().toLowerCase();
+    return RESERVED_TASK_EVENT_TIMELINE_NAMES.has(stem);
+}
+
 function listTimelineJsonlFiles(eventsRoot: string): string[] {
     try {
         return fs.readdirSync(eventsRoot)
-            .filter((name: string) => parseTaskIdJsonlFileName(name) !== null);
+            .filter((name: string) => name.endsWith('.jsonl') && !isReservedTimelineJsonlFile(name));
     } catch {
         return [];
     }
@@ -506,8 +531,88 @@ function detectCodeChangedFromPreflight(bundlePath: string, taskId: string): boo
     }
 }
 
+function shortenIssueDetails(details: string[]): string {
+    const normalized = details
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    if (normalized.length === 0) {
+        return 'none recorded';
+    }
+    return normalized.slice(0, 3).join('; ');
+}
+
+function buildTimelineRepairGuidance(
+    kind: TimelineIssueKind,
+    taskId: string,
+    timelinePath: string,
+    taskStatus?: string | null
+): string {
+    const displayPath = timelinePath.replace(/\\/g, '/');
+    switch (kind) {
+        case 'INVALID':
+            return `inspect ${displayPath}; remove or restore malformed/foreign records, then run node bin/garda.js repair rebuild-indexes --confirm --repo-root "."`;
+        case 'LEGACY':
+            return `keep as historical evidence or replay/re-enter ${taskId} through current gates; then run node bin/garda.js repair rebuild-indexes --confirm --repo-root "."`;
+        case 'INTEGRITY_FAILED':
+            return `treat ${displayPath} as tampered/corrupt evidence; restore from trusted backup or reset the task before rebuilding indexes`;
+        case 'INCOMPLETE':
+            if (taskStatus === 'BLOCKED') {
+                return `resolve the active BLOCKED task state for ${taskId} in TASK.md, then resume with node bin/garda.js next-step "${taskId}" --repo-root "."`;
+            }
+            if (taskStatus === 'SPLIT_REQUIRED') {
+                return `complete the SPLIT_REQUIRED decomposition path for ${taskId} in TASK.md, then resume with node bin/garda.js next-step "${taskId}" --repo-root "."`;
+            }
+            return `resume ${taskId} with node bin/garda.js next-step "${taskId}" --repo-root "." and complete the missing lifecycle gates`;
+        default:
+            return `inspect ${displayPath}`;
+    }
+}
+
+function classifyTimelineIssue(input: TimelineIssueInput): string | null {
+    let kind: TimelineIssueKind | null = null;
+    let details: string[] = [];
+
+    if (input.integrityStatus === 'MISSING' || input.integrityStatus === 'EMPTY') {
+        kind = 'INVALID';
+        details = input.integrityViolations.length > 0
+            ? input.integrityViolations
+            : [`integrity status ${input.integrityStatus}`];
+    } else if (
+        input.integrityStatus === 'FAILED'
+        && input.integrityViolations.some((violation) =>
+            violation.includes('invalid JSON') || violation.includes('foreign task_id')
+        )
+    ) {
+        kind = 'INVALID';
+        details = input.integrityViolations;
+    } else if (input.integrityStatus === 'FAILED') {
+        kind = 'INTEGRITY_FAILED';
+        details = input.integrityViolations;
+    } else if (input.integrityStatus === 'LEGACY_ONLY' || input.integrityStatus === 'PASS_WITH_LEGACY_PREFIX') {
+        kind = 'LEGACY';
+        details = [`integrity status ${input.integrityStatus}`];
+    } else if (input.completenessStatus !== 'COMPLETE') {
+        kind = 'INCOMPLETE';
+        details = input.eventsMissing;
+    }
+
+    if (!kind) {
+        return null;
+    }
+
+    return `${kind} timeline: ${input.fileName} (${shortenIssueDetails(details)}). Repair: ${buildTimelineRepairGuidance(kind, input.taskId, input.timelinePath, input.taskStatus)}`;
+}
+
+function buildInvalidTimelineFileWarning(fileName: string, timelinePath: string): string {
+    const stem = fileName.endsWith('.jsonl') ? fileName.slice(0, -'.jsonl'.length).trim() : fileName;
+    return `INVALID timeline file: ${fileName} (invalid task id '${stem}'). Repair: remove or rename ${timelinePath.replace(/\\/g, '/')} to a canonical T-<segment>(-<segment>)*.jsonl timeline filename before rebuilding derived indexes`;
+}
+
 // Read-only — never writes to disk.
-export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimelineSummary {
+export function collectTimelineSummaryForStatus(
+    bundlePath: string,
+    options: TimelineSummaryCollectionOptions = {}
+): StatusTimelineSummary {
     const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
     const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
     if (!fs.existsSync(eventsRoot)) {
@@ -525,17 +630,29 @@ export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimel
 
     for (const fileName of files) {
         const taskId = parseTaskIdJsonlFileName(fileName);
-        if (!taskId) continue;
         const timelinePath = path.join(eventsRoot, fileName);
+        if (!taskId) {
+            warnings.push(buildInvalidTimelineFileWarning(fileName, timelinePath));
+            continue;
+        }
         const cached = summary?.entries[taskId] ?? null;
+        const taskStatus = options.taskStatuses?.get(taskId) ?? null;
 
         if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath, fullSuiteValidationEnabled)) {
-            if (cached.completeness_status === 'COMPLETE') {
+            const issue = classifyTimelineIssue({
+                taskId,
+                fileName,
+                timelinePath,
+                taskStatus,
+                integrityStatus: cached.integrity_status,
+                completenessStatus: cached.completeness_status,
+                eventsMissing: cached.events_missing,
+                integrityViolations: cached.integrity_violations
+            });
+            if (!issue) {
                 healthy++;
             } else {
-                warnings.push(
-                    'Incomplete timeline: ' + fileName + ' (' + cached.events_missing.join(', ') + ')'
-                );
+                warnings.push(issue);
             }
             continue;
         }
@@ -549,26 +666,61 @@ export function collectTimelineSummaryForStatus(bundlePath: string): StatusTimel
                     codeChanged,
                     fullSuiteValidationEnabled
                 });
-                if (completeness.status === 'COMPLETE') {
+                const inspectResult = inspectTaskEventFile(timelinePath, taskId);
+                const issue = classifyTimelineIssue({
+                    taskId,
+                    fileName,
+                    timelinePath,
+                    taskStatus,
+                    integrityStatus: inspectResult.status,
+                    completenessStatus: completeness.status,
+                    eventsMissing: completeness.events_missing,
+                    integrityViolations: inspectResult.violations
+                });
+                if (!issue) {
                     healthy++;
                 } else {
-                    warnings.push(
-                        'Incomplete timeline: ' + fileName + ' (' + completeness.events_missing.join(', ') + ')'
-                    );
+                    warnings.push(issue);
                 }
             } else {
-                warnings.push('Empty timeline: ' + fileName);
+                warnings.push(classifyTimelineIssue({
+                    taskId,
+                    fileName,
+                    timelinePath,
+                    taskStatus,
+                    integrityStatus: 'EMPTY',
+                    completenessStatus: 'INCOMPLETE',
+                    eventsMissing: [],
+                    integrityViolations: []
+                }) || `INVALID timeline: ${fileName}`);
             }
-        } catch {
-            warnings.push('Unreadable timeline: ' + fileName);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            warnings.push(classifyTimelineIssue({
+                taskId,
+                fileName,
+                timelinePath,
+                taskStatus,
+                integrityStatus: 'MISSING',
+                completenessStatus: 'INCOMPLETE',
+                eventsMissing: [],
+                integrityViolations: [`scan error: ${msg}`]
+            }) || `INVALID timeline: ${fileName}`);
         }
     }
 
-    return { taskCount: files.length, healthy, warnings };
+    return {
+        taskCount: files.filter((fileName) => parseTaskIdJsonlFileName(fileName) !== null).length,
+        healthy,
+        warnings
+    };
 }
 
 // Read-only — never writes to disk.
-export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimelineSummary {
+export function collectTimelineSummaryForDoctor(
+    bundlePath: string,
+    options: TimelineSummaryCollectionOptions = {}
+): DoctorTimelineSummary {
     const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
     const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
     if (!fs.existsSync(eventsRoot)) {
@@ -586,9 +738,13 @@ export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimel
 
     for (const fileName of files) {
         const taskId = parseTaskIdJsonlFileName(fileName);
-        if (!taskId) continue;
         const timelinePath = path.join(eventsRoot, fileName);
+        if (!taskId) {
+            warnings.push(buildInvalidTimelineFileWarning(fileName, timelinePath));
+            continue;
+        }
         const cached = summary?.entries[taskId] ?? null;
+        const taskStatus = options.taskStatuses?.get(taskId) ?? null;
 
         if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath, fullSuiteValidationEnabled)) {
             const item: DoctorTimelineEvidence = {
@@ -604,18 +760,18 @@ export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimel
             };
             evidence.push(item);
 
-            if (cached.integrity_status === 'FAILED') {
-                warnings.push(
-                    'Timeline integrity FAILED for ' + taskId + ': ' +
-                    cached.integrity_violations.join('; ')
-                );
-            } else if (cached.integrity_status === 'EMPTY') {
-                warnings.push('Timeline is EMPTY for ' + taskId + ': ' + timelinePath.replace(/\\/g, '/'));
-            } else if (cached.completeness_status !== 'COMPLETE') {
-                warnings.push(
-                    'Timeline completeness ' + cached.completeness_status + ' for ' + taskId + ': ' +
-                    cached.events_missing.join(', ')
-                );
+            const issue = classifyTimelineIssue({
+                taskId,
+                fileName,
+                timelinePath,
+                taskStatus,
+                integrityStatus: cached.integrity_status,
+                completenessStatus: cached.completeness_status,
+                eventsMissing: cached.events_missing,
+                integrityViolations: cached.integrity_violations
+            });
+            if (issue) {
+                warnings.push(issue);
             }
             continue;
         }
@@ -642,22 +798,31 @@ export function collectTimelineSummaryForDoctor(bundlePath: string): DoctorTimel
             };
             evidence.push(item);
 
-            if (inspectResult.status === 'FAILED') {
-                warnings.push(
-                    'Timeline integrity FAILED for ' + taskId + ': ' +
-                    inspectResult.violations.join('; ')
-                );
-            } else if (inspectResult.status === 'EMPTY') {
-                warnings.push('Timeline is EMPTY for ' + taskId + ': ' + timelinePath.replace(/\\/g, '/'));
-            } else if (completeness.status !== 'COMPLETE') {
-                warnings.push(
-                    'Timeline completeness ' + completeness.status + ' for ' + taskId + ': ' +
-                    completeness.events_missing.join(', ')
-                );
+            const issue = classifyTimelineIssue({
+                taskId,
+                fileName,
+                timelinePath,
+                taskStatus,
+                integrityStatus: inspectResult.status,
+                completenessStatus: completeness.status,
+                eventsMissing: completeness.events_missing,
+                integrityViolations: inspectResult.violations
+            });
+            if (issue) {
+                warnings.push(issue);
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            warnings.push('Timeline scan error for ' + taskId + ': ' + msg);
+            warnings.push(classifyTimelineIssue({
+                taskId,
+                fileName,
+                timelinePath,
+                taskStatus,
+                integrityStatus: 'MISSING',
+                completenessStatus: 'INCOMPLETE',
+                eventsMissing: [],
+                integrityViolations: [`scan error: ${msg}`]
+            }) || `INVALID timeline: ${fileName}`);
         }
     }
 
