@@ -64,6 +64,7 @@ function buildPackageJson(): string {
             'validate:embedded-bundle-parity': 'node scripts/node-foundation/build-scripts.cjs validate-release.js embedded-bundle-parity',
             'validate:clean-worktree': 'node scripts/node-foundation/build-scripts.cjs validate-release.js clean-worktree',
             'validate:release-readiness': 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness',
+            'test:release-smoke': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts tests/node/packaging/pack-smoke.test.ts',
             lint: 'eslint "src/**/*.ts" "tests/node/**/*.ts" "scripts/node-foundation/**/*.ts"',
             coverage: 'c8 --reporter=text --reporter=lcov npm test',
             'coverage:fast': 'c8 --reporter=text --reporter=lcov npm run test:fast',
@@ -72,7 +73,7 @@ function buildPackageJson(): string {
             'quality:fast': 'npm run typecheck && npm run lint && npm run coverage:fast && npm run audit:prod',
             'validate:release': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && npm run test:packaging && npm run validate:clean-worktree',
             'validate:release:fast': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality:fast && npm run test:packaging && npm run validate:clean-worktree',
-            'release:preflight': 'npm run validate:release-readiness && npm run validate:release',
+            'release:preflight': 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release',
             prepack: 'npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create',
             'test:unit': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core',
             'test:gates': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates',
@@ -270,6 +271,7 @@ test('release readiness passes when package, CI, docs, security, and checklist c
         assert.match(output, /RELEASE_READINESS_OK/);
         assert.match(output, /ReleaseNotesInput:/);
         assert.match(output, /Validation command: npm run release:preflight/);
+        assert.match(output, /Short smoke: test:release-smoke exercises task id parsing/);
         assert.match(output, /Readiness alignment:/);
         assert.doesNotMatch(output, /Security\/audit proof:/);
     } finally {

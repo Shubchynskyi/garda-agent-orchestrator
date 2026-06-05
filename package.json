@@ -39,6 +39,7 @@
     "test:diag:preflight": "node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/preflight tests/node/gate-runtime/budget-preflight.test.ts tests/node/gates/diagnostics/shell-smoke-preflight.test.ts tests/node/cli/commands/gates/preflight",
     "test:diag:task-audit": "node scripts/node-foundation/build-scripts.cjs test.js tests/node/gates/task-audit tests/node/cli/commands/task-audit-human-format.test.ts",
     "test:diag:ui-i18n": "node scripts/node-foundation/build-scripts.cjs test.js tests/node/reports/ui-i18n.test.ts tests/node/reports/ui-language-packs.test.ts",
+    "test:release-smoke": "node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts tests/node/packaging/pack-smoke.test.ts",
     "validate:version-parity": "node scripts/node-foundation/build-scripts.cjs validate-release.js",
     "validate:embedded-bundle-parity": "node scripts/node-foundation/build-scripts.cjs validate-release.js embedded-bundle-parity",
     "validate:clean-worktree": "node scripts/node-foundation/build-scripts.cjs validate-release.js clean-worktree",
@@ -52,7 +53,7 @@
     "quality:fast": "npm run typecheck && npm run lint && npm run coverage:fast && npm run audit:prod",
     "validate:release": "npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && npm run test:packaging && npm run validate:clean-worktree",
     "validate:release:fast": "npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality:fast && npm run test:packaging && npm run validate:clean-worktree",
-    "release:preflight": "npm run validate:release-readiness && npm run validate:release",
+    "release:preflight": "npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release",
     "typecheck": "tsc -p tsconfig.node-foundation.json",
     "prepack": "npm run validate:clean-worktree && npm run build:publish-runtime && npm run validate:clean-worktree && node scripts/package-legacy-entrypoint-compat.cjs create",
     "postpack": "node scripts/package-legacy-entrypoint-compat.cjs remove"

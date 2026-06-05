@@ -83,9 +83,10 @@ Direct `npm pack` and `npm pack --dry-run` are guarded by `prepack`, which runs 
 Runs the final operator-facing release readiness gate before the expensive release validation path:
 
 1. `npm run validate:release-readiness`
-2. `npm run validate:release`
+2. `npm run test:release-smoke`
+3. `npm run validate:release`
 
-`npm run validate:release-readiness` is a short checklist gate. It verifies static alignment for package scripts, shipped package files, production audit wiring, CI release validation, lifecycle update smoke wiring, runtime-state documentation, manifest validation guidance, security document package/manifest surface, and the tracked `docs/release-readiness.md` checklist before the release is cut. It intentionally does not replace `npm run validate:release`; the latter remains the build/test/pack/install proof.
+`npm run validate:release-readiness` is a short checklist gate. It verifies static alignment for package scripts, shipped package files, production audit wiring, CI release validation, lifecycle update smoke wiring, runtime-state documentation, manifest validation guidance, security document package/manifest surface, and the tracked `docs/release-readiness.md` checklist before the release is cut. `npm run test:release-smoke` then exercises high-signal runtime contracts for task id parsing, task-event append integrity, next-step startup routing, status/doctor formatting, and package smoke coverage. It intentionally does not replace `npm run validate:release`; the latter remains the build/test/pack/install proof.
 
 ### GitHub Actions CI
 

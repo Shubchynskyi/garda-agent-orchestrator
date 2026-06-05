@@ -17,3 +17,4 @@ queues and must not be treated as publish blockers by release validation.
 - [x] Pre-release audit separated release proof from readiness-validator false negatives.
 - [x] Release-readiness validation uses git-tracked checklist state instead of local task queues.
 - [x] CI smoke validation accepts multiline lifecycle run scripts without weakening matrix checks.
+- [x] Release preflight runs a short runtime-contract smoke suite before the expensive full proof.
