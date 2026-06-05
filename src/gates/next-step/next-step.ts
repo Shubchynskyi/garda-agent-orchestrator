@@ -162,7 +162,8 @@ import {
     resolveDownstreamDependencyRebindRoute,
     resolveFailedReviewRemediationRoute,
     resolveReviewGateStaleUpstreamRecoveryRoute,
-    resolveStrictSequentialUpstreamReuseRoute
+    resolveStrictSequentialUpstreamReuseRoute,
+    type ReviewReuseCandidateHint
 } from './next-step-review-reuse-routing';
 import {
     buildReviewGateChainStatusSummary,
@@ -894,6 +895,9 @@ function buildMinimalRecoveryChain(nextGate: string, commands: NextStepCommand[]
 }
 
 function buildReuseCandidates(text: string, affectedReviewLanes: string[]): string[] {
+    if (/\breuse eligibility validation\b.*\bbefore treating\b|\bbefore treating .*PASS evidence as reusable\b/iu.test(text)) {
+        return ['none indicated'];
+    }
     if (!/\breview reuse\b|\bmaterialize reuse\b|\blane-domain current\b|\bdomain-limited remediation\b|\bexisting .*PASS evidence\b/iu.test(text)) {
         return ['none indicated'];
     }
@@ -901,6 +905,20 @@ function buildReuseCandidates(text: string, affectedReviewLanes: string[]): stri
         return ['unchanged upstream PASS evidence, if named by the current gate reason'];
     }
     return affectedReviewLanes.map((reviewType) => `${reviewType} (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)`);
+}
+
+export function buildReviewReuseCandidatesForDiagnostics(text: string, affectedReviewLanes: string[]): string[] {
+    return buildReuseCandidates(text, affectedReviewLanes);
+}
+
+function getBuildReviewContextReuseCandidateHint(
+    eventsRoot: string,
+    taskId: string,
+    state: ReviewArtifactState
+): ReviewReuseCandidateHint {
+    return state.reusedExistingReview && timelineHasReviewReuseRecordedAfterCompile(eventsRoot, taskId, state)
+        ? 'current-context-candidate'
+        : 'validation-required';
 }
 
 function buildSourceRuntimeRemediationResult(params: {
@@ -2099,6 +2117,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 reviewPolicyMode: reviewPolicy.mode,
                 downstreamReviewType: reviewType,
                 upstreamReviewType,
+                reuseCandidateHint: getBuildReviewContextReuseCandidateHint(eventsRoot, taskId, upstreamState),
                 upstreamScopedDiffReadiness,
                 upstreamReviewerReadinessChain,
                 upstreamReviewContextChain,
@@ -2571,6 +2590,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
         const staleUpstreamRecoveryRoute = resolveReviewGateStaleUpstreamRecoveryRoute({
             upstreamReviewType: reviewType,
+            reuseCandidateHint: getBuildReviewContextReuseCandidateHint(eventsRoot, taskId, reviewGateStaleUpstreamRecovery.upstreamState),
             scopedDiffReadiness,
             reviewerReadinessChain,
             reviewContextChain,

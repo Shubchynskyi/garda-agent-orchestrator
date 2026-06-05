@@ -7,7 +7,11 @@ import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { initGitRepo } from '../git-fixtures';
 
-import { formatNextStepText, resolveNextStep } from './next-step-test-support';
+import {
+    buildReviewReuseCandidatesForDiagnostics,
+    formatNextStepText,
+    resolveNextStep
+} from './next-step-test-support';
 import { getProviderRuntimeEnvironmentKeys } from './next-step-test-support';
 import {
     recordFullSuiteValidationDuration,
@@ -1578,7 +1582,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.match(result.title, /Materialize 'code' review reuse before downstream 'test'/);
-        assert.match(result.reason, /instead of launching a fresh 'code' reviewer/);
+        assert.match(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
@@ -1642,7 +1646,7 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.match(result.title, /Materialize 'code' review reuse before downstream 'test'/);
-        assert.match(result.reason, /instead of launching a fresh 'code' reviewer/);
+        assert.match(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
@@ -1692,7 +1696,7 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'build-review-context', result.reason);
         assert.equal(result.review.next_review_type, 'refactor', result.reason);
         assert.match(result.title, /Materialize 'code' review reuse before downstream 'refactor'/);
-        assert.match(result.reason, /instead of launching a fresh 'code' reviewer/);
+        assert.match(result.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
         assert.ok(!result.commands[0].command.includes('--review-type "security"'));
         assert.ok(!result.commands[0].command.includes('--review-type "refactor"'));
@@ -1705,7 +1709,7 @@ describe('gates/next-step', () => {
         assert.equal(securityResult.next_gate, 'build-review-context', securityResult.reason);
         assert.equal(securityResult.review.next_review_type, 'refactor', securityResult.reason);
         assert.match(securityResult.title, /Materialize 'security' review reuse before downstream 'refactor'/);
-        assert.match(securityResult.reason, /instead of launching a fresh 'security' reviewer/);
+        assert.match(securityResult.reason, /validate reuse eligibility before treating that PASS evidence as reusable/);
         assert.ok(!securityResult.commands[0].command.includes('--review-type "code"'));
         assert.ok(securityResult.commands[0].command.includes('--review-type "security"'));
         assert.ok(!securityResult.commands[0].command.includes('--review-type "refactor"'));
@@ -1715,11 +1719,7 @@ describe('gates/next-step', () => {
             'materialize current-cycle review reuse',
             'rerun navigator before downstream review/check gates'
         ]);
-        assert.deepEqual(securityResult.invalidation_impact?.reuse_candidates, [
-            'security (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
-            'refactor (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
-            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
-        ]);
+        assert.deepEqual(securityResult.invalidation_impact?.reuse_candidates, ['none indicated']);
     });
 
     it('re-materializes stale upstream reuse after a later compile before downstream refactor', () => {
@@ -1896,10 +1896,7 @@ describe('gates/next-step', () => {
             'materialize current-cycle review reuse',
             'rerun navigator before downstream review/check gates'
         ]);
-        assert.deepEqual(result.invalidation_impact?.reuse_candidates, [
-            'code (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
-            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
-        ]);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
@@ -1935,7 +1932,24 @@ describe('gates/next-step', () => {
         assert.match(result.title, /Recover stale upstream 'code' review evidence/);
         assert.ok(result.reason.includes('required-reviews-check failed after compile'), result.reason);
         assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.match(result.reason, /reuse eligibility validation can run/);
+        assert.deepEqual(result.invalidation_impact?.reuse_candidates, ['none indicated']);
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+    });
+
+    it('keeps concrete reuse candidates visible when route text represents validated reuse', () => {
+        const reuseCandidates = buildReviewReuseCandidatesForDiagnostics(
+            "Recover stale upstream 'code' review evidence after review gate failure. " +
+            "The latest required-reviews-check failed after compile, and upstream 'code' is lane-domain current " +
+            "but its review-context/routing binding is stale for the current preflight. " +
+            "Rebind 'code' through build-review-context/reuse before rerunning required-reviews-check.",
+            ['code', 'test']
+        );
+
+        assert.deepEqual(reuseCandidates, [
+            'code (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)',
+            'test (current PASS evidence may be rebound; do not launch a fresh reviewer unless the navigator asks)'
+        ]);
     });
 
     it('rejects receipt-spoofed lane-domain freshness when review context evidence changed', () => {

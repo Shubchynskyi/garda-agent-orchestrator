@@ -16,10 +16,13 @@ export interface ReviewReuseScopedDiffReadiness {
     reason: string;
 }
 
+export type ReviewReuseCandidateHint = 'current-context-candidate' | 'validation-required';
+
 export interface StrictSequentialUpstreamReuseRouteOptions {
     reviewPolicyMode: string;
     downstreamReviewType: string;
     upstreamReviewType: string;
+    reuseCandidateHint: ReviewReuseCandidateHint;
     upstreamScopedDiffReadiness: ReviewReuseScopedDiffReadiness;
     upstreamReviewerReadinessChain: string;
     upstreamReviewContextChain: string;
@@ -32,6 +35,7 @@ export interface StrictSequentialUpstreamReuseRouteOptions {
 export function resolveStrictSequentialUpstreamReuseRoute(
     options: StrictSequentialUpstreamReuseRouteOptions
 ): ReviewReuseRoutingRoute {
+    const validationRequired = options.reuseCandidateHint === 'validation-required';
     if (!options.upstreamScopedDiffReadiness.ready) {
         return {
             status: 'BLOCKED',
@@ -41,10 +45,23 @@ export function resolveStrictSequentialUpstreamReuseRoute(
                 `${options.upstreamScopedDiffReadiness.reason} Configured review policy '${options.reviewPolicyMode}' ` +
                 `requires lane-domain-current '${options.upstreamReviewType}' PASS evidence to be rebound before ` +
                 `continuing to downstream '${options.downstreamReviewType}' after a domain-limited remediation. ` +
+                `${validationRequired
+                    ? 'Reuse eligibility validation is still required before treating that PASS evidence as reusable. '
+                    : ''
+                }` +
                 `${options.upstreamReviewerReadinessChain} ${options.upstreamReviewContextChain}`,
             commands: [options.commands.buildScopedDiff]
         };
     }
+
+    const reuseReason = validationRequired
+        ? `The existing '${options.upstreamReviewType}' PASS evidence is lane-domain current after a domain-limited remediation, ` +
+            'but its exact review-context/reuse hash eligibility has not been validated for the current preflight, ' +
+            `so rebuild '${options.upstreamReviewType}' review context and let build-review-context validate reuse eligibility ` +
+            'before treating that PASS evidence as reusable or deciding a fresh reviewer is required.'
+        : `The existing '${options.upstreamReviewType}' PASS evidence is lane-domain current after a domain-limited remediation, ` +
+            `so rebuild '${options.upstreamReviewType}' review context to materialize reuse instead of launching a fresh ` +
+            `'${options.upstreamReviewType}' reviewer.`;
 
     return {
         status: 'BLOCKED',
@@ -52,10 +69,8 @@ export function resolveStrictSequentialUpstreamReuseRoute(
         title: `Materialize '${options.upstreamReviewType}' review reuse before downstream '${options.downstreamReviewType}'.`,
         reason:
             `Configured review policy '${options.reviewPolicyMode}' requires current-cycle '${options.upstreamReviewType}' ` +
-            `binding before downstream '${options.downstreamReviewType}' review-context preparation. The existing ` +
-            `'${options.upstreamReviewType}' PASS evidence is lane-domain current after a domain-limited remediation, ` +
-            `so rebuild '${options.upstreamReviewType}' review context to materialize reuse instead of launching a fresh ` +
-            `'${options.upstreamReviewType}' reviewer. ${options.upstreamReviewerReadinessChain} ${options.upstreamReviewContextChain}`,
+            `binding before downstream '${options.downstreamReviewType}' review-context preparation. ${reuseReason} ` +
+            `${options.upstreamReviewerReadinessChain} ${options.upstreamReviewContextChain}`,
         commands: [options.commands.buildReviewContext]
     };
 }
@@ -200,6 +215,7 @@ export function resolveDownstreamDependencyRebindRoute(
 
 export interface ReviewGateStaleUpstreamRecoveryRouteOptions {
     upstreamReviewType: string;
+    reuseCandidateHint: ReviewReuseCandidateHint;
     scopedDiffReadiness: ReviewReuseScopedDiffReadiness;
     reviewerReadinessChain: string;
     reviewContextChain: string;
@@ -212,6 +228,7 @@ export interface ReviewGateStaleUpstreamRecoveryRouteOptions {
 export function resolveReviewGateStaleUpstreamRecoveryRoute(
     options: ReviewGateStaleUpstreamRecoveryRouteOptions
 ): ReviewReuseRoutingRoute {
+    const validationRequired = options.reuseCandidateHint === 'validation-required';
     if (!options.scopedDiffReadiness.ready) {
         return {
             status: 'BLOCKED',
@@ -220,10 +237,20 @@ export function resolveReviewGateStaleUpstreamRecoveryRoute(
             reason:
                 `${options.scopedDiffReadiness.reason} The latest required-reviews-check failure indicates stale upstream ` +
                 `'${options.upstreamReviewType}' context/routing evidence; rebuild scoped metadata before re-binding that upstream lane. ` +
+                `${validationRequired
+                    ? 'Reuse eligibility validation is still required before treating that PASS evidence as reusable. '
+                    : ''
+                }` +
                 `${options.reviewerReadinessChain} ${options.reviewContextChain}`,
             commands: [options.commands.buildScopedDiff]
         };
     }
+
+    const reuseReason = validationRequired
+        ? `Rebind '${options.upstreamReviewType}' through build-review-context so reuse eligibility validation can run ` +
+            'before treating that PASS evidence as reusable or deciding a fresh reviewer is required, preserving fail-closed review validation.'
+        : `Rebind '${options.upstreamReviewType}' through build-review-context/reuse before rerunning required-reviews-check, ` +
+            'preserving fail-closed review validation.';
 
     return {
         status: 'BLOCKED',
@@ -231,8 +258,7 @@ export function resolveReviewGateStaleUpstreamRecoveryRoute(
         title: `Recover stale upstream '${options.upstreamReviewType}' review evidence after review gate failure.`,
         reason:
             `The latest required-reviews-check failed after compile, and upstream '${options.upstreamReviewType}' is lane-domain current ` +
-            `but its review-context/routing binding is stale for the current preflight. Rebind '${options.upstreamReviewType}' through ` +
-            `build-review-context/reuse before rerunning required-reviews-check, preserving fail-closed review validation. ` +
+            `but its review-context/routing binding is stale for the current preflight. ${reuseReason} ` +
             `${options.reviewerReadinessChain} ${options.reviewContextChain}`,
         commands: [options.commands.buildReviewContext]
     };
