@@ -33,6 +33,7 @@
 - Reviewer handoffs now include prompt/template/evidence/output paths plus exact verdict-token guidance, reducing malformed review outputs.
 - Reviewer launch handoffs now use an immutable `ReviewerLaunchInputArtifactPath` for artifact-path mode, keeping the prepared input hash separate from the later completed launch artifact hash.
 - Reviewer launch help, next-step guidance, and completion-field hints now consistently name `ReviewerLaunchInputArtifactSha256` as the value for `--launch-input-sha256`, while keeping `launch_input_sha256` and `launch_input_artifact_sha256` clearly scoped as artifact JSON fields.
+- `complete-reviewer-launch --record-invocation` now prints a complete `record-review-result` handoff command with current preflight, context, output source, execution mode, reviewer identity, and repo-root flags.
 - Review reuse is stricter and more useful: PASS reviews can be reused only when receipt, provenance, tree state, scope fingerprints, and current-cycle bindings prove they are still valid.
 - Strict-profile reviews are more evidence-aware, so DB/API/performance/infra/dependency lanes are not forced without matching domain surface evidence.
 - Reviewer contexts now show current full-suite artifact freshness and duration, and tell reviewers when a current PASS suite already covers their lane without rerunning full tests.

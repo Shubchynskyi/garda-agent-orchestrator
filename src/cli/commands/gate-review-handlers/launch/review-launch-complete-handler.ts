@@ -17,6 +17,7 @@ import {
     type ParsedOptionsRecord
 } from '../../shared-command-utils';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
+import { buildRecordReviewResultCommand } from './reviewer-handoff-support';
 
 export interface CompleteReviewerLaunchHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -317,7 +318,21 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
             ...(options.taskModePath ? ['--task-mode-path', String(options.taskModePath)] : []),
             '--repo-root', repoRoot
         ]);
-        console.log('NextAction: record-review-invocation was attested by complete-reviewer-launch; run record-review-result after the delegated reviewer returns.');
+        const reviewOutputPath = getStringField(completedArtifact, 'review_output_path', 'reviewOutputPath')
+            || '<ReviewOutputPath>';
+        const recordReviewResultCommand = buildRecordReviewResultCommand({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewerExecutionMode,
+            reviewerIdentity,
+            preflightPath,
+            reviewContextPath: contextPath,
+            reviewOutputPath,
+            taskModePath: options.taskModePath ? String(options.taskModePath) : null
+        });
+        console.log(`RecordReviewResultCommand: ${recordReviewResultCommand}`);
+        console.log('NextAction: record-review-invocation was attested by complete-reviewer-launch; run RecordReviewResultCommand after the delegated reviewer returns.');
         return;
     }
     console.log('NextAction: run RecordInvocationCommand to attest the invocation.');

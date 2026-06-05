@@ -27,7 +27,14 @@ function quoteReviewerLaunchCommandValue(value: string): string {
     return `"${value.replace(/\\/g, '/').replace(/"/g, '\\"')}"`;
 }
 
+function quoteRecordReviewResultCommandValue(value: string): string {
+    return `'${value.replace(/\\/g, '/').replace(/'/g, `''`)}'`;
+}
+
 function toRepoRelativeCommandPath(repoRoot: string, artifactPath: string): string {
+    if (/^<[^>]+>$/.test(String(artifactPath || '').trim())) {
+        return artifactPath;
+    }
     const relativePath = path.relative(repoRoot, artifactPath);
     if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
         return normalizePath(artifactPath);
@@ -71,6 +78,37 @@ export function buildRecordReviewInvocationCommand(options: {
         '--reviewer-launch-artifact-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewerLaunchArtifactPath)),
         '--repo-root', quoteReviewerLaunchCommandValue('.')
     ];
+    return commandParts.join(' ');
+}
+
+export function buildRecordReviewResultCommand(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerExecutionMode: string;
+    reviewerIdentity: string;
+    preflightPath: string;
+    reviewContextPath: string;
+    reviewOutputPath: string;
+    taskModePath?: string | null;
+}): string {
+    const commandParts = [
+        'node bin/garda.js gate record-review-result',
+        '--task-id', quoteRecordReviewResultCommandValue(options.taskId),
+        '--review-type', quoteRecordReviewResultCommandValue(options.reviewType),
+        '--preflight-path', quoteRecordReviewResultCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.preflightPath)),
+        '--review-context-path', quoteRecordReviewResultCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewContextPath)),
+        '--review-output-path', quoteRecordReviewResultCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewOutputPath)),
+        '--reviewer-execution-mode', quoteRecordReviewResultCommandValue(options.reviewerExecutionMode),
+        '--reviewer-identity', quoteRecordReviewResultCommandValue(options.reviewerIdentity)
+    ];
+    if (options.taskModePath) {
+        commandParts.push(
+            '--task-mode-path',
+            quoteRecordReviewResultCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.taskModePath))
+        );
+    }
+    commandParts.push('--repo-root', quoteRecordReviewResultCommandValue('.'));
     return commandParts.join(' ');
 }
 

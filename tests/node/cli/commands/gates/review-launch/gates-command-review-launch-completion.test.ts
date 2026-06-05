@@ -15,8 +15,27 @@ import {
     seedPromptBoundReviewFixture,
     seedRoutedReviewerLaunchFixture
 } from './gates-command-review-launch-fixtures';
+import { buildRecordReviewResultCommand } from '../../../../../../src/cli/commands/gate-review-handlers/launch/reviewer-handoff-support';
 
 describe('cli/commands/gates review launch completion', () => {
+    it('record-review-result handoff command single-quotes shell-substitution metacharacters', () => {
+        const command = buildRecordReviewResultCommand({
+            repoRoot: 'D:/repo',
+            taskId: 'T-716',
+            reviewType: 'security',
+            reviewerExecutionMode: 'delegated_subagent',
+            reviewerIdentity: 'agent:reviewer-$(whoami)`x`"q";echo pwn;\'tail',
+            preflightPath: 'D:/repo/garda-agent-orchestrator/runtime/reviews/T-716-preflight.json',
+            reviewContextPath: 'D:/repo/garda-agent-orchestrator/runtime/reviews/T-716-security-review-context.json',
+            reviewOutputPath: 'D:/repo/garda-agent-orchestrator/runtime/tmp/reviews/T-716/security/review-output-$(whoami)`x`"q";touch pwn;\'tail.md'
+        });
+
+        assert.ok(command.includes("--review-output-path 'garda-agent-orchestrator/runtime/tmp/reviews/T-716/security/review-output-$(whoami)`x`\"q\";touch pwn;''tail.md'"));
+        assert.ok(command.includes("--reviewer-identity 'agent:reviewer-$(whoami)`x`\"q\";echo pwn;''tail'"));
+        assert.ok(!command.includes('--review-output-path "'));
+        assert.ok(!command.includes('--reviewer-identity "'));
+    });
+
     it('complete-reviewer-launch rejects stale reviewer prompt artifacts after preparation', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-265-stale-prompt-complete';
@@ -287,8 +306,152 @@ describe('cli/commands/gates review launch completion', () => {
         assert.ok(complete.logs.some((line) => line.includes(`LaunchArtifactSha256: ${completedLaunchArtifactSha256}`)));
         assert.ok(complete.logs.some((line) => line.includes(`LaunchInputArtifactPath: ${launchInputArtifactPath}`)));
         assert.ok(complete.logs.some((line) => line.includes(`LaunchInputArtifactSha256: ${pinnedInputArtifactSha256}`)));
+        const recordResultCommand = complete.logs.find((line) => line.startsWith('RecordReviewResultCommand: ')) || '';
+        const reviewOutputPath = String(completedArtifact.review_output_path);
+        assert.ok(recordResultCommand.includes('node bin/garda.js gate record-review-result'));
+        assert.ok(recordResultCommand.includes(`--task-id '${taskId}'`));
+        assert.ok(recordResultCommand.includes("--review-type 'code'"));
+        assert.ok(recordResultCommand.includes(`--preflight-path '${path.relative(repoRoot, fixture.preflightPath).replace(/\\/g, '/')}'`));
+        assert.ok(recordResultCommand.includes(`--review-context-path '${path.relative(repoRoot, fixture.reviewContextPath).replace(/\\/g, '/')}'`));
+        assert.ok(recordResultCommand.includes(`--review-output-path '${path.relative(repoRoot, reviewOutputPath).replace(/\\/g, '/')}'`));
+        assert.ok(recordResultCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
+        assert.ok(recordResultCommand.includes(`--reviewer-identity '${fixture.reviewerIdentity}'`));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch prints an explicit placeholder when review output path is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-716-missing-output-source';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-716-missing-output',
+            attestationSource: 'codex_spawn_agent'
+        });
+
+        const artifactWithoutOutputPath = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        delete artifactWithoutOutputPath.review_output_path;
+        delete artifactWithoutOutputPath.reviewOutputPath;
+        fs.writeFileSync(launchArtifactPath, JSON.stringify(artifactWithoutOutputPath, null, 2) + '\n', 'utf8');
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-716-missing-output',
+            '--attestation-source', 'codex_spawn_agent',
+            ...launchArtifactInputArgsForTest(launchArtifactPath),
+            '--fork-context', 'false',
+            '--record-invocation'
+        ], { cwd: repoRoot });
+
+        assert.equal(complete.exitCode, 0, complete.errors.join('\n'));
+        const recordResultCommand = complete.logs.find((line) => line.startsWith('RecordReviewResultCommand: ')) || '';
+        assert.ok(recordResultCommand.includes("--review-output-path '<ReviewOutputPath>'"), recordResultCommand);
+        assert.ok(!recordResultCommand.includes('--review-output-stdin'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch does not print record-review-result when canonical preflight is missing', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-716-missing-preflight';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-716-missing-preflight',
+            attestationSource: 'codex_spawn_agent'
+        });
+        fs.rmSync(fixture.preflightPath, { force: true });
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-716-missing-preflight',
+            '--attestation-source', 'codex_spawn_agent',
+            ...launchArtifactInputArgsForTest(launchArtifactPath),
+            '--fork-context', 'false',
+            '--record-invocation'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(complete.exitCode, 0);
+        assert.equal(complete.logs.some((line) => line.startsWith('RecordReviewResultCommand: ')), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('complete-reviewer-launch rejects missing reviewer identity before printing record-review-result', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-716-missing-reviewer-identity';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = fixture.launchArtifactPath;
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-716-missing-identity',
+            attestationSource: 'codex_spawn_agent'
+        });
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'test-invocation-716-missing-identity',
+            '--attestation-source', 'codex_spawn_agent',
+            ...launchArtifactInputArgsForTest(launchArtifactPath),
+            '--fork-context', 'false',
+            '--record-invocation'
+        ], { cwd: repoRoot });
+
+        assert.notEqual(complete.exitCode, 0);
+        assert.equal(complete.logs.some((line) => line.startsWith('RecordReviewResultCommand: ')), false);
+        assert.ok(complete.errors.some((line) => line.includes('ReviewerIdentity is required')), complete.errors.join('\n'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
