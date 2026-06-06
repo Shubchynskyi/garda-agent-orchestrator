@@ -315,6 +315,77 @@ describe('gates/task-audit-summary', () => {
             assert.ok(markdown.includes('Late evidence files: CHANGELOG.md.'));
         });
 
+        it('normalizes profile review decisions to the enforced required reviews', () => {
+            writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
+                task_id: TASK_ID,
+                active_profile: 'strict'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                scope_category: 'audit-only',
+                required_reviews: {
+                    code: true,
+                    dependency: true,
+                    test: true
+                },
+                profile_guardrails: {
+                    guardrails_active: false,
+                    lightening_eligible: true,
+                    decisions: [
+                        {
+                            review_type: 'code',
+                            effective_value: false,
+                            decision: 'lightened_by_profile'
+                        },
+                        {
+                            review_type: 'security',
+                            effective_value: true,
+                            decision: 'capability_default'
+                        },
+                        {
+                            review_type: 'refactor',
+                            effective_value: true,
+                            decision: 'capability_default'
+                        }
+                    ],
+                    safety_floors_applied: []
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const decisions = result.profile_review_decisions?.decisions || [];
+            const byType = new Map(decisions.map((decision) => [decision.review_type, decision]));
+            const rendered = formatTaskAuditSummaryText(result);
+
+            assert.equal(byType.get('code')?.effective_value, true);
+            assert.equal(byType.get('code')?.decision, 'preflight_required');
+            assert.equal(byType.get('security')?.effective_value, false);
+            assert.equal(byType.get('security')?.decision, 'not_required_by_preflight');
+            assert.equal(byType.get('refactor')?.effective_value, false);
+            assert.equal(byType.get('refactor')?.decision, 'not_required_by_preflight');
+            assert.equal(byType.get('dependency')?.effective_value, true);
+            assert.equal(byType.get('dependency')?.decision, 'preflight_required');
+            assert.equal(byType.get('test')?.effective_value, true);
+            assert.equal(byType.get('test')?.decision, 'preflight_required');
+            assert.ok(rendered.includes('RequiredReviews: code, dependency, test'));
+            assert.ok(rendered.includes('  [+] code: true (preflight_required)'));
+            assert.ok(rendered.includes('  [-] security: false (not_required_by_preflight)'));
+            assert.ok(rendered.includes('  [-] refactor: false (not_required_by_preflight)'));
+            assert.ok(rendered.includes('  [+] dependency: true (preflight_required)'));
+            assert.ok(rendered.includes('  [+] test: true (preflight_required)'));
+            assert.ok(rendered.includes('security review not required because preflight required_reviews.security=false'));
+            assert.ok(rendered.includes('refactor review not required because preflight required_reviews.refactor=false'));
+            assert.ok(rendered.includes('dependency review kept because preflight required_reviews.dependency=true'));
+            assert.ok(!rendered.includes('security: true (capability_default)'));
+            assert.ok(!rendered.includes('refactor: true (capability_default)'));
+        });
+
         it('accepts stale review receipts only when persisted domain fingerprints match current scope', () => {
             const changedFiles = ['src/gates/task-audit-summary.ts'];
             const currentPreflight = {

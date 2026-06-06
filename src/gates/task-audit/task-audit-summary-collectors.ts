@@ -137,6 +137,7 @@ export interface ProfileReviewDecisionSummary {
         review_type: string;
         effective_value: boolean;
         decision: string;
+        reason?: string;
     }>;
 }
 

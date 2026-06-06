@@ -50,7 +50,8 @@ export function readPreflightSummary(reviewsRoot: string, taskId: string): Prefl
 export function readProfileReviewDecisions(
     taskMode: Record<string, unknown> | null,
     preflight: Record<string, unknown> | null,
-    scopeCategory: string | null
+    scopeCategory: string | null,
+    requiredReviews: Record<string, boolean> = {}
 ): ProfileReviewDecisionSummary | null {
     if (!taskMode || typeof taskMode.active_profile !== 'string' || !taskMode.active_profile) {
         return null;
@@ -75,18 +76,45 @@ export function readProfileReviewDecisions(
     }
 
     const decisions = Array.isArray(guardrails.decisions)
-        ? guardrails.decisions.flatMap((decision): Array<{ review_type: string; effective_value: boolean; decision: string }> => {
+        ? guardrails.decisions.flatMap((decision): ProfileReviewDecisionSummary['decisions'] => {
             if (!decision || typeof decision !== 'object') {
                 return [];
             }
             const record = decision as Record<string, unknown>;
+            const reviewType = String(record.review_type || '');
+            const isRequired = requiredReviews[reviewType] === true;
+            const rawEffectiveValue = record.effective_value === true;
+            const effectiveValue = isRequired;
+            const rawDecision = String(record.decision || '');
+            const normalizedDecision = isRequired && !rawEffectiveValue
+                ? 'preflight_required'
+                : rawEffectiveValue && !isRequired
+                    ? 'not_required_by_preflight'
+                    : rawDecision;
+            const reason = isRequired && !rawEffectiveValue
+                ? `${reviewType} review kept because preflight required_reviews.${reviewType}=true`
+                : rawEffectiveValue && !isRequired
+                    ? `${reviewType} review not required because preflight required_reviews.${reviewType}=false`
+                    : undefined;
             return [{
-                review_type: String(record.review_type || ''),
-                effective_value: record.effective_value === true,
-                decision: String(record.decision || '')
+                review_type: reviewType,
+                effective_value: effectiveValue,
+                decision: normalizedDecision,
+                ...(reason ? { reason } : {})
             }];
         })
         : [];
+    const decisionTypes = new Set(decisions.map((decision) => decision.review_type));
+    for (const [reviewType, isRequired] of Object.entries(requiredReviews)) {
+        if (isRequired && !decisionTypes.has(reviewType)) {
+            decisions.push({
+                review_type: reviewType,
+                effective_value: true,
+                decision: 'preflight_required',
+                reason: `${reviewType} review kept because preflight required_reviews.${reviewType}=true`
+            });
+        }
+    }
     const safetyFloorsApplied = Array.isArray(guardrails.safety_floors_applied)
         ? guardrails.safety_floors_applied.map((entry) => String(entry))
         : [];

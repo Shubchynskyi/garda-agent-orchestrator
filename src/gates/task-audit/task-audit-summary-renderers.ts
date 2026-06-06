@@ -10,6 +10,10 @@ import {
     shouldRenderReviewTrustSummary,
     type ReviewIntegrityAttestation
 } from './task-audit-summary-renderer-common';
+import {
+    getReviewExecutionPreparationOrder,
+    type EffectiveReviewExecutionPolicyMode
+} from '../../core/review-execution-policy';
 export { buildCommitCommandSuggestion } from './task-audit-summary-commit-suggestion';
 export { formatFinalUserReport } from './task-audit-summary-final-report';
 
@@ -149,6 +153,23 @@ function isCommitCommandSuggestion(value: string): boolean {
         || /\bhuman-commit\s+--operator-confirmed\s+yes\b/u.test(trimmed);
 }
 
+function getOrderedRequiredReviewTypes(summary: TaskAuditSummaryResult): string[] {
+    const policyMode = summary.final_closeout.workflow?.review_execution_policy_mode as EffectiveReviewExecutionPolicyMode | undefined;
+    const preparationOrder = getReviewExecutionPreparationOrder(policyMode || 'legacy_test_downstream');
+    return Object.entries(summary.required_reviews)
+        .filter(([, required]) => required)
+        .map(([reviewType]) => reviewType)
+        .sort((left, right) => {
+            const leftRank = preparationOrder.indexOf(left);
+            const rightRank = preparationOrder.indexOf(right);
+            if (leftRank !== rightRank) {
+                return (leftRank === -1 ? Number.MAX_SAFE_INTEGER : leftRank)
+                    - (rightRank === -1 ? Number.MAX_SAFE_INTEGER : rightRank);
+            }
+            return left.localeCompare(right);
+        });
+}
+
 export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
     const profileText = closeout.implementation_summary.active_profile
@@ -279,9 +300,7 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         lines.push(`  - ${file}`);
     }
 
-    const activeReviews = Object.entries(summary.required_reviews)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
+    const activeReviews = getOrderedRequiredReviewTypes(summary);
     if (activeReviews.length > 0) {
         lines.push('');
         lines.push(`RequiredReviews: ${activeReviews.join(', ')}`);
@@ -315,10 +334,11 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
         if (prd.decisions.length > 0) {
             for (const d of prd.decisions) {
                 const marker = d.decision === 'safety_floor_enforced' ? '[!]'
-                    : d.decision === 'lightened_by_profile' ? '[-]'
+                    : d.decision === 'lightened_by_profile' || d.decision === 'not_required_by_preflight' ? '[-]'
                         : d.decision === 'domain_triggered' || d.decision === 'preflight_required' ? '[+]'
                             : '[=]';
-                lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision})`);
+                const reasonSuffix = d.reason ? ` - ${d.reason}` : '';
+                lines.push(`  ${marker} ${d.review_type}: ${d.effective_value} (${d.decision})${reasonSuffix}`);
             }
         }
         if (prd.safety_floors_applied.length > 0) {

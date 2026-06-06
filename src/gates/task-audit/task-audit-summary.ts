@@ -272,7 +272,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const preflightSha256 = preflightSummary.sha256;
     const taskModePath = path.join(reviewsRoot, `${safeTaskId}-task-mode.json`);
     const taskMode = safeReadJson(taskModePath);
-    const profileReviewDecisions = readProfileReviewDecisions(taskMode, preflight, scopeCategory);
+    const profileReviewDecisions = readProfileReviewDecisions(taskMode, preflight, scopeCategory, requiredReviews);
     const reviewGatePath = path.join(reviewsRoot, `${safeTaskId}-review-gate.json`);
     const reviewSnapshot = withReviewArtifactReadBarrier(reviewsRoot, () => {
         const requiredReviewBlockers = collectRequiredReviewBlockers(
