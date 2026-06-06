@@ -247,9 +247,72 @@ describe('gates/task-audit-summary', () => {
 
             assert.deepEqual(result.changed_files, ['src/foo.ts', 'src/bar.ts']);
             assert.equal(result.changed_files_count, 2);
-            assert.equal(result.changed_lines_total, 42);
+            assert.equal(result.changed_lines_total, 0);
+            assert.equal(result.final_closeout.implementation_summary.change_metrics?.preflight_changed_files_count, 2);
+            assert.equal(result.final_closeout.implementation_summary.change_metrics?.preflight_changed_lines_total, 42);
+            assert.equal(result.final_closeout.implementation_summary.change_metrics?.final_tracked_changed_files_count, 2);
+            assert.equal(result.final_closeout.implementation_summary.changed_lines_total, 0);
             assert.equal(result.required_reviews.code, true);
             assert.equal(result.required_reviews.db, false);
+        });
+
+        it('labels preflight and final changed-line metrics when closeout adds late evidence files', () => {
+            initGitRepo(tmpDir);
+            fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'src', 'app.ts'), 'const value = 1;\n', 'utf8');
+            fs.writeFileSync(path.join(tmpDir, 'CHANGELOG.md'), '# Changelog\n\n- Updated closeout evidence.\n', 'utf8');
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/app.ts'],
+                metrics: { changed_lines_total: 1 },
+                required_reviews: {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                task_id: TASK_ID,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'DOCS_UPDATED',
+                docs_updated: ['CHANGELOG.md']
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.deepEqual(result.changed_files, ['src/app.ts', 'CHANGELOG.md']);
+            assert.equal(result.final_closeout.implementation_summary.change_metrics?.preflight_changed_files_count, 1);
+            assert.equal(result.final_closeout.implementation_summary.change_metrics?.preflight_changed_lines_total, 1);
+            assert.equal(result.final_closeout.implementation_summary.change_metrics?.final_tracked_changed_files_count, 2);
+            assert.equal(result.final_closeout.implementation_summary.change_metrics?.final_tracked_changed_lines_total, 3);
+            assert.deepEqual(result.final_closeout.implementation_summary.change_metrics?.late_evidence_files, ['CHANGELOG.md']);
+            assert.equal(result.changed_lines_total, 3);
+            assert.equal(result.final_closeout.implementation_summary.changed_lines_total, 3);
+
+            const rendered = formatTaskAuditSummaryText(result);
+            assert.ok(rendered.includes('ChangedFiles: 2'));
+            assert.ok(!rendered.includes('ChangedFiles: 2 (1 lines)'));
+            assert.ok(rendered.includes('PreflightChangedLines: 1'));
+            assert.ok(rendered.includes('FinalTrackedChangedLines: 3'));
+            assert.ok(rendered.includes('LateEvidenceFiles: CHANGELOG.md'));
+
+            const markdown = formatFinalCloseoutMarkdown(result.final_closeout);
+            assert.ok(markdown.includes('Current audited changed files: 2.'));
+            assert.ok(!markdown.includes('Current audited changed files: 2 (1 lines).'));
+            assert.ok(markdown.includes('Preflight changed lines: 1.'));
+            assert.ok(markdown.includes('Final tracked changed lines: 3.'));
+            assert.ok(markdown.includes('Late evidence files: CHANGELOG.md.'));
         });
 
         it('accepts stale review receipts only when persisted domain fingerprints match current scope', () => {
@@ -409,7 +472,8 @@ describe('gates/task-audit-summary', () => {
                 'authorized_changed_files=garda-agent-orchestrator/live/config/workflow-config.json, src/gates/next-step/next-step.ts ' +
                 '(historical task-mode authorization snapshot; current audited files are reported in ChangedFiles)'
             ));
-            assert.ok(formatTaskAuditSummaryText(result).includes('CurrentAuditedChangedFiles: 1 (3 lines)'));
+            assert.ok(formatTaskAuditSummaryText(result).includes('CurrentAuditedChangedFiles: 1'));
+            assert.ok(formatTaskAuditSummaryText(result).includes('PreflightChangedLines: 3'));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(`Task-mode authorization: ${expectedLine}.`));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(
                 'Task-mode authorization snapshot: orchestrator_work=true; workflow_config_work=true; ' +
@@ -418,7 +482,8 @@ describe('gates/task-audit-summary', () => {
                 'authorized_changed_files=garda-agent-orchestrator/live/config/workflow-config.json, src/gates/next-step/next-step.ts ' +
                 '(historical task-mode authorization snapshot; current audited files are reported in ChangedFiles).'
             ));
-            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Current audited changed files: 1 (3 lines).'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Current audited changed files: 1.'));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Preflight changed lines: 3.'));
         });
 
         it('surfaces reviewer timing provenance only in operator audit output', () => {

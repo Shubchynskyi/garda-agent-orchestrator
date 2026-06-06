@@ -15,6 +15,7 @@ import type {
     FinalCloseoutReviewTimingAuditSummary
 } from './task-audit-summary';
 import type {
+    FinalCloseoutChangeMetrics,
     FinalCloseoutDocsSummary,
     FinalCloseoutOptionalSkillsSummary,
     FinalCloseoutReviewIntegrityAttestation,
@@ -41,6 +42,7 @@ export interface BuildFinalCloseoutArtifactInput {
     changedFiles: string[];
     changedFilesCount: number;
     changedLinesTotal: number;
+    changeMetrics: FinalCloseoutChangeMetrics;
     scopeCategory: string | null;
     reviewTrustSummary: FinalCloseoutReviewTrustSummary | null;
     reviewTimingAudit: FinalCloseoutReviewTimingAuditSummary | null;
@@ -148,6 +150,7 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
                     changedFiles: closeoutScopeSnapshot.changed_files
                 })
                 : null,
+            change_metrics: input.changeMetrics,
             changed_files_count: input.changedFilesCount,
             changed_lines_total: input.changedLinesTotal,
             scope_category: input.scopeCategory,

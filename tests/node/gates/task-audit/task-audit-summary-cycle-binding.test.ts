@@ -452,7 +452,9 @@ describe('gates/task-audit-summary', () => {
                 'CHANGELOG.md',
                 'src/gates/doc-impact.ts'
             ]);
-            assert.ok(rendered.includes('ChangedFiles: 3 (7 lines)'));
+            assert.ok(rendered.includes('ChangedFiles: 3'));
+            assert.ok(rendered.includes('PreflightChangedLines: 7'));
+            assert.ok(!rendered.includes('ChangedFiles: 3 (7 lines)'));
             assert.ok(rendered.includes('  - docs/cli-reference.md'));
             assert.ok(rendered.includes('  - CHANGELOG.md'));
         });

@@ -25,6 +25,7 @@ import { getStatusSnapshot } from '../../validators';
 import {
     buildUnavailableRequiredReviewTrustSummary,
     type EvidenceArtifact,
+    type FinalCloseoutChangeMetrics,
     type FinalReportContract,
     buildReviewIntegrityAttestation,
     readDocImpactSummary,
@@ -53,6 +54,7 @@ import {
     isLocalControlPlaneCommitPath,
     resolveCommittableChangedFiles
 } from './task-audit-summary-drift';
+import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
 import {
     collectEvidenceArtifacts,
     collectRequiredReviewBlockers
@@ -86,6 +88,51 @@ export type {
 
 const NO_COMMIT_REQUIRED_MESSAGE = 'No commit required: no committable changes are present.';
 const NO_COMMIT_CONFIRMATION_MESSAGE = 'No commit confirmation required.';
+
+function buildFinalCloseoutChangeMetrics(options: {
+    repoRoot: string;
+    preflightChangedFiles: string[];
+    preflightChangedLinesTotal: number;
+    finalTrackedChangedFiles: string[];
+}): FinalCloseoutChangeMetrics {
+    const preflightFileSet = new Set(options.preflightChangedFiles.map((entry) => toPosix(entry)).filter(Boolean));
+    const lateEvidenceFiles = [...new Set(options.finalTrackedChangedFiles
+        .map((entry) => toPosix(entry))
+        .filter((entry) => entry && !preflightFileSet.has(entry)))]
+        .sort((left, right) => left.localeCompare(right));
+    let finalTrackedChangedLinesTotal: number | null = null;
+    let finalTrackedChangedLinesSource: FinalCloseoutChangeMetrics['final_tracked_changed_lines_source'] = 'unavailable';
+    if (options.finalTrackedChangedFiles.length === 0) {
+        finalTrackedChangedLinesTotal = 0;
+        finalTrackedChangedLinesSource = 'workspace_snapshot';
+    } else {
+        try {
+            const finalSnapshot = getWorkspaceSnapshotCached(
+                options.repoRoot,
+                'explicit_changed_files',
+                true,
+                options.finalTrackedChangedFiles,
+                { noCache: true, readOnly: true }
+            );
+            const lineTotal = Number(finalSnapshot.changed_lines_total);
+            if (Number.isFinite(lineTotal)) {
+                finalTrackedChangedLinesTotal = lineTotal;
+                finalTrackedChangedLinesSource = 'workspace_snapshot';
+            }
+        } catch {
+            finalTrackedChangedLinesTotal = null;
+            finalTrackedChangedLinesSource = 'unavailable';
+        }
+    }
+    return {
+        preflight_changed_files_count: options.preflightChangedFiles.length,
+        preflight_changed_lines_total: options.preflightChangedLinesTotal,
+        final_tracked_changed_files_count: options.finalTrackedChangedFiles.length,
+        final_tracked_changed_lines_total: finalTrackedChangedLinesTotal,
+        final_tracked_changed_lines_source: finalTrackedChangedLinesSource,
+        late_evidence_files: lateEvidenceFiles
+    };
+}
 
 function filterNotRequiredEvidenceArtifacts(
     evidence: EvidenceArtifact[],
@@ -189,7 +236,14 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const auditedChangedFiles = buildAuditedChangedFiles(repoRoot, preflightSummary.changedFiles, docsSummary);
     const changedFiles = auditedChangedFiles.changedFiles;
     const changedFilesCount = changedFiles.length;
-    const changedLinesTotal = preflightSummary.changedLinesTotal;
+    const preflightChangedLinesTotal = preflightSummary.changedLinesTotal;
+    const changeMetrics = buildFinalCloseoutChangeMetrics({
+        repoRoot,
+        preflightChangedFiles: preflightSummary.changedFiles,
+        preflightChangedLinesTotal,
+        finalTrackedChangedFiles: changedFiles
+    });
+    const changedLinesTotal = changeMetrics.final_tracked_changed_lines_total ?? preflightChangedLinesTotal;
     const finalCloseoutJsonPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.json`);
     const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${safeTaskId}-final-closeout.md`);
     const finalUserReportPath = path.join(reviewsRoot, `${safeTaskId}-final-user-report.md`);
@@ -518,6 +572,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         changedFiles,
         changedFilesCount,
         changedLinesTotal,
+        changeMetrics,
         scopeCategory,
         reviewTrustSummary,
         reviewTimingAudit,

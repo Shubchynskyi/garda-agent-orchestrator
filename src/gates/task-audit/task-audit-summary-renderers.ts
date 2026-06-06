@@ -122,6 +122,26 @@ function formatAuthorizationScopeSnapshot(
     return `${parts.join('; ')} (historical task-mode authorization snapshot; current audited files are reported in ChangedFiles)`;
 }
 
+function formatFinalTrackedChangedLines(
+    implementationSummary: FinalCloseoutArtifact['implementation_summary']
+): string {
+    const metrics = implementationSummary.change_metrics;
+    if (!metrics || metrics.final_tracked_changed_lines_source !== 'workspace_snapshot') {
+        return 'unavailable';
+    }
+    return String(metrics.final_tracked_changed_lines_total ?? 0);
+}
+
+function formatLateEvidenceFiles(
+    implementationSummary: FinalCloseoutArtifact['implementation_summary']
+): string {
+    const lateEvidenceFiles = implementationSummary.change_metrics?.late_evidence_files || [];
+    if (lateEvidenceFiles.length === 0) {
+        return 'none';
+    }
+    return lateEvidenceFiles.join(', ');
+}
+
 function isCommitCommandSuggestion(value: string): boolean {
     const trimmed = String(value || '').trim();
     return /^git\s+commit\s+-m\s+"/u.test(trimmed)
@@ -159,9 +179,11 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
     lines.push(`Task-mode authorization: ${formatTaskModeAuthorizationSummary(closeout.implementation_summary)}.`);
     lines.push(`Task-mode authorization snapshot: ${formatAuthorizationScopeSnapshot(closeout.implementation_summary)}.`);
     lines.push(
-        `Current audited changed files: ${closeout.implementation_summary.changed_files_count} ` +
-        `(${closeout.implementation_summary.changed_lines_total} lines).`
+        `Current audited changed files: ${closeout.implementation_summary.changed_files_count}.`
     );
+    lines.push(`Preflight changed lines: ${closeout.implementation_summary.change_metrics?.preflight_changed_lines_total ?? closeout.implementation_summary.changed_lines_total}.`);
+    lines.push(`Final tracked changed lines: ${formatFinalTrackedChangedLines(closeout.implementation_summary)}.`);
+    lines.push(`Late evidence files: ${formatLateEvidenceFiles(closeout.implementation_summary)}.`);
 
     if (closeout.optional_skills?.visible_summary_line) {
         lines.push(closeout.optional_skills.visible_summary_line);
@@ -252,7 +274,7 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
 
     lines.push('');
-    lines.push(`ChangedFiles: ${summary.changed_files_count} (${summary.changed_lines_total} lines)`);
+    lines.push(`ChangedFiles: ${summary.changed_files_count}`);
     for (const file of summary.changed_files) {
         lines.push(`  - ${file}`);
     }
@@ -271,7 +293,10 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
 
     lines.push(`TaskModeAuthorization: ${formatTaskModeAuthorizationSummary(summary.final_closeout.implementation_summary)}`);
     lines.push(`TaskModeAuthorizationSnapshot: ${formatAuthorizationScopeSnapshot(summary.final_closeout.implementation_summary)}`);
-    lines.push(`CurrentAuditedChangedFiles: ${summary.changed_files_count} (${summary.changed_lines_total} lines)`);
+    lines.push(`CurrentAuditedChangedFiles: ${summary.changed_files_count}`);
+    lines.push(`PreflightChangedLines: ${summary.final_closeout.implementation_summary.change_metrics?.preflight_changed_lines_total ?? summary.changed_lines_total}`);
+    lines.push(`FinalTrackedChangedLines: ${formatFinalTrackedChangedLines(summary.final_closeout.implementation_summary)}`);
+    lines.push(`LateEvidenceFiles: ${formatLateEvidenceFiles(summary.final_closeout.implementation_summary)}`);
 
     const reviewAttemptSummaryLine = getReviewAttemptSummaryLine(summary.review_attempt_summary);
     if (reviewAttemptSummaryLine) {

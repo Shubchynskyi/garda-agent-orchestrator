@@ -80,6 +80,15 @@ export interface FinalCloseoutDocsSummary {
     docs_updated: string[];
 }
 
+export interface FinalCloseoutChangeMetrics {
+    preflight_changed_files_count: number;
+    preflight_changed_lines_total: number;
+    final_tracked_changed_files_count: number;
+    final_tracked_changed_lines_total: number | null;
+    final_tracked_changed_lines_source: 'workspace_snapshot' | 'unavailable';
+    late_evidence_files: string[];
+}
+
 export interface FinalCloseoutImplementationSummary {
     requested_depth: number | null;
     effective_depth: number | null;
@@ -101,6 +110,7 @@ export interface FinalCloseoutImplementationSummary {
     scope_content_sha256?: string | null;
     scope_sha256?: string | null;
     domain_scope_fingerprints?: DomainScopeFingerprints | null;
+    change_metrics?: FinalCloseoutChangeMetrics;
     changed_files_count: number;
     changed_lines_total: number;
     scope_category: string | null;
