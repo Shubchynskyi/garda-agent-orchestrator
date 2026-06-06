@@ -2331,6 +2331,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 depth: reviewDepth
             });
             const failedReviewRoute = resolveFailedReviewRemediationRoute({
+                taskId,
                 reviewType,
                 verdictToken: state.verdictToken || state.failToken || 'FAILED',
                 failureKind: state.failureKind,
@@ -2343,7 +2344,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 downstreamReviewTypes,
                 commands: {
                     restartReviewCycle: buildCommand(
-                        'Restart review cycle for reviewer launch retry',
+                        state.failureKind === 'missing-validation-evidence'
+                            ? 'Restart review cycle after manual-validation evidence refresh'
+                            : 'Restart review cycle for reviewer launch retry',
                         buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, taskIntent, taskModePath)
                     ),
                     rerunNavigator: buildCommand(

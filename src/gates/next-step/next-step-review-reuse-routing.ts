@@ -76,6 +76,7 @@ export function resolveStrictSequentialUpstreamReuseRoute(
 }
 
 export interface FailedReviewRemediationRouteOptions {
+    taskId: string;
     reviewType: string;
     verdictToken: string;
     failureKind: string | null;
@@ -112,6 +113,7 @@ export function resolveFailedReviewRemediationRoute(
     }
 
     if (options.failureKind === 'missing-validation-evidence' && options.currentReviewRecordedEvidenceCurrent) {
+        const selectorPath = `garda-agent-orchestrator/runtime/manual-validation/${options.taskId}/review-evidence.json`;
         return {
             status: 'BLOCKED',
             nextGate: 'review-evidence-refresh',
@@ -120,7 +122,9 @@ export function resolveFailedReviewRemediationRoute(
                 `Recorded '${options.reviewType}' review verdict is '${options.verdictToken}', ` +
                 `but the failure matches missing attached validation evidence (${options.failureReason || 'missing validation evidence'}). ` +
                 'Preserve the failed review artifact and receipt as audit evidence; do not edit them by hand and do not make fake implementation changes. ' +
-                'Refresh the task-scoped manual-validation evidence selector, rerun compile if required by the recovery chain, rebuild the failed review context, and launch a fresh reviewer before downstream reviews.',
+                `Create or update the manual-validation evidence selector '${selectorPath}' with selected_logs entries for the already-run validation logs; each entry must include path, command, and exit_code or status, and may set review_types to ['${options.reviewType}']. ` +
+                'Do not add task-scoped runtime/manual-validation files to preflight --changed-file scope; restart-review-cycle treats them as ignored attachment evidence and refreshes only the affected review lane plus policy-required dependencies. ' +
+                'After the selector is current, run restart-review-cycle with task-specific impact analysis, then rebuild the failed review context and launch a fresh reviewer before downstream reviews.',
             commands: [options.commands.restartReviewCycle]
         };
     }

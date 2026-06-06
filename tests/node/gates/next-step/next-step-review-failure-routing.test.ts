@@ -1339,7 +1339,15 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /missing attached validation evidence/);
         assert.match(result.reason, /do not make fake implementation changes/);
         assert.match(result.reason, /manual-validation evidence selector/);
+        assert.match(result.reason, /garda-agent-orchestrator\/runtime\/manual-validation\/T-NEXT-1\/review-evidence\.json/);
+        assert.match(result.reason, /selected_logs entries/);
+        assert.match(result.reason, /path, command, and exit_code or status/);
+        assert.match(result.reason, /review_types to \['test'\]/);
+        assert.match(result.reason, /Do not add task-scoped runtime\/manual-validation files to preflight --changed-file scope/);
+        assert.equal(result.commands[0].label, 'Restart review cycle after manual-validation evidence refresh');
         assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(!result.commands[0].command.includes('runtime/manual-validation'));
+        assert.ok(!result.commands[0].command.includes('--changed-file'));
         assert.ok(!result.commands[0].command.includes('record-review-result'));
     });
 
