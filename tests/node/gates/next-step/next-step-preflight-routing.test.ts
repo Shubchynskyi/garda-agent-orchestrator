@@ -1516,4 +1516,68 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(command.includes('--changed-file "src/app.ts"'));
         assert.ok(!command.includes('<path>'));
     });
+
+    it('uses current git-auto workspace files when refreshing stale unscoped preflight', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const currentWorkspaceRefresh = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('--changed-file "<path>"'));
+    });
+
+    it('uses orchestrator-work dirty workspace baseline when refreshing stale protected preflight', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const protectedRefresh = true;\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'cli-reference.md'), '# CLI\n\nprotected refresh\n', 'utf8');
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const dirtyWorkspaceBaseline = {
+            detection_source: baselineSnapshot.detection_source,
+            include_untracked: !!baselineSnapshot.include_untracked,
+            changed_files: baselineSnapshot.changed_files,
+            changed_files_sha256: baselineSnapshot.changed_files_sha256,
+            scope_sha256: baselineSnapshot.scope_sha256,
+            file_hashes: {}
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh protected preflight from dirty baseline',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: [],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED');
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "docs/cli-reference.md"'));
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('--changed-file "<path>"'));
+    });
 });

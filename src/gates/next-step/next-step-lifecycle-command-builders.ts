@@ -122,11 +122,32 @@ export function getTaskModePlannedChangedFiles(taskMode: Record<string, unknown>
         : [];
 }
 
+export function getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode: Record<string, unknown> | null): string[] {
+    if (taskMode?.orchestrator_work !== true) {
+        return [];
+    }
+    const dirtyWorkspaceBaseline = taskMode.dirty_workspace_baseline;
+    if (!dirtyWorkspaceBaseline || typeof dirtyWorkspaceBaseline !== 'object' || Array.isArray(dirtyWorkspaceBaseline)) {
+        return [];
+    }
+    const changedFiles = (dirtyWorkspaceBaseline as Record<string, unknown>).changed_files;
+    return Array.isArray(changedFiles)
+        ? changedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
+        : [];
+}
+
+function getTaskModeAuthorizedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
+    return [...new Set([
+        ...getTaskModePlannedChangedFiles(taskMode),
+        ...getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode)
+    ])].sort();
+}
+
 export function getPreflightRefreshChangedFiles(
     taskMode: Record<string, unknown> | null,
     preflight: Record<string, unknown> | null
 ): string[] {
-    const plannedChangedFiles = getTaskModePlannedChangedFiles(taskMode);
+    const plannedChangedFiles = getTaskModeAuthorizedChangedFiles(taskMode);
     const detectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
     const explicitPreflightChangedFiles = detectionSource === 'explicit_changed_files'
         ? getPreflightChangedFiles(preflight)
@@ -159,7 +180,7 @@ export function buildClassifyChangeCommand(params: {
         `--task-intent ${quoteCommandValue(getStringField(params.taskMode, 'task_summary', '<task summary>'))}`
     ];
     const changedFiles = params.changedFiles || (params.includePlannedScope
-        ? getTaskModePlannedChangedFiles(params.taskMode)
+        ? getTaskModeAuthorizedChangedFiles(params.taskMode)
         : []);
     for (const changedFile of changedFiles) {
         parts.push(`--changed-file ${quoteCommandValue(changedFile)}`);

@@ -320,6 +320,7 @@ describe('gates/task-audit-summary', () => {
 
         it('surfaces task-mode workflow-config authorization in audit and closeout output', () => {
             const plannedChangedFiles = ['garda-agent-orchestrator/live/config/workflow-config.json'];
+            const dirtyBaselineChangedFiles = ['src/gates/next-step/next-step.ts'];
             writePreflight(reviewsDir, TASK_ID, {
                 changed_files: plannedChangedFiles,
                 metrics: { changed_lines_total: 3 },
@@ -340,6 +341,14 @@ describe('gates/task-audit-summary', () => {
                 orchestrator_work: true,
                 workflow_config_work: true,
                 planned_changed_files: plannedChangedFiles,
+                dirty_workspace_baseline: {
+                    detection_source: 'git_auto',
+                    include_untracked: true,
+                    changed_files: dirtyBaselineChangedFiles,
+                    changed_files_sha256: 'dirty-baseline-files-sha',
+                    scope_sha256: 'dirty-baseline-scope-sha',
+                    file_hashes: {}
+                },
                 requested_depth: 2,
                 effective_depth: 2,
                 active_profile: 'standard'
@@ -374,6 +383,16 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.implementation_summary.orchestrator_work, true);
             assert.equal(result.final_closeout.implementation_summary.workflow_config_work, true);
             assert.deepEqual(result.final_closeout.implementation_summary.planned_changed_files, plannedChangedFiles);
+            assert.deepEqual(result.final_closeout.implementation_summary.task_mode_scope_snapshot, {
+                orchestrator_work: true,
+                workflow_config_work: true,
+                planned_changed_files: plannedChangedFiles,
+                dirty_workspace_baseline_changed_files: dirtyBaselineChangedFiles,
+                authorized_changed_files: [
+                    ...plannedChangedFiles,
+                    ...dirtyBaselineChangedFiles
+                ].sort()
+            });
             assert.deepEqual(
                 result.final_closeout.implementation_summary.domain_scope_fingerprints?.domains.config.changed_files,
                 plannedChangedFiles
@@ -383,7 +402,23 @@ describe('gates/task-audit-summary', () => {
                 'orchestrator_work=true; workflow_config_work=true; ' +
                 'planned_changed_files=garda-agent-orchestrator/live/config/workflow-config.json';
             assert.ok(formatTaskAuditSummaryText(result).includes(`TaskModeAuthorization: ${expectedLine}`));
+            assert.ok(formatTaskAuditSummaryText(result).includes(
+                'TaskModeAuthorizationSnapshot: orchestrator_work=true; workflow_config_work=true; ' +
+                'original_planned_changed_files=garda-agent-orchestrator/live/config/workflow-config.json; ' +
+                'dirty_workspace_baseline_changed_files=src/gates/next-step/next-step.ts; ' +
+                'authorized_changed_files=garda-agent-orchestrator/live/config/workflow-config.json, src/gates/next-step/next-step.ts ' +
+                '(historical task-mode authorization snapshot; current audited files are reported in ChangedFiles)'
+            ));
+            assert.ok(formatTaskAuditSummaryText(result).includes('CurrentAuditedChangedFiles: 1 (3 lines)'));
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(`Task-mode authorization: ${expectedLine}.`));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(
+                'Task-mode authorization snapshot: orchestrator_work=true; workflow_config_work=true; ' +
+                'original_planned_changed_files=garda-agent-orchestrator/live/config/workflow-config.json; ' +
+                'dirty_workspace_baseline_changed_files=src/gates/next-step/next-step.ts; ' +
+                'authorized_changed_files=garda-agent-orchestrator/live/config/workflow-config.json, src/gates/next-step/next-step.ts ' +
+                '(historical task-mode authorization snapshot; current audited files are reported in ChangedFiles).'
+            ));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Current audited changed files: 1 (3 lines).'));
         });
 
         it('surfaces reviewer timing provenance only in operator audit output', () => {

@@ -66,6 +66,21 @@ function readTaskModePlannedChangedFiles(taskMode: Record<string, unknown> | nul
         .sort((left, right) => left.localeCompare(right));
 }
 
+function readTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode: Record<string, unknown> | null): string[] {
+    const dirtyWorkspaceBaseline = taskMode?.dirty_workspace_baseline;
+    if (!dirtyWorkspaceBaseline || typeof dirtyWorkspaceBaseline !== 'object' || Array.isArray(dirtyWorkspaceBaseline)) {
+        return [];
+    }
+    const changedFiles = (dirtyWorkspaceBaseline as Record<string, unknown>).changed_files;
+    if (!Array.isArray(changedFiles)) {
+        return [];
+    }
+    return [...new Set(changedFiles
+        .map((entry) => toPosix(String(entry || '').trim()))
+        .filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right));
+}
+
 export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInput): FinalCloseoutArtifact {
     let closeoutScopeSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null = null;
     if (input.changedFiles.length > 0) {
@@ -78,6 +93,8 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
             closeoutScopeSnapshot = null;
         }
     }
+    const plannedChangedFiles = readTaskModePlannedChangedFiles(input.taskMode);
+    const dirtyWorkspaceBaselineChangedFiles = readTaskModeDirtyWorkspaceBaselineChangedFiles(input.taskMode);
 
     return {
         schema_version: 1,
@@ -106,7 +123,17 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
             path_mode: input.pathMode,
             orchestrator_work: input.taskMode?.orchestrator_work === true,
             workflow_config_work: input.taskMode?.workflow_config_work === true,
-            planned_changed_files: readTaskModePlannedChangedFiles(input.taskMode),
+            planned_changed_files: plannedChangedFiles,
+            task_mode_scope_snapshot: {
+                orchestrator_work: input.taskMode?.orchestrator_work === true,
+                workflow_config_work: input.taskMode?.workflow_config_work === true,
+                planned_changed_files: plannedChangedFiles,
+                dirty_workspace_baseline_changed_files: dirtyWorkspaceBaselineChangedFiles,
+                authorized_changed_files: [...new Set([
+                    ...plannedChangedFiles,
+                    ...dirtyWorkspaceBaselineChangedFiles
+                ])].sort((left, right) => left.localeCompare(right))
+            },
             review_verdicts: input.reviewVerdicts,
             docs_updated: input.docsSummary.decision === 'DOCS_UPDATED',
             changed_files: input.changedFiles,

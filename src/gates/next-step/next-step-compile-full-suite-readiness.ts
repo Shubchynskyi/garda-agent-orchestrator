@@ -295,7 +295,12 @@ export function readPreflightWorkspaceReadiness(
             `preflight scope_sha256=${expectedScopeSha256} differs from current scope_sha256=${currentScope.scope_sha256}`
         );
     }
-    let currentChangedFiles: string[] | undefined;
+    let currentChangedFiles: string[] | undefined = Array.isArray(currentScope.changed_files)
+        ? [...new Set([
+            ...currentScope.changed_files.map((entry) => normalizePath(entry)).filter(Boolean),
+            ...plannedChangedFiles
+        ])].sort()
+        : undefined;
     const allowDocsOnlyDelta = options.allowDocsOnlyDelta !== false;
     if (normalizedDetectionSource === 'explicit_changed_files') {
         const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
@@ -322,7 +327,10 @@ export function readPreflightWorkspaceReadiness(
             const currentGitChangedFiles = currentGitSnapshotFiles.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
             ));
-            currentChangedFiles = currentGitChangedFiles;
+            currentChangedFiles = [...new Set([
+                ...currentGitChangedFiles,
+                ...plannedChangedFiles
+            ])].sort();
             const plannedSet = new Set(plannedChangedFiles);
             const preflightUsesOnlyPlannedScope = plannedSet.size > 0
                 && changedFiles.length > 0

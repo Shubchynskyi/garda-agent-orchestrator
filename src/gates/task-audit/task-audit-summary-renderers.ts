@@ -99,6 +99,29 @@ function formatTaskModeAuthorizationSummary(
     return `${base}; planned_changed_files=${plannedChangedFiles.join(', ')}`;
 }
 
+function formatAuthorizationScopeSnapshot(
+    implementationSummary: FinalCloseoutArtifact['implementation_summary']
+): string {
+    const snapshot = implementationSummary.task_mode_scope_snapshot;
+    const plannedChangedFiles = Array.isArray(snapshot?.planned_changed_files)
+        ? snapshot.planned_changed_files
+        : [];
+    const dirtyWorkspaceBaselineChangedFiles = Array.isArray(snapshot?.dirty_workspace_baseline_changed_files)
+        ? snapshot.dirty_workspace_baseline_changed_files
+        : [];
+    const authorizedChangedFiles = Array.isArray(snapshot?.authorized_changed_files)
+        ? snapshot.authorized_changed_files
+        : [];
+    const parts = [
+        `orchestrator_work=${snapshot?.orchestrator_work === true}`,
+        `workflow_config_work=${snapshot?.workflow_config_work === true}`,
+        `original_planned_changed_files=${plannedChangedFiles.length > 0 ? plannedChangedFiles.join(', ') : 'none'}`,
+        `dirty_workspace_baseline_changed_files=${dirtyWorkspaceBaselineChangedFiles.length > 0 ? dirtyWorkspaceBaselineChangedFiles.join(', ') : 'none'}`,
+        `authorized_changed_files=${authorizedChangedFiles.length > 0 ? authorizedChangedFiles.join(', ') : 'none'}`
+    ];
+    return `${parts.join('; ')} (historical task-mode authorization snapshot; current audited files are reported in ChangedFiles)`;
+}
+
 function isCommitCommandSuggestion(value: string): boolean {
     const trimmed = String(value || '').trim();
     return /^git\s+commit\s+-m\s+"/u.test(trimmed)
@@ -134,6 +157,11 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
         `Review verdicts: ${reviewVerdictText}. Docs updated: ${docsUpdatedText}.`
     );
     lines.push(`Task-mode authorization: ${formatTaskModeAuthorizationSummary(closeout.implementation_summary)}.`);
+    lines.push(`Task-mode authorization snapshot: ${formatAuthorizationScopeSnapshot(closeout.implementation_summary)}.`);
+    lines.push(
+        `Current audited changed files: ${closeout.implementation_summary.changed_files_count} ` +
+        `(${closeout.implementation_summary.changed_lines_total} lines).`
+    );
 
     if (closeout.optional_skills?.visible_summary_line) {
         lines.push(closeout.optional_skills.visible_summary_line);
@@ -242,6 +270,8 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
 
     lines.push(`TaskModeAuthorization: ${formatTaskModeAuthorizationSummary(summary.final_closeout.implementation_summary)}`);
+    lines.push(`TaskModeAuthorizationSnapshot: ${formatAuthorizationScopeSnapshot(summary.final_closeout.implementation_summary)}`);
+    lines.push(`CurrentAuditedChangedFiles: ${summary.changed_files_count} (${summary.changed_lines_total} lines)`);
 
     const reviewAttemptSummaryLine = getReviewAttemptSummaryLine(summary.review_attempt_summary);
     if (reviewAttemptSummaryLine) {

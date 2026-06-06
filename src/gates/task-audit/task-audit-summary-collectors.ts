@@ -87,6 +87,13 @@ export interface FinalCloseoutImplementationSummary {
     orchestrator_work?: boolean;
     workflow_config_work?: boolean;
     planned_changed_files?: string[];
+    task_mode_scope_snapshot?: {
+        orchestrator_work: boolean;
+        workflow_config_work: boolean;
+        planned_changed_files: string[];
+        dirty_workspace_baseline_changed_files: string[];
+        authorized_changed_files: string[];
+    };
     review_verdicts: Record<string, string>;
     docs_updated: boolean;
     changed_files?: string[];
