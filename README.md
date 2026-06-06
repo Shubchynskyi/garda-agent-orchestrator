@@ -87,7 +87,7 @@ If you want persistent commands, install globally.
 
 ## Supported Providers
 
-The provider list is maintained in [docs/providers.md](docs/providers.md). That page documents current entrypoints, bridge profiles, shared `AGENTS.md` providers, and the Antigravity independent-review limitation.
+The provider list is maintained in [docs/providers.md](docs/providers.md). That page documents current entrypoints, bridge profiles, shared `AGENTS.md` providers, and Antigravity 2.0 / CLI delegated-review support notes.
 
 ## CLI Commands
 
