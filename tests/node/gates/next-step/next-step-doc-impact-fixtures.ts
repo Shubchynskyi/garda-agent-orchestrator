@@ -1,10 +1,10 @@
-import { describe, it, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
+import { afterEach } from 'node:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { initGitRepo } from '../git-fixtures';
 
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
@@ -26,10 +26,10 @@ import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { buildStrictDecompositionDecisionArtifact } from './next-step-test-support';
 
-const TASK_ID = 'T-NEXT-1';
-const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
-const requireFromTest = createRequire(__filename);
-const NEXT_STEP_FULL_SUITE_TEST_CONFIG: FullSuiteValidationConfig = Object.freeze({
+export const TASK_ID = 'T-NEXT-1';
+export const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
+export const requireFromTest = createRequire(__filename);
+export const NEXT_STEP_FULL_SUITE_TEST_CONFIG: FullSuiteValidationConfig = Object.freeze({
     enabled: true,
     command: 'npm test',
     timeout_ms: 300_000,
@@ -39,7 +39,7 @@ const NEXT_STEP_FULL_SUITE_TEST_CONFIG: FullSuiteValidationConfig = Object.freez
     placement: 'before_test_review'
 });
 
-const ALL_REVIEW_FLAGS = Object.freeze({
+export const ALL_REVIEW_FLAGS = Object.freeze({
     code: false,
     db: false,
     security: false,
@@ -51,10 +51,10 @@ const ALL_REVIEW_FLAGS = Object.freeze({
     dependency: false
 });
 
-let tempRoots: string[] = [];
-const PROVIDER_ENV_KEYS = getProviderRuntimeEnvironmentKeys();
+export let tempRoots: string[] = [];
+export const PROVIDER_ENV_KEYS = getProviderRuntimeEnvironmentKeys();
 
-function withProviderEnv<T>(updates: Record<string, string | undefined>, callback: () => T): T {
+export function withProviderEnv<T>(updates: Record<string, string | undefined>, callback: () => T): T {
     const previousValues = new Map<string, string | undefined>();
     for (const key of PROVIDER_ENV_KEYS) {
         previousValues.set(key, process.env[key]);
@@ -80,7 +80,7 @@ function withProviderEnv<T>(updates: Record<string, string | undefined>, callbac
     }
 }
 
-function makeTempRepo(): string {
+export function makeTempRepo(): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-next-step-'));
     tempRoots.push(repoRoot);
     fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews'), { recursive: true });
@@ -153,25 +153,25 @@ function makeTempRepo(): string {
     return repoRoot;
 }
 
-function reviewsRoot(repoRoot: string): string {
+export function reviewsRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
 }
 
-function eventsRoot(repoRoot: string): string {
+export function eventsRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
 }
 
-function writeJson(filePath: string, payload: unknown): void {
+export function writeJson(filePath: string, payload: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 }
 
-function writeJsonWithSha(filePath: string, payload: unknown): string {
+export function writeJsonWithSha(filePath: string, payload: unknown): string {
     writeJson(filePath, payload);
     return fileSha256(filePath);
 }
 
-function writeProjectMemoryWorkflowConfig(
+export function writeProjectMemoryWorkflowConfig(
     repoRoot: string,
     options: { enabled?: boolean; mode?: 'off' | 'check' | 'update' | 'strict'; fullSuiteEnabled?: boolean } = {}
 ): void {
@@ -185,7 +185,7 @@ function writeProjectMemoryWorkflowConfig(
     writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), config);
 }
 
-function seedProjectMemory(repoRoot: string): void {
+export function seedProjectMemory(repoRoot: string): void {
     const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
     fs.mkdirSync(memoryRoot, { recursive: true });
     for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
@@ -193,21 +193,21 @@ function seedProjectMemory(repoRoot: string): void {
     }
 }
 
-function seedProjectMemoryImpact(repoRoot: string, taskId: string): void {
+export function seedProjectMemoryImpact(repoRoot: string, taskId: string): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const result = assessProjectMemoryImpact({ repoRoot, taskId, preflightPath });
     writeJson(result.artifactPath, result.artifact);
 }
 
-function sha256Text(value: string): string {
+export function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
-function fileSha256(filePath: string): string {
+export function fileSha256(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-function writeNoOpEvidence(
+export function writeNoOpEvidence(
     repoRoot: string,
     taskId: string,
     preflightPath: string,
@@ -229,7 +229,7 @@ function writeNoOpEvidence(
     });
 }
 
-function writeStrictDecompositionDecision(
+export function writeStrictDecompositionDecision(
     repoRoot: string,
     taskId: string,
     options: {
@@ -257,7 +257,7 @@ function writeStrictDecompositionDecision(
     );
 }
 
-function appendEvent(
+export function appendEvent(
     repoRoot: string,
     taskId: string,
     eventType: string,
@@ -305,7 +305,7 @@ function appendEvent(
     };
 }
 
-function seedStartedTask(repoRoot: string, taskId: string): void {
+export function seedStartedTask(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -326,7 +326,7 @@ function seedStartedTask(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 }
 
-function seedCustomStartedTask(repoRoot: string, taskId: string): string {
+export function seedCustomStartedTask(repoRoot: string, taskId: string): string {
     const taskModePath = path.join(reviewsRoot(repoRoot), `${taskId}-custom-task-mode.json`);
     writeJson(taskModePath, buildTaskModeArtifact({
         taskId,
@@ -351,7 +351,7 @@ function seedCustomStartedTask(repoRoot: string, taskId: string): string {
     return taskModePath;
 }
 
-function seedTaskModeOnly(repoRoot: string, taskId: string): void {
+export function seedTaskModeOnly(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-task-mode.json`), buildTaskModeArtifact({
         taskId,
         entryMode: 'EXPLICIT_TASK_EXECUTION',
@@ -367,7 +367,7 @@ function seedTaskModeOnly(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'TASK_MODE_ENTERED');
 }
 
-function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'POST_PREFLIGHT', taskModePath = ''): void {
+export function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'POST_PREFLIGHT', taskModePath = ''): void {
     const rulePackPath = path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
     const artifact = buildRulePackArtifact({
         repoRoot,
@@ -389,17 +389,17 @@ function seedRulePack(repoRoot: string, taskId: string, stage: 'TASK_ENTRY' | 'P
     });
 }
 
-function seedHandshake(repoRoot: string, taskId: string): void {
+export function seedHandshake(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-handshake.json`), { task_id: taskId, status: 'PASS' });
     appendEvent(repoRoot, taskId, 'HANDSHAKE_DIAGNOSTICS_RECORDED');
 }
 
-function seedShellSmoke(repoRoot: string, taskId: string): void {
+export function seedShellSmoke(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-shell-smoke.json`), { task_id: taskId, status: 'PASS' });
     appendEvent(repoRoot, taskId, 'SHELL_SMOKE_PREFLIGHT_RECORDED');
 }
 
-function seedPostPreflightRulePack(repoRoot: string, taskId: string, preflightPath: string, taskModePath = ''): void {
+export function seedPostPreflightRulePack(repoRoot: string, taskId: string, preflightPath: string, taskModePath = ''): void {
     const rulePackPath = path.join(reviewsRoot(repoRoot), `${taskId}-rule-pack.json`);
     const artifact = buildRulePackArtifact({
         repoRoot,
@@ -427,11 +427,11 @@ function seedPostPreflightRulePack(repoRoot: string, taskId: string, preflightPa
     });
 }
 
-function normalizeForTimeline(filePath: string): string {
+export function normalizeForTimeline(filePath: string): string {
     return filePath.replace(/\\/g, '/');
 }
 
-function seedSplitRequiredLatchEvidence(
+export function seedSplitRequiredLatchEvidence(
     repoRoot: string,
     taskId: string,
     guardKind: 'scope_budget' | 'review_cycle' = 'scope_budget'
@@ -479,13 +479,13 @@ function seedSplitRequiredLatchEvidence(
     });
 }
 
-function getLoadedRuleFileBasenames(command: string): string[] {
+export function getLoadedRuleFileBasenames(command: string): string[] {
     return [...command.matchAll(/--loaded-rule-file "([^"]+)"/g)]
         .map((match) => path.basename(match[1]))
         .sort();
 }
 
-function writePreflight(
+export function writePreflight(
     repoRoot: string,
     taskId: string,
     requiredReviews: Record<string, boolean>,
@@ -536,7 +536,7 @@ function writePreflight(
     return preflightPath;
 }
 
-function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
+export function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
@@ -559,7 +559,7 @@ function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED', 'PASS', {}, timestampUtc);
 }
 
-function writeGitAutoPreflight(
+export function writeGitAutoPreflight(
     repoRoot: string,
     taskId: string,
     requiredReviews: Record<string, boolean>
@@ -598,7 +598,7 @@ function writeGitAutoPreflight(
     return preflightPath;
 }
 
-function seedGitAutoCompilePass(repoRoot: string, taskId: string): void {
+export function seedGitAutoCompilePass(repoRoot: string, taskId: string): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const snapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
@@ -621,7 +621,81 @@ function seedGitAutoCompilePass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
 }
 
-function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
+export function stageFiles(repoRoot: string, ...relativePaths: string[]): void {
+    execFileSync('git', ['add', ...relativePaths], { cwd: repoRoot, stdio: 'ignore' });
+}
+
+export function writeStagedPreflight(
+    repoRoot: string,
+    taskId: string,
+    requiredReviews: Record<string, boolean>
+): string {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+    const domainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource: snapshot.detection_source,
+        includeUntracked: snapshot.include_untracked,
+        changedFiles: snapshot.changed_files
+    });
+    writeJson(preflightPath, {
+        task_id: taskId,
+        detection_source: snapshot.detection_source,
+        include_untracked: snapshot.include_untracked,
+        mode: 'FULL_PATH',
+        scope_category: 'mixed',
+        metrics: {
+            changed_lines_total: snapshot.changed_lines_total,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256,
+            domain_scope_fingerprints: domainScopeFingerprints
+        },
+        required_reviews: requiredReviews,
+        changed_files: snapshot.changed_files,
+        review_execution_policy: {
+            mode: 'strict_sequential',
+            visible_summary_line: 'Review execution policy: strict_sequential'
+        }
+    });
+    appendEvent(repoRoot, taskId, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+        output_path: normalizeForTimeline(preflightPath)
+    });
+    seedPostPreflightRulePack(repoRoot, taskId, preflightPath);
+    return preflightPath;
+}
+
+export function seedStagedCompilePass(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+    const domainScopeFingerprints = buildDomainScopeFingerprints({
+        repoRoot,
+        detectionSource: snapshot.detection_source,
+        includeUntracked: snapshot.include_untracked,
+        changedFiles: snapshot.changed_files
+    });
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
+        timestamp_utc: new Date().toISOString(),
+        task_id: taskId,
+        event_source: 'compile-gate',
+        status: 'PASSED',
+        outcome: 'PASS',
+        preflight_path: preflightPath.replace(/\\/g, '/'),
+        preflight_hash_sha256: fileSha256(preflightPath),
+        scope_detection_source: snapshot.detection_source,
+        scope_include_untracked: snapshot.include_untracked,
+        scope_changed_files: snapshot.changed_files,
+        scope_changed_files_count: snapshot.changed_files_count,
+        scope_changed_lines_total: snapshot.changed_lines_total,
+        scope_changed_files_sha256: snapshot.changed_files_sha256,
+        scope_content_sha256: snapshot.scope_content_sha256,
+        scope_sha256: snapshot.scope_sha256,
+        domain_scope_fingerprints: domainScopeFingerprints
+    });
+    appendEvent(repoRoot, taskId, 'COMPILE_GATE_PASSED');
+}
+
+export function buildReviewContextScopeFixture(repoRoot: string, taskId: string, reviewType: string): Record<string, unknown> {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     const preflight = fs.existsSync(preflightPath)
         ? JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>
@@ -659,7 +733,7 @@ function buildReviewContextScopeFixture(repoRoot: string, taskId: string, review
     };
 }
 
-function writeReviewEvidence(
+export function writeReviewEvidence(
     repoRoot: string,
     taskId: string,
     reviewType: string,
@@ -744,6 +818,7 @@ function writeReviewEvidence(
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: `test-${reviewType}-invocation`,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             ...launchInputEvidenceFixture(taskId, reviewType),
@@ -777,6 +852,7 @@ function writeReviewEvidence(
                 reviewer_launch_tool: 'test-subagent-spawn',
                 provider_invocation_id: `test-${reviewType}-invocation`,
                 launch_prepared_at_utc: launchPreparedAtUtc,
+                delegation_started_at_utc: launchedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
                 launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
@@ -812,6 +888,7 @@ function writeReviewEvidence(
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: launchedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             invocation_attested_at_utc: invocationAttestedAtUtc
@@ -822,7 +899,7 @@ function writeReviewEvidence(
     });
 }
 
-function markReviewEvidenceAsStrictReuse(
+export function markReviewEvidenceAsStrictReuse(
     repoRoot: string,
     taskId: string,
     reviewType: string,
@@ -905,7 +982,7 @@ function markReviewEvidenceAsStrictReuse(
     });
 }
 
-function writeStrictIndependentCodeReviewEvidence(repoRoot: string, taskId: string): void {
+export function writeStrictIndependentCodeReviewEvidence(repoRoot: string, taskId: string): void {
     const reviewType = 'code';
     const reviewerIdentity = 'agent:code-reviewer';
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
@@ -1031,7 +1108,7 @@ function writeStrictIndependentCodeReviewEvidence(repoRoot: string, taskId: stri
     appendEvent(repoRoot, taskId, 'REVIEW_GATE_PASSED');
 }
 
-function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: string, reviewerIdentity: string): void {
+export function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: string, reviewerIdentity: string): void {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     writeJson(reviewContextPath, {
@@ -1047,7 +1124,7 @@ function writeReviewContextOnly(repoRoot: string, taskId: string, reviewType: st
     });
 }
 
-function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<string, unknown> {
+export function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<string, unknown> {
     const copyPastePrompt = `Delegated ${reviewType} reviewer launch prompt for ${taskId}.`;
     const copyPastePromptSha256 = sha256Text(copyPastePrompt);
     return {
@@ -1059,7 +1136,7 @@ function launchInputEvidenceFixture(taskId: string, reviewType: string): Record<
     };
 }
 
-function seedCompletedReviewerLaunchAndInvocation(
+export function seedCompletedReviewerLaunchAndInvocation(
     repoRoot: string,
     taskId: string,
     reviewType: string,
@@ -1098,6 +1175,7 @@ function seedCompletedReviewerLaunchAndInvocation(
         prepared_launch_event_sha256: preparedIntegrity.event_sha256,
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
+        delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z',
         ...launchInputEvidenceFixture(taskId, reviewType),
         fork_context: false
@@ -1120,6 +1198,7 @@ function seedCompletedReviewerLaunchAndInvocation(
         reviewer_launch_attestation_source: 'test-subagent-spawn',
         reviewer_launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
+        delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z',
         launch_input_mode: launchArtifact.launch_input_mode,
         launch_input_sha256: launchArtifact.launch_input_sha256,
@@ -1127,7 +1206,7 @@ function seedCompletedReviewerLaunchAndInvocation(
     });
 }
 
-function readReviewContextTreeStateSha256(repoRoot: string, taskId: string, reviewType: string): string {
+export function readReviewContextTreeStateSha256(repoRoot: string, taskId: string, reviewType: string): string {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
     const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
@@ -1136,7 +1215,7 @@ function readReviewContextTreeStateSha256(repoRoot: string, taskId: string, revi
     return String(treeState.tree_state_sha256 || '').trim();
 }
 
-function writeFreshReviewContextWithoutRouting(repoRoot: string, taskId: string, reviewType: string): string {
+export function writeFreshReviewContextWithoutRouting(repoRoot: string, taskId: string, reviewType: string): string {
     const reviewContextPath = path.join(reviewsRoot(repoRoot), `${taskId}-${reviewType}-review-context.json`);
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
     writeJson(reviewContextPath, {
@@ -1153,7 +1232,7 @@ function writeFreshReviewContextWithoutRouting(repoRoot: string, taskId: string,
     return reviewContextPath;
 }
 
-function seedReviewGatePass(repoRoot: string, taskId: string): void {
+export function seedReviewGatePass(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-review-gate.json`), {
         task_id: taskId,
         status: 'PASSED',
@@ -1162,7 +1241,7 @@ function seedReviewGatePass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'REVIEW_GATE_PASSED');
 }
 
-function seedDocImpactPass(repoRoot: string, taskId: string): void {
+export function seedDocImpactPass(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-doc-impact.json`), {
         task_id: taskId,
         decision: 'NO_DOC_UPDATES',
@@ -1172,7 +1251,7 @@ function seedDocImpactPass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'DOC_IMPACT_ASSESSED');
 }
 
-function seedCompletionPass(repoRoot: string, taskId: string): void {
+export function seedCompletionPass(repoRoot: string, taskId: string): void {
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-completion-gate.json`), {
         task_id: taskId,
         status: 'PASSED',
@@ -1181,7 +1260,7 @@ function seedCompletionPass(repoRoot: string, taskId: string): void {
     appendEvent(repoRoot, taskId, 'COMPLETION_GATE_PASSED');
 }
 
-function seedFullSuiteValidation(
+export function seedFullSuiteValidation(
     repoRoot: string,
     taskId: string,
     status: 'PASSED' | 'FAILED' | 'SKIPPED' = 'PASSED',
@@ -1229,63 +1308,12 @@ function seedFullSuiteValidation(
     );
 }
 
-function seedTimedOutFullSuiteFailure(
-    repoRoot: string,
-    taskId: string,
-    config: FullSuiteValidationConfig,
-    durationMs = 400_000
-): void {
-    seedFullSuiteValidation(repoRoot, taskId, 'FAILED');
-    const fullSuitePath = path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-validation.json`);
-    const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
-    fullSuiteArtifact.timed_out = true;
-    fullSuiteArtifact.duration_ms = durationMs;
-    fullSuiteArtifact.timeout_forecast = {
-        configured_timeout_seconds: Math.ceil(config.timeout_ms / 1000),
-        recommended_timeout_seconds: Math.ceil(config.timeout_ms / 1000),
-        recommendation_source: 'config_timeout'
-    };
-    writeJson(fullSuitePath, fullSuiteArtifact);
-    recordFullSuiteValidationDuration(repoRoot, config, {
-        timestamp_utc: '2099-01-01T00:00:00.000Z',
-        task_id: taskId,
-        status: 'FAILED',
-        duration_ms: durationMs,
-        timed_out: true,
-        exit_code: 1
-    });
-}
-
-function seedFullSuiteRetryEvidence(
-    repoRoot: string,
-    taskId: string,
-    reasonKind: 'transient' | 'out_of_scope' | 'harness' | 'focused_pass_after_failure' = 'transient',
-    focusedValidation: Record<string, unknown> = {
-        command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-routing.test.ts',
-        exit_code: 0,
-        status: 'PASSED'
-    }
-): void {
-    const manualValidationRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'manual-validation', taskId);
-    fs.mkdirSync(manualValidationRoot, { recursive: true });
-    const fullSuitePath = path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-validation.json`);
-    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    writeJson(path.join(manualValidationRoot, 'full-suite-retry-evidence.json'), {
-        schema_version: 1,
-        task_id: taskId,
-        reason_kind: reasonKind,
-        full_suite_failure_artifact_sha256: fileSha256(fullSuitePath),
-        preflight_sha256: fileSha256(preflightPath),
-        focused_validation: focusedValidation
-    });
-}
-
-function materializeFinalCloseout(repoRoot: string, taskId: string): void {
+export function materializeFinalCloseout(repoRoot: string, taskId: string): void {
     const summary = buildTaskAuditSummary({ taskId, repoRoot });
     synchronizeFinalCloseoutArtifacts(summary);
 }
 
-function seedCompletedTaskWithIndependentCodeReview(repoRoot: string, taskId: string): void {
+export function seedCompletedTaskWithIndependentCodeReview(repoRoot: string, taskId: string): void {
     seedStartedTask(repoRoot, taskId);
     writePreflight(repoRoot, taskId, { ...ALL_REVIEW_FLAGS, code: true });
     seedCompilePass(repoRoot, taskId);
@@ -1294,7 +1322,7 @@ function seedCompletedTaskWithIndependentCodeReview(repoRoot: string, taskId: st
     seedCompletionPass(repoRoot, taskId);
 }
 
-function seedSourceCheckoutRuntime(repoRoot: string, stale: boolean): void {
+export function seedSourceCheckoutRuntime(repoRoot: string, stale: boolean): void {
     fs.writeFileSync(path.join(repoRoot, 'package.json'), '{"name":"garda-test"}\n', 'utf8');
     fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
@@ -1317,797 +1345,3 @@ afterEach(() => {
 });
 
 
-describe('gates/next-step', () => {
-    it('runs enabled full-suite validation before launching mandatory test review', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /before test review/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-    });
-
-    it('runs after-compile full-suite validation before launching any reviewer', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'after_compile_before_reviews'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        const text = formatNextStepText(result);
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.full_suite_validation.placement, 'after_compile_before_reviews');
-        assert.match(result.title, /after compile before reviews/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-        assert.ok(text.includes('FullSuite: enabled=true; placement=after_compile_before_reviews;'));
-    });
-
-    it('blocks reviewer launch after current after-compile full-suite failure', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'after_compile_before_reviews'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'implementation');
-        assert.match(result.title, /Fix full-suite failures/);
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-        assert.ok(!result.commands[0].command.includes('--review-type'));
-    });
-
-    it('retries after-compile full-suite when focused transient evidence is bound to the current failure', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'after_compile_before_reviews'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
-        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.match(result.title, /focused transient evidence/);
-        assert.match(result.reason, /manual-validation\/T-NEXT-1\/full-suite-retry-evidence\.json/);
-        assert.match(result.reason, /does not replace mandatory full-suite evidence/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-        assert.ok(!result.commands[0].command.includes('--review-type'));
-    });
-
-    it('rejects malformed focused retry evidence instead of coercing exit code to success', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'after_compile_before_reviews'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
-        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient', {
-            command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-routing.test.ts',
-            exit_code: null,
-            status: 'FAILED'
-        });
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'implementation');
-        assert.match(result.title, /Fix full-suite failures/);
-        assert.doesNotMatch(result.title, /focused transient evidence/);
-        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-    });
-
-    it('rejects contradictory focused retry evidence with pass status and nonzero exit code', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'after_compile_before_reviews'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
-        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient', {
-            command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-routing.test.ts',
-            exit_code: 1,
-            status: 'PASSED'
-        });
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'implementation');
-        assert.match(result.title, /Fix full-suite failures/);
-        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
-    });
-
-    it('rejects focused retry evidence without an auditable command', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'after_compile_before_reviews'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
-        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient', {
-            status: 'PASSED'
-        });
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'implementation');
-        assert.match(result.title, /Fix full-suite failures/);
-        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
-    });
-
-    it('retries after-compile full-suite timeout when duration history recommends a longer timeout', () => {
-        const repoRoot = makeTempRepo();
-        const fullSuiteConfig: FullSuiteValidationConfig = {
-            ...NEXT_STEP_FULL_SUITE_TEST_CONFIG,
-            placement: 'after_compile_before_reviews'
-        };
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: fullSuiteConfig,
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedTimedOutFullSuiteFailure(repoRoot, TASK_ID, fullSuiteConfig);
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.match(result.title, /Retry full-suite validation/);
-        assert.match(result.reason, /timed out/);
-        assert.match(result.reason, /recommends a longer timeout/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-        assert.ok(!result.commands[0].command.includes('--review-type'));
-    });
-
-    it('allows mandatory test review before full-suite when placement is before completion', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_completion'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.equal(result.full_suite_validation.placement, 'before_completion');
-        assert.ok(result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
-    });
-
-    it('surfaces recent full-suite duration timeout guidance before running the suite', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: NEXT_STEP_FULL_SUITE_TEST_CONFIG,
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        recordFullSuiteValidationDuration(repoRoot, NEXT_STEP_FULL_SUITE_TEST_CONFIG, {
-            timestamp_utc: '2099-01-01T00:00:00.000Z',
-            task_id: 'T-OLD-1',
-            status: 'PASSED',
-            duration_ms: 100_000,
-            timed_out: false,
-            exit_code: 0
-        });
-        recordFullSuiteValidationDuration(repoRoot, NEXT_STEP_FULL_SUITE_TEST_CONFIG, {
-            timestamp_utc: '2099-01-01T00:01:00.000Z',
-            task_id: 'T-OLD-2',
-            status: 'FAILED',
-            duration_ms: 200_000,
-            timed_out: false,
-            exit_code: 1
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        const text = formatNextStepText(result);
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.match(result.reason, /Recommended full-suite command timeout: 240s/);
-        assert.match(result.reason, /last 2 run\(s\) avg 150s/);
-        assert.match(result.reason, /max 200s/);
-        assert.ok(text.includes('FullSuiteTimeout: Recommended full-suite command timeout: 240s'));
-    });
-
-    it('keeps parallel non-test reviews launchable while test review waits for full-suite validation', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            refactor: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        const text = formatNextStepText(result);
-
-        assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'code');
-        assert.deepEqual(result.review.launchable_review_types, ['code', 'security', 'refactor']);
-        assert.deepEqual(result.review.blocked_review_lanes, [
-            {
-                review_type: 'test',
-                blocked_by: ['full-suite-validation'],
-                reason: 'Waiting for current full-suite validation evidence before launching test review.'
-            }
-        ]);
-        assert.ok(text.includes('ReviewLaunchableBatch: code, security, refactor'));
-        assert.ok(text.includes('BlockedReviewLanes: test blocked by full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(result.commands[0].command.includes('--review-type "code"'));
-    });
-
-    it('launches parallel test review after current full-suite validation passes', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'parallel_all'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, {
-            ...ALL_REVIEW_FLAGS,
-            code: true,
-            security: true,
-            refactor: true,
-            test: true
-        }, { reviewPolicyMode: 'parallel_all' });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'build-review-context');
-        assert.deepEqual(result.review.launchable_review_types, ['code', 'security', 'refactor', 'test']);
-        assert.deepEqual(result.review.blocked_review_lanes, []);
-    });
-
-    it('uses current early full-suite pass before continuing to mandatory test review', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'build-review-context');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.ok(result.commands[0].command.includes('--review-type "test"'));
-    });
-
-    it('blocks mandatory test review after current early full-suite failure', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'implementation');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /Fix full-suite failures/);
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-    });
-
-    it('retries early full-suite before test review when focused evidence clears a transient failure', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
-        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'out_of_scope');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /focused transient evidence/);
-        assert.match(result.reason, /reason_kind=out_of_scope/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-    });
-
-    it('retries early full-suite timeout before mandatory test review when duration history recommends a longer timeout', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: NEXT_STEP_FULL_SUITE_TEST_CONFIG,
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-        seedTimedOutFullSuiteFailure(repoRoot, TASK_ID, NEXT_STEP_FULL_SUITE_TEST_CONFIG);
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /Retry full-suite validation/);
-        assert.match(result.reason, /timed out/);
-        assert.match(result.reason, /recommends a longer timeout/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('build-review-context'));
-    });
-
-    it('reruns full-suite before test review when prior full-suite pass is stale after a newer compile', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED', '2099-01-01T00:00:02.000Z');
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /before test review/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-    });
-
-    it('routes full-suite refresh before test review when newer compile has unchanged scope binding', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'PASSED', '2099-01-01T00:00:02.000Z');
-        const compileArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`);
-        const compileArtifact = JSON.parse(fs.readFileSync(compileArtifactPath, 'utf8')) as Record<string, unknown>;
-        const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
-        const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
-        const scopeBinding = {
-            changed_files_sha256: compileArtifact.scope_changed_files_sha256,
-            scope_sha256: compileArtifact.scope_sha256,
-            scope_content_sha256: compileArtifact.scope_content_sha256
-        };
-        (fullSuiteArtifact.cycle_binding as Record<string, unknown>).scope_binding = scopeBinding;
-        writeJson(fullSuitePath, fullSuiteArtifact);
-        const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
-        const updatedTimeline = fs.readFileSync(timelinePath, 'utf8')
-            .split('\n')
-            .map((line) => {
-                if (!line.trim()) return line;
-                const parsed = JSON.parse(line) as Record<string, unknown>;
-                if (parsed.event_type === 'FULL_SUITE_VALIDATION_PASSED') {
-                    ((parsed.details as Record<string, unknown>).cycle_binding as Record<string, unknown>).scope_binding = scopeBinding;
-                    return JSON.stringify(parsed);
-                }
-                return line;
-            })
-            .join('\n');
-        fs.writeFileSync(timelinePath, updatedTimeline, 'utf8');
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /before test review/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-    });
-
-    it('reruns full-suite before test review when prior full-suite failure is stale after a newer compile', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_test_review'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED', '2099-01-01T00:00:02.000Z');
-        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient');
-        seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
-        writeReviewEvidence(repoRoot, TASK_ID, 'code');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.review.next_review_type, 'test', result.reason);
-        assert.match(result.title, /before test review/);
-        assert.doesNotMatch(result.title, /focused transient evidence/);
-        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
-        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
-        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
-        assert.ok(!result.commands[0].command.includes('implementation'));
-    });
-
-    it('surfaces effective full-suite config before completion', () => {
-        const repoRoot = makeTempRepo();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            full_suite_validation: {
-                enabled: true,
-                command: 'npm test',
-                placement: 'before_completion'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
-        seedCompilePass(repoRoot, TASK_ID);
-        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-gate.json`), { task_id: TASK_ID, status: 'PASSED' });
-        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-doc-impact.json`), { task_id: TASK_ID, decision: 'NO_DOC_UPDATES' });
-        appendEvent(repoRoot, TASK_ID, 'REVIEW_GATE_PASSED');
-        appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED');
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation');
-        assert.equal(result.full_suite_validation.enabled, true);
-        assert.equal(result.full_suite_validation.command, 'npm test');
-        assert.equal(result.full_suite_validation.placement, 'before_completion');
-        assert.match(result.title, /before completion/);
-        assert.ok(result.reason.includes('workflow-config.json'));
-    });
-
-    it('routes to completion when full-suite validation is disabled after docs pass', () => {
-        const repoRoot = makeTempRepo();
-        seedStartedTask(repoRoot, TASK_ID);
-        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
-        seedCompilePass(repoRoot, TASK_ID);
-        seedReviewGatePass(repoRoot, TASK_ID);
-        seedDocImpactPass(repoRoot, TASK_ID);
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.full_suite_validation.enabled, false);
-        assert.equal(result.next_gate, 'completion-gate');
-        assert.ok(result.commands[0].command.includes('gate completion-gate'));
-    });
-
-    it('records full-suite as not required for docs-only scopes when full-suite config is enabled', () => {
-        const repoRoot = makeTempRepo();
-        const defaultWorkflowConfig = buildDefaultWorkflowConfig();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            ...defaultWorkflowConfig,
-            full_suite_validation: {
-                ...defaultWorkflowConfig.full_suite_validation,
-                enabled: true,
-                command: 'npm test',
-                placement: 'after_compile_before_reviews'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            },
-            project_memory_maintenance: {
-                ...defaultWorkflowConfig.project_memory_maintenance,
-                enabled: false
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        const preflightPath = writePreflight(repoRoot, TASK_ID, {});
-        const docsPath = path.join(repoRoot, 'docs', 'runbook.md');
-        fs.mkdirSync(path.dirname(docsPath), { recursive: true });
-        fs.writeFileSync(docsPath, '# Runbook\n', 'utf8');
-        const docsSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['docs/runbook.md']);
-        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-        preflight.detection_source = docsSnapshot.detection_source;
-        preflight.scope_category = 'docs-only';
-        preflight.changed_files = docsSnapshot.changed_files;
-        preflight.metrics = {
-            changed_lines_total: docsSnapshot.changed_lines_total,
-            changed_files_sha256: docsSnapshot.changed_files_sha256,
-            scope_content_sha256: docsSnapshot.scope_content_sha256,
-            scope_sha256: docsSnapshot.scope_sha256
-        };
-        preflight.required_reviews = { ...ALL_REVIEW_FLAGS };
-        preflight.triggers = {
-            runtime_code_changed: false,
-            test: false,
-            db: false,
-            security: false,
-            api: false,
-            performance: false,
-            infra: false,
-            dependency: false,
-            refactor: false
-        };
-        writeJson(preflightPath, preflight);
-        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
-        seedCompilePass(repoRoot, TASK_ID);
-        seedReviewGatePass(repoRoot, TASK_ID);
-        seedDocImpactPass(repoRoot, TASK_ID);
-
-        const beforeSkip = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.equal(beforeSkip.next_gate, 'full-suite-validation', beforeSkip.reason);
-        assert.equal(beforeSkip.full_suite_validation.placement, 'after_compile_before_reviews');
-        assert.match(beforeSkip.title, /not required/i);
-        assert.ok(beforeSkip.commands[0].command.includes('gate full-suite-validation'));
-        assert.equal(beforeSkip.commands[0].label, 'Record full-suite not required');
-
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'SKIPPED', '2099-01-01T00:00:05.000Z');
-        const afterSkip = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        assert.equal(afterSkip.next_gate, 'completion-gate', afterSkip.reason);
-        assert.ok(afterSkip.commands[0].command.includes('gate completion-gate'));
-    });
-
-    it('rejects stale full-suite not-required artifacts for docs-only scopes', () => {
-        const repoRoot = makeTempRepo();
-        const defaultWorkflowConfig = buildDefaultWorkflowConfig();
-        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
-            ...defaultWorkflowConfig,
-            full_suite_validation: {
-                ...defaultWorkflowConfig.full_suite_validation,
-                enabled: true,
-                command: 'npm test'
-            },
-            review_execution_policy: {
-                mode: 'code_first_optional'
-            },
-            project_memory_maintenance: {
-                ...defaultWorkflowConfig.project_memory_maintenance,
-                enabled: false
-            }
-        });
-        seedStartedTask(repoRoot, TASK_ID);
-        const preflightPath = writePreflight(repoRoot, TASK_ID, {});
-        const docsPath = path.join(repoRoot, 'docs', 'runbook.md');
-        fs.mkdirSync(path.dirname(docsPath), { recursive: true });
-        fs.writeFileSync(docsPath, '# Runbook\n', 'utf8');
-        const docsSnapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['docs/runbook.md']);
-        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
-        preflight.detection_source = docsSnapshot.detection_source;
-        preflight.scope_category = 'docs-only';
-        preflight.changed_files = docsSnapshot.changed_files;
-        preflight.metrics = {
-            changed_lines_total: docsSnapshot.changed_lines_total,
-            changed_files_sha256: docsSnapshot.changed_files_sha256,
-            scope_content_sha256: docsSnapshot.scope_content_sha256,
-            scope_sha256: docsSnapshot.scope_sha256
-        };
-        preflight.required_reviews = { ...ALL_REVIEW_FLAGS };
-        preflight.triggers = {
-            runtime_code_changed: false,
-            test: false,
-            db: false,
-            security: false,
-            api: false,
-            performance: false,
-            infra: false,
-            dependency: false,
-            refactor: false
-        };
-        writeJson(preflightPath, preflight);
-        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
-        seedCompilePass(repoRoot, TASK_ID);
-        seedReviewGatePass(repoRoot, TASK_ID);
-        seedDocImpactPass(repoRoot, TASK_ID);
-        seedFullSuiteValidation(repoRoot, TASK_ID, 'SKIPPED');
-        const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
-        const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
-        (fullSuiteArtifact.cycle_binding as Record<string, unknown>).compile_gate_timestamp = '2000-01-01T00:00:00.000Z';
-        writeJson(fullSuitePath, fullSuiteArtifact);
-        seedReviewGatePass(repoRoot, TASK_ID);
-
-        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-
-        assert.equal(result.next_gate, 'full-suite-validation', result.reason);
-        assert.match(result.title, /not required/i);
-        assert.equal(result.commands[0].label, 'Record full-suite not required');
-    });
-});
