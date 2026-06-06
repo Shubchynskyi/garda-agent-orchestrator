@@ -96,11 +96,11 @@ test('tree-state review compatibility suite keeps the focused regression shards 
             "required-reviews-check and completion prefer canonical review-context artifacts over stale legacy default files"
         ],
         [
-            'tests/node/cli/commands/gates/review-reuse/gates-review-reuse-stale-evidence.test.ts',
+            'tests/node/cli/commands/gates/review-reuse/gates-review-reuse-historical-rejections.test.ts',
             "does not reuse historical review-recorded evidence when the review artifact path uses parent traversal"
         ],
         [
-            'tests/node/cli/commands/gates/review-reuse/gates-review-reuse-stale-evidence.test.ts',
+            'tests/node/cli/commands/gates/review-reuse/gates-review-reuse-historical-rejections.test.ts',
             "does not reuse prior code-review evidence without historical reviewer tree-state binding"
         ],
         [

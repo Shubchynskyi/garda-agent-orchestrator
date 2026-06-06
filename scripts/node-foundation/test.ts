@@ -6,6 +6,7 @@ import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } fr
 
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
 const NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV = 'GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME';
+const NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT = 24_000;
 
 const NODE_TEST_OPTIONS_WITH_VALUE = new Set<string>([
     '--test-name-pattern',
@@ -242,6 +243,25 @@ function hasExplicitTestShardOption(optionArgs: string[]): boolean {
     return optionArgs.some((arg) => arg === '--test-shard' || arg.startsWith('--test-shard='));
 }
 
+function estimateNodeTestArgChars(optionArgs: string[], selectedTestFiles: string[]): number {
+    const args = [process.execPath, '--test', ...optionArgs, ...selectedTestFiles];
+    return args.reduce((total, arg) => total + arg.length + 3, 0);
+}
+
+function resolveAutoShardCount(selectedTestFiles: string[], optionArgs: string[]): number {
+    if (selectedTestFiles.length <= 1) {
+        return 1;
+    }
+    const estimatedArgChars = estimateNodeTestArgChars(optionArgs, selectedTestFiles);
+    if (estimatedArgChars <= NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT) {
+        return 1;
+    }
+    return Math.max(2, Math.min(
+        selectedTestFiles.length,
+        Math.ceil(estimatedArgChars / NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT)
+    ));
+}
+
 function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs: string[], _fileTargets: string[]): number {
     // Disable sharding only when an explicit --test-shard option is provided (manual shard selection).
     // Directory fileTargets expand to multiple files and should still benefit from GARDA_NODE_FOUNDATION_TEST_SHARDS.
@@ -250,9 +270,9 @@ function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs
         return 1;
     }
 
-    const rawValue = String(process.env[NODE_FOUNDATION_TEST_SHARDS_ENV] || '1').trim();
+    const rawValue = String(process.env[NODE_FOUNDATION_TEST_SHARDS_ENV] || '').trim();
     if (!rawValue) {
-        return 1;
+        return resolveAutoShardCount(selectedTestFiles, optionArgs);
     }
 
     const parsed = Number(rawValue);

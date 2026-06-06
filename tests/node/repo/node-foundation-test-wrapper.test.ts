@@ -17,7 +17,7 @@ const mutableChildProcess = require('node:child_process') as typeof childProcess
     spawnSync: typeof childProcess.spawnSync;
 };
 
-function createBuildResultFixture(): { buildResult: BuildResult; cleanup: () => void; } {
+function createBuildResultFixture(extraTestCount = 0): { buildResult: BuildResult; cleanup: () => void; } {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-node-foundation-tests-'));
     const buildRoot = path.join(repoRoot, '.node-build');
     fs.mkdirSync(path.join(buildRoot, 'tests', 'node', 'cli', 'commands'), { recursive: true });
@@ -28,14 +28,23 @@ function createBuildResultFixture(): { buildResult: BuildResult; cleanup: () => 
     fs.writeFileSync(compiledGateTest, 'void 0;\n', 'utf8');
     fs.writeFileSync(compiledRepoTest, 'void 0;\n', 'utf8');
 
+    const copiedFiles = [
+        'tests/node/cli/commands/gates.test.js',
+        'tests/node/repo/build-root-serialization.test.js'
+    ];
+    for (let index = 0; index < extraTestCount; index += 1) {
+        const relativePath = `tests/node/repo/auto-shard-long-path-${String(index).padStart(4, '0')}-padding-padding-padding-padding.test.js`;
+        const compiledPath = path.join(buildRoot, ...relativePath.split('/'));
+        fs.mkdirSync(path.dirname(compiledPath), { recursive: true });
+        fs.writeFileSync(compiledPath, 'void 0;\n', 'utf8');
+        copiedFiles.push(relativePath);
+    }
+
     return {
         buildResult: {
             repoRoot,
             buildRoot,
-            copiedFiles: [
-                'tests/node/cli/commands/gates.test.js',
-                'tests/node/repo/build-root-serialization.test.js'
-            ],
+            copiedFiles,
             generatedCliPath: path.join(buildRoot, 'bin', 'garda.js'),
             manifestPath: path.join(buildRoot, 'node-foundation-manifest.json')
         },
@@ -183,6 +192,46 @@ test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shard
             '--test',
             path.join(buildResult.buildRoot, 'tests', 'node', 'repo', 'build-root-serialization.test.js')
         ]);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests auto-shards when the compiled test command would be too long', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture(260);
+    const originalArgv = process.argv;
+    const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const observedShardArgs: string[][] = [];
+
+    try {
+        process.argv = ['node', 'scripts/node-foundation/test.js'];
+        delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            observedShardArgs.push(Array.from(args));
+            const events = new (require('node:events').EventEmitter)();
+            setImmediate(() => events.emit('exit', 0));
+            return events as childProcess.ChildProcess;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.ok(observedShardArgs.length > 1, `Expected auto-sharding, got ${observedShardArgs.length} shard(s).`);
+        assert.ok(observedShardArgs.every((args) => args[0] === '--test'));
     } finally {
         process.argv = originalArgv;
         if (originalShardEnv === undefined) {
