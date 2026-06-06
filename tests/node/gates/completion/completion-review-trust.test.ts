@@ -259,4 +259,286 @@ describe('gates/completion review trust', () => {
         }
     });
 
+    it('rejects doc-impact project_memory_updated claims when project-memory-impact records no update', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904c-project-memory-claim-mismatch';
+
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot, 'Codex');
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            seedProjectMemory(repoRoot);
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                scope_category: 'code',
+                required_reviews: {
+                    code: true,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                }
+            });
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Validate project memory claim parity',
+                provider: 'Codex',
+                routedTo: 'AGENTS.md'
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+            assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'IMPLEMENTATION_STARTED', 'INFO', 'Implementation started.', {
+                preflight_path: preflightPath.replace(/\\/g, '/')
+            });
+            writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+            const reviewsRoot = getReviewsRoot(repoRoot);
+            const preflightHash = fileSha256(preflightPath);
+            writeJson(path.join(reviewsRoot, `${taskId}-review-gate.json`), {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                preflight_hash_sha256: preflightHash,
+                required_reviews: { code: true },
+                verdicts: { code: 'REVIEW PASSED' },
+                review_checks: {
+                    code: {
+                        required: true,
+                        skipped_by_override: false,
+                        verdict: 'REVIEW PASSED',
+                        pass_token: 'REVIEW PASSED',
+                        receipt_valid: true,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:code-reviewer',
+                        reviewer_fallback_reason: null,
+                        trust_level: 'INDEPENDENT_AUDITED'
+                    }
+                }
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Review gate passed.', {
+                preflight_hash_sha256: preflightHash,
+                required_reviews: { code: true }
+            });
+
+            writeJson(path.join(reviewsRoot, `${taskId}-doc-impact.json`), {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES',
+                behavior_changed: true,
+                project_memory_updated: true,
+                rationale: 'Internal behavior evidence claims project memory was updated.'
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'DOC_IMPACT_ASSESSED', 'PASS', 'Doc impact assessed.', {
+                decision: 'NO_DOC_UPDATES',
+                project_memory_updated: true
+            });
+
+            recordCurrentProjectMemoryImpact(repoRoot, taskId, preflightPath);
+            const result = runCompletionGate({ repoRoot, preflightPath, taskId });
+
+            assert.equal(result.status, 'FAILED');
+            assert.equal(result.project_memory_impact_evidence.status, 'NO_UPDATE_NEEDED');
+            assert.ok(result.violations.some((violation: string) => violation.includes('project_memory_updated=true')));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('accepts doc-impact project_memory_update_not_needed claims when project-memory-impact records no update', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904c-project-memory-no-update-needed';
+
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot, 'Codex');
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            seedProjectMemory(repoRoot);
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['tests/node/gates/doc-impact/doc-impact.test.ts'],
+                scope_category: 'test',
+                required_reviews: {
+                    code: false,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: true,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                }
+            });
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Validate project memory no-update-needed parity',
+                provider: 'Codex',
+                routedTo: 'AGENTS.md'
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+            assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'IMPLEMENTATION_STARTED', 'INFO', 'Implementation started.', {
+                preflight_path: preflightPath.replace(/\\/g, '/')
+            });
+            writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'test', 'REVIEW PASSED');
+
+            const reviewsRoot = getReviewsRoot(repoRoot);
+            const preflightHash = fileSha256(preflightPath);
+            writeJson(path.join(reviewsRoot, `${taskId}-review-gate.json`), {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                preflight_hash_sha256: preflightHash,
+                required_reviews: { test: true },
+                verdicts: { test: 'REVIEW PASSED' },
+                review_checks: {
+                    test: {
+                        required: true,
+                        skipped_by_override: false,
+                        verdict: 'REVIEW PASSED',
+                        pass_token: 'REVIEW PASSED',
+                        receipt_valid: true,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:test-reviewer',
+                        reviewer_fallback_reason: null,
+                        trust_level: 'INDEPENDENT_AUDITED'
+                    }
+                }
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Review gate passed.', {
+                preflight_hash_sha256: preflightHash,
+                required_reviews: { test: true }
+            });
+
+            writeJson(path.join(reviewsRoot, `${taskId}-doc-impact.json`), {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES',
+                behavior_changed: true,
+                project_memory_update_not_needed: true,
+                rationale: 'Internal behavior was checked against project memory and no update was needed.'
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'DOC_IMPACT_ASSESSED', 'PASS', 'Doc impact assessed.', {
+                decision: 'NO_DOC_UPDATES',
+                project_memory_update_not_needed: true
+            });
+
+            recordCurrentProjectMemoryImpact(repoRoot, taskId, preflightPath);
+            const result = runCompletionGate({ repoRoot, preflightPath, taskId });
+
+            assert.equal(result.status, 'PASSED', JSON.stringify(result, null, 2));
+            assert.equal(result.project_memory_impact_evidence.status, 'NO_UPDATE_NEEDED');
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects doc-impact project_memory_update_not_needed claims when project-memory-impact records update-needed evidence', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-904c-project-memory-no-update-mismatch';
+
+        try {
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot, 'Codex');
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            seedProjectMemory(repoRoot);
+            const preflightPath = writePreflight(repoRoot, taskId, {
+                changed_files: ['src/gates/project-memory-impact.ts'],
+                scope_category: 'code',
+                required_reviews: {
+                    code: true,
+                    db: false,
+                    security: false,
+                    refactor: false,
+                    api: false,
+                    test: false,
+                    performance: false,
+                    infra: false,
+                    dependency: false
+                }
+            });
+
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Validate project memory no-update-needed mismatch',
+                provider: 'Codex',
+                routedTo: 'AGENTS.md'
+            });
+            assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+            assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'IMPLEMENTATION_STARTED', 'INFO', 'Implementation started.', {
+                preflight_path: preflightPath.replace(/\\/g, '/')
+            });
+            writeCompilePassEvidence(repoRoot, taskId, preflightPath);
+            writeReceiptBackedReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+            const reviewsRoot = getReviewsRoot(repoRoot);
+            const preflightHash = fileSha256(preflightPath);
+            writeJson(path.join(reviewsRoot, `${taskId}-review-gate.json`), {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                preflight_hash_sha256: preflightHash,
+                required_reviews: { code: true },
+                verdicts: { code: 'REVIEW PASSED' },
+                review_checks: {
+                    code: {
+                        required: true,
+                        skipped_by_override: false,
+                        verdict: 'REVIEW PASSED',
+                        pass_token: 'REVIEW PASSED',
+                        receipt_valid: true,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: 'agent:code-reviewer',
+                        reviewer_fallback_reason: null,
+                        trust_level: 'INDEPENDENT_AUDITED'
+                    }
+                }
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'REVIEW_GATE_PASSED', 'PASS', 'Review gate passed.', {
+                preflight_hash_sha256: preflightHash,
+                required_reviews: { code: true }
+            });
+
+            writeJson(path.join(reviewsRoot, `${taskId}-doc-impact.json`), {
+                task_id: taskId,
+                status: 'PASSED',
+                outcome: 'PASS',
+                decision: 'NO_DOC_UPDATES',
+                behavior_changed: true,
+                project_memory_update_not_needed: true,
+                rationale: 'Internal behavior claims project memory did not need updates.'
+            });
+            appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'DOC_IMPACT_ASSESSED', 'PASS', 'Doc impact assessed.', {
+                decision: 'NO_DOC_UPDATES',
+                project_memory_update_not_needed: true
+            });
+
+            recordCurrentProjectMemoryImpact(repoRoot, taskId, preflightPath);
+            const result = runCompletionGate({ repoRoot, preflightPath, taskId });
+
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some((violation: string) => violation.includes('project_memory_update_not_needed=true')));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
 });

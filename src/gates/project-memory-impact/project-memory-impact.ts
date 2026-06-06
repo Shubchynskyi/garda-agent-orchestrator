@@ -248,6 +248,10 @@ export function assessProjectMemoryImpact(options: ProjectMemoryImpactOptions): 
     const violations: string[] = [];
 
     if (options.confirmUpdated === true) {
+        const previousImpact = readImpactArtifact(runtime.artifactPath).artifact;
+        const previousCompactSha256 = previousImpact?.impact_fingerprint_sha256 === impactFingerprint
+            ? previousImpact.compact.sha256
+            : null;
         const built = buildUpdateEvidence({
             repoRoot,
             bundleRoot: runtime.bundleRoot,
@@ -255,7 +259,8 @@ export function assessProjectMemoryImpact(options: ProjectMemoryImpactOptions): 
             impactFingerprint,
             affectedMemoryFiles,
             updatedMemoryFiles: options.updatedMemoryFiles || [],
-            compactSha256: compact.sha256
+            compactSha256: compact.sha256,
+            previousCompactSha256
         });
         updateEvidenceToWrite = built.violations.length === 0 ? built.evidence : null;
         updateEvidence = {

@@ -37,6 +37,12 @@ function writeProjectMemoryEvidence(repoRoot: string, taskId = 'T-001'): void {
     fs.writeFileSync(filePath, `# Compact Memory\n\n- ${taskId}: internal runtime behavior documented.\n`, 'utf8');
 }
 
+function writeProjectMemoryMapEvidence(repoRoot: string): void {
+    const filePath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'compact.md');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, '# Compact Memory\n\n- Internal runtime behavior contract documented as current project map state.\n', 'utf8');
+}
+
 describe('gates/doc-impact', () => {
     describe('assessDocImpact', () => {
         it('passes with valid DOCS_UPDATED decision', () => {
@@ -144,7 +150,7 @@ describe('gates/doc-impact', () => {
         it('passes internal-only behavior change with project memory evidence and no docs_updated', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
             const preflightPath = createPreflight(tmpDir);
-            writeProjectMemoryEvidence(tmpDir);
+            writeProjectMemoryMapEvidence(tmpDir);
             const result = assessDocImpact({
                 preflightPath,
                 taskId: 'T-001',
@@ -164,10 +170,55 @@ describe('gates/doc-impact', () => {
             assert.equal(result.changelog_updated, false);
             assert.equal(result.project_memory_updated, true);
             assert.deepEqual(result.violations, []);
+            assert.deepEqual(result.internal_closeout_evidence.project_memory_files, []);
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
-        it('fails internal-only behavior change when internal evidence flags have no durable task evidence', () => {
+        it('passes internal-only behavior change with explicit project memory no-update-needed claim', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'NO_DOC_UPDATES',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                projectMemoryUpdateNotNeeded: true,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'Internal runtime behavior was checked against project memory and no update was needed.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.equal(result.project_memory_updated, false);
+            assert.equal(result.project_memory_update_not_needed, true);
+            assert.deepEqual(result.violations, []);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('rejects conflicting project memory update claims', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'NO_DOC_UPDATES',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                projectMemoryUpdated: true,
+                projectMemoryUpdateNotNeeded: true,
+                sensitiveReviewed: false,
+                docsUpdated: [],
+                rationale: 'Internal runtime behavior claims conflicting project memory states.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'FAILED');
+            assert.ok(result.violations.some(v => v.includes('ProjectMemoryUpdated=true is incompatible')));
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('defers project-memory-updated proof to project-memory-impact but still requires changelog evidence when requested', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
             const preflightPath = createPreflight(tmpDir);
             const result = assessDocImpact({
@@ -185,8 +236,8 @@ describe('gates/doc-impact', () => {
             });
             assert.equal(result.status, 'FAILED');
             assert.ok(result.violations.some(v => v.includes('InternalChangelogUpdated=true requires task-scoped durable evidence')));
-            assert.ok(result.violations.some(v => v.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')));
-            assert.ok(result.violations.some(v => v.includes('BehaviorChanged=true requires Decision=DOCS_UPDATED or internal closeout evidence.')));
+            assert.ok(!result.violations.some(v => v.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')));
+            assert.ok(!result.violations.some(v => v.includes('BehaviorChanged=true requires Decision=DOCS_UPDATED or internal closeout evidence.')));
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
@@ -210,7 +261,7 @@ describe('gates/doc-impact', () => {
             });
             assert.equal(result.status, 'FAILED');
             assert.ok(result.violations.some(v => v.includes("InternalChangelogUpdated=true requires task-scoped durable evidence")));
-            assert.ok(result.violations.some(v => v.includes("ProjectMemoryUpdated=true requires task-scoped durable evidence")));
+            assert.ok(!result.violations.some(v => v.includes("ProjectMemoryUpdated=true requires task-scoped durable evidence")));
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 

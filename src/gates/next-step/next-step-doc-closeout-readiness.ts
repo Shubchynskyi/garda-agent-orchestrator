@@ -3,7 +3,8 @@ import * as path from 'node:path';
 import {
     type ProjectMemoryImpactEvidenceStatus,
     type ProjectMemoryImpactStatus,
-    getProjectMemoryImpactLifecycleEvidence
+    getProjectMemoryImpactLifecycleEvidence,
+    routeProjectMemoryImpact
 } from '../project-memory-impact/project-memory-impact';
 import {
     getClassificationConfig,
@@ -101,6 +102,7 @@ function docImpactTimelineDetailsMatchArtifact(
         && details.changelog_updated === docImpact.changelog_updated
         && details.internal_changelog_updated === docImpact.internal_changelog_updated
         && details.project_memory_updated === docImpact.project_memory_updated
+        && details.project_memory_update_not_needed === docImpact.project_memory_update_not_needed
         && stringSha256(actualDocsUpdated.join('\n')) === stringSha256(expectedDocsUpdated.join('\n'));
 }
 
@@ -405,7 +407,10 @@ export function buildDocImpactCommand(
         parts.push(`--behavior-changed ${internalOnlyBehaviorChanged ? 'true' : 'false'}`);
         parts.push('--changelog-updated false');
         if (internalOnlyBehaviorChanged) {
-            parts.push('--project-memory-updated true');
+            const memoryImpact = routeProjectMemoryImpact(getPreflightChangedFiles(preflight));
+            parts.push(memoryImpact.affectedFileNames.length > 0
+                ? '--project-memory-updated true'
+                : '--project-memory-update-not-needed true');
         }
     }
     if (requiresSensitiveScopeDocAcknowledgement(preflight)) {
@@ -430,7 +435,7 @@ export function buildDocImpactCompatibilityHint(): string {
         'changelog/docs maintenance only -> --decision "DOCS_UPDATED" --behavior-changed false --changelog-updated true plus --docs-updated "CHANGELOG.md";',
         'changelog plus implementation scope -> next-step defaults to --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true;',
         'user-facing behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true plus docs/changelog evidence;',
-        'internal-only runtime behavior changed -> --decision "NO_DOC_UPDATES" --behavior-changed true plus --internal-changelog-updated true and/or --project-memory-updated true.'
+        'internal-only runtime behavior changed -> --decision "NO_DOC_UPDATES" --behavior-changed true plus --internal-changelog-updated true, --project-memory-updated true, or --project-memory-update-not-needed true when project-memory-impact records NO_UPDATE_NEEDED.'
     ].join(' ');
 }
 

@@ -498,7 +498,8 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         evidence: projectMemoryImpactEvidence,
         orderedEvents,
         fullSuiteValidationEnabled: fullSuiteValidationRequired,
-        timelinePath
+        timelinePath,
+        docImpactEvidence: docImpactEvidence as Record<string, unknown> | null
     }));
 
     const status = errors.length > 0 ? 'FAILED' : 'PASSED';

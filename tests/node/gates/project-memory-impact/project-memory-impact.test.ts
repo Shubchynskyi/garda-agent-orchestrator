@@ -274,6 +274,9 @@ describe('assessProjectMemoryImpact', () => {
                 changed_files: ['src/gates/project-memory-impact.ts']
             }, null, 2), 'utf8');
             const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            const initial = assessProjectMemoryImpact({ repoRoot, taskId, preflightPath });
+            fs.mkdirSync(path.dirname(initial.artifactPath), { recursive: true });
+            fs.writeFileSync(initial.artifactPath, JSON.stringify(initial.artifact, null, 2), 'utf8');
             fs.writeFileSync(path.join(memoryRoot, 'compact.md'), 'x'.repeat(13000), 'utf8');
 
             const result = assessProjectMemoryImpact({
@@ -303,6 +306,40 @@ describe('assessProjectMemoryImpact', () => {
             assert.equal(evidence.compact_refreshed, true);
             assert.equal(evidence.visible_summary_line.includes('compact=OVERFLOW'), false);
             assert.ok(evidence.visible_summary_line.includes('compact=REFRESHED_OVERFLOW_ACKNOWLEDGED'));
+        });
+    });
+
+    it('does not mark compact refreshed only because compact.md was explicitly listed', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-113b';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: ['src/gates/project-memory-impact.ts']
+            }, null, 2), 'utf8');
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.writeFileSync(path.join(memoryRoot, 'compact.md'), 'x'.repeat(13000), 'utf8');
+            const initial = assessProjectMemoryImpact({ repoRoot, taskId, preflightPath });
+            fs.mkdirSync(path.dirname(initial.artifactPath), { recursive: true });
+            fs.writeFileSync(initial.artifactPath, JSON.stringify(initial.artifact, null, 2), 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId,
+                preflightPath,
+                confirmUpdated: true,
+                updatedMemoryFiles: [
+                    'garda-agent-orchestrator/live/docs/project-memory/commands.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+                ]
+            });
+
+            assert.equal(result.artifact.status, 'UPDATED');
+            assert.equal(result.updateEvidenceToWrite?.compact_refreshed, false);
         });
     });
 
@@ -343,7 +380,7 @@ describe('assessProjectMemoryImpact', () => {
             assert.equal(evidence.evidence_status, 'STALE');
             assert.equal(evidence.status, 'UPDATED');
             assert.equal(evidence.compact_status, 'OVERFLOW');
-            assert.equal(evidence.compact_refreshed, true);
+            assert.equal(evidence.compact_refreshed, false);
             assert.ok(evidence.visible_summary_line.includes('compact=OVERFLOW'));
             assert.equal(evidence.visible_summary_line.includes('compact=REFRESHED_OVERFLOW_ACKNOWLEDGED'), false);
         });

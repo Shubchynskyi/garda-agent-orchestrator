@@ -1403,7 +1403,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('changelog plus implementation scope -> next-step defaults to --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
         assert.ok(result.reason.includes('user-facing behavior changed -> --decision "DOCS_UPDATED" --behavior-changed true --changelog-updated true'));
         assert.ok(result.reason.includes('internal-only runtime behavior changed -> --decision "NO_DOC_UPDATES" --behavior-changed true'));
-        assert.ok(result.reason.includes('--internal-changelog-updated true and/or --project-memory-updated true'));
+        assert.ok(result.reason.includes('--internal-changelog-updated true, --project-memory-updated true, or --project-memory-update-not-needed true'));
         assert.ok(result.commands[0].command.includes('--behavior-changed true'));
     });
 
@@ -1768,6 +1768,13 @@ describe('gates/next-step', () => {
             }
         },
         {
+            name: 'mismatched doc-impact project memory no-update-needed flag',
+            mutateArtifact: (artifact: Record<string, unknown>) => artifact,
+            appendEvents: (repoRoot: string, artifact: Record<string, unknown>) => {
+                appendEvent(repoRoot, TASK_ID, 'DOC_IMPACT_ASSESSED', 'PASS', { ...artifact, project_memory_update_not_needed: true });
+            }
+        },
+        {
             name: 'behavior-changing doc-impact evidence',
             mutateArtifact: (artifact: Record<string, unknown>) => ({
                 ...artifact,
@@ -1971,7 +1978,7 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
         assert.ok(result.commands[0].command.includes('--behavior-changed true'));
         assert.ok(result.commands[0].command.includes('--changelog-updated false'));
-        assert.ok(result.commands[0].command.includes('--project-memory-updated true'));
+        assert.ok(result.commands[0].command.includes('--project-memory-update-not-needed true'));
         assert.ok(result.commands[0].command.includes('--rationale "Implementation files changed with no user-facing documentation paths; recording internal-only behavior evidence. Update task-scoped project memory before running if this command reports missing internal evidence."'));
     });
 

@@ -229,6 +229,7 @@ export function buildUpdateEvidence(input: {
     affectedMemoryFiles: string[];
     updatedMemoryFiles: string[];
     compactSha256: string | null;
+    previousCompactSha256?: string | null;
 }): { evidence: ProjectMemoryUpdateEvidence; updateEvidence: ProjectMemoryImpactArtifact['update_evidence']; violations: string[] } {
     const violations: string[] = [];
     const resolvedUpdatedMemoryFiles = resolveUpdatedMemoryFilesForConfirmation({
@@ -253,6 +254,10 @@ export function buildUpdateEvidence(input: {
     if (input.affectedMemoryFiles.length > 0 && missingUpdated.length > 0) {
         violations.push(`Confirmed update evidence is missing affected memory files: ${missingUpdated.join(', ')}.`);
     }
+    const compactRefreshed = !!input.previousCompactSha256
+        && !!input.compactSha256
+        && input.previousCompactSha256 !== input.compactSha256
+        && updatedMemoryFiles.some((file) => file.endsWith('/compact.md'));
     const hashes = hashUpdatedMemoryFiles(input.repoRoot, updatedMemoryFiles);
     const evidence: ProjectMemoryUpdateEvidence = {
         schema_version: 1,
@@ -262,7 +267,7 @@ export function buildUpdateEvidence(input: {
         impact_fingerprint_sha256: input.impactFingerprint,
         updated_memory_files: updatedMemoryFiles,
         updated_file_hashes: hashes,
-        compact_refreshed: updatedMemoryFiles.some((file) => file.endsWith('/compact.md')),
+        compact_refreshed: compactRefreshed,
         compact_sha256: input.compactSha256
     };
     return {

@@ -69,6 +69,7 @@ export interface AssessDocImpactOptions {
     changelogUpdated?: unknown;
     internalChangelogUpdated?: unknown;
     projectMemoryUpdated?: unknown;
+    projectMemoryUpdateNotNeeded?: unknown;
     sensitiveReviewed?: unknown;
     docsUpdated?: unknown;
     rationale?: string;
@@ -157,8 +158,9 @@ function collectTaskScopedProjectMemoryEvidence(
 function hasInternalBehaviorEvidence(options: {
     internalChangelogUpdated: boolean;
     projectMemoryUpdated: boolean;
+    projectMemoryUpdateNotNeeded: boolean;
 }): boolean {
-    return options.internalChangelogUpdated || options.projectMemoryUpdated;
+    return options.internalChangelogUpdated || options.projectMemoryUpdated || options.projectMemoryUpdateNotNeeded;
 }
 
 /**
@@ -173,6 +175,7 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     const changelogUpdated = parseBool(options.changelogUpdated);
     const internalChangelogUpdated = parseBool(options.internalChangelogUpdated);
     const projectMemoryUpdated = parseBool(options.projectMemoryUpdated);
+    const projectMemoryUpdateNotNeeded = parseBool(options.projectMemoryUpdateNotNeeded);
     const sensitiveReviewed = parseBool(options.sensitiveReviewed);
     const docsUpdated = [...new Set(toStringArray(options.docsUpdated, { trimValues: true }).filter(Boolean))].sort();
     const rationale = (options.rationale || '').trim();
@@ -208,19 +211,22 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     }
     const internalBehaviorEvidencePresent = hasInternalBehaviorEvidence({
         internalChangelogUpdated,
-        projectMemoryUpdated
+        projectMemoryUpdated,
+        projectMemoryUpdateNotNeeded
     });
-    const internalBehaviorEvidenceMaterialized = (!!internalChangelogEvidence || projectMemoryEvidence.length > 0);
+    const internalBehaviorEvidenceMaterialized = (
+        !!internalChangelogEvidence
+        || projectMemoryUpdated
+        || projectMemoryUpdateNotNeeded
+    );
     const internalOnlyBehaviorEvidencePresent = decision === 'NO_DOC_UPDATES' && internalBehaviorEvidencePresent;
     const internalOnlyBehaviorEvidenceMaterialized = internalOnlyBehaviorEvidencePresent && internalBehaviorEvidenceMaterialized;
+    if (projectMemoryUpdated && projectMemoryUpdateNotNeeded) {
+        errors.push('ProjectMemoryUpdated=true is incompatible with ProjectMemoryUpdateNotNeeded=true.');
+    }
     if (internalChangelogUpdated && !internalChangelogEvidence) {
         errors.push(
             `InternalChangelogUpdated=true requires task-scoped durable evidence in ${INTERNAL_CHANGELOG_PATH} containing task id '${resolvedTaskId || taskId}'.`
-        );
-    }
-    if (projectMemoryUpdated && projectMemoryEvidence.length === 0) {
-        errors.push(
-            `ProjectMemoryUpdated=true requires task-scoped durable evidence under ${PROJECT_MEMORY_ROOT} containing task id '${resolvedTaskId || taskId}'.`
         );
     }
     if (decision === 'DOCS_UPDATED' && !docsUpdated.length) {
@@ -279,9 +285,11 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
         changelog_updated: changelogUpdated,
         internal_changelog_updated: internalChangelogUpdated,
         project_memory_updated: projectMemoryUpdated,
+        project_memory_update_not_needed: projectMemoryUpdateNotNeeded,
         internal_closeout_evidence: {
             internal_changelog_updated: internalChangelogUpdated,
             project_memory_updated: projectMemoryUpdated,
+            project_memory_update_not_needed: projectMemoryUpdateNotNeeded,
             internal_changelog_path: internalChangelogEvidence
                 ? normalizeDocImpactInputPath(internalChangelogEvidence.path, options.repoRoot)
                 : null,

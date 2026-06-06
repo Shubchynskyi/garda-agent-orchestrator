@@ -91,6 +91,7 @@ describe('cli/commands/gates doc-impact', () => {
         assert.deepEqual(artifact.internal_closeout_evidence, {
             internal_changelog_updated: true,
             project_memory_updated: true,
+            project_memory_update_not_needed: false,
             internal_changelog_path: 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md',
             internal_changelog_sha256: artifact.internal_closeout_evidence.internal_changelog_sha256,
             project_memory_files: artifact.internal_closeout_evidence.project_memory_files
@@ -136,6 +137,35 @@ describe('cli/commands/gates doc-impact', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('accepts internal-only behavior with project-memory no-update-needed evidence claim', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-902-internal-memory-current';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+
+        const result = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: true,
+            changelogUpdated: false,
+            projectMemoryUpdateNotNeeded: true,
+            rationale: 'Internal behavior was checked against project memory and no update was needed.',
+            emitMetrics: false
+        });
+
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-doc-impact.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(result.outputLines[0], 'DOC_IMPACT_GATE_PASSED');
+        assert.equal(artifact.project_memory_updated, false);
+        assert.equal(artifact.project_memory_update_not_needed, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('rejects internal-only behavior evidence flags without durable task evidence', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902-internal-bare-flags';
@@ -158,7 +188,7 @@ describe('cli/commands/gates doc-impact', () => {
 
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.ok(result.outputLines.some((line) => line.includes('InternalChangelogUpdated=true requires task-scoped durable evidence')));
-        assert.ok(result.outputLines.some((line) => line.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')));
+        assert.equal(result.outputLines.some((line) => line.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -187,7 +217,7 @@ describe('cli/commands/gates doc-impact', () => {
 
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.ok(result.outputLines.some((line) => line.includes('InternalChangelogUpdated=true requires task-scoped durable evidence')));
-        assert.ok(result.outputLines.some((line) => line.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')));
+        assert.equal(result.outputLines.some((line) => line.includes('ProjectMemoryUpdated=true requires task-scoped durable evidence')), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

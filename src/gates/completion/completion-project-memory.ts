@@ -13,6 +13,7 @@ export function validateProjectMemoryImpactForCompletion(input: {
     orderedEvents: readonly TimelineEventEntry[];
     fullSuiteValidationEnabled: boolean;
     timelinePath: string;
+    docImpactEvidence?: Record<string, unknown> | null;
 }): string[] {
     const violations: string[] = [];
     if (!input.evidence.required) {
@@ -25,6 +26,18 @@ export function validateProjectMemoryImpactForCompletion(input: {
         );
         violations.push(...input.evidence.violations);
         return violations;
+    }
+    if (input.docImpactEvidence?.project_memory_updated === true && input.evidence.status !== 'UPDATED') {
+        violations.push(
+            'Doc impact evidence claims project_memory_updated=true, but project-memory-impact did not record UPDATED evidence for the current completion cycle. ' +
+            `${input.evidence.visible_summary_line}`
+        );
+    }
+    if (input.docImpactEvidence?.project_memory_update_not_needed === true && input.evidence.status !== 'NO_UPDATE_NEEDED') {
+        violations.push(
+            'Doc impact evidence claims project_memory_update_not_needed=true, but project-memory-impact did not record NO_UPDATE_NEEDED evidence for the current completion cycle. ' +
+            `${input.evidence.visible_summary_line}`
+        );
     }
 
     const impactEvent = findLatestTimelineEvent(
@@ -58,4 +71,3 @@ export function validateProjectMemoryImpactForCompletion(input: {
     }
     return violations;
 }
-
