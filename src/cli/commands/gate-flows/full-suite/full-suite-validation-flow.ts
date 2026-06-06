@@ -1,11 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../../core/constants';
-import { LIFECYCLE_EVENT_TYPES } from '../../../../gate-runtime/lifecycle-events';
-import { appendTaskEventAsync } from '../../../../gate-runtime/task-events';
 import * as gateHelpers from '../../../../gates/shared/helpers';
-import { redactSecretText, redactSensitiveData } from '../../../../core/redaction';
+import { redactSecretText } from '../../../../core/redaction';
 import {
     buildFullSuiteValidationOutputTelemetry,
     buildFullSuiteTimeoutForecast,
@@ -18,15 +15,9 @@ import {
     isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
     loadFullSuiteValidationConfig,
     recordFullSuiteValidationDuration,
-    type FullSuiteValidationCycleBinding,
-    type FullSuiteValidationResult
+    type FullSuiteValidationCycleBinding
 } from '../../../../gates/full-suite/full-suite-validation';
 import { getTaskModeEvidence } from '../../../../gates/task-mode/task-mode';
-import {
-    getCycleBindingSnapshotFromPayload,
-    taskCycleScopeBindingsMatch,
-    type TaskCycleBindingSnapshot
-} from '../../../../gates/task-events-summary/task-events-summary';
 import {
     buildRawOutputRetentionEvidence,
     serializeCapturedOutputLines
@@ -43,449 +34,31 @@ import {
     parseRequiredText
 } from '../../cli-helpers';
 import { requireResolvedPath } from '../../shared-command-utils';
+import {
+    type FullSuiteValidationCommandOptions,
+    type FullSuiteValidationCommandResult
+} from './full-suite-validation-flow-types';
+import {
+    readFullSuiteScopeBinding,
+    readLatestCompileGatePassedTimestamp,
+    tryReadRebindableFullSuiteValidationArtifact
+} from './full-suite-validation-cycle-binding';
+import { writeArtifactThenEmitMandatoryFullSuiteEvent } from './full-suite-validation-lifecycle';
+import {
+    normalizeSuccessfulFullSuiteOutputRetention,
+    shouldOmitSuccessfulFullSuiteOutput
+} from './full-suite-validation-output-retention';
+import {
+    cleanupGeneratedLocksAfterTimedOutFullSuite,
+    formatGeneratedLockCleanupObservation
+} from './full-suite-validation-lock-cleanup';
+import { buildWorkflowConfigWorkBlockedResult } from './full-suite-validation-workflow-config';
 
-export interface FullSuiteValidationCommandOptions {
-    taskId?: unknown;
-    preflightPath?: unknown;
-    repoRoot?: unknown;
-}
-
-export interface FullSuiteValidationCommandResult {
-    outputText: string;
-    exitCode: number;
-}
-
-function resolveFullSuiteValidationEventType(status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED'): string {
-    return {
-        PASSED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_PASSED,
-        FAILED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_FAILED,
-        WARNED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_WARNED,
-        SKIPPED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_SKIPPED
-    }[status];
-}
-
-function resolveFullSuiteValidationOutcome(status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED'): string {
-    return status === 'FAILED' ? 'FAIL' : status === 'WARNED' ? 'WARN' : status === 'SKIPPED' ? 'INFO' : 'PASS';
-}
-
-const FULL_SUITE_VALIDATION_EVENT_TYPES = new Set<string>([
-    LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_PASSED,
-    LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_FAILED,
-    LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_WARNED,
-    LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_SKIPPED
-]);
-
-const FULL_SUITE_GENERATED_LOCKS = Object.freeze([
-    '.scripts-build.lock',
-    '.node-build.lock',
-    'dist.lock'
-]);
-
-interface GeneratedLockCleanupObservation {
-    readonly lock_path: string;
-    readonly removed: boolean;
-    readonly reason: string;
-    readonly owner_pid: number | null;
-    readonly owner_alive: boolean | null;
-}
-
-function readLatestFullSuiteValidationTransactionId(eventsRoot: string, taskId: string): string | null {
-    const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
-        return null;
-    }
-
-    let transactionId: string | null = null;
-    const lines = fs.readFileSync(timelinePath, 'utf8')
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-    for (const line of lines) {
-        try {
-            const parsed = JSON.parse(line) as Record<string, unknown>;
-            const eventType = String(parsed.event_type || '').trim();
-            if (!FULL_SUITE_VALIDATION_EVENT_TYPES.has(eventType)) {
-                continue;
-            }
-            const details = parsed.details && typeof parsed.details === 'object'
-                ? parsed.details as Record<string, unknown>
-                : null;
-            const candidate = details ? String(details.artifact_transaction_id || '').trim() : '';
-            transactionId = candidate || null;
-        } catch {
-            // Best-effort only; timeline integrity is validated elsewhere.
-        }
-    }
-
-    return transactionId;
-}
-
-function cleanupPendingFullSuiteValidationArtifact(pendingArtifactPath: string, pendingMetaPath: string): void {
-    fs.rmSync(pendingArtifactPath, { force: true });
-    fs.rmSync(pendingMetaPath, { force: true });
-}
-
-function promotePendingFullSuiteValidationArtifact(
-    pendingArtifactPath: string,
-    pendingMetaPath: string,
-    artifactPath: string
-): void {
-    fs.copyFileSync(pendingArtifactPath, artifactPath);
-    cleanupPendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath);
-}
-
-function recoverPendingFullSuiteValidationArtifact(
-    eventsRoot: string,
-    taskId: string,
-    artifactPath: string,
-    pendingArtifactPath: string,
-    pendingMetaPath: string
-): void {
-    const pendingArtifactExists = fs.existsSync(pendingArtifactPath);
-    const pendingMetaExists = fs.existsSync(pendingMetaPath);
-    if (!pendingArtifactExists && !pendingMetaExists) {
-        return;
-    }
-
-    if (!pendingArtifactExists || !pendingMetaExists) {
-        cleanupPendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath);
-        return;
-    }
-
-    let pendingTransactionId: string | null = null;
-    try {
-        const pendingMeta = JSON.parse(fs.readFileSync(pendingMetaPath, 'utf8')) as Record<string, unknown>;
-        const candidate = String(pendingMeta.transaction_id || '').trim();
-        pendingTransactionId = candidate || null;
-    } catch {
-        cleanupPendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath);
-        return;
-    }
-
-    const latestTransactionId = readLatestFullSuiteValidationTransactionId(eventsRoot, taskId);
-    if (pendingTransactionId && latestTransactionId === pendingTransactionId) {
-        promotePendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath, artifactPath);
-        return;
-    }
-
-    cleanupPendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath);
-}
-
-async function appendFullSuiteValidationLifecycleEvent(
-    repoRoot: string,
-    eventsRoot: string,
-    taskId: string,
-    status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED',
-    details: Record<string, unknown>
-): Promise<void> {
-    const result = await appendTaskEventAsync(
-        repoRoot,
-        taskId,
-        resolveFullSuiteValidationEventType(status),
-        resolveFullSuiteValidationOutcome(status),
-        `Full-suite validation ${status.toLowerCase()}.`,
-        details,
-        {
-            actor: 'gate',
-            passThru: true,
-            eventsRoot
-        }
-    );
-    if (!result || !result.integrity) {
-        const warningText = result?.warnings.join(' | ') || 'task timeline append failed without diagnostics.';
-        throw new Error(`Mandatory lifecycle event '${resolveFullSuiteValidationEventType(status)}' append failed: ${warningText}`);
-    }
-}
-
-async function writeArtifactThenEmitMandatoryFullSuiteEvent(
-    repoRoot: string,
-    eventsRoot: string,
-    taskId: string,
-    artifactPath: string,
-    status: 'PASSED' | 'FAILED' | 'WARNED' | 'SKIPPED',
-    artifact: unknown,
-    details: Record<string, unknown>
-): Promise<void> {
-    const pendingArtifactPath = `${artifactPath}.pending`;
-    const pendingMetaPath = `${artifactPath}.pending.meta.json`;
-    recoverPendingFullSuiteValidationArtifact(eventsRoot, taskId, artifactPath, pendingArtifactPath, pendingMetaPath);
-    const transactionId = randomUUID();
-    fs.writeFileSync(pendingArtifactPath, `${JSON.stringify(redactSensitiveData(artifact), null, 2)}\n`, 'utf8');
-    fs.writeFileSync(
-        pendingMetaPath,
-        `${JSON.stringify({ transaction_id: transactionId }, null, 2)}\n`,
-        'utf8'
-    );
-    try {
-        await appendFullSuiteValidationLifecycleEvent(repoRoot, eventsRoot, taskId, status, {
-            ...details,
-            artifact_transaction_id: transactionId
-        });
-    } catch (error: unknown) {
-        try {
-            cleanupPendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath);
-        } catch {
-            // Best-effort cleanup only; keep the lifecycle emit failure as the primary error.
-        }
-        throw error;
-    }
-    try {
-        promotePendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath, artifactPath);
-    } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-            `Mandatory lifecycle event '${resolveFullSuiteValidationEventType(status)}' was recorded, ` +
-            `but canonical artifact promotion failed: ${message}. ` +
-            `Pending artifact retained at '${gateHelpers.normalizePath(pendingArtifactPath)}' for recovery on the next full-suite-validation run.`
-        );
-    }
-}
-
-function readLatestCompileGatePassedTimestamp(repoRoot: string, taskId: string): string | null {
-    const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
-    if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
-        return null;
-    }
-
-    let latestTimestamp: string | null = null;
-    const lines = fs.readFileSync(timelinePath, 'utf8')
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-    for (const line of lines) {
-        try {
-            const parsed = JSON.parse(line) as Record<string, unknown>;
-            if (String(parsed.event_type || '').trim() !== 'COMPILE_GATE_PASSED') {
-                continue;
-            }
-            const timestamp = String(parsed.timestamp_utc || '').trim();
-            if (timestamp) {
-                latestTimestamp = timestamp;
-            }
-        } catch {
-            // Best-effort only; timeline integrity is validated elsewhere.
-        }
-    }
-
-    return latestTimestamp;
-}
-
-function normalizeSha256Text(value: unknown): string | null {
-    const text = String(value || '').trim().toLowerCase();
-    return /^[0-9a-f]{64}$/.test(text) ? text : null;
-}
-
-function readFullSuiteScopeBinding(
-    repoRoot: string,
-    taskId: string,
-    preflight: Record<string, unknown>
-): NonNullable<FullSuiteValidationCycleBinding['scope_binding']> | null {
-    const compileGatePath = gateHelpers.joinOrchestratorPath(
-        repoRoot,
-        path.join('runtime', 'reviews', `${taskId}-compile-gate.json`)
-    );
-    const compileGate = fs.existsSync(compileGatePath) && fs.statSync(compileGatePath).isFile()
-        ? JSON.parse(fs.readFileSync(compileGatePath, 'utf8')) as Record<string, unknown>
-        : null;
-    const metrics = preflight.metrics && typeof preflight.metrics === 'object' && !Array.isArray(preflight.metrics)
-        ? preflight.metrics as Record<string, unknown>
-        : {};
-    const changedFilesSha256 = normalizeSha256Text(compileGate?.preflight_changed_files_sha256)
-        || normalizeSha256Text(compileGate?.scope_changed_files_sha256)
-        || normalizeSha256Text(metrics.changed_files_sha256);
-    const scopeSha256 = normalizeSha256Text(compileGate?.preflight_scope_sha256)
-        || normalizeSha256Text(metrics.scope_sha256);
-    const scopeContentSha256 = normalizeSha256Text(compileGate?.preflight_scope_content_sha256)
-        || normalizeSha256Text(metrics.scope_content_sha256);
-    if (!changedFilesSha256 && !scopeSha256 && !scopeContentSha256) {
-        return null;
-    }
-    return {
-        changed_files_sha256: changedFilesSha256,
-        scope_sha256: scopeSha256,
-        scope_content_sha256: scopeContentSha256
-    };
-}
-
-function buildCurrentTaskCycleBinding(cycleBinding: FullSuiteValidationCycleBinding): TaskCycleBindingSnapshot {
-    return {
-        preflight_path: gateHelpers.normalizePath(cycleBinding.preflight_path),
-        preflight_sha256: String(cycleBinding.preflight_sha256 || '').trim().toLowerCase() || null,
-        compile_gate_timestamp: cycleBinding.compile_gate_timestamp,
-        scope_binding: cycleBinding.scope_binding ?? null
-    };
-}
-
-function normalizeSuccessfulFullSuiteOutputRetention(
-    repoRoot: string,
-    artifactOutputPath: string,
-    result: FullSuiteValidationResult
-): FullSuiteValidationResult {
-    if (!shouldOmitSuccessfulFullSuiteOutput(result)) {
-        return result;
-    }
-
-    let rawOutputText = '';
-    const resolvedOutputArtifactPath = gateHelpers.resolvePathInsideRepo(
-        result.output_artifact_path || artifactOutputPath,
-        repoRoot,
-        { allowMissing: true }
-    );
-    if (resolvedOutputArtifactPath && fs.existsSync(resolvedOutputArtifactPath) && fs.statSync(resolvedOutputArtifactPath).isFile()) {
-        rawOutputText = fs.readFileSync(resolvedOutputArtifactPath, 'utf8');
-        fs.rmSync(resolvedOutputArtifactPath, { force: true });
-    }
-
-    return {
-        ...result,
-        output_artifact_path: null,
-        output_retention: result.output_retention || buildRawOutputRetentionEvidence(rawOutputText, false)
-    };
-}
-
-export function shouldOmitSuccessfulFullSuiteOutput(
-    result: Pick<FullSuiteValidationResult, 'status' | 'warnings'>
-): boolean {
-    return result.status === 'PASSED' && result.warnings.length === 0;
-}
-
-function tryReadRebindableFullSuiteValidationArtifact(options: {
-    artifactPath: string;
-    repoRoot: string;
-    taskId: string;
-    configCommand: string;
-    cycleBinding: FullSuiteValidationCycleBinding;
-}): FullSuiteValidationResult | null {
-    if (!fs.existsSync(options.artifactPath) || !fs.statSync(options.artifactPath).isFile()) {
-        return null;
-    }
-
-    try {
-        const raw = JSON.parse(fs.readFileSync(options.artifactPath, 'utf8')) as Record<string, unknown>;
-        const status = String(raw.status || '').trim().toUpperCase();
-        if (status !== 'PASSED' && status !== 'WARNED') {
-            return null;
-        }
-        if (raw.enabled !== true) {
-            return null;
-        }
-        if (String(raw.command || '').trim() !== options.configCommand) {
-            return null;
-        }
-        const currentCycle = buildCurrentTaskCycleBinding(options.cycleBinding);
-        const candidateCycle = getCycleBindingSnapshotFromPayload(raw, options.repoRoot);
-        if (!candidateCycle?.compile_gate_timestamp || !currentCycle.compile_gate_timestamp) {
-            return null;
-        }
-        const strictCurrent =
-            candidateCycle.preflight_path === currentCycle.preflight_path
-            && candidateCycle.preflight_sha256 === currentCycle.preflight_sha256
-            && candidateCycle.compile_gate_timestamp === currentCycle.compile_gate_timestamp;
-        if (strictCurrent) {
-            return null;
-        }
-        const rawCycleBinding = raw.cycle_binding;
-        if (!rawCycleBinding || typeof rawCycleBinding !== 'object' || Array.isArray(rawCycleBinding)) {
-            return null;
-        }
-        if (String((rawCycleBinding as Record<string, unknown>).task_id || '').trim() !== options.taskId) {
-            return null;
-        }
-        if (candidateCycle.preflight_path !== currentCycle.preflight_path) {
-            return null;
-        }
-        if (!taskCycleScopeBindingsMatch(currentCycle, candidateCycle)) {
-            return null;
-        }
-        return {
-            ...(raw as unknown as FullSuiteValidationResult),
-            cycle_binding: options.cycleBinding
-        };
-    } catch {
-        return null;
-    }
-}
-
-function readGeneratedLockOwnerPid(lockPath: string): number | null {
-    const ownerPath = path.join(lockPath, 'owner.json');
-    try {
-        const parsed = JSON.parse(fs.readFileSync(ownerPath, 'utf8')) as Record<string, unknown>;
-        return Number.isInteger(parsed.pid) && Number(parsed.pid) > 0
-            ? Number(parsed.pid)
-            : null;
-    } catch {
-        return null;
-    }
-}
-
-function isProcessAlive(pid: number | null): boolean | null {
-    if (pid === null || !Number.isInteger(pid) || pid <= 0) {
-        return null;
-    }
-
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch (error: unknown) {
-        const code = error != null && typeof error === 'object' && 'code' in error
-            ? String((error as { code?: unknown }).code || '')
-            : '';
-        if (code === 'ESRCH') {
-            return false;
-        }
-        if (code === 'EPERM') {
-            return true;
-        }
-        return null;
-    }
-}
-
-function cleanupGeneratedLocksAfterTimedOutFullSuite(repoRoot: string): GeneratedLockCleanupObservation[] {
-    const observations: GeneratedLockCleanupObservation[] = [];
-    const resolvedRoot = path.resolve(repoRoot);
-
-    for (const lockName of FULL_SUITE_GENERATED_LOCKS) {
-        const lockPath = path.resolve(resolvedRoot, lockName);
-        if (!lockPath.startsWith(`${resolvedRoot}${path.sep}`)) {
-            continue;
-        }
-        if (!fs.existsSync(lockPath) || !fs.statSync(lockPath).isDirectory()) {
-            continue;
-        }
-
-        const ownerPid = readGeneratedLockOwnerPid(lockPath);
-        const ownerAlive = isProcessAlive(ownerPid);
-        if (ownerPid !== null && ownerAlive === false) {
-            fs.rmSync(lockPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-            observations.push({
-                lock_path: gateHelpers.normalizePath(lockPath),
-                removed: true,
-                reason: 'owner_process_dead_after_full_suite_timeout',
-                owner_pid: ownerPid,
-                owner_alive: false
-            });
-            continue;
-        }
-
-        observations.push({
-            lock_path: gateHelpers.normalizePath(lockPath),
-            removed: false,
-            reason: ownerPid === null ? 'owner_pid_missing_or_unreadable' : 'owner_process_still_alive_or_unknown',
-            owner_pid: ownerPid,
-            owner_alive: ownerAlive
-        });
-    }
-
-    return observations;
-}
-
-function formatGeneratedLockCleanupObservation(observation: GeneratedLockCleanupObservation): string {
-    const action = observation.removed ? 'removed' : 'retained';
-    const ownerPid = observation.owner_pid === null ? 'unknown' : String(observation.owner_pid);
-    const ownerAlive = observation.owner_alive === null ? 'unknown' : String(observation.owner_alive);
-    return `Full-suite timeout cleanup ${action} generated lock ${observation.lock_path} `
-        + `(reason=${observation.reason}; owner_pid=${ownerPid}; owner_alive=${ownerAlive}).`;
-}
+export { shouldOmitSuccessfulFullSuiteOutput } from './full-suite-validation-output-retention';
+export type {
+    FullSuiteValidationCommandOptions,
+    FullSuiteValidationCommandResult
+} from './full-suite-validation-flow-types';
 
 function buildFullSuiteValidationCommandEnv(): NodeJS.ProcessEnv {
     return {
@@ -504,30 +77,6 @@ function resolveEffectiveFullSuiteValidationConfig(
     return effectiveTimeoutMs === config.timeout_ms
         ? config
         : { ...config, timeout_ms: effectiveTimeoutMs };
-}
-
-function buildWorkflowConfigWorkBlockedResult(
-    config: ReturnType<typeof loadFullSuiteValidationConfig>,
-    cycleBinding: FullSuiteValidationCycleBinding,
-    violations: string[],
-    scanError: string | null
-): FullSuiteValidationResult {
-    return {
-        status: 'FAILED',
-        enabled: config.enabled,
-        command: config.command,
-        exit_code: null,
-        timed_out: false,
-        output_artifact_path: null,
-        compact_summary: ['Workflow config change is not authorized for this task mode.'],
-        failure_chunks: [],
-        out_of_scope_failure_policy: config.out_of_scope_failure_policy,
-        out_of_scope_failure_detected: false,
-        out_of_scope_audit_verdict: 'NOT_APPLICABLE',
-        violations,
-        warnings: scanError ? [`Workflow config workspace scan warning: ${scanError}`] : [],
-        cycle_binding: cycleBinding
-    };
 }
 
 export async function runFullSuiteValidationCommand(
