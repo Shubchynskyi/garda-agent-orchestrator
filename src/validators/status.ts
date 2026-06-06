@@ -1,11 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { StatusSnapshot as CliStatusSnapshot } from '../cli/commands/cli-helpers';
 import {
     resolveAgentInitStateRelativePathForTarget,
     resolveInitAnswersRelativePathForTarget
 } from '../core/constants';
-import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../core/project-memory-rollout';
 import { pathExists, readTextFile } from '../core/filesystem';
 import { isPathInsideRoot } from '../core/paths';
 import { validateInitAnswers } from '../schemas/init-answers';
@@ -19,71 +17,33 @@ import {
     detectSourceBundleParity
 } from './workspace-layout';
 import { collectTimelineSummaryForStatus } from '../gate-runtime/timeline-summary';
-import {
-    scanProviderCompliance,
-    formatProviderComplianceSummary,
-    type ProviderComplianceResult
-} from './provider-compliance';
-import {
-    evaluateProtectedControlPlaneManifest,
-    type ProtectedControlPlaneManifestEvidence
-} from '../gates/shared/helpers';
+import { scanProviderCompliance } from './provider-compliance';
+import { evaluateProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import {
     collectToxinSnapshot,
-    buildToxinStatusSummary,
-    formatToxinSummaryLines,
-    type ToxinStatusSummary
+    buildToxinStatusSummary
 } from '../runtime/toxin-metrics';
-import { resolveProfileAwareExecuteTaskRecommendation } from './task-command';
-import {
-    assessProtectedManifest,
-    type ProtectedManifestAssessment
-} from './protected-manifest-assessment';
+import { assessProtectedManifest } from './protected-manifest-assessment';
 import { readTaskQueueStatusMap } from './task-status-map';
+import { buildRecommendedNextCommand } from './status-recommendations';
+import type {
+    AgentInitializationPendingReason,
+    AgentInitState,
+    AgentInitStateResult,
+    InitAnswers,
+    InitAnswersState,
+    LiveVersionPayload,
+    LiveVersionState,
+    StatusSnapshot,
+    TimelineSummary
+} from './status-types';
 
-type InitAnswers = ReturnType<typeof validateInitAnswers>;
-
-interface LiveVersionPayload {
-    Version?: unknown;
-    SourceOfTruth?: unknown;
-    EnforceNoAutoCommit?: unknown;
-}
-
-type AgentInitStateResult = ReturnType<typeof readAgentInitStateSafe>;
-type AgentInitState = NonNullable<AgentInitStateResult['state']>;
-type AgentInitializationPendingReason = CliStatusSnapshot['agentInitializationPendingReason'];
-type TimelineSummary = ReturnType<typeof collectTimelineSummaryForStatus>;
-
-interface InitAnswersState {
-    resolvedPath: string;
-    present: boolean;
-    answers: InitAnswers | null;
-    error: string | null;
-}
-
-interface LiveVersionState {
-    payload: LiveVersionPayload | null;
-    error: string | null;
-}
-
-export interface StatusSnapshot extends CliStatusSnapshot {
-    enforceNoAutoCommit: boolean | null;
-    initAnswersPathForDisplay: string;
-    initAnswersPresent: boolean;
-    taskPresent: boolean;
-    livePresent: boolean;
-    usagePresent: boolean;
-    agentInitStatePath: string;
-    agentInitState: AgentInitState | null;
-    timelineTaskCount: number;
-    timelineHealthy: number;
-    timelineWarnings: string[];
-    parityResult: ReturnType<typeof detectSourceBundleParity>;
-    providerComplianceResult: ProviderComplianceResult | null;
-    protectedManifestEvidence: ProtectedControlPlaneManifestEvidence | null;
-    protectedManifestAssessment: ProtectedManifestAssessment | null;
-    toxinMetricsSummary: ToxinStatusSummary | null;
-}
+export type { StatusSnapshot } from './status-types';
+export {
+    formatStatusSnapshot,
+    formatStatusSnapshotCompact,
+    formatStatusSnapshotJson
+} from './status-rendering';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
@@ -367,7 +327,7 @@ function readProviderComplianceResult(
     targetRoot: string,
     bundlePresent: boolean,
     currentActiveAgentFiles: string[]
-): ProviderComplianceResult | null {
+): StatusSnapshot['providerComplianceResult'] {
     if (!bundlePresent || currentActiveAgentFiles.length === 0) {
         return null;
     }
@@ -382,7 +342,7 @@ function readProviderComplianceResult(
 function readProtectedManifestEvidence(
     targetRoot: string,
     bundlePresent: boolean
-): ProtectedControlPlaneManifestEvidence | null {
+): StatusSnapshot['protectedManifestEvidence'] {
     if (!bundlePresent) {
         return null;
     }
@@ -435,7 +395,7 @@ function readToxinMetricsSummary(
     targetRoot: string,
     bundlePath: string,
     bundlePresent: boolean
-): ToxinStatusSummary | null {
+): StatusSnapshot['toxinMetricsSummary'] {
     if (!bundlePresent) {
         return null;
     }
@@ -446,224 +406,6 @@ function readToxinMetricsSummary(
     } catch {
         return null;
     }
-}
-
-function buildRecommendedNextCommand(options: {
-    readyForTasks: boolean;
-    bundlePath: string;
-    parityResult: ReturnType<typeof detectSourceBundleParity>;
-    protectedManifestAssessment: ProtectedManifestAssessment | null;
-    primaryInitializationComplete: boolean;
-    agentInitializationPendingReason: AgentInitializationPendingReason;
-    bundlePresent: boolean;
-    initAnswersPresent: boolean;
-    initAnswersError: string | null;
-    resolvedTargetRoot: string;
-    initAnswersPath: string | undefined;
-}): string {
-    const {
-        readyForTasks,
-        bundlePath,
-        parityResult,
-        protectedManifestAssessment,
-        primaryInitializationComplete,
-        agentInitializationPendingReason,
-        bundlePresent,
-        initAnswersPresent,
-        initAnswersError,
-        resolvedTargetRoot,
-        initAnswersPath
-    } = options;
-
-    if (readyForTasks) {
-        return resolveProfileAwareExecuteTaskRecommendation(resolvedTargetRoot, bundlePath);
-    }
-    if (parityResult.isStale && parityResult.remediation) {
-        return parityResult.remediation;
-    }
-
-    const protectedManifestNeedsRepair = protectedManifestAssessment?.requires_refresh === true;
-    if (protectedManifestNeedsRepair) {
-        return `npx garda-agent-orchestrator update --target-root "${resolvedTargetRoot}"`;
-    }
-    if (primaryInitializationComplete && agentInitializationPendingReason !== null) {
-        return `Give your agent "${path.join(bundlePath, 'AGENT_INIT_PROMPT.md')}" and complete the agent-init flow`;
-    }
-    if (bundlePresent && (!initAnswersPresent || initAnswersError)) {
-        return `npx garda-agent-orchestrator setup --target-root "${resolvedTargetRoot}"`;
-    }
-    if (bundlePresent) {
-        return `npx garda-agent-orchestrator install --target-root "${resolvedTargetRoot}" --init-answers-path "${initAnswersPath}"`;
-    }
-    return 'npx garda-agent-orchestrator setup';
-}
-
-function buildHeadlineText(snapshot: StatusSnapshot): string {
-    if (snapshot.readyForTasks) {
-        return 'Workspace ready';
-    }
-    if (snapshot.primaryInitializationComplete) {
-        return 'Agent setup required';
-    }
-    if (snapshot.bundlePresent) {
-        return 'Primary setup required';
-    }
-    return 'Not installed';
-}
-
-function buildBadge(enabled: boolean, options?: { warning?: boolean }): string {
-    const warning = options?.warning || false;
-    if (enabled) return '[x]';
-    if (warning) return '[~]';
-    return '[ ]';
-}
-
-function buildSeverityBadge(severity: 'pass' | 'warn' | 'fail'): string {
-    switch (severity) {
-        case 'pass':
-            return '[x]';
-        case 'warn':
-            return '[~]';
-        default:
-            return '[ ]';
-    }
-}
-
-function appendParityLines(lines: string[], snapshot: StatusSnapshot): void {
-    if (!snapshot.parityResult.isSourceCheckout) {
-        return;
-    }
-
-    lines.push(`  ${buildBadge(!snapshot.parityResult.isStale, { warning: snapshot.parityResult.isStale })} Source parity (Self-hosted)`);
-    if (!snapshot.parityResult.isStale) {
-        return;
-    }
-    for (const violation of snapshot.parityResult.violations) {
-        lines.push(`    Violation: ${violation}`);
-    }
-}
-
-function appendProviderComplianceLines(lines: string[], snapshot: StatusSnapshot): void {
-    if (!snapshot.providerComplianceResult) {
-        return;
-    }
-
-    lines.push(`  ${buildBadge(snapshot.providerComplianceResult.passed)} Provider control compliance`);
-    if (snapshot.providerComplianceResult.passed) {
-        return;
-    }
-
-    const complianceLines = formatProviderComplianceSummary(snapshot.providerComplianceResult);
-    for (const line of complianceLines.slice(1)) {
-        lines.push(`  ${line}`);
-    }
-}
-
-function appendProtectedManifestLines(lines: string[], snapshot: StatusSnapshot): void {
-    if (!snapshot.protectedManifestEvidence) {
-        return;
-    }
-
-    const manifestStatus = snapshot.protectedManifestEvidence.status;
-    const manifestAssessment = snapshot.protectedManifestAssessment;
-    const manifestSeverity = manifestAssessment?.severity
-        || (manifestStatus === 'MATCH' || manifestStatus === 'MISSING' ? 'pass' : 'fail');
-    lines.push(`  ${buildSeverityBadge(manifestSeverity)} Protected manifest (${manifestStatus})`);
-    lines.push('    Role: trusted protected control-plane baseline for lifecycle drift checks.');
-
-    if (manifestAssessment?.code === 'INFO_SOURCE_CHECKOUT') {
-        lines.push('    Assessment: INFO_SOURCE_CHECKOUT');
-        lines.push('    Info: self-hosted source-checkout drift is informational while protected source and generated bundle files evolve together.');
-        lines.push('    Impact: status keeps the workspace ready, while task-start gates still enforce dirty-baseline and manifest guardrails for true pre-start drift.');
-        lines.push('    Optional: Run setup/update/reinit after intentional control-plane changes settle and you want to refresh the trusted baseline.');
-        return;
-    }
-
-    if (manifestAssessment?.code === 'INFO_TASK_CONTEXT_ALLOWED_DRIFT') {
-        lines.push('    Assessment: INFO_TASK_CONTEXT_ALLOWED_DRIFT');
-        lines.push('    Info: current task context already explains this protected-manifest drift.');
-        return;
-    }
-
-    if (manifestStatus === 'DRIFT') {
-        const driftCount = snapshot.protectedManifestEvidence.changed_files.length;
-        lines.push(`    Drift: ${driftCount} file(s) changed since last trusted snapshot`);
-        for (const changedFile of snapshot.protectedManifestEvidence.changed_files.slice(0, 5)) {
-            lines.push(`    - ${changedFile}`);
-        }
-        if (driftCount > 5) {
-            lines.push(`    ... and ${driftCount - 5} more`);
-        }
-        lines.push('    Fix: Run setup/update/reinit to refresh the trusted lifecycle baseline, or restart with --orchestrator-work if the task intentionally changes orchestrator control-plane files.');
-        return;
-    }
-
-    if (manifestStatus === 'INVALID') {
-        lines.push('    Warning: trusted manifest is malformed; re-run setup/update/reinit');
-        lines.push('    Fix: Run setup/update/reinit before ordinary tasks, or restart with --orchestrator-work if this task intentionally changes orchestrator control-plane files.');
-    }
-}
-
-function buildPendingCheckpointLine(snapshot: StatusSnapshot): string | null {
-    switch (snapshot.agentInitializationPendingReason) {
-        case 'AGENT_HANDOFF_REQUIRED':
-            return '  Next stage: Launch your agent with AGENT_INIT_PROMPT.md';
-        case 'LANGUAGE_CONFIRMATION_PENDING':
-            return '  Pending checkpoint: Confirm assistant language during AGENT_INIT_PROMPT flow';
-        case 'ACTIVE_AGENT_FILES_PENDING':
-            return '  Pending checkpoint: Confirm active agent files during AGENT_INIT_PROMPT flow';
-        case 'AGENT_STATE_STALE':
-            return '  Pending checkpoint: Agent-init state no longer matches current init answers; rerun AGENT_INIT_PROMPT flow';
-        case 'PROJECT_RULES_PENDING':
-            return '  Pending checkpoint: Update project-specific live rules before finalizing agent init';
-        case 'SKILLS_PROMPT_PENDING':
-            return '  Pending checkpoint: Ask the optional specialist-skills yes/no question before finalizing agent init; user decline is allowed';
-        case 'ORDINARY_DOC_PATHS_PENDING':
-            return '  Pending checkpoint: Confirm ordinary document paths during AGENT_INIT_PROMPT flow';
-        case 'PROJECT_MEMORY_PENDING':
-            return '  Pending checkpoint: Initialize or refresh Garda project memory during AGENT_INIT_PROMPT flow';
-        case 'PROJECT_COMMANDS_PENDING':
-            return `  Missing project commands: ${snapshot.missingProjectCommands.length}`;
-        case 'VALIDATION_PENDING':
-            return '  Pending checkpoint: Run agent-init validation to get verify + manifest PASSED';
-        case 'AGENT_STATE_INVALID':
-            return '  Pending checkpoint: Repair invalid agent-init state file';
-        default:
-            return null;
-    }
-}
-
-function appendTimelineLines(lines: string[], snapshot: StatusSnapshot): void {
-    if (snapshot.timelineTaskCount === 0 && snapshot.timelineWarnings.length === 0) {
-        return;
-    }
-
-    lines.push(`TaskTimelines: ${snapshot.timelineHealthy}/${snapshot.timelineTaskCount} complete`);
-    lines.push('  Canonical task timelines: garda-agent-orchestrator/runtime/task-events/<task-id>.jsonl');
-    lines.push('  Derived indexes: garda-agent-orchestrator/runtime/task-events/all-tasks.jsonl, garda-agent-orchestrator/runtime/task-events/.timeline-summary.json');
-    for (const warning of snapshot.timelineWarnings) {
-        lines.push(`  Warning: ${warning}`);
-    }
-}
-
-function appendToxinLines(lines: string[], snapshot: StatusSnapshot): void {
-    if (!snapshot.toxinMetricsSummary) {
-        return;
-    }
-
-    lines.push('');
-    lines.push('Toxin Metrics');
-    for (const line of formatToxinSummaryLines(snapshot.toxinMetricsSummary)) {
-        lines.push(`  ${line}`);
-    }
-}
-
-function appendCommandsLines(lines: string[], snapshot: StatusSnapshot): void {
-    if (snapshot.agentInitializationPendingReason !== 'PROJECT_COMMANDS_PENDING') {
-        return;
-    }
-    lines.push(`CommandsRule: ${snapshot.commandsRulePath}`);
-    lines.push('CommandsStatus: PENDING_AGENT_CONTEXT');
 }
 
 export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string): StatusSnapshot {
@@ -803,78 +545,4 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         mandatoryFullSuiteEnabled,
         latestUpdateNotice
     };
-}
-
-export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { heading?: string }): string {
-    const heading = options?.heading || 'GARDA_STATUS';
-    const lines: string[] = [
-        heading,
-        buildHeadlineText(snapshot),
-        `Project: ${snapshot.targetRoot}`,
-        `Bundle: ${snapshot.bundlePath}`,
-        `InitAnswers: ${snapshot.initAnswersResolvedPath}`,
-        `CollectedVia: ${snapshot.collectedVia || 'n/a'}`
-    ];
-
-    if (snapshot.activeAgentFiles) {
-        lines.push(`ActiveAgentFiles: ${snapshot.activeAgentFiles}`);
-    }
-    lines.push(
-        `SourceOfTruth: ${snapshot.sourceOfTruth || 'n/a'}`
-        + `${snapshot.canonicalEntrypoint ? ` -> ${snapshot.canonicalEntrypoint}` : ''}`
-    );
-    if (snapshot.activeProfile) {
-        lines.push(`ActiveProfile: ${snapshot.activeProfile}`);
-    }
-
-    lines.push('');
-    lines.push('Workspace Stages');
-    lines.push(`  ${buildBadge(snapshot.bundlePresent)} Installed`);
-    lines.push(`  ${buildBadge(snapshot.primaryInitializationComplete, { warning: snapshot.bundlePresent && !snapshot.primaryInitializationComplete })} Primary initialization`);
-    lines.push(`  ${buildBadge(snapshot.agentInitializationComplete, { warning: snapshot.primaryInitializationComplete && !snapshot.agentInitializationComplete })} Agent initialization`);
-
-    appendParityLines(lines, snapshot);
-    appendProviderComplianceLines(lines, snapshot);
-    appendProtectedManifestLines(lines, snapshot);
-
-    lines.push(`  ${buildBadge(snapshot.readyForTasks, { warning: snapshot.agentInitializationComplete && !snapshot.readyForTasks })} Ready for task execution`);
-
-    const pendingCheckpointLine = buildPendingCheckpointLine(snapshot);
-    if (pendingCheckpointLine) {
-        lines.push(pendingCheckpointLine);
-    }
-    if (snapshot.agentInitializationPendingReason === 'PROJECT_MEMORY_PENDING') {
-        lines.push(`ProjectMemoryInitRefreshPrompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`);
-    }
-    if (snapshot.initAnswersError) {
-        lines.push(`InitAnswersStatus: INVALID (${snapshot.initAnswersError})`);
-    }
-    if (snapshot.liveVersionError) {
-        lines.push(`LiveVersionStatus: INVALID (${snapshot.liveVersionError})`);
-    }
-    if (snapshot.agentInitStateError) {
-        lines.push(`AgentInitStateStatus: INVALID (${snapshot.agentInitStateError})`);
-    }
-
-    appendTimelineLines(lines, snapshot);
-    appendToxinLines(lines, snapshot);
-    appendCommandsLines(lines, snapshot);
-
-    lines.push(`RecommendedNextCommand: ${snapshot.recommendedNextCommand}`);
-    return lines.join('\n');
-}
-
-export function formatStatusSnapshotCompact(snapshot: StatusSnapshot): string {
-    if (!snapshot.readyForTasks) {
-        return formatStatusSnapshot(snapshot);
-    }
-    const profileSuffix = snapshot.activeProfile ? ` | profile=${snapshot.activeProfile}` : '';
-    const toxinSuffix = snapshot.toxinMetricsSummary && snapshot.toxinMetricsSummary.warnings.length > 0
-        ? ` | toxin_warnings=${snapshot.toxinMetricsSummary.warnings.length}`
-        : '';
-    return `GARDA_STATUS: ready | source=${snapshot.sourceOfTruth || 'n/a'}${profileSuffix}${toxinSuffix}`;
-}
-
-export function formatStatusSnapshotJson(snapshot: StatusSnapshot): string {
-    return JSON.stringify(snapshot, null, 2);
 }
