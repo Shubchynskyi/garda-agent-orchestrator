@@ -3,470 +3,63 @@ import * as path from 'node:path';
 
 import {
     appendAggregateEventAsync,
-    appendAggregateEventSync,
-    type AggregateAppendMode,
-    type AggregateRetentionResult
+    appendAggregateEventSync
 } from './task-events-retention';
 import {
     withFilesystemLock,
     withFilesystemLockAsync,
-    type LockContentionLevel,
     type LockOptions
 } from './task-events-locking';
-import {
-    assertValidTaskId,
-    buildEventIntegrityHash,
-    forEachJsonlLine,
-    toTrimmedLowerCaseString,
-    toTrimmedString
-} from './task-events-helpers';
-import { createTaskEventPublicRecord, type TaskEventPublicMetadata } from './task-event-public-contract';
-import { LIFECYCLE_EVENT_TYPES } from './lifecycle-event-types';
+import { assertValidTaskId } from './task-events-helpers';
+import { createTaskEventPublicRecord } from './task-event-public-contract';
 import { redactSecretText, redactSensitiveData } from '../core/redaction';
+import {
+    appendTaskEventLineAsync,
+    appendTaskEventLineSync,
+    toPositiveInteger
+} from './task-events-io-write';
+import { refreshTimelineSummaryForCommittedEvent } from './task-events-io-summary';
+import {
+    applyAggregateLockTelemetry,
+    applyTaskLockTelemetry,
+    assertMandatoryAppendCommitted,
+    buildAppendWarning,
+    createAppendResult,
+    getBlockingTaskEventAppendWarnings,
+    markTaskEventCommitted,
+    markTaskEventSkippedDuplicate,
+    recordDerivedAppendWarning,
+    taskEventAppendHasBlockingFailure
+} from './task-events-io-result';
+import {
+    readTaskEventAppendState,
+    readTaskEventAppendStateFast
+} from './task-events-io-index';
+import type {
+    AppendTaskEventOptions,
+    AppendTaskEventResult,
+    TaskEvent,
+    TaskEventAppendState,
+    TaskEventCommitStatus,
+    TaskEventIntegrity,
+    TaskEventPaths
+} from './task-events-io-types';
 
-const TAIL_READ_CHUNK_SIZE = 4096;
-const SUMMARY_REFRESH_EVENT_TYPES = new Set<string>([
-    LIFECYCLE_EVENT_TYPES.TASK_MODE_ENTERED,
-    LIFECYCLE_EVENT_TYPES.PLAN_CREATED,
-    LIFECYCLE_EVENT_TYPES.RULE_PACK_LOADED,
-    LIFECYCLE_EVENT_TYPES.RULE_PACK_LOAD_FAILED,
-    LIFECYCLE_EVENT_TYPES.HANDSHAKE_DIAGNOSTICS_RECORDED,
-    LIFECYCLE_EVENT_TYPES.SHELL_SMOKE_PREFLIGHT_RECORDED,
-    LIFECYCLE_EVENT_TYPES.PREFLIGHT_STARTED,
-    LIFECYCLE_EVENT_TYPES.PREFLIGHT_CLASSIFIED,
-    LIFECYCLE_EVENT_TYPES.PREFLIGHT_FAILED,
-    LIFECYCLE_EVENT_TYPES.IMPLEMENTATION_STARTED,
-    LIFECYCLE_EVENT_TYPES.COMPILE_GATE_PASSED,
-    LIFECYCLE_EVENT_TYPES.COMPILE_GATE_FAILED,
-    LIFECYCLE_EVENT_TYPES.REVIEW_PHASE_STARTED,
-    LIFECYCLE_EVENT_TYPES.REVIEW_RECORDED,
-    LIFECYCLE_EVENT_TYPES.REVIEWER_LAUNCH_PREPARED,
-    LIFECYCLE_EVENT_TYPES.REVIEWER_INVOCATION_ATTESTED,
-    LIFECYCLE_EVENT_TYPES.REVIEW_GATE_PASSED,
-    LIFECYCLE_EVENT_TYPES.REVIEW_GATE_PASSED_WITH_OVERRIDE,
-    LIFECYCLE_EVENT_TYPES.REVIEW_GATE_FAILED,
-    LIFECYCLE_EVENT_TYPES.DOC_IMPACT_ASSESSED,
-    LIFECYCLE_EVENT_TYPES.DOC_IMPACT_ASSESSMENT_FAILED,
-    LIFECYCLE_EVENT_TYPES.PROJECT_MEMORY_IMPACT_ASSESSED,
-    LIFECYCLE_EVENT_TYPES.PROJECT_MEMORY_IMPACT_BLOCKED,
-    LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_PASSED,
-    LIFECYCLE_EVENT_TYPES.COMPLETION_GATE_FAILED
-]);
+export {
+    getBlockingTaskEventAppendWarnings,
+    readTaskEventAppendState,
+    readTaskEventAppendStateFast,
+    taskEventAppendHasBlockingFailure
+};
 
-export interface TaskEventAppendState {
-    matching_events: number;
-    parse_errors: number;
-    last_integrity_sequence: number | null;
-    last_event_sha256: string | null;
-}
-
-export interface AppendTaskEventOptions {
-    actor?: string;
-    passThru?: boolean;
-    eventsRoot?: string;
-    emitOnce?: unknown;
-    lockTimeoutMs?: unknown;
-    lockRetryMs?: unknown;
-    lockStaleMs?: unknown;
-    allowForeignHostStaleRecovery?: unknown;
-    preWriteDelayMs?: unknown;
-    aggregateMaxLines?: unknown;
-}
-
-export interface TaskEventIntegrity {
-    schema_version: number;
-    task_sequence: number;
-    prev_event_sha256: string | null;
-    event_sha256?: string;
-}
-
-export interface TaskEvent {
-    schema_version: number;
-    event_source: string;
-    timestamp_utc: string;
-    task_id: string;
-    event_type: string;
-    outcome: string;
-    actor: string;
-    message: string;
-    details: unknown;
-    public_metadata: TaskEventPublicMetadata;
-    integrity?: TaskEventIntegrity;
-}
-
-export type TaskEventCommitStatus =
-    | 'not_committed'
-    | 'committed'
-    | 'committed_with_derived_index_failure'
-    | 'skipped_duplicate';
-
-export interface AppendTaskEventResult {
-    task_event_log_path: string;
-    all_tasks_log_path: string;
-    integrity: TaskEventIntegrity | null;
-    commit_status: TaskEventCommitStatus;
-    canonical_committed: boolean;
-    warnings: string[];
-    derived_warnings: string[];
-    skipped_reason?: 'emit_once_duplicate' | null;
-    aggregate_retention?: AggregateRetentionResult;
-    lock_telemetry?: {
-        task_lock_retries: number;
-        task_lock_elapsed_ms: number;
-        task_lock_contention_level: LockContentionLevel;
-        task_lock_stale_recovered: boolean;
-        task_lock_stale_reason: 'owner_dead' | 'age_exceeded' | null;
-        aggregate_lock_retries: number;
-        aggregate_lock_elapsed_ms: number;
-        aggregate_lock_contention_level: LockContentionLevel;
-        aggregate_lock_stale_recovered: boolean;
-        aggregate_lock_stale_reason: 'owner_dead' | 'age_exceeded' | null;
-        aggregate_append_mode: AggregateAppendMode;
-    };
-}
-
-interface TaskEventPaths {
-    eventsRoot: string;
-    taskFilePath: string;
-    allTasksPath: string;
-    taskLockPath: string;
-    aggregateLockPath: string;
-}
-
-interface TaskEventAppendIndex {
-    taskFilePath: string;
-    taskId: string;
-    size: number;
-    mtimeMs: number;
-    ctimeMs: number;
-    state: TaskEventAppendState;
-    eventTypes: Set<string>;
-}
-
-interface TaskEventAppendReadiness {
-    state: TaskEventAppendState;
-    duplicate: boolean;
-}
-
-const taskEventAppendIndexCache = new Map<string, TaskEventAppendIndex>();
-const TASK_EVENT_APPEND_INDEX_CACHE_MAX_ENTRIES = 128;
-
-function toPositiveInteger(value: unknown, fallback: number): number {
-    const parsed = Number.parseInt(String(value), 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function sleepMsAsync(milliseconds: number): Promise<void> {
-    if (!milliseconds || milliseconds <= 0) {
-        return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-        setTimeout(resolve, milliseconds);
-    });
-}
-
-function getErrorMessage(err: unknown): string {
-    return err instanceof Error ? err.message : String(err);
-}
-
-function readLastNonEmptyLine(filePath: string): string | null {
-    let fd: number | null = null;
-    try {
-        let stat: fs.Stats;
-        try {
-            stat = fs.statSync(filePath);
-        } catch {
-            return null;
-        }
-        if (!stat.isFile() || stat.size === 0) {
-            return null;
-        }
-
-        fd = fs.openSync(filePath, 'r');
-        const fileSize = stat.size;
-        const chunkSize = Math.min(TAIL_READ_CHUNK_SIZE, fileSize);
-        let offset = fileSize;
-        let accumulated = Buffer.alloc(0);
-
-        while (offset > 0) {
-            const readSize = Math.min(chunkSize, offset);
-            offset -= readSize;
-            const buf = Buffer.alloc(readSize);
-            fs.readSync(fd, buf, 0, readSize, offset);
-            accumulated = Buffer.concat([buf, accumulated]);
-
-            let end = accumulated.length;
-            while (end > 0) {
-                const newlinePosition = accumulated.lastIndexOf(0x0A, end - 1);
-                const lineStart = newlinePosition + 1;
-                const lineBytes = accumulated.subarray(lineStart, end);
-                if (lineBytes.length > 0 && lineBytes.some((byte) => byte !== 0x20 && byte !== 0x09 && byte !== 0x0D)) {
-                    return lineBytes.toString('utf8').trim();
-                }
-                end = newlinePosition >= 0 ? newlinePosition : 0;
-            }
-        }
-
-        const text = accumulated.toString('utf8').trim();
-        return text || null;
-    } catch {
-        return null;
-    } finally {
-        if (fd != null) {
-            try { fs.closeSync(fd); } catch { /* best-effort */ }
-        }
-    }
-}
-
-function getTaskEventAppendIndexCacheKey(taskFilePath: string, taskId: string): string {
-    return `${path.resolve(taskFilePath)}\0${taskId}`;
-}
-
-function getTaskEventFileStat(taskFilePath: string): { size: number; mtimeMs: number; ctimeMs: number } | null {
-    try {
-        const stat = fs.statSync(taskFilePath);
-        return stat.isFile()
-            ? { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs }
-            : null;
-    } catch {
-        return null;
-    }
-}
-
-function rememberTaskEventAppendIndex(cacheKey: string, index: TaskEventAppendIndex): TaskEventAppendIndex {
-    if (!taskEventAppendIndexCache.has(cacheKey) && taskEventAppendIndexCache.size >= TASK_EVENT_APPEND_INDEX_CACHE_MAX_ENTRIES) {
-        const oldestKey = taskEventAppendIndexCache.keys().next().value as string | undefined;
-        if (oldestKey) {
-            taskEventAppendIndexCache.delete(oldestKey);
-        }
-    }
-    taskEventAppendIndexCache.set(cacheKey, index);
-    return index;
-}
-
-function readTaskEventAppendIndex(taskFilePath: string, taskId: string): TaskEventAppendIndex {
-    const cacheKey = getTaskEventAppendIndexCacheKey(taskFilePath, taskId);
-    const stat = getTaskEventFileStat(taskFilePath);
-    const emptyState: TaskEventAppendState = {
-        matching_events: 0,
-        parse_errors: 0,
-        last_integrity_sequence: null,
-        last_event_sha256: null
-    };
-
-    if (!stat) {
-        return rememberTaskEventAppendIndex(cacheKey, {
-            taskFilePath,
-            taskId,
-            size: 0,
-            mtimeMs: 0,
-            ctimeMs: 0,
-            state: emptyState,
-            eventTypes: new Set<string>()
-        });
-    }
-
-    const cached = taskEventAppendIndexCache.get(cacheKey);
-    if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs && cached.ctimeMs === stat.ctimeMs) {
-        return cached;
-    }
-
-    const state: TaskEventAppendState = {
-        matching_events: 0,
-        parse_errors: 0,
-        last_integrity_sequence: null,
-        last_event_sha256: null
-    };
-    const eventTypes = new Set<string>();
-
-    forEachJsonlLine(taskFilePath, (rawLine: string) => {
-        let event: Record<string, unknown>;
-        try {
-            event = JSON.parse(rawLine) as Record<string, unknown>;
-        } catch {
-            state.parse_errors++;
-            return;
-        }
-
-        const eventTaskId = toTrimmedString(event.task_id);
-        if (eventTaskId && eventTaskId !== taskId) {
-            return;
-        }
-
-        state.matching_events++;
-        const eventType = toTrimmedLowerCaseString(event.event_type);
-        if (eventType) {
-            eventTypes.add(eventType);
-        }
-
-        const integrity = event.integrity;
-        if (!integrity || typeof integrity !== 'object') {
-            return;
-        }
-
-        const integrityRecord = integrity as Record<string, unknown>;
-        const sequence = integrityRecord.task_sequence;
-        const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
-        if (typeof sequence === 'number' && sequence > 0 && eventSha256) {
-            state.last_integrity_sequence = sequence;
-            state.last_event_sha256 = eventSha256;
-        }
-    });
-
-    return rememberTaskEventAppendIndex(cacheKey, {
-        taskFilePath,
-        taskId,
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-        ctimeMs: stat.ctimeMs,
-        state,
-        eventTypes
-    });
-}
-
-function readTaskEventAppendReadiness(
-    taskFilePath: string,
-    taskId: string,
-    eventType: string,
-    emitOnce: boolean
-): TaskEventAppendReadiness {
-    if (!emitOnce) {
-        return {
-            state: readTaskEventAppendState(taskFilePath, taskId),
-            duplicate: false
-        };
-    }
-
-    const index = readTaskEventAppendIndex(taskFilePath, taskId);
-    const targetEventType = toTrimmedLowerCaseString(eventType);
-    return {
-        state: index.state,
-        duplicate: targetEventType ? index.eventTypes.has(targetEventType) : false
-    };
-}
-
-function refreshTaskEventAppendIndexAfterAppend(
-    taskFilePath: string,
-    taskId: string,
-    event: TaskEvent
-): void {
-    const cacheKey = getTaskEventAppendIndexCacheKey(taskFilePath, taskId);
-    const cached = taskEventAppendIndexCache.get(cacheKey);
-    if (!cached) {
-        return;
-    }
-
-    const stat = getTaskEventFileStat(taskFilePath);
-    if (!stat) {
-        taskEventAppendIndexCache.delete(cacheKey);
-        return;
-    }
-
-    const eventType = toTrimmedLowerCaseString(event.event_type);
-    if (eventType) {
-        cached.eventTypes.add(eventType);
-    }
-    cached.size = stat.size;
-    cached.mtimeMs = stat.mtimeMs;
-    cached.ctimeMs = stat.ctimeMs;
-    cached.state = {
-        matching_events: cached.state.matching_events + 1,
-        parse_errors: cached.state.parse_errors,
-        last_integrity_sequence: event.integrity?.task_sequence ?? cached.state.last_integrity_sequence,
-        last_event_sha256: event.integrity?.event_sha256 ?? cached.state.last_event_sha256
-    };
-}
-
-export function readTaskEventAppendStateFast(taskFilePath: string, taskId: string): TaskEventAppendState | null {
-    const rawLine = readLastNonEmptyLine(taskFilePath);
-    if (!rawLine || !rawLine.trim()) {
-        return null;
-    }
-
-    let event: Record<string, unknown>;
-    try {
-        event = JSON.parse(rawLine) as Record<string, unknown>;
-    } catch {
-        return null;
-    }
-
-    const eventTaskId = toTrimmedString(event.task_id);
-    if (eventTaskId && eventTaskId !== taskId) {
-        return null;
-    }
-
-    const integrity = event.integrity;
-    if (!integrity || typeof integrity !== 'object') {
-        return null;
-    }
-
-    const integrityRecord = integrity as Record<string, unknown>;
-    const sequence = integrityRecord.task_sequence;
-    const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
-    if (typeof sequence !== 'number' || sequence <= 0 || !eventSha256) {
-        return null;
-    }
-
-    return {
-        matching_events: sequence,
-        parse_errors: 0,
-        last_integrity_sequence: sequence,
-        last_event_sha256: eventSha256
-    };
-}
-
-export function readTaskEventAppendState(taskFilePath: string, taskId: string): TaskEventAppendState {
-    const state: TaskEventAppendState = {
-        matching_events: 0,
-        parse_errors: 0,
-        last_integrity_sequence: null,
-        last_event_sha256: null
-    };
-
-    try {
-        if (!fs.existsSync(taskFilePath) || !fs.statSync(taskFilePath).isFile()) {
-            return state;
-        }
-    } catch {
-        return state;
-    }
-
-    const fastState = readTaskEventAppendStateFast(taskFilePath, taskId);
-    if (fastState != null) {
-        return fastState;
-    }
-
-    forEachJsonlLine(taskFilePath, (rawLine: string) => {
-        let event: Record<string, unknown>;
-        try {
-            event = JSON.parse(rawLine) as Record<string, unknown>;
-        } catch {
-            state.parse_errors++;
-            return;
-        }
-
-        const eventTaskId = toTrimmedString(event.task_id);
-        if (eventTaskId && eventTaskId !== taskId) {
-            return;
-        }
-
-        state.matching_events++;
-        const integrity = event.integrity;
-        if (!integrity || typeof integrity !== 'object') {
-            return;
-        }
-
-        const integrityRecord = integrity as Record<string, unknown>;
-        const sequence = integrityRecord.task_sequence;
-        const eventSha256 = toTrimmedLowerCaseString(integrityRecord.event_sha256);
-        if (typeof sequence === 'number' && sequence > 0 && eventSha256) {
-            state.last_integrity_sequence = sequence;
-            state.last_event_sha256 = eventSha256;
-        }
-    });
-
-    return state;
-}
+export type {
+    AppendTaskEventOptions,
+    AppendTaskEventResult,
+    TaskEvent,
+    TaskEventAppendState,
+    TaskEventCommitStatus,
+    TaskEventIntegrity
+};
 
 function resolveTaskEventPaths(repoRoot: string, safeTaskId: string, eventsRoot?: string): TaskEventPaths {
     const resolvedEventsRoot = eventsRoot
@@ -481,237 +74,42 @@ function resolveTaskEventPaths(repoRoot: string, safeTaskId: string, eventsRoot?
     };
 }
 
-function createAppendResult(paths: TaskEventPaths): AppendTaskEventResult {
+function buildLockOptions(options: AppendTaskEventOptions): LockOptions {
     return {
-        task_event_log_path: paths.taskFilePath.replace(/\\/g, '/'),
-        all_tasks_log_path: paths.allTasksPath.replace(/\\/g, '/'),
-        integrity: null,
-        commit_status: 'not_committed',
-        canonical_committed: false,
-        warnings: [],
-        derived_warnings: [],
-        skipped_reason: null,
-        lock_telemetry: {
-            task_lock_retries: 0,
-            task_lock_elapsed_ms: 0,
-            task_lock_contention_level: 'none',
-            task_lock_stale_recovered: false,
-            task_lock_stale_reason: null,
-            aggregate_lock_retries: 0,
-            aggregate_lock_elapsed_ms: 0,
-            aggregate_lock_contention_level: 'none',
-            aggregate_lock_stale_recovered: false,
-            aggregate_lock_stale_reason: null,
-            aggregate_append_mode: 'locked'
-        }
+        timeoutMs: options.lockTimeoutMs,
+        retryMs: options.lockRetryMs,
+        staleMs: options.lockStaleMs,
+        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
     };
 }
 
-function applyTaskLockTelemetry(result: AppendTaskEventResult, telemetry: {
-    retries: number;
-    elapsedMs: number;
-    contentionLevel: LockContentionLevel;
-    staleLockRecovered: boolean;
-    staleLockReason: 'owner_dead' | 'age_exceeded' | null;
-}): void {
-    if (!result.lock_telemetry) {
-        return;
-    }
-    result.lock_telemetry.task_lock_retries = telemetry.retries;
-    result.lock_telemetry.task_lock_elapsed_ms = telemetry.elapsedMs;
-    result.lock_telemetry.task_lock_contention_level = telemetry.contentionLevel;
-    result.lock_telemetry.task_lock_stale_recovered = telemetry.staleLockRecovered;
-    result.lock_telemetry.task_lock_stale_reason = telemetry.staleLockReason;
+function createTaskEvent(
+    safeTaskId: string,
+    eventType: string,
+    outcome: string,
+    actor: string,
+    message: string,
+    details: unknown
+): TaskEvent {
+    return createTaskEventPublicRecord({
+        timestamp_utc: new Date().toISOString(),
+        task_id: safeTaskId,
+        event_type: eventType,
+        outcome,
+        actor,
+        message: redactSecretText(message),
+        details: redactSensitiveData(details)
+    }) as TaskEvent;
 }
 
-function applyAggregateLockTelemetry(
-    result: AppendTaskEventResult,
-    appendMode: AggregateAppendMode,
-    telemetry?: {
-        retries: number;
-        elapsedMs: number;
-        contentionLevel: LockContentionLevel;
-        staleLockRecovered: boolean;
-        staleLockReason: 'owner_dead' | 'age_exceeded' | null;
-    }
-): void {
-    if (!result.lock_telemetry) {
-        return;
-    }
-    result.lock_telemetry.aggregate_append_mode = appendMode;
-    if (!telemetry) {
-        return;
-    }
-    result.lock_telemetry.aggregate_lock_retries = telemetry.retries;
-    result.lock_telemetry.aggregate_lock_elapsed_ms = telemetry.elapsedMs;
-    result.lock_telemetry.aggregate_lock_contention_level = telemetry.contentionLevel;
-    result.lock_telemetry.aggregate_lock_stale_recovered = telemetry.staleLockRecovered;
-    result.lock_telemetry.aggregate_lock_stale_reason = telemetry.staleLockReason;
+function shouldEmitOnce(value: unknown): boolean {
+    return value === true || String(value || '').trim().toLowerCase() === 'true';
 }
 
-function getCodeChangedHintFromEvent(event: TaskEvent | null): boolean | undefined {
-    if (!event || event.event_type !== 'PREFLIGHT_CLASSIFIED') {
-        return undefined;
-    }
-    if (!event.details || typeof event.details !== 'object' || Array.isArray(event.details)) {
-        return undefined;
-    }
-    const details = event.details as Record<string, unknown>;
-    return typeof details.code_changed === 'boolean' ? details.code_changed : undefined;
-}
-
-function shouldRefreshTimelineSummary(event: TaskEvent): boolean {
-    return SUMMARY_REFRESH_EVENT_TYPES.has(event.event_type);
-}
-
-function updateTimelineSummaryBestEffortForEvent(eventsRoot: string, taskId: string, event: TaskEvent | null): string | null {
-    try {
-        const { updateTimelineSummaryForTask } = require('./timeline-summary') as typeof import('./timeline-summary');
-        updateTimelineSummaryForTask(eventsRoot, taskId, getCodeChangedHintFromEvent(event));
-        return null;
-    } catch (error: unknown) {
-        return buildAppendWarning('task-event timeline summary update failed', error);
-    }
-}
-
-function refreshTimelineSummaryForCommittedEvent(
-    result: AppendTaskEventResult,
-    eventsRoot: string,
-    taskId: string,
-    event: TaskEvent
-): void {
-    if (!shouldRefreshTimelineSummary(event)) {
-        return;
-    }
-    const warning = updateTimelineSummaryBestEffortForEvent(eventsRoot, taskId, event);
-    if (warning) {
-        recordDerivedAppendWarning(result, warning);
-        process.stderr.write(`WARNING: ${warning}\n`);
-    }
-}
-
-function appendTaskEventLineSync(
-    taskFilePath: string,
-    taskId: string,
-    event: TaskEvent,
-    emitOnce: boolean
-): string | null {
-    const readiness = readTaskEventAppendReadiness(taskFilePath, taskId, event.event_type, emitOnce);
-    if (readiness.duplicate) {
-        return null;
-    }
-
-    const appendState = readiness.state;
-    const previousSequence = appendState.last_integrity_sequence;
-    const previousHash = appendState.last_event_sha256;
-    const nextSequence = typeof previousSequence === 'number'
-        ? previousSequence + 1
-        : appendState.matching_events + 1;
-
-    event.integrity = {
-        schema_version: 1,
-        task_sequence: nextSequence,
-        prev_event_sha256: previousHash
-    };
-
-    const eventSha256 = buildEventIntegrityHash({ ...event });
-    if (eventSha256 == null) {
-        throw new Error('Failed to build event integrity hash.');
-    }
-
-    event.integrity.event_sha256 = eventSha256;
-    const serializedLine = JSON.stringify(event);
-    fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
-    refreshTaskEventAppendIndexAfterAppend(taskFilePath, taskId, event);
-    return serializedLine;
-}
-
-async function appendTaskEventLineAsync(
-    taskFilePath: string,
-    taskId: string,
-    event: TaskEvent,
-    preWriteDelayMs: number,
-    emitOnce: boolean
-): Promise<string | null> {
-    const readiness = readTaskEventAppendReadiness(taskFilePath, taskId, event.event_type, emitOnce);
-    if (readiness.duplicate) {
-        return null;
-    }
-
-    const appendState = readiness.state;
-    const previousSequence = appendState.last_integrity_sequence;
-    const previousHash = appendState.last_event_sha256;
-    const nextSequence = typeof previousSequence === 'number'
-        ? previousSequence + 1
-        : appendState.matching_events + 1;
-
-    event.integrity = {
-        schema_version: 1,
-        task_sequence: nextSequence,
-        prev_event_sha256: previousHash
-    };
-
-    const eventSha256 = buildEventIntegrityHash({ ...event });
-    if (eventSha256 == null) {
-        throw new Error('Failed to build event integrity hash.');
-    }
-
-    event.integrity.event_sha256 = eventSha256;
-    const serializedLine = JSON.stringify(event);
-    if (preWriteDelayMs > 0) {
-        await sleepMsAsync(preWriteDelayMs);
-    }
-    fs.appendFileSync(taskFilePath, serializedLine + '\n', 'utf8');
-    refreshTaskEventAppendIndexAfterAppend(taskFilePath, taskId, event);
-    return serializedLine;
-}
-
-function buildAppendWarning(prefix: string, error: unknown): string {
-    return `${prefix}: ${getErrorMessage(error)}`;
-}
-
-function markTaskEventCommitted(result: AppendTaskEventResult, event: TaskEvent): void {
-    result.integrity = Object.assign({}, event.integrity);
-    result.commit_status = 'committed';
-    result.canonical_committed = true;
-}
-
-function markTaskEventSkippedDuplicate(result: AppendTaskEventResult): void {
-    result.skipped_reason = 'emit_once_duplicate';
-    result.commit_status = 'skipped_duplicate';
-    result.canonical_committed = false;
-}
-
-function recordDerivedAppendWarning(result: AppendTaskEventResult, warning: string): void {
+function handleAppendFailure(result: AppendTaskEventResult, warning: string, passThru: boolean): AppendTaskEventResult | null {
     result.warnings.push(warning);
-    result.derived_warnings.push(warning);
-    if (result.canonical_committed) {
-        result.commit_status = 'committed_with_derived_index_failure';
-    }
-}
-
-export function getBlockingTaskEventAppendWarnings(result: AppendTaskEventResult): string[] {
-    return result.warnings.filter((warning) => !result.derived_warnings.includes(warning));
-}
-
-export function taskEventAppendHasBlockingFailure(
-    result: AppendTaskEventResult,
-    acceptSkippedDuplicate = true
-): boolean {
-    const acceptedDuplicate = acceptSkippedDuplicate && result.skipped_reason === 'emit_once_duplicate';
-    return (!result.canonical_committed && !acceptedDuplicate) ||
-        result.commit_status === 'not_committed' ||
-        getBlockingTaskEventAppendWarnings(result).length > 0;
-}
-
-function assertMandatoryAppendCommitted(result: AppendTaskEventResult, eventType: string): void {
-    const blockingWarnings = getBlockingTaskEventAppendWarnings(result);
-    if (taskEventAppendHasBlockingFailure(result)) {
-        const diagnostics = blockingWarnings.length > 0
-            ? blockingWarnings
-            : (result.warnings.length > 0 ? result.warnings : [`commit_status=${result.commit_status}`]);
-        throw new Error(`Mandatory lifecycle event '${eventType}' append failed: ${diagnostics.join(' | ')}`);
-    }
+    process.stderr.write(`WARNING: ${warning}\n`);
+    return passThru ? result : null;
 }
 
 export function appendTaskEvent(
@@ -725,7 +123,7 @@ export function appendTaskEvent(
 ): AppendTaskEventResult | null {
     const actor = options.actor || 'gate';
     const passThru = options.passThru || false;
-    const emitOnce = options.emitOnce === true || String(options.emitOnce || '').trim().toLowerCase() === 'true';
+    const emitOnce = shouldEmitOnce(options.emitOnce);
 
     if (!taskId) {
         return null;
@@ -733,21 +131,8 @@ export function appendTaskEvent(
 
     const safeTaskId = assertValidTaskId(taskId);
     const paths = resolveTaskEventPaths(repoRoot, safeTaskId, options.eventsRoot);
-    const lockOptions: LockOptions = {
-        timeoutMs: options.lockTimeoutMs,
-        retryMs: options.lockRetryMs,
-        staleMs: options.lockStaleMs,
-        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
-    };
-    const event = createTaskEventPublicRecord({
-        timestamp_utc: new Date().toISOString(),
-        task_id: safeTaskId,
-        event_type: eventType,
-        outcome,
-        actor,
-        message: redactSecretText(message),
-        details: redactSensitiveData(details)
-    }) as TaskEvent;
+    const lockOptions = buildLockOptions(options);
+    const event = createTaskEvent(safeTaskId, eventType, outcome, actor, message, details);
     const result = createAppendResult(paths);
     let line: string | null = null;
 
@@ -764,10 +149,7 @@ export function appendTaskEvent(
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
     } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event append failed', error);
-        result.warnings.push(warning);
-        process.stderr.write(`WARNING: ${warning}\n`);
-        return passThru ? result : null;
+        return handleAppendFailure(result, buildAppendWarning('task-event append failed', error), passThru);
     }
 
     if (result.skipped_reason === 'emit_once_duplicate') {
@@ -807,7 +189,7 @@ export async function appendTaskEventAsync(
 ): Promise<AppendTaskEventResult | null> {
     const actor = options.actor || 'gate';
     const passThru = options.passThru || false;
-    const emitOnce = options.emitOnce === true || String(options.emitOnce || '').trim().toLowerCase() === 'true';
+    const emitOnce = shouldEmitOnce(options.emitOnce);
 
     if (!taskId) {
         return null;
@@ -815,21 +197,8 @@ export async function appendTaskEventAsync(
 
     const safeTaskId = assertValidTaskId(taskId);
     const paths = resolveTaskEventPaths(repoRoot, safeTaskId, options.eventsRoot);
-    const lockOptions: LockOptions = {
-        timeoutMs: options.lockTimeoutMs,
-        retryMs: options.lockRetryMs,
-        staleMs: options.lockStaleMs,
-        allowForeignHostStaleRecovery: options.allowForeignHostStaleRecovery
-    };
-    const event = createTaskEventPublicRecord({
-        timestamp_utc: new Date().toISOString(),
-        task_id: safeTaskId,
-        event_type: eventType,
-        outcome,
-        actor,
-        message: redactSecretText(message),
-        details: redactSensitiveData(details)
-    }) as TaskEvent;
+    const lockOptions = buildLockOptions(options);
+    const event = createTaskEvent(safeTaskId, eventType, outcome, actor, message, details);
     const result = createAppendResult(paths);
     let line: string | null = null;
 
@@ -847,10 +216,7 @@ export async function appendTaskEventAsync(
         });
         applyTaskLockTelemetry(result, taskLockResult.telemetry);
     } catch (error: unknown) {
-        const warning = buildAppendWarning('task-event append failed', error);
-        result.warnings.push(warning);
-        process.stderr.write(`WARNING: ${warning}\n`);
-        return passThru ? result : null;
+        return handleAppendFailure(result, buildAppendWarning('task-event append failed', error), passThru);
     }
 
     if (result.skipped_reason === 'emit_once_duplicate') {
@@ -936,3 +302,4 @@ export async function appendMandatoryTaskEventAsync(
     assertMandatoryAppendCommitted(result, eventType);
     return result;
 }
+
