@@ -312,7 +312,11 @@ function getOrchestratorRoot(repoRoot: string): string {
     return path.join(repoRoot, 'garda-agent-orchestrator');
 }
 
-function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] = ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']): void {
+function writeDriftedProtectedManifest(
+    repoRoot: string,
+    changedFiles: string[] = ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
+    options: { isSourceCheckout?: boolean } = {}
+): void {
     const manifestPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'protected-control-plane-manifest.json');
     const rulesRoot = path.join(getOrchestratorRoot(repoRoot), 'live', 'docs', 'agent-rules');
     const crypto = require('node:crypto');
@@ -343,7 +347,7 @@ function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] 
         protected_roots: ['garda-agent-orchestrator/live/docs/agent-rules/'],
         protected_snapshot: protectedSnapshot,
         protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
-        is_source_checkout: false
+        is_source_checkout: options.isSourceCheckout === true
     }, null, 2), 'utf8');
 }
 
@@ -1052,6 +1056,98 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('fails compile gate when source-checkout inherited manifest drift expands after preflight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-source-checkout-manifest-drift-expanded';
+        const extraProtectedPath = path.join(repoRoot, 'src', 'cli', 'main.ts');
+        const extraProtectedFile = 'src/cli/main.ts';
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
+            name: 'garda-agent-orchestrator',
+            version: '0.0.0-test'
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        fs.mkdirSync(path.dirname(extraProtectedPath), { recursive: true });
+        fs.writeFileSync(extraProtectedPath, 'console.log("baseline protected file");\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        runGit(repoRoot, ['add', 'package.json', extraProtectedFile]);
+        const extraProtectedStatus = runGit(repoRoot, ['status', '--porcelain', '--', 'package.json', extraProtectedFile]);
+        if (extraProtectedStatus.stdout.trim()) {
+            runGit(repoRoot, ['commit', '-m', 'test: add source checkout protected baseline file']);
+        }
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        writeDriftedProtectedManifest(
+            repoRoot,
+            ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
+            { isSourceCheckout: true }
+        );
+        const manifestPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'protected-control-plane-manifest.json');
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as Record<string, any>;
+        manifest.protected_roots = [
+            ...new Set([
+                ...(Array.isArray(manifest.protected_roots) ? manifest.protected_roots : []),
+                'src/cli/'
+            ])
+        ];
+        manifest.protected_snapshot[extraProtectedFile] = createHash('sha256')
+            .update(fs.readFileSync(extraProtectedPath, 'utf8'))
+            .digest('hex');
+        manifest.protected_snapshot_sha256 = computeProtectedSnapshotDigest(manifest.protected_snapshot);
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Block source-checkout manifest drift that expands after preflight'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Block source-checkout manifest drift that expands after preflight',
+            ['src/app.ts']
+        );
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+        assert.equal(
+            preflight.triggers.protected_control_plane_manifest_baseline_allowance_status,
+            'SOURCE_CHECKOUT_INHERITED_DRIFT'
+        );
+        assert.deepEqual(
+            preflight.triggers.protected_control_plane_manifest_changed_files,
+            ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        fs.writeFileSync(extraProtectedPath, 'console.log("expanded protected drift");\n', 'utf8');
+
+        const commandsPath = path.join(repoRoot, 'commands-source-checkout-manifest-drift-expanded.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Trusted protected control-plane manifest drift detected before compile gate')));
+        assert.ok(result.outputLines.some((line) => line.includes(extraProtectedFile)));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('fails compile gate when a protected pre-existing dirty file changes outside explicit scope', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901dirty-protected';
@@ -1268,6 +1364,77 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.status, 'PASSED');
         assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'PASS');
         assert.deepEqual(completionResult.isolation_mode_warnings, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('passes compile gate when source-checkout inherited manifest drift stays unchanged after preflight', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-901-source-checkout-manifest-drift-unchanged';
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
+            name: 'garda-agent-orchestrator',
+            version: '0.0.0-test'
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        runGit(repoRoot, ['add', 'package.json']);
+        const packageStatus = runGit(repoRoot, ['status', '--porcelain', '--', 'package.json']);
+        if (packageStatus.stdout.trim()) {
+            runGit(repoRoot, ['commit', '-m', 'test: add source checkout package marker']);
+        }
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        writeDriftedProtectedManifest(
+            repoRoot,
+            ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
+            { isSourceCheckout: true }
+        );
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow unchanged source-checkout inherited manifest drift through compile'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            'Allow unchanged source-checkout inherited manifest drift through compile',
+            ['src/app.ts']
+        );
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
+        assert.equal(
+            preflight.triggers.protected_control_plane_manifest_baseline_allowance_status,
+            'SOURCE_CHECKOUT_INHERITED_DRIFT'
+        );
+        assert.deepEqual(
+            preflight.triggers.protected_control_plane_manifest_changed_files,
+            ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']
+        );
+        assert.equal(loadPostPreflightRulePack(repoRoot, taskId, preflightPath).exitCode, 0);
+
+        const commandsPath = path.join(repoRoot, 'commands-source-checkout-manifest-drift-unchanged.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        const result = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+
+        assert.equal(result.exitCode, 0, result.outputLines.join('\n'));
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_PASSED');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

@@ -386,7 +386,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             manifestStatus: protectedManifestEvidence.status,
             manifestChangedFiles: protectedManifestEvidence.changed_files,
             dirtyWorkspaceProtectionStatus: dirtyWorkspaceProtectionDrift.status,
-            dirtyWorkspaceProtectedFiles: dirtyWorkspaceProtectedScope?.protected_files || []
+            dirtyWorkspaceProtectedFiles: dirtyWorkspaceProtectedScope?.protected_files || [],
+            sourceCheckoutInheritedDrift: protectedManifestEvidence.manifest?.is_source_checkout === true
+                && gateHelpers.isOrchestratorSourceCheckout(repoRoot)
         });
         (result.triggers as any).protected_control_plane_manifest_baseline_allowance_status =
             protectedManifestBaselineAllowance.status;

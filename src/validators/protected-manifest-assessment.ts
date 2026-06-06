@@ -4,6 +4,7 @@ import type { SourceBundleParityResult } from './workspace-layout';
 export type ProtectedManifestAssessmentCode =
     | 'HEALTHY'
     | 'INFO_SOURCE_CHECKOUT'
+    | 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT'
     | 'INFO_TASK_CONTEXT_ALLOWED_DRIFT'
     | 'REPAIR_REQUIRED';
 
@@ -58,6 +59,15 @@ export function assessProtectedManifest(
     }
 
     const baselineAllowanceStatus = String(options.baselineAllowanceStatus || '').trim().toUpperCase();
+    if (baselineAllowanceStatus === 'SOURCE_CHECKOUT_INHERITED_DRIFT') {
+        return {
+            code: 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT',
+            severity: 'warn',
+            blocks: false,
+            requires_refresh: true
+        };
+    }
+
     if (options.orchestratorWork === true || baselineAllowanceStatus === 'INHERITED_BASELINE_ONLY') {
         return {
             code: 'INFO_TASK_CONTEXT_ALLOWED_DRIFT',

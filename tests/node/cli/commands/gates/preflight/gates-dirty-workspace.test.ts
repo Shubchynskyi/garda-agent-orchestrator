@@ -32,7 +32,11 @@ import {
     PROVIDER_ENTRYPOINT_BY_SOURCE
 } from '../../gate-test-helpers';
 
-function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] = ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']): void {
+function writeDriftedProtectedManifest(
+    repoRoot: string,
+    changedFiles: string[] = ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
+    options: { isSourceCheckout?: boolean } = {}
+): void {
     const manifestPath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'protected-control-plane-manifest.json');
     const rulesRoot = path.join(getOrchestratorRoot(repoRoot), 'live', 'docs', 'agent-rules');
     const crypto = require('node:crypto');
@@ -67,7 +71,7 @@ function writeDriftedProtectedManifest(repoRoot: string, changedFiles: string[] 
         protected_roots: ['garda-agent-orchestrator/live/docs/agent-rules/'],
         protected_snapshot: protectedSnapshot,
         protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
-        is_source_checkout: false
+        is_source_checkout: options.isSourceCheckout === true
     }, null, 2), 'utf8');
 }
 
@@ -276,6 +280,64 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
             /Trusted protected control-plane manifest drift detected before preflight classification/
         );
         assert.equal(fs.existsSync(outputPath), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('allows clean source-checkout inherited protected manifest drift without forcing orchestrator-work', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900manifest-source-checkout-inherited';
+        const outputPath = path.join(repoRoot, 'preflight-manifest-source-checkout-inherited.json');
+        seedBaselineAgentsFile(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({
+            name: 'garda-agent-orchestrator',
+            version: '0.0.0-test'
+        }, null, 2) + '\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
+        initializeGitRepo(repoRoot);
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        writeDriftedProtectedManifest(repoRoot, ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'], {
+            isSourceCheckout: true
+        });
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Allow inherited source-checkout manifest drift on clean task start'
+        });
+        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+        assert.equal(rulePackResult.exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: [],
+            taskId,
+            taskIntent: 'Allow inherited source-checkout manifest drift on clean task start',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.task_id, taskId);
+        assert.equal(payload.scope_category, 'empty');
+        assert.deepEqual(payload.changed_files, []);
+        assert.equal(payload.triggers.protected_control_plane_manifest_status, 'DRIFT');
+        assert.deepEqual(
+            payload.triggers.protected_control_plane_manifest_changed_files,
+            ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md']
+        );
+        assert.equal(
+            payload.triggers.protected_control_plane_manifest_baseline_allowance_status,
+            'SOURCE_CHECKOUT_INHERITED_DRIFT'
+        );
+        assert.equal(
+            payload.triggers.protected_control_plane_manifest_assessment,
+            'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT'
+        );
+        assert.equal(fs.existsSync(outputPath), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

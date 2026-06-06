@@ -1,5 +1,6 @@
 import {
     evaluateProtectedControlPlaneManifest,
+    isOrchestratorSourceCheckout,
     normalizePath,
     toPlainRecord,
     type ProtectedControlPlaneManifestEvidence
@@ -12,7 +13,7 @@ export interface ProtectedManifestLifecycleGuardResult {
 }
 
 export interface ProtectedManifestBaselineAllowanceResult {
-    status: 'NOT_APPLICABLE' | 'INHERITED_BASELINE_ONLY';
+    status: 'NOT_APPLICABLE' | 'INHERITED_BASELINE_ONLY' | 'SOURCE_CHECKOUT_INHERITED_DRIFT';
     protected_files: string[];
     manifest_changed_files: string[];
 }
@@ -69,6 +70,7 @@ export function evaluateProtectedManifestBaselineAllowance(options: {
     manifestChangedFiles: string[];
     dirtyWorkspaceProtectionStatus?: string | null;
     dirtyWorkspaceProtectedFiles?: string[] | null;
+    sourceCheckoutInheritedDrift?: boolean;
 }): ProtectedManifestBaselineAllowanceResult {
     const manifestStatus = String(options.manifestStatus || '').trim().toUpperCase();
     const manifestChangedFiles = normalizePathList(options.manifestChangedFiles);
@@ -78,6 +80,13 @@ export function evaluateProtectedManifestBaselineAllowance(options: {
     if (options.orchestratorWork || manifestStatus !== 'DRIFT') {
         return {
             status: 'NOT_APPLICABLE',
+            protected_files: dirtyWorkspaceProtectedFiles,
+            manifest_changed_files: manifestChangedFiles
+        };
+    }
+    if (options.sourceCheckoutInheritedDrift && dirtyWorkspaceProtectedFiles.length === 0) {
+        return {
+            status: 'SOURCE_CHECKOUT_INHERITED_DRIFT',
             protected_files: dirtyWorkspaceProtectedFiles,
             manifest_changed_files: manifestChangedFiles
         };
@@ -111,6 +120,9 @@ export function getProtectedManifestLifecycleGuard(
     options: ProtectedManifestLifecycleGuardOptions
 ): ProtectedManifestLifecycleGuardResult {
     const manifestEvidence = options.manifestEvidence || evaluateProtectedControlPlaneManifest(options.repoRoot, null, true);
+    const sourceCheckoutInheritedDrift = manifestEvidence.status === 'DRIFT'
+        && manifestEvidence.manifest?.is_source_checkout === true
+        && isOrchestratorSourceCheckout(options.repoRoot);
     if (options.orchestratorWork) {
         return {
             status: 'ALLOW',
@@ -134,15 +146,24 @@ export function getProtectedManifestLifecycleGuard(
             ? preflightManifestChangedFiles
             : manifestEvidence.changed_files,
         dirtyWorkspaceProtectionStatus,
-        dirtyWorkspaceProtectedFiles
+        dirtyWorkspaceProtectedFiles,
+        sourceCheckoutInheritedDrift
     });
     const currentManifestAllowance = evaluateProtectedManifestBaselineAllowance({
         orchestratorWork: options.orchestratorWork,
         manifestStatus: manifestEvidence.status,
         manifestChangedFiles: manifestEvidence.changed_files,
         dirtyWorkspaceProtectionStatus,
-        dirtyWorkspaceProtectedFiles
+        dirtyWorkspaceProtectedFiles,
+        sourceCheckoutInheritedDrift: sourceCheckoutInheritedDrift && (
+            preflightManifestStatus !== 'DRIFT'
+            || manifestEvidence.changed_files.every((entry) => preflightManifestChangedFiles.includes(entry))
+        )
     });
+    const preflightManifestAllowed = preflightManifestAllowance.status === 'INHERITED_BASELINE_ONLY'
+        || preflightManifestAllowance.status === 'SOURCE_CHECKOUT_INHERITED_DRIFT';
+    const currentManifestAllowed = currentManifestAllowance.status === 'INHERITED_BASELINE_ONLY'
+        || currentManifestAllowance.status === 'SOURCE_CHECKOUT_INHERITED_DRIFT';
     if (preflightManifestStatus === 'INVALID') {
         return {
             status: 'BLOCK',
@@ -152,7 +173,7 @@ export function getProtectedManifestLifecycleGuard(
             ]
         };
     }
-    if (preflightManifestStatus === 'DRIFT' && preflightManifestAllowance.status !== 'INHERITED_BASELINE_ONLY') {
+    if (preflightManifestStatus === 'DRIFT' && !preflightManifestAllowed) {
         const driftFiles = preflightManifestChangedFiles.length > 0
             ? preflightManifestChangedFiles
             : manifestEvidence.changed_files;
@@ -177,7 +198,7 @@ export function getProtectedManifestLifecycleGuard(
             ]
         };
     }
-    if (manifestEvidence.status === 'DRIFT' && currentManifestAllowance.status !== 'INHERITED_BASELINE_ONLY') {
+    if (manifestEvidence.status === 'DRIFT' && !currentManifestAllowed) {
         const driftFiles = manifestEvidence.changed_files.join(', ') || 'unknown protected files';
         const remediation = options.restartCommandHint
             ? `Restart task mode with: ${options.restartCommandHint}`

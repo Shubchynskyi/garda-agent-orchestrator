@@ -1440,6 +1440,19 @@ test('getStatusSnapshot treats source-checkout protected-manifest DRIFT as infor
         assert.ok(output.includes('[~] Protected manifest'));
         assert.ok(output.includes('Assessment: INFO_SOURCE_CHECKOUT'));
         assert.ok(output.includes('workspace ready') || output.includes('Workspace ready'));
+
+        const inheritedDriftOutput = formatStatusSnapshot({
+            ...snapshot,
+            protectedManifestAssessment: {
+                code: 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT',
+                severity: 'warn',
+                blocks: false,
+                requires_refresh: true
+            }
+        });
+        assert.ok(inheritedDriftOutput.includes('Assessment: INFO_SOURCE_CHECKOUT_INHERITED_DRIFT'));
+        assert.ok(inheritedDriftOutput.includes('inherited from prior committed control-plane work'));
+        assert.ok(inheritedDriftOutput.includes('should not force --orchestrator-work solely for this inherited clean-worktree drift'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

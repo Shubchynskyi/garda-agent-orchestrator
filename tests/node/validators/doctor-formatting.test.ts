@@ -530,6 +530,39 @@ test('formatDoctorResult treats source-checkout protected-manifest drift as info
     assert.ok(output.includes('Doctor: PASSED'));
 });
 
+test('formatDoctorResult distinguishes source-checkout inherited protected-manifest drift', () => {
+    const fakeResult = buildFakeDoctorResult({
+        protectedManifestEvidence: {
+            status: 'DRIFT' as const,
+            manifest_path: '/tmp/test/garda-agent-orchestrator/runtime/protected-control-plane-manifest.json',
+            changed_files: ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
+            manifest: {
+                schema_version: 1,
+                event_source: 'refresh-protected-control-plane-manifest' as const,
+                timestamp_utc: '2026-04-23T00:00:00.000Z',
+                workspace_root: '/tmp/test',
+                orchestrator_root: '/tmp/test/garda-agent-orchestrator',
+                protected_roots: ['garda-agent-orchestrator/live/docs/agent-rules/'],
+                protected_snapshot: {},
+                is_source_checkout: true
+            }
+        },
+        protectedManifestAssessment: {
+            code: 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT' as const,
+            severity: 'warn' as const,
+            blocks: false,
+            requires_refresh: true
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+    assert.ok(output.includes('Protected Control-Plane Manifest'));
+    assert.ok(output.includes('Assessment: INFO_SOURCE_CHECKOUT_INHERITED_DRIFT'));
+    assert.ok(output.includes('clean source checkout inherited protected-manifest drift from prior committed control-plane work'));
+    assert.ok(output.includes('run repair protected-manifest after operator verification'));
+    assert.ok(output.includes('Doctor: PASSED'));
+});
+
 
 test('formatDoctorResult includes runtime compatibility section', () => {
     const fakeResult = buildFakeDoctorResult({

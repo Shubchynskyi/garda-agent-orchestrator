@@ -294,6 +294,10 @@ export function formatDoctorResult(result: DoctorResult): string {
                 lines.push('  Assessment: INFO_SOURCE_CHECKOUT');
                 lines.push('  Impact: Informational in a self-hosted source checkout while protected source and generated bundle files evolve together.');
                 lines.push('  Fix: Optional: re-run setup/update/reinit after intentional control-plane changes settle and you want to refresh the trusted manifest.');
+            } else if (result.protectedManifestAssessment?.code === 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT') {
+                lines.push('  Assessment: INFO_SOURCE_CHECKOUT_INHERITED_DRIFT');
+                lines.push('  Impact: Informational for task start because the clean source checkout inherited protected-manifest drift from prior committed control-plane work.');
+                lines.push('  Fix: Optional: run repair protected-manifest after operator verification to refresh the trusted manifest.');
             } else if (result.protectedManifestAssessment?.code === 'INFO_TASK_CONTEXT_ALLOWED_DRIFT') {
                 lines.push('  Assessment: INFO_TASK_CONTEXT_ALLOWED_DRIFT');
                 lines.push('  Impact: Informational because the current task context already explains this inherited protected drift.');

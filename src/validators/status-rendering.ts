@@ -88,6 +88,14 @@ function appendProtectedManifestLines(lines: string[], snapshot: StatusSnapshot)
         return;
     }
 
+    if (manifestAssessment?.code === 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT') {
+        lines.push('    Assessment: INFO_SOURCE_CHECKOUT_INHERITED_DRIFT');
+        lines.push('    Info: self-hosted source-checkout drift is inherited from prior committed control-plane work, not current dirty task scope.');
+        lines.push('    Impact: task-start gates should not force --orchestrator-work solely for this inherited clean-worktree drift.');
+        lines.push('    Optional: Run repair protected-manifest after operator verification to refresh the trusted baseline.');
+        return;
+    }
+
     if (manifestAssessment?.code === 'INFO_TASK_CONTEXT_ALLOWED_DRIFT') {
         lines.push('    Assessment: INFO_TASK_CONTEXT_ALLOWED_DRIFT');
         lines.push('    Info: current task context already explains this protected-manifest drift.');
