@@ -1545,9 +1545,16 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'complete-reviewer-launch', result.reason);
         assert.equal(result.commands[0].label, 'Complete delegated reviewer launch metadata');
+        assert.ok(result.reason.includes('Provider-owned placeholders in the command are only --attestation-source'));
+        assert.ok(result.reason.includes('Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed'));
         assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        assert.ok(result.commands[0].command.includes('--reviewer-execution-mode "delegated_subagent"'));
+        assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
         assert.ok(result.commands[0].command.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
+        assert.ok(result.commands[0].command.includes('--fork-context false'));
+        assert.ok(result.commands[0].command.includes('--record-invocation'));
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
+        assert.ok(normalizedCommand.includes(`--reviewer-launch-artifact-path "garda-agent-orchestrator/runtime/tmp/reviews/${TASK_ID}/code/reviewer-launch.json"`));
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
         assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${pinnedInputArtifactSha256}"`));
         assert.ok(!result.commands[0].command.includes('--launch-input-artifact-sha256'));

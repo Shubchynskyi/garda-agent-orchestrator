@@ -130,6 +130,7 @@ export function resolveDelegatedReviewReadinessRoute(
                 reason:
                     `Required review '${options.reviewType}' has recorded reviewer delegation start evidence for the current routing event and review context. ` +
                     `After the delegated reviewer returns, run complete-reviewer-launch so the gate records completion attestation without redefining the reviewer start time. ` +
+                    `Provider-owned placeholders in the command are only --attestation-source; replace it with the delegated reviewer launch result after provider completion. Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed. ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.completeLaunch]
             };

@@ -1010,6 +1010,67 @@ describe('cli/commands/gates review launch completion', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('complete-reviewer-launch rejects missing attestation source', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-305-complete-launch-missing-source';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
+
+        const previousPrepareExitCode = process.exitCode;
+        const previousPrepareCwd = process.cwd();
+        process.exitCode = 0;
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate', 'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath
+            ]);
+            assert.equal(process.exitCode ?? 0, 0);
+        } finally {
+            process.chdir(previousPrepareCwd);
+            process.exitCode = previousPrepareExitCode;
+        }
+
+        const capturedErrors: string[] = [];
+        const originalConsoleError = console.error;
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        console.error = (...args: unknown[]) => capturedErrors.push(args.map(String).join(' '));
+        try {
+            process.chdir(repoRoot);
+            await runCliMainWithHandling([
+                'gate', 'complete-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity,
+                '--reviewer-launch-artifact-path', launchArtifactPath,
+                '--provider-invocation-id', 'test-invocation-305',
+                '--fork-context', 'false'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            console.error = originalConsoleError;
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.ok(observedExitCode !== 0, `Expected non-zero exit code, got ${observedExitCode}`);
+        assert.ok(capturedErrors.some((line) => line.includes('AttestationSource is required')));
+        const artifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        assert.equal(artifact.attestation_state, 'prepared', 'Artifact should remain in prepared state after failed complete');
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('complete-reviewer-launch rejects when no fresh-context flag is provided', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-305-complete-launch-no-ctx';
