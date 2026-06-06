@@ -12,6 +12,8 @@ const BASE_OPTIONS = Object.freeze({
     gateStatus: null,
     gatePassed: false,
     timedOutRetryAvailable: false,
+    transientRetryEvidenceAvailable: false,
+    transientRetryEvidenceReason: null,
     configPath: 'garda-agent-orchestrator/live/config/workflow-config.json',
     commandText: 'npm test',
     timeoutForecastLine: 'Recommended full-suite command timeout: 240s.',
@@ -73,5 +75,19 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.nextGate, 'implementation');
         assert.match(route?.title || '', /Fix full-suite failures/);
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
+    });
+
+    it('routes non-timeout failures to full-suite retry when focused transient evidence is present', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            gateStatus: 'FAIL',
+            transientRetryEvidenceAvailable: true,
+            transientRetryEvidenceReason: 'Evidence: runtime/manual-validation/T-123/full-suite-retry-evidence.json; reason_kind=transient.'
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-validation');
+        assert.match(route?.title || '', /focused transient evidence/);
+        assert.match(route?.reason || '', /does not replace mandatory full-suite evidence/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
     });
 });

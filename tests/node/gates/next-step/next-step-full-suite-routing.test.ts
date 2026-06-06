@@ -1256,6 +1256,30 @@ function seedTimedOutFullSuiteFailure(
     });
 }
 
+function seedFullSuiteRetryEvidence(
+    repoRoot: string,
+    taskId: string,
+    reasonKind: 'transient' | 'out_of_scope' | 'harness' | 'focused_pass_after_failure' = 'transient',
+    focusedValidation: Record<string, unknown> = {
+        command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-routing.test.ts',
+        exit_code: 0,
+        status: 'PASSED'
+    }
+): void {
+    const manualValidationRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'manual-validation', taskId);
+    fs.mkdirSync(manualValidationRoot, { recursive: true });
+    const fullSuitePath = path.join(reviewsRoot(repoRoot), `${taskId}-full-suite-validation.json`);
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    writeJson(path.join(manualValidationRoot, 'full-suite-retry-evidence.json'), {
+        schema_version: 1,
+        task_id: taskId,
+        reason_kind: reasonKind,
+        full_suite_failure_artifact_sha256: fileSha256(fullSuitePath),
+        preflight_sha256: fileSha256(preflightPath),
+        focused_validation: focusedValidation
+    });
+}
+
 function materializeFinalCloseout(repoRoot: string, taskId: string): void {
     const summary = buildTaskAuditSummary({ taskId, repoRoot });
     synchronizeFinalCloseoutArtifacts(summary);
@@ -1380,6 +1404,142 @@ describe('gates/next-step', () => {
         assert.match(result.title, /Fix full-suite failures/);
         assert.ok(!result.commands[0].command.includes('build-review-context'));
         assert.ok(!result.commands[0].command.includes('--review-type'));
+    });
+
+    it('retries after-compile full-suite when focused transient evidence is bound to the current failure', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.match(result.title, /focused transient evidence/);
+        assert.match(result.reason, /manual-validation\/T-NEXT-1\/full-suite-retry-evidence\.json/);
+        assert.match(result.reason, /does not replace mandatory full-suite evidence/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+        assert.ok(!result.commands[0].command.includes('--review-type'));
+    });
+
+    it('rejects malformed focused retry evidence instead of coercing exit code to success', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient', {
+            command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-routing.test.ts',
+            exit_code: null,
+            status: 'FAILED'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.match(result.title, /Fix full-suite failures/);
+        assert.doesNotMatch(result.title, /focused transient evidence/);
+        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+    });
+
+    it('rejects contradictory focused retry evidence with pass status and nonzero exit code', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient', {
+            command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-routing.test.ts',
+            exit_code: 1,
+            status: 'PASSED'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.match(result.title, /Fix full-suite failures/);
+        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
+    });
+
+    it('rejects focused retry evidence without an auditable command', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'after_compile_before_reviews'
+            },
+            review_execution_policy: {
+                mode: 'parallel_all'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            test: true
+        }, { reviewPolicyMode: 'parallel_all' });
+        seedCompilePass(repoRoot, TASK_ID);
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient', {
+            status: 'PASSED'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.match(result.title, /Fix full-suite failures/);
+        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
     });
 
     it('retries after-compile full-suite timeout when duration history recommends a longer timeout', () => {
@@ -1603,6 +1763,36 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('build-review-context'));
     });
 
+    it('retries early full-suite before test review when focused evidence clears a transient failure', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+            full_suite_validation: {
+                enabled: true,
+                command: 'npm test',
+                placement: 'before_test_review'
+            },
+            review_execution_policy: {
+                mode: 'code_first_optional'
+            }
+        });
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'out_of_scope');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.equal(result.review.next_review_type, 'test', result.reason);
+        assert.match(result.title, /focused transient evidence/);
+        assert.match(result.reason, /reason_kind=out_of_scope/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+        assert.ok(!result.commands[0].command.includes('--review-type "test"'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+    });
+
     it('retries early full-suite timeout before mandatory test review when duration history recommends a longer timeout', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
@@ -1729,6 +1919,7 @@ describe('gates/next-step', () => {
         seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:01.000Z');
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
         seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED', '2099-01-01T00:00:02.000Z');
+        seedFullSuiteRetryEvidence(repoRoot, TASK_ID, 'transient');
         seedCompilePass(repoRoot, TASK_ID, '2099-01-01T00:00:03.000Z');
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
 
@@ -1737,6 +1928,8 @@ describe('gates/next-step', () => {
         assert.equal(result.next_gate, 'full-suite-validation');
         assert.equal(result.review.next_review_type, 'test', result.reason);
         assert.match(result.title, /before test review/);
+        assert.doesNotMatch(result.title, /focused transient evidence/);
+        assert.doesNotMatch(result.reason, /full-suite-retry-evidence/);
         assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
         assert.ok(!result.commands[0].command.includes('implementation'));

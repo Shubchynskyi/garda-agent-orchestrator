@@ -27,6 +27,8 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     gateStatus: GateOutcome['status'] | null;
     gatePassed: boolean;
     timedOutRetryAvailable: boolean;
+    transientRetryEvidenceAvailable: boolean;
+    transientRetryEvidenceReason: string | null;
     configPath: string;
     commandText: string;
     timeoutForecastLine: string | null;
@@ -91,6 +93,13 @@ function resolveAfterCompileBeforeReviewsRoute(
                 'Rerun the configured full-suite command before launching independent reviewers.'
             );
         }
+        if (options.transientRetryEvidenceAvailable) {
+            return buildManualTransientRetryRoute(
+                options,
+                'Retry full-suite validation after focused transient evidence.',
+                'Rerun the configured full-suite command before launching independent reviewers.'
+            );
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'implementation',
@@ -138,6 +147,13 @@ function resolveBeforeTestReviewRoute(
             return buildRetryRoute(
                 options,
                 'Retry full-suite validation with updated timeout forecast.',
+                'Rerun it before launching the mandatory test reviewer.'
+            );
+        }
+        if (options.transientRetryEvidenceAvailable) {
+            return buildManualTransientRetryRoute(
+                options,
+                'Retry full-suite validation after focused transient evidence.',
                 'Rerun it before launching the mandatory test reviewer.'
             );
         }
@@ -192,6 +208,31 @@ function buildRetryRoute(
         reason:
             `Full-suite validation timed out for the current compiled scope, and duration history now recommends a longer timeout. ` +
             `${retryInstruction} ` +
+            `Command: ${options.commandText}. ${options.timeoutForecastLine || ''}`.trim(),
+        commands: [
+            buildCommand(
+                'Retry full-suite validation',
+                options.command
+            )
+        ]
+    };
+}
+
+function buildManualTransientRetryRoute(
+    options: NextStepFullSuiteValidationRoutingOptions,
+    title: string,
+    retryInstruction: string
+): NextStepFullSuiteValidationRoute {
+    const evidenceReason = options.transientRetryEvidenceReason
+        ? ` ${options.transientRetryEvidenceReason}`
+        : '';
+    return {
+        status: 'BLOCKED',
+        nextGate: 'full-suite-validation',
+        title,
+        reason:
+            `Full-suite validation failed for the current compiled scope, but task-scoped focused validation evidence marks the failure as transient or already cleared.${evidenceReason} ` +
+            `${retryInstruction} Focused validation is recovery guidance only and does not replace mandatory full-suite evidence. ` +
             `Command: ${options.commandText}. ${options.timeoutForecastLine || ''}`.trim(),
         commands: [
             buildCommand(

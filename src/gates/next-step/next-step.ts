@@ -43,6 +43,8 @@ import type {
     ReviewTrustSummary
 } from '../review/review-trust-summary';
 import {
+    fileSha256,
+    joinOrchestratorPath,
     normalizePath,
     resolvePathInsideRepo
 } from '../shared/helpers';
@@ -442,6 +444,83 @@ function fullSuiteFailedTimeoutRetryAvailable(
 
     const durationMs = Number(artifact.duration_ms);
     return Number.isFinite(durationMs) && durationMs > 0 && recommendedTimeoutSeconds * 1000 > durationMs;
+}
+
+interface FullSuiteManualRetryEvidence {
+    available: boolean;
+    reason: string | null;
+}
+
+function readFullSuiteManualRetryEvidence(options: {
+    repoRoot: string;
+    taskId: string;
+    fullSuiteArtifact: Record<string, unknown> | null;
+    fullSuiteArtifactPath: string;
+    preflightSha256: string | null;
+    currentFailedFullSuite: boolean;
+}): FullSuiteManualRetryEvidence {
+    if (!options.currentFailedFullSuite || !isPlainRecord(options.fullSuiteArtifact)) {
+        return { available: false, reason: null };
+    }
+    const evidencePath = joinOrchestratorPath(
+        options.repoRoot,
+        path.join('runtime', 'manual-validation', options.taskId, 'full-suite-retry-evidence.json')
+    );
+    if (!fileExists(evidencePath)) {
+        return { available: false, reason: null };
+    }
+    let evidence: Record<string, unknown>;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(evidencePath, 'utf8')) as unknown;
+        if (!isPlainRecord(parsed)) {
+            return { available: false, reason: null };
+        }
+        evidence = parsed;
+    } catch {
+        return { available: false, reason: null };
+    }
+    if (String(evidence.task_id || '').trim() !== options.taskId) {
+        return { available: false, reason: null };
+    }
+    const allowedReasonKinds = new Set(['transient', 'out_of_scope', 'harness', 'focused_pass_after_failure']);
+    const reasonKind = String(evidence.reason_kind || '').trim();
+    if (!allowedReasonKinds.has(reasonKind)) {
+        return { available: false, reason: null };
+    }
+    const expectedFailureArtifactSha256 = String(fileSha256(options.fullSuiteArtifactPath) || '').trim().toLowerCase();
+    if (!expectedFailureArtifactSha256) {
+        return { available: false, reason: null };
+    }
+    if (String(evidence.full_suite_failure_artifact_sha256 || '').trim().toLowerCase() !== expectedFailureArtifactSha256) {
+        return { available: false, reason: null };
+    }
+    const expectedPreflightSha256 = String(options.preflightSha256 || '').trim().toLowerCase();
+    if (!expectedPreflightSha256 || String(evidence.preflight_sha256 || '').trim().toLowerCase() !== expectedPreflightSha256) {
+        return { available: false, reason: null };
+    }
+    const focusedValidation = isPlainRecord(evidence.focused_validation)
+        ? evidence.focused_validation
+        : null;
+    const focusedCommand = String(focusedValidation?.command || '').trim();
+    if (!focusedCommand) {
+        return { available: false, reason: null };
+    }
+    const focusedStatus = String(focusedValidation?.status || '').trim().toUpperCase();
+    const focusedExitCode = focusedValidation?.exit_code;
+    const focusedExitCodePresent = Object.prototype.hasOwnProperty.call(focusedValidation || {}, 'exit_code');
+    const focusedExitCodePassed = focusedExitCodePresent
+        && typeof focusedExitCode === 'number'
+        && Number.isInteger(focusedExitCode)
+        && focusedExitCode === 0;
+    const focusedStatusFailed = focusedStatus === 'FAILED' || focusedStatus === 'FAIL' || focusedStatus === 'ERROR';
+    const focusedStatusPassed = focusedStatus === 'PASSED' || focusedStatus === 'PASS';
+    const focusedExitCodeContradictsPass = focusedExitCodePresent && !focusedExitCodePassed;
+    const focusedPassed = !focusedStatusFailed && !focusedExitCodeContradictsPass && (focusedExitCodePassed || focusedStatusPassed);
+    if (!focusedPassed) {
+        return { available: false, reason: null };
+    }
+    const reason = `Evidence: ${normalizePath(evidencePath)}; reason_kind=${reasonKind}${focusedCommand ? `; focused_command=${focusedCommand}` : ''}.`;
+    return { available: true, reason };
 }
 
 function buildCliPrefix(repoRoot: string): string {
@@ -1291,6 +1370,22 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         readinessArtifacts.fullSuiteValidation,
         fullSuiteTimeoutForecast
     );
+    const currentFailedFullSuiteValidation = fullSuiteGateStatus === 'FAIL'
+        && fullSuiteArtifactMatchesCurrentCycle(
+            readinessArtifacts.fullSuiteValidation,
+            taskId,
+            preflightPath,
+            preflightSha256,
+            summary
+        );
+    const fullSuiteManualRetryEvidence = readFullSuiteManualRetryEvidence({
+        repoRoot,
+        taskId,
+        fullSuiteArtifact: readinessArtifacts.fullSuiteValidation,
+        fullSuiteArtifactPath: readinessArtifacts.paths.fullSuiteValidationPath,
+        preflightSha256,
+        currentFailedFullSuite: currentFailedFullSuiteValidation
+    });
     const reviewLaunchPlan = applyFullSuiteReadinessToReviewLaunchPlan(
         buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
@@ -2135,6 +2230,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         gateStatus: fullSuiteGateStatus,
         gatePassed: fullSuiteGatePassed,
         timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
+        transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
+        transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,
         configPath: fullSuiteSummary.config_path,
         commandText: fullSuiteConfig.command,
         timeoutForecastLine: fullSuiteTimeoutForecastLine,
