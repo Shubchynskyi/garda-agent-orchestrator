@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto';
 import { parseTaskMdTableRow } from '../../core/task-md-table';
 import {
     PROJECT_MEMORY_FOCUSED_FILE_NAMES,
+    PROJECT_MEMORY_MAP_READ_GUIDANCE,
+    PROJECT_MEMORY_MAP_WRITE_CONTRACT,
     PROJECT_MEMORY_READ_FIRST_FILE_NAMES,
     PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,
     resolveLiveProjectMemoryDir,
@@ -338,10 +340,11 @@ export function buildProjectMemoryBrief(
             'then inspect repository evidence before applying any framework-specific defaults.'
         ].join(' '),
         task_start_guidance: [
+            PROJECT_MEMORY_MAP_READ_GUIDANCE,
             'Read the generated summary rule as orientation after TASK_ENTRY rule loading.',
             'Read README.md and compact.md first.',
             'Read only the suggested focused memory files for this task.',
-            'Treat memory as orientation, not proof; inspect source/tests/config before changing behavior.'
+            PROJECT_MEMORY_MAP_WRITE_CONTRACT
         ]
     };
 }

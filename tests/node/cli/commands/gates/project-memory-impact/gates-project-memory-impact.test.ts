@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 
 import {
+    PROJECT_MEMORY_MAP_WRITE_CONTRACT,
     PROJECT_MEMORY_REQUIRED_FILE_NAMES
 } from '../../../../../../src/core/project-memory';
 import { runCliWithCapturedOutput } from '../../gate-test-cli-capture';
@@ -122,6 +123,8 @@ test('project-memory-impact CLI prints a ready-to-run remediation command when a
         assert.match(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md"/);
         assert.match(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/decisions\.md"/);
         assert.match(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/risks\.md"/);
+        assert.match(output, /MemoryWriteContract:/);
+        assert.ok(output.includes(PROJECT_MEMORY_MAP_WRITE_CONTRACT));
 
         const rerun = childProcess.spawnSync(remediationCommand, {
             cwd: repoRoot,

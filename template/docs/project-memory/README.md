@@ -1,49 +1,37 @@
 # Project Memory
 
-Durable project knowledge that survives every orchestrator lifecycle event.
+Durable project map for agents working in this repository.
 
-## Index-First Protocol
+This directory is user-owned. Lifecycle commands may seed missing files, but agents must not overwrite, merge, or delete project-memory content unless the operator explicitly asks for a memory update.
 
-1. Read this file first.
-2. Read `compact.md` second.
-3. Read only the memory files relevant to the task.
-4. Inspect source, tests, config, and docs only as needed for evidence.
-5. Treat memory as orientation, not proof. Compile, review, and validation gates remain mandatory when required by workflow.
+## How To Use
 
-## Ownership Contract
+1. Read this file.
+2. Read `compact.md`.
+3. Open only task-relevant files listed in `compact.md` or `module-map.md`.
+4. Verify current facts against source, tests, config, and runtime evidence before changing behavior.
 
-- Everything under `project-memory/` is user-owned.
-- Lifecycle materialization may add missing seed files, but must not overwrite, merge, or delete existing files here.
-- Agents may write memory files only when workflow mode and explicit operator approval allow it.
+Project memory is orientation, not proof. It should help an agent find the right code and contracts quickly; it must not replace `TASK.md`, gate artifacts, source reads, or tests.
 
-## Read-First Files
+## Files
 
 | File | Purpose |
 |---|---|
-| `README.md` | This index and ownership protocol. |
-| `compact.md` | Bounded task-start project map and routing hints. |
+| `compact.md` | Short task-start map: project snapshot, main contracts, routing table, and validation cheat sheet. |
+| `context.md` | Product scope, goals, and boundaries. |
+| `architecture.md` | Runtime architecture, lifecycle flow, trust boundaries, and artifact ownership. |
+| `module-map.md` | Where to inspect code and tests for each project area. |
+| `commands.md` | Current commands agents commonly need, with when to run them and cautions. |
+| `decisions.md` | Durable architectural and workflow decisions grouped by theme. |
+| `risks.md` | Active risk map and fragile contracts to preserve. |
+| `conventions.md` | Coding, naming, workflow, and memory maintenance conventions. |
+| `stack.md` | Runtime, test, packaging, and infrastructure stack. |
 
-## Focused Memory Files
+## Write Contract
 
-| File | Purpose |
-|---|---|
-| `context.md` | Business domain, project goals, and high-level scope. |
-| `stack.md` | Languages, frameworks, infrastructure, key dependencies, and unknown/custom stack fallback. |
-| `architecture.md` | System architecture, component boundaries, and integration points. |
-| `module-map.md` | Repository areas, path ownership, and where to inspect for common changes. |
-| `commands.md` | Build, test, dev, release, and verification commands. |
-| `conventions.md` | Coding standards, naming rules, and workflow conventions beyond agent-rules. |
-| `decisions.md` | Architectural and process decisions with rationale. |
-| `risks.md` | Known risks, fragile paths, security notes, and compatibility constraints. |
-
-## Bounded Compact Summary
-
-- Keep `compact.md` below `project_memory_maintenance.max_compact_summary_chars`.
-- Put durable details in focused files and link from `compact.md`.
-- Remove stale facts instead of accumulating historical noise.
-
-## Adding Files
-
-- Use lowercase kebab-case filenames with `.md` extension, for example `api-contracts.md`.
-- Each file should start with a level-1 heading matching its purpose.
-- Add new files only for durable project knowledge that agents will reuse across tasks.
+- Prefer current-state facts over task history.
+- Do not use task ids as headings by default.
+- Keep task ids only when they are useful provenance for a durable contract.
+- Remove or collapse repeated per-task notes once their durable decision is represented in a domain section.
+- Keep entries compact enough that `README.md` plus `compact.md` are practical at task start.
+- Record uncertainty as a question or risk, not as a fact.

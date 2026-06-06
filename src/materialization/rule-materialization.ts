@@ -4,6 +4,8 @@ import { pathExists, readTextFile } from '../core/filesystem';
 import {
     DEFAULT_PROJECT_MEMORY_GENERATED_SUMMARY_MAX_CHARS,
     PROJECT_MEMORY_FILE_DEFINITIONS,
+    PROJECT_MEMORY_MAP_READ_GUIDANCE,
+    PROJECT_MEMORY_MAP_WRITE_CONTRACT,
     PROJECT_MEMORY_REQUIRED_FILE_NAMES,
     buildProjectMemorySourceRelativePath,
     getProjectMemoryMeaningfulLines,
@@ -460,9 +462,34 @@ function truncateSummaryText(text: string, maxLength = 180): string {
     return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
+function isTaskIdMemoryHeading(heading: string): boolean {
+    return /^T-\d+(?:[-\w]*)?\b/i.test(heading);
+}
+
+function formatProjectMemorySectionList(sections: ProjectMemorySummarySection[]): string {
+    const mapSections = sections.filter((section) => !isTaskIdMemoryHeading(section.heading));
+    const taskHeadingCount = sections.length - mapSections.length;
+    if (mapSections.length > 0) {
+        return [
+            mapSections.map((section) => section.heading).join(', '),
+            taskHeadingCount > 0 ? `${taskHeadingCount} task-id provenance heading(s) hidden` : ''
+        ].filter(Boolean).join('; ');
+    }
+    if (taskHeadingCount > 0) {
+        return `${taskHeadingCount} task-id provenance heading(s) hidden`;
+    }
+    return 'n/a';
+}
+
 function buildSectionPreviewLines(snapshot: ProjectMemoryFileSnapshot): string[] {
     const lines: string[] = [];
-    for (const section of snapshot.sections.slice(0, 3)) {
+    const taskHeadingCount = snapshot.sections
+        .filter((section) => isTaskIdMemoryHeading(section.heading))
+        .length;
+    const mapSections = snapshot.sections
+        .filter((section) => !isTaskIdMemoryHeading(section.heading));
+    const previewSections = mapSections.slice(0, 3);
+    for (const section of previewSections) {
         const meaningfulLines = getProjectMemoryMeaningfulLines(section.content);
         const firstLine = meaningfulLines[0];
         if (!firstLine) {
@@ -470,8 +497,11 @@ function buildSectionPreviewLines(snapshot: ProjectMemoryFileSnapshot): string[]
         }
         lines.push(`- ${section.heading}: ${truncateSummaryText(firstLine)}`);
     }
-    if (snapshot.sections.length > 3) {
-        lines.push(`- Additional sections: ${snapshot.sections.length - 3}`);
+    if (taskHeadingCount > 0) {
+        lines.push('- Task-id headings detected in source memory; treat them as provenance/history and prefer domain map headings.');
+    }
+    if (mapSections.length > 3) {
+        lines.push(`- Additional sections: ${mapSections.length - 3}`);
     }
     if (lines.length === 0 && snapshot.meaningfulLines.length > 0) {
         for (const line of snapshot.meaningfulLines.slice(0, 3)) {
@@ -544,7 +574,10 @@ export function generateProjectMemorySummary(
         `Generated at: ${timestampIso}`, '',
         '> Auto-generated from `docs/project-memory/`. Edit source files there;',
         '> this summary regenerates on every init, reinit, and update.',
-        '> This is a link-first orientation index, not a full copy of project memory.', ''
+        '> This is a link-first orientation index, not a full copy of project memory.', '',
+        '## Map Contract', '',
+        `- ${PROJECT_MEMORY_MAP_READ_GUIDANCE}`,
+        `- ${PROJECT_MEMORY_MAP_WRITE_CONTRACT}`, ''
     ]);
 
     if (!pathExists(projectMemoryDir)) {
@@ -596,9 +629,7 @@ export function generateProjectMemorySummary(
     ]);
 
     for (const snapshot of snapshots) {
-        const sectionList = snapshot.sections.length > 0
-            ? snapshot.sections.map((section) => section.heading).join(', ')
-            : 'n/a';
+        const sectionList = formatProjectMemorySectionList(snapshot.sections);
         pushBoundedLine(lines, `| \`${snapshot.sourcePath}\` | ${escapeMarkdownTableCell(snapshot.purpose)} | ${snapshot.status} | ${snapshot.charCount ?? 0} | ${escapeMarkdownTableCell(sectionList)} |`);
     }
 
@@ -618,7 +649,7 @@ export function generateProjectMemorySummary(
                 `### \`${snapshot.fileName}\``,
                 `- Source: \`${snapshot.sourcePath}\``,
                 `- SHA-256: ${formatHash(snapshot.sha256)}`,
-                `- Sections: ${snapshot.sections.map((section) => section.heading).join(', ') || 'n/a'}`
+                `- Sections: ${formatProjectMemorySectionList(snapshot.sections)}`
             ]);
             const previewLines = buildSectionPreviewLines(snapshot);
             if (previewLines.length > 0) {

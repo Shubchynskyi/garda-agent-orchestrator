@@ -39,21 +39,24 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 4. Keep commands and runbooks in `40-commands.md` aligned with actual project tooling.
 
 ## Project Memory Write Protocol
-1. When an agent discovers a durable project fact during task execution (architecture insight, convention, stack detail, domain constraint, design decision), it must append or update the relevant file in `garda-agent-orchestrator/live/docs/project-memory/`.
+1. When an agent discovers a durable project fact during task execution (architecture insight, convention, stack detail, domain constraint, design decision), it must append or update the relevant file in `garda-agent-orchestrator/live/docs/project-memory/` as a compact project map entry.
 2. Target file selection:
    - Business domain, goals, scope → `context.md`.
    - Component boundaries, data flow, integration points → `architecture.md`.
    - Coding standards, naming rules, workflow conventions → `conventions.md`.
    - Languages, frameworks, infrastructure, dependencies → `stack.md`.
+   - Current commands, validation paths, and operator runbooks → `commands.md`.
+   - Module ownership and test/source routing → `module-map.md`.
+   - Active risks and fragile contracts → `risks.md`.
    - Architectural or process decisions with rationale → `decisions.md`.
    - If no existing file fits, create a new kebab-case `.md` file with a level-1 heading.
-3. Write only confirmed, user-approved facts; do not speculate or store transient task details.
-4. Each write must preserve existing content; append new sections or update existing ones without removing prior entries.
-5. After writing, note the update in the task completion summary so the user can review.
+3. Write only confirmed, user-approved facts; do not speculate or store transient task details, per-task narratives, large command outputs, or duplicated known orchestrator issues.
+4. Prefer updating an existing domain section over appending a new chronological task section. Task ids may be included as provenance, but should not be the default heading structure.
+5. Each write must preserve durable existing content while removing or collapsing stale task-log style repetition when the task explicitly scopes memory maintenance.
+6. After writing, note the update in the task completion summary so the user can review.
 
 ## DevOps
 1. Do not commit secrets.
 2. Use `.env` for local setup.
 3. Validate deployment or infrastructure changes using project-native tooling before commit.
-
 

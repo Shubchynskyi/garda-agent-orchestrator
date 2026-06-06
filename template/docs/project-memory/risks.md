@@ -1,17 +1,31 @@
 # Risks
 
-Durable project risks, fragile paths, and operator cautions. Do not use this as a substitute for tests or reviews.
+Active risk map. Use this to identify fragile contracts before changing source. It is not a substitute for tests, reviews, or gate evidence.
 
-## Known Sharp Edges
-| Risk | Affected paths | Mitigation | Last checked |
-|---|---|---|---|
-|  |  |  |  |
+## Risk Register
 
-## Security And Privacy Notes
-- 
+| Risk | Affected areas | Mitigation |
+|---|---|---|
+|  |  |  |
 
-## Migration And Compatibility Notes
-- 
+## Sharp Edges By Workflow
 
-## Unknowns To Resolve
-- 
+### Task Start
+
+-
+
+### Reviews
+
+-
+
+### Closeout
+
+-
+
+### Release Or Deployment
+
+-
+
+## Unknowns
+
+-

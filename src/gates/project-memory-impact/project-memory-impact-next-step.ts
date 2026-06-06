@@ -1,4 +1,5 @@
 import type { ProjectMemoryImpactStatus } from './project-memory-impact-types';
+import { PROJECT_MEMORY_MAP_WRITE_CONTRACT } from '../../core/project-memory';
 
 export function buildProjectMemoryImpactNextStep(
     status: ProjectMemoryImpactStatus,
@@ -12,11 +13,11 @@ export function buildProjectMemoryImpactNextStep(
         case 'UPDATED':
             return 'Project memory update evidence is current for the affected memory files.';
         case 'BLOCKED':
-            return 'With explicit user approval, update the listed memory files and rerun project-memory-impact with --confirm-updated, or switch maintenance mode out of strict/update.';
+            return `With explicit user approval, update the listed memory files as a compact project map and rerun project-memory-impact with --confirm-updated, or switch maintenance mode out of strict/update. ${PROJECT_MEMORY_MAP_WRITE_CONTRACT}`;
         case 'UPDATE_NEEDED':
         default:
             return affectedMemoryFiles.length > 0
-                ? 'With explicit user approval, update listed memory files when appropriate, then rerun with --confirm-updated; check mode remains advisory.'
+                ? `With explicit user approval, update listed memory files when appropriate, then rerun with --confirm-updated; check mode remains advisory. ${PROJECT_MEMORY_MAP_WRITE_CONTRACT}`
                 : 'Inspect project-memory diagnostics; check mode remains advisory.';
     }
 }

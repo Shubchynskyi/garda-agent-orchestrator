@@ -39,7 +39,9 @@ export function formatTaskBriefText(result: Record<string, unknown>): string {
             ...(projectMemory.suggested_files.length > 0
                 ? projectMemory.suggested_files.map((entry) => `  - ${entry}`)
                 : ['  none']),
-            `ProjectMemoryFallback: ${projectMemory.unknown_custom_stack_fallback}`
+            `ProjectMemoryFallback: ${projectMemory.unknown_custom_stack_fallback}`,
+            'ProjectMemoryTaskStartGuidance:',
+            ...projectMemory.task_start_guidance.map((entry) => `  - ${entry}`)
         );
         if (projectMemory.init_refresh_prompt) {
             lines.push(`ProjectMemoryInitRefreshPrompt: ${projectMemory.init_refresh_prompt}`);

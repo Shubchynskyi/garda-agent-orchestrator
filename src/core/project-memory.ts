@@ -19,15 +19,27 @@ export const PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH = `live/docs/agent-rules/
 export const DEFAULT_PROJECT_MEMORY_MAX_COMPACT_SUMMARY_CHARS = 12_000;
 export const DEFAULT_PROJECT_MEMORY_GENERATED_SUMMARY_MAX_CHARS = 12_000;
 
+export const PROJECT_MEMORY_MAP_READ_GUIDANCE = [
+    'Project memory is a compact project map for orientation, not proof.',
+    'Read README.md, then compact.md, then only focused files relevant to the task.',
+    'Verify memory facts against source, tests, config, docs, and gate evidence before changing behavior.'
+].join(' ');
+
+export const PROJECT_MEMORY_MAP_WRITE_CONTRACT = [
+    'Write durable current-state contracts only: module ownership, workflow invariants, commands, decisions, risks, and active unknowns.',
+    'Do not store repeated task narratives, transient failures, large command outputs, or duplicated known orchestrator issues.',
+    'Task ids are optional provenance only and should not be the default heading structure.'
+].join(' ');
+
 export const PROJECT_MEMORY_FILE_DEFINITIONS = Object.freeze([
     {
         fileName: 'README.md',
-        purpose: 'Index, ownership protocol, and read order.',
+        purpose: 'Index, ownership protocol, read order, and map write contract.',
         readRole: 'read_first'
     },
     {
         fileName: 'compact.md',
-        purpose: 'Bounded task-start project map and routing hints.',
+        purpose: 'Bounded task-start project map and routing hints, not task history.',
         readRole: 'read_first'
     },
     {
@@ -52,7 +64,7 @@ export const PROJECT_MEMORY_FILE_DEFINITIONS = Object.freeze([
     },
     {
         fileName: 'commands.md',
-        purpose: 'Build, test, dev, release, and verification commands.',
+        purpose: 'Current build, test, dev, release, and verification commands.',
         readRole: 'focused'
     },
     {
@@ -62,12 +74,12 @@ export const PROJECT_MEMORY_FILE_DEFINITIONS = Object.freeze([
     },
     {
         fileName: 'decisions.md',
-        purpose: 'Architectural and process decisions with rationale.',
+        purpose: 'Durable architectural and process decisions grouped by theme.',
         readRole: 'focused'
     },
     {
         fileName: 'risks.md',
-        purpose: 'Known risks, fragile paths, security notes, and compatibility constraints.',
+        purpose: 'Active risk map, fragile paths, security notes, and compatibility constraints.',
         readRole: 'focused'
     }
 ] as const satisfies readonly ProjectMemoryFileDefinition[]);

@@ -15,6 +15,10 @@ import {
     extractNonEmptySections,
     stripHtmlComments
 } from '../../../src/materialization/rule-materialization';
+import {
+    PROJECT_MEMORY_MAP_READ_GUIDANCE,
+    PROJECT_MEMORY_MAP_WRITE_CONTRACT
+} from '../../../src/core/project-memory';
 
 function findRepoRoot() {
     let current = __dirname;
@@ -358,6 +362,9 @@ describe('generateProjectMemorySummary', () => {
             assert.ok(result!.includes('DO NOT EDIT'));
             assert.ok(result!.includes('2025-01-01T00:00:00.000Z'));
             assert.ok(result!.includes('link-first orientation index'));
+            assert.ok(result!.includes('## Map Contract'));
+            assert.ok(result!.includes(PROJECT_MEMORY_MAP_READ_GUIDANCE));
+            assert.ok(result!.includes(PROJECT_MEMORY_MAP_WRITE_CONTRACT));
             assert.ok(result!.includes('## Source Index'));
             assert.ok(result!.includes('### `context.md`'));
             assert.ok(result!.includes('E-commerce SaaS.'));
@@ -374,6 +381,34 @@ describe('generateProjectMemorySummary', () => {
                 result,
                 /\| `stack\.md` \| `docs\/project-memory\/stack\.md` \| `[a-f0-9]{64}` \| content \|/
             );
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('hides task-id headings from the generated map while preserving a warning', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-pm-task-heading-'));
+        try {
+            const pmDir = path.join(tmpDir, 'project-memory');
+            fs.mkdirSync(pmDir, { recursive: true });
+            fs.writeFileSync(path.join(pmDir, 'decisions.md'),
+                [
+                    '# Decisions',
+                    '',
+                    '## T-737',
+                    '',
+                    'One-off task narrative that should not define map structure.',
+                    '',
+                    '## Review Workflow',
+                    '',
+                    'Delegated reviewers must run in fresh context.'
+                ].join('\n'), 'utf8');
+
+            const result = generateProjectMemorySummary(pmDir, '2025-01-01T00:00:00.000Z');
+            assert.ok(result.includes('Review Workflow'));
+            assert.ok(result.includes('1 task-id provenance heading(s) hidden'));
+            assert.ok(result.includes('Task-id headings detected in source memory'));
+            assert.ok(!result.includes('- T-737:'));
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }

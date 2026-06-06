@@ -49,6 +49,9 @@ test('AGENT_INIT_PROMPT routes project-memory enrichment to source files', () =>
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
     assert.match(content, /Enrich project memory from real repository evidence/i);
     assert.ok(content.includes(PROJECT_MEMORY_INIT_REFRESH_PROMPT));
+    assert.match(content, /compact project map for orientation, not proof/i);
+    assert.match(content, /Task ids are optional provenance only/i);
+    assert.match(content, /not be the default heading structure/i);
     assert.match(content, /garda-agent-orchestrator\/live\/docs\/project-memory\/README\.md/);
     assert.match(content, /garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md/);
     assert.match(content, /do not edit `garda-agent-orchestrator\/live\/docs\/agent-rules\/15-project-memory\.md` directly/i);

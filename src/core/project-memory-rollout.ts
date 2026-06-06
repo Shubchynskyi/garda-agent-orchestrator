@@ -7,11 +7,18 @@ import {
     type ProjectMemoryMaintenanceConfig
 } from './workflow-config';
 import { isPlainObject } from './config-merge';
+import {
+    PROJECT_MEMORY_MAP_READ_GUIDANCE,
+    PROJECT_MEMORY_MAP_WRITE_CONTRACT
+} from './project-memory';
 
 export const PROJECT_MEMORY_INIT_REFRESH_PROMPT = [
     'Initialize or refresh Garda project memory.',
     'Inspect the repository through the normal orchestrator workflow, starting with `garda-agent-orchestrator/live/docs/project-memory/README.md` and `garda-agent-orchestrator/live/docs/project-memory/compact.md`.',
-    'Update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are missing, stale, template-seeded, placeholder-only, or incomplete; keep `compact.md` concise; record confirmed stack, commands, module map, decisions, risks, and unknown/custom stack fallback from source, configs, tests, durable docs, or explicit user answers.',
+    PROJECT_MEMORY_MAP_READ_GUIDANCE,
+    'Update only `garda-agent-orchestrator/live/docs/project-memory/*.md` files that are missing, stale, template-seeded, placeholder-only, incomplete, or no longer shaped as a compact project map.',
+    PROJECT_MEMORY_MAP_WRITE_CONTRACT,
+    'Keep `compact.md` concise and link-oriented; record confirmed stack, commands, module map, decisions, risks, and unknown/custom stack fallback from source, configs, tests, durable docs, or explicit user answers.',
     'Do not edit generated `garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md`, do not invent facts, and do not overwrite user-authored memory without preserving its facts.',
     'Record project-memory update evidence when the workflow asks for it.'
 ].join(' ');

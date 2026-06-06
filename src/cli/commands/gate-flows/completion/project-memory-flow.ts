@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { appendMandatoryTaskEvent } from '../../../../gate-runtime/task-events';
 import { EXIT_GATE_FAILURE } from '../../../exit-codes';
 import { getBundleCliCommand, getSourceCliCommand, resolveBundleNameForTarget } from '../../../../core/constants';
+import { PROJECT_MEMORY_MAP_WRITE_CONTRACT } from '../../../../core/project-memory';
 import {
     PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
     PROJECT_MEMORY_IMPACT_BLOCKED_EVENT,
@@ -94,6 +95,7 @@ function formatProjectMemoryImpactOutput(input: {
         for (const file of artifact.affected_memory_files) {
             lines.push(`  - ${file}`);
         }
+        lines.push(`MemoryWriteContract: ${PROJECT_MEMORY_MAP_WRITE_CONTRACT}`);
     }
     if (artifact.reasons.length > 0) {
         lines.push('Reasons:');

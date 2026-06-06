@@ -16,12 +16,13 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 5. Task completion always ends with a short agent-authored summary followed by the Garda-generated final user report printed verbatim from `runtime/reviews/<task-id>-final-user-report.md`, then the suggested conventional-style `git commit -m "<type>(<scope>): <summary>"` command and explicit `Do you want me to commit now? (yes/no)` question when there are committable changes (see `80-task-workflow.md`, Mandatory Gate Contract).
 
 ## Project Memory — Storage Directive
-1. Durable project knowledge (architecture, conventions, stack details, domain constraints, design decisions) must be written to `garda-agent-orchestrator/live/docs/project-memory/`.
+1. Durable project knowledge (architecture, conventions, stack details, domain constraints, design decisions) must be written to `garda-agent-orchestrator/live/docs/project-memory/` as a compact project map, not as a task log.
 2. Do not embed durable project knowledge in orchestrator-managed rule files (`agent-rules/*.md`), config JSON, root entrypoints, or `TASK.md`.
 3. The `project-memory/` directory is user-owned; lifecycle materialization may add missing seed files, but must not overwrite, merge, or delete existing files.
 4. When reading project memory, start with `README.md`, then `compact.md`, then only the focused memory files relevant to the task.
 5. Canonical focused files: `context.md`, `stack.md`, `architecture.md`, `module-map.md`, `commands.md`, `conventions.md`, `decisions.md`, `risks.md`. Add new files in lowercase kebab-case `.md` format when an existing category does not fit.
 6. Agents may read `project-memory/` at any time for context. Write access requires explicit user approval or a task instruction that authorises the update.
+7. Project-memory writes must record durable current-state contracts only: module ownership, workflow invariants, commands, decisions, risks, and active unknowns. Do not store repeated task narratives, transient failures, large command outputs, or duplicated known orchestrator issues. Task ids are optional provenance only and should not be the default heading structure.
 
 ## Mandatory Infrastructure Integrity
 1. Mandatory gate/tooling failures (e.g., `Unknown gate`, missing CLI capability, missing local build dependencies, stale bundle mismatch, unreadable gate artifact paths) are critical infrastructure defects.

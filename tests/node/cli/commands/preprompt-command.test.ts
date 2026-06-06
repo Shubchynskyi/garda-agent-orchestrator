@@ -6,7 +6,11 @@ import * as childProcess from 'node:child_process';
 
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
 import { COMMAND_SUMMARY } from '../../../../src/cli/commands/cli-helpers';
-import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
+import {
+    PROJECT_MEMORY_MAP_READ_GUIDANCE,
+    PROJECT_MEMORY_MAP_WRITE_CONTRACT,
+    PROJECT_MEMORY_REQUIRED_FILE_NAMES
+} from '../../../../src/core/project-memory';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { computeOptionalSkillTaskTextSha256 } from '../../../../src/runtime/optional-skill-selection';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
@@ -401,7 +405,7 @@ test('preprompt task project-memory suggestions vary by task area', async () => 
     }
 });
 
-test('preprompt task text output includes ProjectMemoryReadFirst', async () => {
+test('preprompt task text output includes ProjectMemoryReadFirst and map guidance', async () => {
     const repoRoot = createTempRepo();
     const taskId = 'T-404';
     try {
@@ -418,6 +422,9 @@ test('preprompt task text output includes ProjectMemoryReadFirst', async () => {
         assert.equal(result.exitCode, 0);
         const output = result.logs.join('\n');
         assert.ok(output.includes('ProjectMemoryReadFirst:'));
+        assert.ok(output.includes('ProjectMemoryTaskStartGuidance:'));
+        assert.ok(output.includes(PROJECT_MEMORY_MAP_READ_GUIDANCE));
+        assert.ok(output.includes(PROJECT_MEMORY_MAP_WRITE_CONTRACT));
         assert.ok(output.includes('garda-agent-orchestrator/live/docs/project-memory/README.md'));
         assert.ok(!output.includes('ProjectMemoryInitRefreshPrompt:'));
     } finally {

@@ -56,6 +56,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Do not read every project-memory file by default; use `preprompt task` suggestions or `compact.md` task routing to choose a small focused set.
 - Memory is orientation, not proof. Validate against source, tests, config, and mandatory gates before changing behavior.
 - Project-memory writes are not automatic task-start behavior. Update memory only when workflow mode and explicit operator approval allow it.
+- When updating memory, write durable current-state contracts only: module ownership, workflow invariants, commands, decisions, risks, and active unknowns. Do not write repeated task narratives, transient failures, or default task-id heading sections.
 - Unknown or custom stack fallback: read `stack.md`, `commands.md`, and `module-map.md`, then inspect repository evidence instead of applying framework-specific assumptions.
 
 ## Integrity Priority Rules

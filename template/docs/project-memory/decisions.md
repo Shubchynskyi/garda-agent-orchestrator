@@ -1,15 +1,18 @@
 # Decisions
 
-<!-- Record architectural and process decisions using a lightweight ADR format.
-     Agents read this file to understand *why* things are the way they are. -->
+Durable project decisions grouped by theme. This file is not a chronological task log.
 
-<!-- Use the template below for each decision. Keep entries in reverse chronological order. -->
+## Project Memory Is A Map
 
-<!--
-## YYYY-MM-DD — <Title>
+Project memory exists to speed agent orientation. It should describe current module ownership, workflow contracts, commands, decisions, and risks. Task ids are optional provenance, not the primary structure.
 
-**Status:** accepted | superseded | deprecated
-**Context:** Why this decision was needed.
-**Decision:** What was decided.
-**Consequences:** Trade-offs and follow-up implications.
--->
+## Decision Template
+
+Use compact entries like this when a durable decision is needed:
+
+### <Decision Title>
+
+- Status: accepted | superseded | deprecated
+- Context: why this decision was needed.
+- Decision: what is now true.
+- Consequences: trade-offs, validation, or follow-up implications.

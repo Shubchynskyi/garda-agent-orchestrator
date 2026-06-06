@@ -1,6 +1,6 @@
 # Commands
 
-Record project-specific commands that are safe and expected for agents to run. Keep this practical and current.
+Record current project-specific commands that are safe and expected for agents to run. Keep this practical, current, and grouped by purpose rather than by task history.
 
 ## Setup
 | Command | When to run | Notes |
@@ -26,3 +26,4 @@ Record project-specific commands that are safe and expected for agents to run. K
 - Prefer the smallest command that proves the changed behavior.
 - Run mandatory orchestrator gates when task workflow requires them.
 - Add environment prerequisites or long-running command warnings here.
+- Do not paste large command outputs; store durable command contracts only.
