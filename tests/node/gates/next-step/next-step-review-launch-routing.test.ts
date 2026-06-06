@@ -1700,7 +1700,7 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
     });
 
-    it('routes to record-review-result after current context invocation is attested even when an old receipt exists', () => {
+    it('routes to record-review-result with review-output-path after current context invocation is attested and output path is known', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -1741,6 +1741,7 @@ describe('gates/next-step', () => {
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: 'test-invocation-123',
             launched_at_utc: '2026-04-28T00:00:00.000Z',
+            review_output_path: path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'review-output-from-launch.md').replace(/\\/g, '/'),
             ...launchInputEvidenceFixture(TASK_ID, 'code'),
             fork_context: false
         });
@@ -1768,15 +1769,35 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'record-review-result', result.reason);
+        assert.equal(result.commands[0].label, 'Record delegated review output file, then close reviewer');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
-        assert.ok(result.commands[0].command.includes('--review-output-stdin'));
-        assert.ok(!result.commands[0].command.includes('--review-output-path'));
+        assert.ok(!result.commands[0].command.includes('--review-output-stdin'));
+        assert.ok(result.commands[0].command.includes(`--review-output-path "garda-agent-orchestrator/runtime/tmp/reviews/${TASK_ID}/code/review-output-from-launch.md"`));
         assertGateChainDecision(result.reason, {
             edgeId: 'review-invocation-to-result',
             status: 'pass'
         });
         assert.ok(result.reason.includes('invocation=attested'));
         assert.ok(result.reason.includes('review output/receipt=receipt invalid or stale'));
+    });
+
+    it('keeps explicit stdin fallback when current launch metadata has no review output path', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        seedCompletedReviewerLaunchAndInvocation(repoRoot, TASK_ID, 'code', reviewerIdentity);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-review-result', result.reason);
+        assert.equal(result.commands[0].label, 'Pipe delegated review output into stdin, then close reviewer');
+        assert.ok(result.commands[0].command.startsWith("'<paste exact delegated reviewer output here>' | "));
+        assert.ok(result.commands[0].command.includes('--review-output-stdin'));
+        assert.ok(!result.commands[0].command.includes('--review-output-path'));
     });
 
     it('does not route to record-review-result when invocation telemetry exists without current completed launch metadata', () => {

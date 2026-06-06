@@ -2723,8 +2723,19 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                     buildRecordReviewerInvocationCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, launchArtifactPath, taskModePath)
                 ),
                 recordResult: buildCommand(
-                    'Record delegated review output, then close reviewer',
-                    buildRecordReviewResultCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, preflightCommandPath, taskModePath)
+                    launchArtifactEvidence.reviewOutputPath
+                        ? 'Record delegated review output file, then close reviewer'
+                        : 'Pipe delegated review output into stdin, then close reviewer',
+                    buildRecordReviewResultCommand(
+                        repoRoot,
+                        cliPrefix,
+                        taskId,
+                        reviewType,
+                        reviewerIdentity,
+                        preflightCommandPath,
+                        taskModePath,
+                        launchArtifactEvidence.reviewOutputPath
+                    )
                 )
             }
         });

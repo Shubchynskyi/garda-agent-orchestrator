@@ -189,15 +189,23 @@ export function buildRecordReviewResultCommand(
     reviewType: string,
     reviewerIdentity: string,
     preflightCommandPath: string,
-    taskModePath: string | null
+    taskModePath: string | null,
+    reviewOutputPath?: string | null
 ): string {
-    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
+    const hasReviewOutputPath = Boolean(String(reviewOutputPath || '').trim());
+    const reviewOutputSourcePart = hasReviewOutputPath
+        ? `--review-output-path "${toRepoDisplayPath(repoRoot, String(reviewOutputPath))}"`
+        : '--review-output-stdin';
+    const command = buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-result', [
         `--review-type "${reviewType}"`,
         `--preflight-path "${preflightCommandPath}"`,
-        '--review-output-stdin',
+        reviewOutputSourcePart,
         '--reviewer-execution-mode "delegated_subagent"',
         `--reviewer-identity "${reviewerIdentity}"`
     ], taskModePath);
+    return hasReviewOutputPath
+        ? command
+        : `'<paste exact delegated reviewer output here>' | ${command}`;
 }
 
 export function buildRestartReviewCycleCommand(

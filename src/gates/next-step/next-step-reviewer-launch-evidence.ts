@@ -34,6 +34,7 @@ export interface CurrentReviewerLaunchArtifactEvidence {
     sha256: string | null;
     launchInputArtifactPath: string | null;
     launchInputArtifactSha256: string | null;
+    reviewOutputPath: string | null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -263,7 +264,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
         path: null,
         sha256: null,
         launchInputArtifactPath: null,
-        launchInputArtifactSha256: null
+        launchInputArtifactSha256: null,
+        reviewOutputPath: null
     };
     const reviewerIdentity = state.contextReviewerIdentity || '';
     if (!reviewerIdentity.startsWith('agent:') || !state.contextExists || !state.contextCurrent) {
@@ -356,6 +358,10 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 continue;
             }
             const launchArtifactSha256 = fileSha256(launchArtifactPath);
+            const reviewOutputPath = resolveReviewerLaunchArtifactPathFromTelemetry(
+                repoRoot,
+                getArtifactStringField(launchArtifact, 'review_output_path', 'reviewOutputPath')
+            );
             let launchInputArtifactPath: string | null = null;
             let launchInputArtifactSha256: string | null = null;
             if (artifactState === 'prepared' || artifactState === 'delegation_started') {
@@ -389,7 +395,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 path: launchArtifactPath,
                 sha256: launchArtifactSha256 || null,
                 launchInputArtifactPath,
-                launchInputArtifactSha256
+                launchInputArtifactSha256,
+                reviewOutputPath
             };
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
