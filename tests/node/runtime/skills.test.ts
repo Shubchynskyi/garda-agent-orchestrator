@@ -40,6 +40,8 @@ import {
     emitSkillReferenceLoadedEventAsync
 } from '../../../src/runtime/skills';
 import {
+    buildSkillsHeadlines,
+    computeCurrentSkillsHeadlinesSourceState,
     computeSkillsHeadlinesSourceStateHintSha256,
     computeSkillsHeadlinesSourceStateSha256
 } from '../../../src/runtime/skill-headlines';
@@ -313,6 +315,9 @@ test('skills headlines include baseline, installed optional, and custom live ski
         assert.ok(listing.customSkillDirectories.includes('architecture-review'));
 
         const headlines = readSkillsHeadlines(bundleRoot).payload;
+        const sourceState = computeCurrentSkillsHeadlinesSourceState(bundleRoot);
+        assert.equal(sourceState.sourceStateSha256, headlines.source_state_sha256);
+        assert.equal(sourceState.sourceStateHintSha256, headlines.source_state_hint_sha256);
         assert.ok(headlines.skills.some((skill) => skill.id === 'code-review' && skill.source === 'baseline'));
         assert.ok(headlines.skills.some((skill) => skill.id === 'node-backend' && skill.source === 'installed_optional'));
         assert.ok(headlines.skills.some((skill) => skill.id === 'custom-helper' && skill.source === 'custom_live'));
@@ -324,6 +329,59 @@ test('skills headlines include baseline, installed optional, and custom live ski
         assert.ok(headlines.skills.some((skill) => skill.id === 'custom-helper' && skill.review_binding === 'general_purpose'));
         assert.ok(headlines.custom_skill_ids.includes('custom-helper'));
         assert.ok(headlines.custom_skill_ids.includes('architecture-review'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('skills headlines preserve custom directory ids when a live skill manifest is missing', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-missing-manifest-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        seedBaselineSkills(repoRoot, bundleRoot);
+        fs.cpSync(path.join(repoRoot, 'template', 'skill-packs'), path.join(bundleRoot, 'template', 'skill-packs'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        writeSkillsIndex(bundleRoot);
+
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills', 'custom-missing-manifest'), { recursive: true });
+
+        const persistedHeadlines = readSkillsHeadlines(bundleRoot).payload;
+        assert.ok(persistedHeadlines.custom_skill_ids.includes('custom-missing-manifest'));
+        assert.ok(!persistedHeadlines.skills.some((skill) => skill.id === 'custom-missing-manifest'));
+
+        const explicitHashHeadlines = buildSkillsHeadlines(
+            bundleRoot,
+            '0'.repeat(64),
+            '1'.repeat(64)
+        );
+        assert.ok(explicitHashHeadlines.custom_skill_ids.includes('custom-missing-manifest'));
+        assert.ok(!explicitHashHeadlines.skills.some((skill) => skill.id === 'custom-missing-manifest'));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('current skills headline source-state hashing does not validate manifest content', () => {
+    const repoRoot = findRepoRoot();
+    const bundleRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-skills-headlines-incomplete-manifest-'));
+
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'template', 'skill-packs', 'incomplete-pack'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'skills'), { recursive: true });
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        fs.copyFileSync(path.join(repoRoot, 'template', 'config', 'skill-packs.json'), getSkillPacksConfigPath(bundleRoot));
+        fs.writeFileSync(path.join(bundleRoot, 'template', 'skill-packs', 'incomplete-pack', 'pack.json'), JSON.stringify({
+            id: 'incomplete-pack',
+            label: 'Incomplete Pack'
+        }, null, 2), 'utf8');
+
+        const state = computeCurrentSkillsHeadlinesSourceState(bundleRoot);
+        assert.match(state.sourceStateSha256, /^[a-f0-9]{64}$/);
+        assert.match(state.sourceStateHintSha256, /^[a-f0-9]{64}$/);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
