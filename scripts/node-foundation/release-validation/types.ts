@@ -1,0 +1,134 @@
+export const CLEAN_WORKTREE_DIRTY_PATH_LIMIT = 40;
+
+export const SECURITY_RELEASE_DOC_ITEMS = Object.freeze([
+    'SECURITY.md',
+    'docs/threat-model.md',
+    'docs/sbom.md'
+]);
+
+export const PUBLIC_PACKAGE_DOC_ITEMS = Object.freeze([
+    'README.md',
+    'HOW_TO.md',
+    'CHANGELOG.md',
+    'docs/architecture.md',
+    'docs/cli-reference.md',
+    'docs/configuration.md',
+    'docs/node-platform-foundation.md',
+    'docs/operator-consistency-runbook.md',
+    'docs/release-readiness.md',
+    'docs/work-example.md'
+]);
+
+export const RELEASE_READINESS_CHECKLIST_PATH = 'docs/release-readiness.md';
+
+export const SOURCEFUL_PACKAGE_SURFACE_ITEMS = Object.freeze([
+    'bin',
+    'dist',
+    'src',
+    'template',
+    'package.json',
+    'MANIFEST.md',
+    'docs/operator-consistency-runbook.md',
+    'VERSION'
+]);
+
+export const RELEASE_VALIDATION_COMMANDS = Object.freeze([
+    'version-parity',
+    'clean-worktree',
+    'embedded-bundle-parity',
+    'release-readiness'
+] as const);
+
+export type ReleaseValidationCommand = typeof RELEASE_VALIDATION_COMMANDS[number];
+
+export const EMBEDDED_BUNDLE_PARITY_ITEMS = Object.freeze([
+    '.gitattributes',
+    'bin',
+    'dist',
+    'package.json',
+    'src',
+    'template',
+    'README.md',
+    'HOW_TO.md',
+    'MANIFEST.md',
+    'AGENT_INIT_PROMPT.md',
+    'CHANGELOG.md',
+    'LICENSE',
+    'NOTICE',
+    'SECURITY.md',
+    'docs/architecture.md',
+    'docs/cli-reference.md',
+    'docs/configuration.md',
+    'docs/node-platform-foundation.md',
+    'docs/threat-model.md',
+    'docs/sbom.md',
+    'TRADEMARKS.md',
+    'docs/operator-consistency-runbook.md',
+    'docs/work-example.md',
+    'VERSION'
+]);
+
+export interface ReleaseVersionParityState {
+    repoRoot: string;
+    versionFileValue: string | null;
+    packageJsonVersion: string | null;
+    packageLockVersion: string | null;
+    packageLockRootPackageVersion: string | null;
+    deployedLiveVersion: string | null;
+}
+
+export interface ReleaseVersionParityResult extends ReleaseVersionParityState {
+    passed: boolean;
+    violations: string[];
+}
+
+export interface CleanWorktreePreflightState {
+    repoRoot: string;
+    headSha: string | null;
+    branchName: string | null;
+    detachedHead: boolean;
+    dirtyPaths: string[];
+}
+
+export interface CleanWorktreePreflightResult extends CleanWorktreePreflightState {
+    passed: boolean;
+    violations: string[];
+    remediation: string;
+}
+
+export interface EmbeddedBundleParityItemResult {
+    item: string;
+    rootExists: boolean;
+    bundleExists: boolean;
+    rootHash: string | null;
+    bundleHash: string | null;
+}
+
+export interface EmbeddedBundleParityResult {
+    repoRoot: string;
+    bundleRoot: string;
+    bundlePresent: boolean;
+    bundleIgnoredByGit: boolean;
+    checkedItems: string[];
+    passed: boolean;
+    violations: string[];
+    items: EmbeddedBundleParityItemResult[];
+}
+
+export interface ReleaseReadinessCheck {
+    area: string;
+    label: string;
+    passed: boolean;
+    details: string[];
+}
+
+export interface ReleaseReadinessResult {
+    repoRoot: string;
+    version: string | null;
+    passed: boolean;
+    violations: string[];
+    checks: ReleaseReadinessCheck[];
+    releaseChecklistItems: string[];
+    openReleaseChecklistItems: string[];
+    releaseNotesInput: string[];
+}
