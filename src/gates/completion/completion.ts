@@ -1,6 +1,4 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { ReviewReceipt } from '../../gate-runtime/review-context';
 import {
     computeProtectedSnapshotDigest,
     normalizePath,
@@ -23,11 +21,6 @@ import { getNoOpEvidence } from '../task-mode/no-op';
 import { getHandshakeEvidence, getHandshakeEvidenceViolations } from '../diagnostics/handshake-diagnostics';
 import { getShellSmokeEvidence, getShellSmokeEvidenceViolations } from '../diagnostics/shell-smoke-preflight';
 import { getRulePackEvidence, getRulePackEvidenceViolations } from '../rule-pack/rule-pack';
-import { resolveCanonicalReviewContextPath } from '../review-context/review-context-paths';
-import {
-    buildReviewContextPreflightDiffExpectations,
-    getReviewContextContractViolations
-} from '../review-context/review-context-contract';
 import {
     resolveRuntimeReviewerIdentity,
     resolveReviewerRoutingPolicy
@@ -37,46 +30,27 @@ import {
     collectOrderedTimelineEvents,
     readJsonArtifact,
     ensurePassedArtifactStatus,
-    readOptionalArtifactStringField,
-    findLatestRecordedReviewContextPath,
-    findLatestTimelineEvent,
-    type TimelineEventEntry
+    readOptionalArtifactStringField
 } from './completion-evidence';
 import {
     REVIEW_CONTRACTS,
     validateStageSequence,
     validateZeroDiffCompletionEvidence,
     validateReviewSkillEvidence,
-    validatePreflightForCompletion,
-    getReviewArtifactFindingsEvidence
+    validatePreflightForCompletion
 } from './completion-verdict';
 
 import {
     buildCoherentCycleRestartCommand,
     buildReviewCycleRestartCommand
 } from './completion-reporting';
-// readReviewTrustSummary is intentionally imported for re-export
-import {
-    buildUnavailableRequiredReviewTrustSummary,
-    readReviewTrustSummary,
-    readReviewTrustSummaryFromReviewGate
-} from '../task-audit/task-audit-summary-collectors';
 import {
     loadFullSuiteValidationConfig,
     isFullSuiteNotRequiredForDocsOnlyScope,
-    isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
-    type FullSuiteValidationCycleBinding,
-    type FullSuiteValidationResult
+    isFullSuiteNotRequiredForZeroDiffNoReviewableScope
 } from '../full-suite/full-suite-validation';
 import {
-    getCycleBindingSnapshotFromPayload,
-    resolveTaskCycleBindingSnapshot,
-    taskCycleScopeBindingsMatch
-} from '../task-events-summary/task-events-summary';
-import {
-    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
-    getProjectMemoryImpactLifecycleEvidence,
-    type ProjectMemoryImpactLifecycleEvidence
+    getProjectMemoryImpactLifecycleEvidence
 } from '../project-memory-impact/project-memory-impact';
 import {
     validateStrictDeferredReviewFollowups,
@@ -87,7 +61,12 @@ import {
     getWorkflowConfigWorkViolations
 } from '../workflow-config/workflow-config-work';
 import { resolveReviewExecutionPolicyModeFromPreflight } from '../../core/review-execution-policy';
-import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
+import { validateProjectMemoryImpactForCompletion } from './completion-project-memory';
+import {
+    collectRequiredReviewEvidence,
+    resolveCompletionReviewTrustSummary
+} from './completion-required-review-evidence';
+import { collectFullSuiteValidationEvidence } from './completion-full-suite-evidence';
 
 export { detectCodeChanged, preflightRequiresAnyReview } from '../preflight/preflight-code-change';
 
@@ -155,57 +134,6 @@ export interface RunCompletionGateOptions {
     noOpArtifactPath?: string;
     handshakePath?: string;
     shellSmokePath?: string;
-}
-
-function validateProjectMemoryImpactForCompletion(input: {
-    evidence: ProjectMemoryImpactLifecycleEvidence;
-    orderedEvents: readonly TimelineEventEntry[];
-    fullSuiteValidationEnabled: boolean;
-    timelinePath: string;
-}): string[] {
-    const violations: string[] = [];
-    if (!input.evidence.required) {
-        return violations;
-    }
-    if (input.evidence.evidence_status !== 'CURRENT') {
-        violations.push(
-            `Project memory impact evidence is not current before completion: ${input.evidence.evidence_status}. ` +
-            `${input.evidence.visible_summary_line}`
-        );
-        violations.push(...input.evidence.violations);
-        return violations;
-    }
-
-    const impactEvent = findLatestTimelineEvent(
-        input.orderedEvents,
-        (entry) => entry.event_type === PROJECT_MEMORY_IMPACT_ASSESSED_EVENT
-    );
-    if (!impactEvent) {
-        violations.push(`Task timeline '${normalizePath(input.timelinePath)}' is missing ${PROJECT_MEMORY_IMPACT_ASSESSED_EVENT}.`);
-        return violations;
-    }
-
-    const docImpactEvent = findLatestTimelineEvent(
-        input.orderedEvents,
-        (entry) => entry.event_type === 'DOC_IMPACT_ASSESSED'
-    );
-    if (docImpactEvent && impactEvent.sequence <= docImpactEvent.sequence) {
-        violations.push('Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.');
-    }
-    if (input.fullSuiteValidationEnabled) {
-        const fullSuiteEvent = findLatestTimelineEvent(
-            input.orderedEvents,
-            (entry) => entry.event_type === 'FULL_SUITE_VALIDATION_PASSED'
-                || entry.event_type === 'FULL_SUITE_VALIDATION_WARNED'
-                || entry.event_type === 'FULL_SUITE_VALIDATION_SKIPPED'
-        );
-        if (!fullSuiteEvent) {
-            violations.push('Project memory impact evidence requires current full-suite validation evidence when full-suite validation is enabled.');
-        } else if (impactEvent.sequence <= fullSuiteEvent.sequence) {
-            violations.push('Project memory impact evidence must be recorded after full-suite validation for the current completion cycle.');
-        }
-    }
-    return violations;
 }
 
 export function runCompletionGate(options: RunCompletionGateOptions) {
@@ -446,14 +374,6 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         ? preflight.profile_selection as Record<string, unknown>
         : {};
     const activeProfile = String(profileSelection.effective_profile || profileSelection.task_profile || '').trim() || null;
-    const reviewArtifacts: Record<string, {
-        path: string;
-        content: string;
-        reviewContextPath: string;
-        reviewContext: Record<string, unknown> | null;
-        receipt: ReviewReceipt | null;
-        findings_evidence: ReturnType<typeof getReviewArtifactFindingsEvidence>;
-    }> = {};
     const runtimeIdentity = resolveRuntimeReviewerIdentity({
         repoRoot,
         taskId: resolvedTaskId,
@@ -470,113 +390,20 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
     const scopeCategory = typeof preflight.scope_category === 'string' ? preflight.scope_category : null;
 
     const {
+        reviewArtifacts,
         receiptReviewTrustSummary,
         reviewGateTrustSummary
-    } = withReviewArtifactReadBarrier(reviewsRoot, () => {
-        const reviewEvidence = readJsonArtifact(reviewEvidencePath, 'Review gate', errors);
-        ensurePassedArtifactStatus(reviewEvidence, 'Review gate', errors);
-        for (const [reviewKey] of REVIEW_CONTRACTS) {
-            const required = !!requiredReviews[reviewKey];
-            if (!required) {
-                continue;
-            }
-            const artifactPath = path.join(reviewsRoot, `${resolvedTaskId}-${reviewKey}.md`);
-            const recordedReviewContextPath = findLatestRecordedReviewContextPath(orderedEvents, reviewKey);
-            const reviewContextPath = resolveCanonicalReviewContextPath({
-                reviewsRoot,
-                taskId: resolvedTaskId,
-                reviewType: reviewKey,
-                explicitPath: recordedReviewContextPath
-            });
-            const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-            const artifactExists = fs.existsSync(artifactPath) && fs.statSync(artifactPath).isFile();
-
-            if (!artifactExists) {
-                if (required) {
-                    errors.push(`Required review artifact not found: ${normalizePath(artifactPath)}`);
-                }
-                continue;
-            }
-
-            const artifactContent = fs.readFileSync(artifactPath, 'utf8');
-            let reviewContext: Record<string, unknown> | null = null;
-            let receipt: ReviewReceipt | null = null;
-            if (fs.existsSync(reviewContextPath) && fs.statSync(reviewContextPath).isFile()) {
-                try {
-                    const parsedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8'));
-                    if (parsedReviewContext && typeof parsedReviewContext === 'object' && !Array.isArray(parsedReviewContext)) {
-                        reviewContext = parsedReviewContext as Record<string, unknown>;
-                        if (required) {
-                            errors.push(...getReviewContextContractViolations({
-                                contextPath: reviewContextPath,
-                                reviewContext,
-                                expectedTaskId: resolvedTaskId,
-                                expectedReviewType: reviewKey,
-                                expectedPreflightPath: validatedPreflight.preflight_path,
-                                expectedPreflightSha256: validatedPreflight.preflight_hash,
-                                requireReviewType: true,
-                                requireTaskId: true,
-                                requirePreflightPath: true,
-                                requirePreflightSha256: true,
-                                ...buildReviewContextPreflightDiffExpectations(validatedPreflight.preflight, reviewKey)
-                            }));
-                        }
-                    }
-                } catch {
-                    if (required) {
-                        errors.push(`Required review-context artifact is invalid JSON: ${normalizePath(reviewContextPath)}`);
-                    }
-                }
-            } else if (required) {
-                errors.push(`Required review-context artifact not found: ${normalizePath(reviewContextPath)}`);
-            }
-            if (fs.existsSync(receiptPath) && fs.statSync(receiptPath).isFile()) {
-                try {
-                    const parsedReceipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-                    if (parsedReceipt && typeof parsedReceipt === 'object' && !Array.isArray(parsedReceipt)) {
-                        receipt = parsedReceipt as ReviewReceipt;
-                    }
-                } catch {
-                    if (required) {
-                        errors.push(`Required review receipt is invalid JSON: ${normalizePath(receiptPath)}`);
-                    }
-                }
-            } else if (required) {
-                errors.push(`Required review receipt not found: ${normalizePath(receiptPath)}`);
-            }
-            const findingsEvidence = getReviewArtifactFindingsEvidence(artifactPath, artifactContent);
-            reviewArtifacts[reviewKey] = {
-                path: normalizePath(artifactPath),
-                content: artifactContent,
-                reviewContextPath: normalizePath(reviewContextPath),
-                reviewContext,
-                receipt,
-                findings_evidence: findingsEvidence
-            };
-            if (Array.isArray(findingsEvidence.violations) && findingsEvidence.violations.length > 0) {
-                errors.push(...findingsEvidence.violations);
-            }
-        }
-        const receiptReviewTrustSummary = readReviewTrustSummary(
-            requiredReviews,
-            reviewsRoot,
-            resolvedTaskId || '',
-            scopeCategory,
-            validatedPreflight.preflight_hash
-        );
-        const reviewGateTrustSummary = readReviewTrustSummaryFromReviewGate(
-            reviewEvidence && typeof reviewEvidence === 'object' && !Array.isArray(reviewEvidence)
-                ? reviewEvidence as Record<string, unknown>
-                : null,
-            requiredReviews,
-            resolvedTaskId || '',
-            scopeCategory,
-            validatedPreflight.preflight_hash
-        );
-        return {
-            receiptReviewTrustSummary,
-            reviewGateTrustSummary
-        };
+    } = collectRequiredReviewEvidence({
+        reviewsRoot,
+        taskId: resolvedTaskId || '',
+        preflight,
+        preflightPath: validatedPreflight.preflight_path || '',
+        preflightSha256: validatedPreflight.preflight_hash || '',
+        reviewEvidencePath,
+        requiredReviews,
+        scopeCategory,
+        orderedEvents,
+        errors
     });
 
     // T-003: review-skill invocation evidence for code-changing tasks
@@ -620,11 +447,12 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         observed_execution_modes: reviewSkillEvidence.reviewer_execution_modes,
         enforcement_level: 'hard_block'
     };
-    const hasRequiredReviews = Object.values(requiredReviews).some((value) => value === true);
-    const reviewTrustSummary = reviewGateTrustSummary
-        ?? (hasRequiredReviews
-            ? buildUnavailableRequiredReviewTrustSummary(requiredReviews, scopeCategory)
-            : receiptReviewTrustSummary);
+    const reviewTrustSummary = resolveCompletionReviewTrustSummary({
+        requiredReviews,
+        scopeCategory,
+        receiptReviewTrustSummary,
+        reviewGateTrustSummary
+    });
     const deferredFollowupEvidence: DeferredFollowupValidationResult = validateStrictDeferredReviewFollowups({
         repoRoot,
         taskId: resolvedTaskId || '',
@@ -645,117 +473,21 @@ export function runCompletionGate(options: RunCompletionGateOptions) {
         plan_summary: taskModeEvidence.plan?.plan_summary ?? null
     };
 
-    const fullSuiteValidationPath = path.join(reviewsRoot, `${resolvedTaskId}-full-suite-validation.json`);
-    const fullSuiteValidationEvidence: {
-        enabled: boolean;
-        artifact_path: string;
-        status: string | null;
-        cycle_binding: FullSuiteValidationCycleBinding | null;
-        cycle_binding_valid: boolean | null;
-        violations: string[];
-    } = {
+    const fullSuiteValidationEvidence = collectFullSuiteValidationEvidence({
         enabled: fullSuiteValidationConfig.enabled,
-        artifact_path: normalizePath(fullSuiteValidationPath),
-        status: null,
-        cycle_binding: null,
-        cycle_binding_valid: null,
-        violations: []
-    };
-
-    if (fullSuiteValidationRequired) {
-        const fullSuiteArtifact = readJsonArtifact(fullSuiteValidationPath, 'Full suite validation', errors) as FullSuiteValidationResult | null;
-        const hasFullSuiteTimelineEvent =
-            timelineEventTypes.has('FULL_SUITE_VALIDATION_PASSED')
-            || timelineEventTypes.has('FULL_SUITE_VALIDATION_WARNED')
-            || timelineEventTypes.has('FULL_SUITE_VALIDATION_FAILED')
-            || timelineEventTypes.has('FULL_SUITE_VALIDATION_SKIPPED');
-        if (!hasFullSuiteTimelineEvent) {
-            const message = `Task timeline '${normalizePath(timelinePath)}' is missing full-suite validation lifecycle evidence.`;
-            errors.push(message);
-            fullSuiteValidationEvidence.violations.push(message);
-        }
-
-        if (!fullSuiteArtifact) {
-            fullSuiteValidationEvidence.status = 'MISSING';
-        } else {
-            const artifactStatus = String(fullSuiteArtifact.status || '').trim().toUpperCase();
-            fullSuiteValidationEvidence.status = artifactStatus || null;
-            const rawCycleBinding = fullSuiteArtifact.cycle_binding;
-            if (!rawCycleBinding || typeof rawCycleBinding !== 'object' || Array.isArray(rawCycleBinding)) {
-                const message = `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' is missing cycle_binding.`;
-                errors.push(message);
-                fullSuiteValidationEvidence.violations.push(message);
-            } else {
-                const cycleBindingRecord = rawCycleBinding as unknown as Record<string, unknown>;
-                const cycleBinding: FullSuiteValidationCycleBinding = {
-                    task_id: String(cycleBindingRecord.task_id || '').trim(),
-                    preflight_path: normalizePath(cycleBindingRecord.preflight_path || ''),
-                    preflight_sha256: String(cycleBindingRecord.preflight_sha256 || '').trim().toLowerCase(),
-                    compile_gate_timestamp: cycleBindingRecord.compile_gate_timestamp == null
-                        ? null
-                        : String(cycleBindingRecord.compile_gate_timestamp || '').trim() || null
-                };
-                fullSuiteValidationEvidence.cycle_binding = cycleBinding;
-                const expectedCycleBinding: FullSuiteValidationCycleBinding = {
-                    task_id: String(resolvedTaskId || '').trim(),
-                    preflight_path: normalizePath(validatedPreflight.preflight_path),
-                    preflight_sha256: String(validatedPreflight.preflight_hash || '').trim().toLowerCase(),
-                    compile_gate_timestamp: latestCompileGatePassedTimestamp
-                };
-                const currentCycle = resolveTaskCycleBindingSnapshot(
-                    String(resolvedTaskId || '').trim(),
-                    orderedEvents as unknown as ReadonlyArray<Record<string, unknown>>,
-                    repoRoot,
-                    reviewsRoot
-                );
-                const candidateCycle = getCycleBindingSnapshotFromPayload({ cycle_binding: cycleBindingRecord }, repoRoot);
-                const sameScopeBinding = taskCycleScopeBindingsMatch(currentCycle, candidateCycle);
-                const cycleBindingValid =
-                    cycleBinding.task_id === expectedCycleBinding.task_id
-                    && (
-                        (
-                            cycleBinding.preflight_path === expectedCycleBinding.preflight_path
-                            && cycleBinding.preflight_sha256 === expectedCycleBinding.preflight_sha256
-                            && cycleBinding.compile_gate_timestamp === expectedCycleBinding.compile_gate_timestamp
-                        )
-                        || (
-                            sameScopeBinding
-                            && cycleBinding.preflight_path === expectedCycleBinding.preflight_path
-                        )
-                    );
-                fullSuiteValidationEvidence.cycle_binding_valid = cycleBindingValid;
-                if (!cycleBindingValid) {
-                    const message =
-                        `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' is stale for the current task cycle. ` +
-                        `Expected task_id='${expectedCycleBinding.task_id}', preflight_path='${expectedCycleBinding.preflight_path}', ` +
-                        `preflight_sha256='${expectedCycleBinding.preflight_sha256}', compile_gate_timestamp='${expectedCycleBinding.compile_gate_timestamp || 'null'}'.`;
-                    errors.push(message);
-                    fullSuiteValidationEvidence.violations.push(message);
-                }
-            }
-
-            const artifactIsAcceptedDocsOnlySkip =
-                artifactStatus === 'SKIPPED'
-                && fullSuiteNotRequiredForDocsOnly
-                && String(fullSuiteArtifact.skip_reason || '').trim() === 'DOCS_ONLY_SCOPE_NOT_REQUIRED'
-                && fullSuiteArtifact.required === false;
-            if (artifactStatus !== 'PASSED' && artifactStatus !== 'WARNED' && !artifactIsAcceptedDocsOnlySkip) {
-                const message =
-                    `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' must have status PASSED or WARNED when enabled, ` +
-                    `or SKIPPED with skip_reason DOCS_ONLY_SCOPE_NOT_REQUIRED for docs-only scopes, got '${artifactStatus || 'UNKNOWN'}'.`;
-                errors.push(message);
-                fullSuiteValidationEvidence.violations.push(message);
-            }
-            if (String(fullSuiteArtifact.command || '').trim() !== fullSuiteValidationConfig.command) {
-                const message =
-                    `Full suite validation artifact '${normalizePath(fullSuiteValidationPath)}' command does not match current workflow config.`;
-                errors.push(message);
-                fullSuiteValidationEvidence.violations.push(message);
-            }
-        }
-    } else {
-        fullSuiteValidationEvidence.status = 'NOT_REQUIRED';
-    }
+        required: fullSuiteValidationRequired,
+        reviewsRoot,
+        taskId: String(resolvedTaskId || '').trim(),
+        repoRoot,
+        timelinePath,
+        orderedEvents,
+        expectedPreflightPath: validatedPreflight.preflight_path || '',
+        expectedPreflightSha256: validatedPreflight.preflight_hash || '',
+        expectedCompileGateTimestamp: latestCompileGatePassedTimestamp,
+        expectedCommand: fullSuiteValidationConfig.command,
+        fullSuiteNotRequiredForDocsOnly,
+        errors
+    });
 
     const projectMemoryImpactEvidence = getProjectMemoryImpactLifecycleEvidence({
         repoRoot,

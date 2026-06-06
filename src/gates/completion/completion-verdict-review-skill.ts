@@ -35,6 +35,11 @@ import {
 } from '../review/reviewer-routing';
 import { isTrivialReview } from './completion-verdict-findings';
 import { evaluateHiddenReviewTimingTrust } from '../review/review-timing-trust';
+import {
+    createEmptyReviewSkillEvidenceResult,
+    getRequiredReviewKeys,
+    type ReviewSkillEvidenceResult
+} from './completion-review-skill-contracts';
 
 function timestampProvenanceMatchesEventDetails(
     details: Record<string, unknown> | null | undefined,
@@ -50,18 +55,6 @@ function timestampProvenanceMatchesEventDetails(
     const eventValue = normalizeReviewProvenanceUtcTimestamp(rawText);
     return !!eventValue && provenanceValue === eventValue;
 }
-
-export const REVIEW_CONTRACTS = [
-    ['code', 'REVIEW PASSED'],
-    ['db', 'DB REVIEW PASSED'],
-    ['security', 'SECURITY REVIEW PASSED'],
-    ['refactor', 'REFACTOR REVIEW PASSED'],
-    ['api', 'API REVIEW PASSED'],
-    ['test', 'TEST REVIEW PASSED'],
-    ['performance', 'PERFORMANCE REVIEW PASSED'],
-    ['infra', 'INFRA REVIEW PASSED'],
-    ['dependency', 'DEPENDENCY REVIEW PASSED']
-];
 
 function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown> | null | undefined): string | null {
     const treeState = reviewContext?.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
@@ -107,24 +100,12 @@ export function validateReviewSkillEvidence(
     executionProviderSource: string | null = null,
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode = DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
     repoRoot: string | null = null
-): { skill_ids: string[]; reference_paths: string[]; artifact_keys: string[]; reviewer_execution_modes: string[]; violations: string[] } {
-    const result = {
-        skill_ids: [] as string[],
-        reference_paths: [] as string[],
-        artifact_keys: [] as string[],
-        reviewer_execution_modes: [] as string[],
-        violations: [] as string[]
-    };
+): ReviewSkillEvidenceResult {
+    const result = createEmptyReviewSkillEvidenceResult();
     if (!codeChanged) return result;
 
     const normalizedTimelinePath = normalizePath(timelinePath);
-
-    const requiredKeys: string[] = [];
-    for (const [key, value] of Object.entries(requiredReviews)) {
-        if (value === true) {
-            requiredKeys.push(key);
-        }
-    }
+    const requiredKeys = getRequiredReviewKeys(requiredReviews);
 
     const compilePassSequence = findLatestTimelineEvent(events, (entry) => entry.event_type === 'COMPILE_GATE_PASSED')?.sequence ?? null;
     const reviewPhaseSequence = findLatestTimelineEvent(events, (entry) => entry.event_type === 'REVIEW_PHASE_STARTED')?.sequence ?? null;

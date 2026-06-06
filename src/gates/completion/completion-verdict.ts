@@ -34,7 +34,10 @@ export {
 } from './completion-verdict-findings';
 
 export {
-    REVIEW_CONTRACTS,
+    REVIEW_CONTRACTS
+} from './completion-review-skill-contracts';
+
+export {
     validateReviewSkillEvidence
 } from './completion-verdict-review-skill';
 
