@@ -1347,6 +1347,26 @@ describe('gates/next-step post preflight binding', () => {
         ]);
     });
 
+    it('routes stale docs-only workspace changes to classify-change before missing POST_PREFLIGHT rules', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const preflighted = 1;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '\nDocument late change.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.title, /Refresh preflight for the current workspace/);
+        assert.match(result.reason, /Preflight scope is stale before compile/);
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--changed-file "CHANGELOG.md"'));
+        assert.ok(!result.commands[0].command.includes('--stage "POST_PREFLIGHT"'));
+        assert.ok(!result.commands[0].command.includes('bind-rule-pack-to-preflight'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
+    });
+
     it('routes equivalent current-cycle POST_PREFLIGHT refreshes to evidence binding instead of rereading rules', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -1361,6 +1381,26 @@ describe('gates/next-step post preflight binding', () => {
         assert.match(result.reason, /only the preflight binding must be refreshed/);
         assert.ok(result.commands[0].command.includes('gate bind-rule-pack-to-preflight'));
         assert.ok(!result.commands[0].command.includes('--loaded-rule-file'));
+    });
+
+    it('routes stale docs-only workspace changes to classify-change before POST_PREFLIGHT rebind', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const preflighted = 1;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { seedPostPreflight: false });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '\nDocument late rebind change.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.title, /Refresh preflight for the current workspace/);
+        assert.match(result.reason, /Preflight scope is stale before compile/);
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.commands[0].command.includes('--changed-file "CHANGELOG.md"'));
+        assert.ok(!result.commands[0].command.includes('bind-rule-pack-to-preflight'));
+        assert.ok(!result.commands[0].command.includes('gate compile-gate'));
     });
 
     it('preserves custom task-mode path when binding refreshed POST_PREFLIGHT evidence', () => {

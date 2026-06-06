@@ -1748,6 +1748,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode)
         })
         : { ready: false, reason: 'No current preflight exists.' };
+    const strictPreGuardWorkspaceReadiness = preflight
+        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: null,
+            failedReviewVerdict: null,
+            docImpactPath,
+            plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
+            allowDocsOnlyDelta: false
+        })
+        : { ready: false, reason: 'No current preflight exists.' };
     const preflightCycleReadiness = readPreflightCycleReadiness(
         eventsRoot,
         taskId,
@@ -1774,6 +1783,15 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode)
         })
         : preflightWorkspaceReadiness;
+    const effectiveStrictPreGuardWorkspaceReadiness = preflight && failedCurrentReviewStateForPreflight
+        ? readPreflightWorkspaceReadiness(repoRoot, preflight, {
+            failedReviewType: failedCurrentReviewStateForPreflight?.reviewType || null,
+            failedReviewVerdict: failedCurrentReviewStateForPreflight?.verdictToken || failedCurrentReviewStateForPreflight?.failToken || null,
+            docImpactPath,
+            plannedChangedFiles: getTaskModePlannedChangedFiles(taskMode),
+            allowDocsOnlyDelta: false
+        })
+        : strictPreGuardWorkspaceReadiness;
 
     const startupCycleReadiness = readStartupCycleReadiness(repoRoot, eventsRoot, taskId, taskModePath, {
         enforceLateRulePackAfterReviewPhase:
@@ -1899,6 +1917,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         rulePackPath,
         taskModePath
     );
+    const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
 
     const preGuardRoute = resolveNextStepPreGuardRoute({
         preflightCycleReadiness,
@@ -1920,7 +1939,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             selfGuardPolicyChangeCommand: buildGardaSelfGuardPolicyChangeCommand(cliPrefix),
             orchestratorWorkRestartCommand: buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode)
         },
-        workspaceReadiness: effectivePreflightWorkspaceReadiness,
+        workspaceReadiness: reviewGateAlreadyPassed
+            ? effectivePreflightWorkspaceReadiness
+            : effectiveStrictPreGuardWorkspaceReadiness,
         workspaceRefreshCommand: buildClassifyChangeCommand({
             repoRoot,
             cliPrefix,
@@ -1929,7 +1950,9 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
-            changedFiles: effectivePreflightWorkspaceReadiness.currentChangedFiles
+            changedFiles: (reviewGateAlreadyPassed
+                ? effectivePreflightWorkspaceReadiness.currentChangedFiles
+                : effectiveStrictPreGuardWorkspaceReadiness.currentChangedFiles)
                 ?? getPreflightRefreshChangedFiles(taskMode, preflight)
         }),
         coherentCycleReadiness,
@@ -2717,7 +2740,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         }
     }
 
-    const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
     const downstreamDependencyRebind = reviewGateAlreadyPassed
         ? null
         : findDownstreamReviewNeedingDependencyRebind({

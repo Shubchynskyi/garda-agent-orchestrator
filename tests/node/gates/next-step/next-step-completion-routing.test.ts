@@ -1704,7 +1704,7 @@ describe('gates/next-step', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
         assert.equal(result.next_gate, 'classify-change', result.reason);
-        assert.ok(result.reason.includes('Compile gate failed because the preflight scope is stale'));
+        assert.ok(result.reason.includes('Preflight scope is stale before compile'));
         assert.ok(result.commands[0].command.includes('gate classify-change'));
         assert.ok(!result.commands[0].command.includes('gate compile-gate'));
     });
