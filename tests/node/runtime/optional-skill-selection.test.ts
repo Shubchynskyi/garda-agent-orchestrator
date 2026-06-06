@@ -213,6 +213,168 @@ test('buildOptionalSkillSelectionArtifact surfaces recommended_missing_packs dis
     }
 });
 
+test('buildOptionalSkillSelectionArtifact suppresses missing frontend packs for backend control-plane context', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        fs.copyFileSync(
+            path.join(process.cwd(), 'template', 'config', 'optional-skill-selection-policy.json'),
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json')
+        );
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Stop recommending frontend-react for protected-control-plane runtime workflow gates.',
+            changedPaths: ['src/gates/next-step/next-step.ts', 'src/runtime/optional-skill-selection/artifact-builder.ts'],
+            loadedHeadlinesCache: {
+                headlinesPath: path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'),
+                headlinesSha256: 'fixture-headlines-sha',
+                materializationNeeded: false,
+                skills: [],
+                optional_packs: [{
+                    id: 'frontend-react',
+                    label: 'Frontend React',
+                    description: 'Optional React and TypeScript frontend skills.',
+                    installed: false,
+                    implemented: true,
+                    collides_with_baseline: false,
+                    ready_skill_ids: ['frontend-react'],
+                    placeholder_skill_ids: [],
+                    recommended_for: ['React apps', 'UI tasks', 'frontend refactors'],
+                    tags: ['frontend', 'react', 'typescript']
+                }],
+                payload: null
+            }
+        });
+
+        assert.equal(artifact.payload.decision, 'as_is');
+        assert.deepEqual(artifact.payload.recommended_missing_packs, []);
+        assert.match(artifact.payload.visible_summary_line, /Optional skills: as_is/);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildOptionalSkillSelectionArtifact suppresses missing frontend packs for backend app paths', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        fs.copyFileSync(
+            path.join(process.cwd(), 'template', 'config', 'optional-skill-selection-policy.json'),
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json')
+        );
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Stop recommending frontend-react for backend runtime service work.',
+            changedPaths: ['src/backend/app/server.ts'],
+            loadedHeadlinesCache: {
+                headlinesPath: path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'),
+                headlinesSha256: 'fixture-headlines-sha',
+                materializationNeeded: false,
+                skills: [],
+                optional_packs: [{
+                    id: 'frontend-react',
+                    label: 'Frontend React',
+                    description: 'Optional React and TypeScript frontend skills.',
+                    installed: false,
+                    implemented: true,
+                    collides_with_baseline: false,
+                    ready_skill_ids: ['frontend-react'],
+                    placeholder_skill_ids: [],
+                    recommended_for: ['React apps', 'UI tasks', 'frontend refactors'],
+                    tags: ['frontend', 'react', 'typescript']
+                }],
+                payload: null
+            }
+        });
+
+        assert.equal(artifact.payload.decision, 'as_is');
+        assert.deepEqual(artifact.payload.recommended_missing_packs, []);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildOptionalSkillSelectionArtifact keeps missing frontend pack recommendation for explicit React UI context', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        fs.copyFileSync(
+            path.join(process.cwd(), 'template', 'config', 'optional-skill-selection-policy.json'),
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json')
+        );
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement a frontend React UI component for the dashboard.',
+            changedPaths: ['src/frontend/react/DashboardCard.tsx'],
+            loadedHeadlinesCache: {
+                headlinesPath: path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'),
+                headlinesSha256: 'fixture-headlines-sha',
+                materializationNeeded: false,
+                skills: [],
+                optional_packs: [{
+                    id: 'frontend-react',
+                    label: 'Frontend React',
+                    description: 'Optional React and TypeScript frontend skills.',
+                    installed: false,
+                    implemented: true,
+                    collides_with_baseline: false,
+                    ready_skill_ids: ['frontend-react'],
+                    placeholder_skill_ids: [],
+                    recommended_for: ['React apps', 'UI tasks', 'frontend refactors'],
+                    tags: ['frontend', 'react', 'typescript']
+                }],
+                payload: null
+            }
+        });
+
+        assert.equal(artifact.payload.decision, 'recommended_missing_packs');
+        assert.deepEqual(artifact.payload.recommended_missing_packs.map((entry) => entry.id), ['frontend-react']);
+        assert.match(artifact.payload.visible_summary_line, /frontend-react/);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildOptionalSkillSelectionArtifact keeps explicit frontend text recommendation on shared runtime paths', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+        fs.copyFileSync(
+            path.join(process.cwd(), 'template', 'config', 'optional-skill-selection-policy.json'),
+            path.join(bundleRoot, 'live', 'config', 'optional-skill-selection-policy.json')
+        );
+
+        const artifact = buildOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement a React UI component for the runtime dashboard.',
+            changedPaths: ['src/runtime/dashboard-shell.ts'],
+            loadedHeadlinesCache: {
+                headlinesPath: path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'),
+                headlinesSha256: 'fixture-headlines-sha',
+                materializationNeeded: false,
+                skills: [],
+                optional_packs: [{
+                    id: 'frontend-react',
+                    label: 'Frontend React',
+                    description: 'Optional React and TypeScript frontend skills.',
+                    installed: false,
+                    implemented: true,
+                    collides_with_baseline: false,
+                    ready_skill_ids: ['frontend-react'],
+                    placeholder_skill_ids: [],
+                    recommended_for: ['React apps', 'UI tasks', 'frontend refactors'],
+                    tags: ['frontend', 'react', 'typescript']
+                }],
+                payload: null
+            }
+        });
+
+        assert.equal(artifact.payload.decision, 'recommended_missing_packs');
+        assert.deepEqual(artifact.payload.recommended_missing_packs.map((entry) => entry.id), ['frontend-react']);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('buildOptionalSkillSelectionArtifact keeps selected_installed_skills mutually exclusive from recommended_missing_packs', () => {
     const bundleRoot = makeBundleRoot();
     try {

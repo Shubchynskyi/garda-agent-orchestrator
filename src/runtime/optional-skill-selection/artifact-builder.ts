@@ -120,6 +120,138 @@ export function hasNonDocumentationChangedPaths(paths: readonly string[]): boole
     return paths.some((entry) => !isDocumentationLikePath(entry));
 }
 
+const FRONTEND_PACK_SIGNALS = [
+    'angular',
+    'browser',
+    'component',
+    'css',
+    'frontend',
+    'nextjs',
+    'react',
+    'spa',
+    'svelte',
+    'ui',
+    'vue',
+    'web'
+];
+
+const BACKEND_OR_CONTROL_PLANE_CONTEXT_SIGNALS = [
+    'backend',
+    'cli',
+    'compile-gate',
+    'control-plane',
+    'gate',
+    'orchestrator',
+    'preflight',
+    'protected-control-plane',
+    'reviewer',
+    'runtime',
+    'task-audit',
+    'validator',
+    'workflow'
+];
+
+const FRONTEND_PATH_SIGNALS = [
+    '/components/',
+    '/pages/',
+    '/routes/',
+    '/ui/',
+    '/views/',
+    'components/',
+    'frontend/',
+    'pages/',
+    'public/',
+    'src/app/',
+    'src/components/',
+    'src/frontend/',
+    'src/ui/',
+    'styles/'
+];
+
+const FRONTEND_WORK_INTENT_SIGNALS = [
+    'app route',
+    'dashboard',
+    'frontend task',
+    'frontend tasks',
+    'frontend work',
+    'layout',
+    'page',
+    'react component',
+    'screen',
+    'style',
+    'ui component',
+    'ui task',
+    'ui tasks',
+    'ui work',
+    'view'
+];
+
+function textOrPathContainsAny(
+    taskTextLower: string,
+    changedPathsLower: readonly string[],
+    signals: readonly string[]
+): boolean {
+    return signals.some((signal) => (
+        textContainsSignal(taskTextLower, signal)
+        || pathContainsSignal(changedPathsLower, signal)
+    ));
+}
+
+function hasFrontendIntent(taskTextLower: string, changedPathsLower: readonly string[]): boolean {
+    if (textOrPathContainsAny(taskTextLower, changedPathsLower, FRONTEND_PACK_SIGNALS)) {
+        return true;
+    }
+    return hasFrontendPathIntent(changedPathsLower);
+}
+
+function hasFrontendPathIntent(changedPathsLower: readonly string[]): boolean {
+    return changedPathsLower.some((entry) => FRONTEND_PATH_SIGNALS.some((signal) => entry.includes(signal)));
+}
+
+function hasExplicitFrontendWorkIntent(taskTextLower: string, changedPathsLower: readonly string[]): boolean {
+    if (hasFrontendPathIntent(changedPathsLower)) {
+        return true;
+    }
+    if (!textOrPathContainsAny(taskTextLower, changedPathsLower, FRONTEND_PACK_SIGNALS)) {
+        return false;
+    }
+    return FRONTEND_WORK_INTENT_SIGNALS.some((signal) => textContainsSignal(taskTextLower, signal));
+}
+
+function packLooksFrontend(pack: SkillsHeadlinePackEntry): boolean {
+    const packSignals = uniqueSorted([
+        pack.id,
+        pack.label,
+        pack.description,
+        ...pack.ready_skill_ids,
+        ...pack.tags,
+        ...pack.recommended_for
+    ].map((entry) => normalizeText(entry)).filter(Boolean));
+    return packSignals.some((entry) => FRONTEND_PACK_SIGNALS.some((signal) => textContainsSignal(entry, signal)));
+}
+
+export function shouldSuppressRecommendedPackForContext(
+    pack: SkillsHeadlinePackEntry,
+    taskTextLower: string,
+    changedPathsLower: readonly string[]
+): boolean {
+    if (!packLooksFrontend(pack)) {
+        return false;
+    }
+    const backendOrControlPlaneContext = textOrPathContainsAny(
+        taskTextLower,
+        changedPathsLower,
+        BACKEND_OR_CONTROL_PLANE_CONTEXT_SIGNALS
+    );
+    if (backendOrControlPlaneContext && !hasExplicitFrontendWorkIntent(taskTextLower, changedPathsLower)) {
+        return true;
+    }
+    if (hasFrontendIntent(taskTextLower, changedPathsLower)) {
+        return false;
+    }
+    return backendOrControlPlaneContext;
+}
+
 export function collectPrimarySignals(skill: SkillsHeadlineSkillEntry): string[] {
     return uniqueSorted([
         skill.id,
@@ -288,6 +420,9 @@ export function selectRecommendedPacks(
         ].map((entry) => normalizeText(entry)).filter(Boolean));
         const scored = scoreSignalBuckets(taskTextLower, changedPathsLower, primarySignals, secondarySignals);
         if (scored.score <= 0) {
+            continue;
+        }
+        if (shouldSuppressRecommendedPackForContext(pack, taskTextLower, changedPathsLower)) {
             continue;
         }
 
