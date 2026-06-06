@@ -72,7 +72,7 @@ test('tree-state review compatibility suite keeps the focused regression shards 
             "does not fingerprint review reuse scope from files reached through symlinked directories outside repo"
         ],
         [
-            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews.test.ts',
+            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews-safety.test.ts',
             "fails required reviews gate when receipt tree-state binding is missing or tampered"
         ],
         [
@@ -84,7 +84,7 @@ test('tree-state review compatibility suite keeps the focused regression shards 
             "prepare-reviewer-launch rejects stale staged review contexts after MM drift"
         ],
         [
-            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews.test.ts',
+            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews-safety.test.ts',
             "required-reviews-check rejects passed staged receipts after same-path MM drift"
         ],
         [
@@ -92,7 +92,7 @@ test('tree-state review compatibility suite keeps the focused regression shards 
             "record-review-result accepts legacy review-context identity when task-mode runtime identity is backfilled safely"
         ],
         [
-            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews.test.ts',
+            'tests/node/cli/commands/gates/required-reviews/gates-command-required-reviews-happy-path.test.ts',
             "required-reviews-check and completion prefer canonical review-context artifacts over stale legacy default files"
         ],
         [
