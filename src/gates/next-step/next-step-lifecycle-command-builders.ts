@@ -103,11 +103,17 @@ export function buildOrchestratorWorkRestartCommand(
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
         : [];
+    const dirtyBaselineChangedFiles = getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode);
     const currentChangedFiles = additionalPlannedChangedFiles
         .map((entry) => normalizePath(entry))
         .filter(Boolean);
+    const restartScopeFiles = currentChangedFiles.length > 0
+        ? currentChangedFiles
+        : dirtyBaselineChangedFiles.length > 0
+            ? dirtyBaselineChangedFiles
+            : plannedChangedFiles;
     const mergedPlannedChangedFiles = [...new Set(
-        currentChangedFiles.length > 0 ? currentChangedFiles : plannedChangedFiles
+        restartScopeFiles
     )].sort();
     for (const plannedChangedFile of mergedPlannedChangedFiles) {
         parts.push(`--planned-changed-file ${quoteCommandValue(plannedChangedFile)}`);
