@@ -439,6 +439,37 @@ export function readOptionalSkillPolicyModeSafe(bundleRoot: string): string | nu
     }
 }
 
+function buildOptionalSkillTaskStartInstruction(input: {
+    policyMode: string;
+    decision: string | null;
+    selectedSkillIds: string[];
+    recommendedMissingPackIds: string[];
+    asIsReason: string | null;
+    artifactPath: string;
+    headlinesPath: string | null;
+    activationReady: boolean;
+    activationCommands: string[];
+}): string {
+    if (input.policyMode === 'off') {
+        return 'Optional skill selection is disabled by policy; proceed without specialized optional skill activation.';
+    }
+    if (input.selectedSkillIds.length > 0) {
+        const skillList = input.selectedSkillIds.join(', ');
+        if (input.activationReady && input.activationCommands.length > 0) {
+            return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the chosen role/skill.`;
+        }
+        return `Selected optional skill(s): ${skillList}. Materialize the current-cycle selection artifact with classify-change before implementation, then activate the selected skill.`;
+    }
+    if (input.recommendedMissingPackIds.length > 0) {
+        return `No installed optional skill is selected; missing pack recommendation(s): ${input.recommendedMissingPackIds.join(', ')}. Inspect the compact skill catalog before implementation and either install/select a pack through the supported flow or proceed with the recorded no-specialized-skill decision.`;
+    }
+    const reason = input.asIsReason || 'generic_context_sufficient';
+    const catalogHint = input.headlinesPath
+        ? ` Compact catalog: ${input.headlinesPath}.`
+        : '';
+    return `No specialized optional skill selected; current-cycle evidence records as_is (${reason}). Inspect the compact skill catalog if that looks wrong; otherwise this is the explicit no-specialized-skill-needed decision.${catalogHint}`;
+}
+
 export function buildOptionalSkillsDiagnostics(
     repoRoot: string,
     targetRoot: string,
@@ -469,6 +500,18 @@ export function buildOptionalSkillsDiagnostics(
                 selected_installed_skill_activation_ready: false,
                 selected_installed_skill_activation_blocker: null,
                 selected_installed_skill_activation_commands: [],
+                skill_catalog_path: toPortableRepoPath(targetRoot, path.join(bundleRoot, 'live', 'config', 'skills-headlines.json')),
+                task_start_instruction: buildOptionalSkillTaskStartInstruction({
+                    policyMode: policyConfig.mode,
+                    decision: null,
+                    selectedSkillIds: [],
+                    recommendedMissingPackIds: [],
+                    asIsReason: 'policy_off',
+                    artifactPath: portableArtifactPath,
+                    headlinesPath: toPortableRepoPath(targetRoot, path.join(bundleRoot, 'live', 'config', 'skills-headlines.json')),
+                    activationReady: false,
+                    activationCommands: []
+                }),
                 recommended_missing_packs: [],
                 as_is_reason: 'policy_off',
                 visible_summary_line: 'Optional skills: as_is (reason: policy_off)',
@@ -551,22 +594,41 @@ export function buildOptionalSkillsDiagnostics(
         } else if (previewViolations.length > 0) {
             blocker = previewViolations.join(' ');
         }
+        const selectedSkillIds = preview.payload.selected_installed_skills.map((entry) => entry.id);
+        const selectedSkillPaths = preview.payload.selected_installed_skills.map((entry) => entry.allowed_skill_path);
+        const activationCommands = activationReady
+            ? preview.payload.selected_installed_skills.map((entry) => (
+                buildOptionalSkillActivationCommand(repoRoot, taskId, entry.id)
+            ))
+            : [];
+        const recommendedPackIds = preview.payload.recommended_missing_packs.map((entry) => entry.id);
+        const skillCatalogPath = preview.payload.headlines_path
+            ? preview.payload.headlines_path.replace(/\\/g, '/')
+            : toPortableRepoPath(targetRoot, path.join(bundleRoot, 'live', 'config', 'skills-headlines.json'));
         return {
             artifact_path: portableArtifactPath,
             artifact_present: currentCycleArtifact !== null,
             current_policy_mode: policyConfig.mode,
             policy_mode: policyMode,
             decision: preview.payload.decision,
-            selected_installed_skills: preview.payload.selected_installed_skills.map((entry) => entry.id),
-            selected_installed_skill_paths: preview.payload.selected_installed_skills.map((entry) => entry.allowed_skill_path),
+            selected_installed_skills: selectedSkillIds,
+            selected_installed_skill_paths: selectedSkillPaths,
             selected_installed_skill_activation_ready: activationReady,
             selected_installed_skill_activation_blocker: activationBlocker,
-            selected_installed_skill_activation_commands: activationReady
-                ? preview.payload.selected_installed_skills.map((entry) => (
-                    buildOptionalSkillActivationCommand(repoRoot, taskId, entry.id)
-                ))
-                : [],
-            recommended_missing_packs: preview.payload.recommended_missing_packs.map((entry) => entry.id),
+            selected_installed_skill_activation_commands: activationCommands,
+            skill_catalog_path: skillCatalogPath,
+            task_start_instruction: buildOptionalSkillTaskStartInstruction({
+                policyMode,
+                decision: preview.payload.decision,
+                selectedSkillIds,
+                recommendedMissingPackIds: recommendedPackIds,
+                asIsReason: preview.payload.as_is_reason,
+                artifactPath: portableArtifactPath,
+                headlinesPath: skillCatalogPath,
+                activationReady,
+                activationCommands
+            }),
+            recommended_missing_packs: recommendedPackIds,
             as_is_reason: preview.payload.as_is_reason,
             visible_summary_line: preview.payload.visible_summary_line,
             blocker

@@ -165,6 +165,33 @@ export function formatNextStepText(result: NextStepResult): string {
     if (result.project_memory) {
         lines.push(result.project_memory.visible_summary_line);
     }
+    if (result.optional_skill_selection) {
+        const optionalSkills = result.optional_skill_selection;
+        if (optionalSkills.visible_summary_line) {
+            lines.push(optionalSkills.visible_summary_line);
+        }
+        lines.push(
+            `OptionalSkillDecision: policy=${optionalSkills.policy_mode || 'unknown'}; ` +
+            `decision=${optionalSkills.decision || 'unknown'}; artifact=${optionalSkills.artifact_path || 'none'}; ` +
+            `present=${optionalSkills.artifact_present}`
+        );
+        if (optionalSkills.selected_skill_ids.length > 0) {
+            lines.push(`OptionalSkillSelected: ${optionalSkills.selected_skill_ids.join(', ')}`);
+        }
+        if (optionalSkills.recommended_missing_pack_ids.length > 0) {
+            lines.push(`OptionalSkillRecommendedMissingPacks: ${optionalSkills.recommended_missing_pack_ids.join(', ')}`);
+        }
+        if (optionalSkills.skill_catalog_path) {
+            lines.push(`OptionalSkillCatalog: ${optionalSkills.skill_catalog_path}`);
+        }
+        lines.push(`OptionalSkillTaskStartInstruction: ${optionalSkills.task_start_instruction}`);
+        if (optionalSkills.activation_commands.length > 0) {
+            lines.push('OptionalSkillActivationCommands:');
+            for (const command of optionalSkills.activation_commands) {
+                lines.push(`  - ${command}`);
+            }
+        }
+    }
     lines.push(`ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
     if (result.review.required_reviews.length > 0) {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);

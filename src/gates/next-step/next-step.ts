@@ -70,6 +70,9 @@ import {
     type TaskModeMarkdownWorkingPlanMetadata
 } from '../task-mode/task-mode';
 import {
+    readOptionalSkillSelectionArtifact
+} from '../../runtime/optional-skill-selection';
+import {
     readStartupCycleReadiness
 } from './next-step-startup-readiness';
 import {
@@ -351,6 +354,20 @@ export interface NextStepProfileSummary {
     token_economy_active_for_depth: boolean | null;
 }
 
+export interface NextStepOptionalSkillSelectionSummary {
+    artifact_path: string | null;
+    artifact_present: boolean;
+    policy_mode: string | null;
+    decision: string | null;
+    selected_skill_ids: string[];
+    recommended_missing_pack_ids: string[];
+    as_is_reason: string | null;
+    visible_summary_line: string | null;
+    activation_commands: string[];
+    skill_catalog_path: string | null;
+    task_start_instruction: string;
+}
+
 export type {
     NextStepReviewCycleAutoSplitPrompt,
     NextStepReviewCycleBlock,
@@ -376,6 +393,7 @@ export interface NextStepResult {
     audit_status: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
     markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
+    optional_skill_selection: NextStepOptionalSkillSelectionSummary | null;
     warnings: string[];
     invalidation_impact: NextStepInvalidationImpactSummary | null;
     review_cycle_block: NextStepReviewCycleBlock | null;
@@ -744,6 +762,99 @@ function getOrdinaryDocReviewSkips(preflight: Record<string, unknown> | null): {
         .sort((left, right) => left.path.localeCompare(right.path) || left.pattern.localeCompare(right.pattern));
 }
 
+function readStringArrayFromObjects(value: unknown, fieldName: string): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value
+        .map((entry) => {
+            if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                return null;
+            }
+            return String((entry as Record<string, unknown>)[fieldName] || '').trim() || null;
+        })
+        .filter((entry): entry is string => entry !== null)
+        .sort();
+}
+
+function buildOptionalSkillTaskStartInstruction(input: {
+    policyMode: string | null;
+    selectedSkillIds: string[];
+    recommendedMissingPackIds: string[];
+    asIsReason: string | null;
+    skillCatalogPath: string | null;
+    activationCommands: string[];
+}): string {
+    if (input.policyMode === 'off') {
+        return 'Optional skill selection is disabled by policy; proceed without specialized optional skill activation.';
+    }
+    if (input.selectedSkillIds.length > 0) {
+        const skillList = input.selectedSkillIds.join(', ');
+        if (input.activationCommands.length > 0) {
+            return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the chosen role/skill.`;
+        }
+        return `Selected optional skill(s): ${skillList}. Rerun the navigator until classify-change materializes current-cycle selection evidence, then activate the selected skill before implementation.`;
+    }
+    if (input.recommendedMissingPackIds.length > 0) {
+        return `No installed optional skill is selected; missing pack recommendation(s): ${input.recommendedMissingPackIds.join(', ')}. Inspect the compact skill catalog before implementation and either install/select a pack through the supported flow or proceed with the recorded no-specialized-skill decision.`;
+    }
+    const reason = input.asIsReason || 'generic_context_sufficient';
+    const catalogHint = input.skillCatalogPath ? ` Compact catalog: ${input.skillCatalogPath}.` : '';
+    return `No specialized optional skill selected; current-cycle evidence records as_is (${reason}). Inspect the compact skill catalog if that looks wrong; otherwise this is the explicit no-specialized-skill-needed decision.${catalogHint}`;
+}
+
+function buildOptionalSkillSelectionSummary(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    preflight: Record<string, unknown> | null
+): NextStepOptionalSkillSelectionSummary | null {
+    const preflightOptional = preflight?.optional_skill_selection;
+    if (!preflightOptional || typeof preflightOptional !== 'object' || Array.isArray(preflightOptional)) {
+        return null;
+    }
+    const preflightOptionalRecord = preflightOptional as Record<string, unknown>;
+    const artifactPath = normalizePath(String(preflightOptionalRecord.artifact_path || '').trim());
+    const resolvedArtifactPath = artifactPath
+        ? resolvePathInsideRepo(artifactPath, repoRoot, { allowMissing: true })
+        : null;
+    const artifact = readOptionalSkillSelectionArtifact(
+        path.join(repoRoot, resolveBundleNameForTarget(repoRoot)),
+        taskId
+    );
+    const artifactPayload = artifact?.payload || null;
+    const selectedSkillIds = readStringArrayFromObjects(artifactPayload?.selected_installed_skills, 'id');
+    const recommendedMissingPackIds = readStringArrayFromObjects(artifactPayload?.recommended_missing_packs, 'id');
+    const policyMode = String(preflightOptionalRecord.policy_mode || artifactPayload?.policy_mode || '').trim() || null;
+    const decision = String(preflightOptionalRecord.decision || artifactPayload?.decision || '').trim() || null;
+    const asIsReason = String(artifactPayload?.as_is_reason || '').trim() || null;
+    const visibleSummaryLine = String(preflightOptionalRecord.visible_summary_line || artifactPayload?.visible_summary_line || '').trim() || null;
+    const skillCatalogPath = String(artifactPayload?.headlines_path || '').trim() || null;
+    const activationCommands = selectedSkillIds.map((skillId) => (
+        `${cliPrefix} gate activate-optional-skill --task-id "${taskId}" --skill-id "${skillId}" --repo-root "."`
+    ));
+    return {
+        artifact_path: artifactPath || null,
+        artifact_present: resolvedArtifactPath ? fs.existsSync(resolvedArtifactPath) : false,
+        policy_mode: policyMode,
+        decision,
+        selected_skill_ids: selectedSkillIds,
+        recommended_missing_pack_ids: recommendedMissingPackIds,
+        as_is_reason: asIsReason,
+        visible_summary_line: visibleSummaryLine,
+        activation_commands: decision === 'selected_installed_skills' ? activationCommands : [],
+        skill_catalog_path: skillCatalogPath,
+        task_start_instruction: buildOptionalSkillTaskStartInstruction({
+            policyMode,
+            selectedSkillIds,
+            recommendedMissingPackIds,
+            asIsReason,
+            skillCatalogPath,
+            activationCommands: decision === 'selected_installed_skills' ? activationCommands : []
+        })
+    };
+}
+
 function buildResult(params: {
     taskId: string;
     navigatorCommand: string;
@@ -760,6 +871,7 @@ function buildResult(params: {
     auditStatus: TaskAuditSummaryResult['status'];
     profile: NextStepProfileSummary | null;
     markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
+    optionalSkillSelection?: NextStepOptionalSkillSelectionSummary | null;
     warnings?: string[];
     reviewCycleBlock?: NextStepReviewCycleBlock | null;
     finalReport?: NextStepFinalReportSummary | null;
@@ -799,6 +911,7 @@ function buildResult(params: {
         audit_status: params.auditStatus,
         profile: params.profile,
         markdown_working_plan: params.markdownWorkingPlan || null,
+        optional_skill_selection: params.optionalSkillSelection || null,
         warnings: params.warnings || [],
         invalidation_impact: invalidationImpact,
         review_cycle_block: params.reviewCycleBlock || null,
@@ -1056,6 +1169,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const taskIdCaseMismatch = taskEntry ? null : resolveTaskQueueCaseMismatch(taskEntries, taskId);
     const defaultExecutionProvider = resolveProviderFromEnvironment();
     const profileSummary = buildNextStepProfileSummary(repoRoot, taskEntry, taskMode, preflight);
+    const optionalSkillSelectionSummary = buildOptionalSkillSelectionSummary(repoRoot, cliPrefix, taskId, preflight);
     let workflowReviewPolicy: ResolvedReviewExecutionPolicyConfig = {
         mode: LEGACY_REVIEW_EXECUTION_POLICY_MODE,
         configured: false
@@ -1106,6 +1220,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             auditStatus: 'INCOMPLETE',
             profile: profileSummary,
             markdownWorkingPlan,
+            optionalSkillSelection: optionalSkillSelectionSummary,
             sourceRuntimeStaleness: detectSourceCheckoutRuntimeStaleness(repoRoot)
         });
     }
@@ -1231,6 +1346,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         review: reviewSummary,
         profile: profileSummary,
         markdownWorkingPlan,
+        optionalSkillSelection: optionalSkillSelectionSummary,
         auditStatus: summary.status,
         warnings: [] as string[],
         sourceRuntimeStaleness

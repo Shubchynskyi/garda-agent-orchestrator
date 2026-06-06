@@ -108,4 +108,141 @@ describe('next-step refactor contract baseline', () => {
         assert.match(result.commands[0]?.command ?? '', new RegExp(`--task-summary "${TASK_TITLE}"`, 'u'));
         assert.doesNotMatch(result.commands[0]?.command ?? '', /Wrong duplicate title/u);
     });
+
+    it('surfaces optional-skill selection guidance from current preflight evidence', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:00.000Z',
+            policy_mode: 'advisory',
+            decision: 'selected_installed_skills',
+            selected_installed_skills: [
+                {
+                    id: 'node-backend',
+                    pack: 'node-backend',
+                    source: 'installed_optional',
+                    allowed_skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md',
+                    reason_codes: ['task_signals'],
+                    matches: { task_signals: ['api endpoint'], changed_path_signals: [] }
+                }
+            ],
+            recommended_missing_packs: [],
+            as_is_reason: null,
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/api/orders.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: node-backend (reason: task_text)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/api/orders.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'advisory',
+                decision: 'selected_installed_skills',
+                visible_summary_line: 'Optional skills: node-backend (reason: task_text)'
+            }
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.optional_skill_selection?.decision, 'selected_installed_skills');
+        assert.deepEqual(result.optional_skill_selection?.selected_skill_ids, ['node-backend']);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /Run the activation command/i);
+        assert.match(text, /^OptionalSkillDecision: policy=advisory; decision=selected_installed_skills;/mu);
+        assert.match(text, /^OptionalSkillSelected: node-backend$/mu);
+        assert.match(text, /gate activate-optional-skill --task-id "T-CONTRACT-1" --skill-id "node-backend"/u);
+    });
+
+    it('surfaces compact catalog guidance when optional-skill evidence recommends missing packs', () => {
+        const repoRoot = makeContractRepo();
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        const optionalSkillArtifactPath = path.join(reviewsRoot, `${TASK_ID}-optional-skill-selection.json`);
+        const preflightPath = path.join(reviewsRoot, `${TASK_ID}-preflight.json`);
+        const optionalSkillArtifact = {
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: TASK_ID,
+            timestamp_utc: '2026-01-01T00:00:00.000Z',
+            policy_mode: 'advisory',
+            decision: 'recommended_missing_packs',
+            selected_installed_skills: [],
+            recommended_missing_packs: [
+                {
+                    id: 'telegram-bot',
+                    pack: 'telegram-bot',
+                    reason_codes: ['task_signals'],
+                    matches: { task_signals: ['telegram bot'], changed_path_signals: [] }
+                }
+            ],
+            as_is_reason: 'no_relevant_installed_skill',
+            task_text_present: true,
+            task_text_sha256: 'fixture-task-text',
+            changed_paths: ['src/bot/telegram.ts'],
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: 'fixture-preflight',
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: 'fixture-headlines',
+            visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
+        };
+        writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            scope_category: 'code',
+            changed_files: ['src/bot/telegram.ts'],
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            optional_skill_selection: {
+                artifact_path: optionalSkillArtifactPath.replace(/\\/g, '/'),
+                policy_mode: 'advisory',
+                decision: 'recommended_missing_packs',
+                visible_summary_line: 'Optional skills: recommended_missing_packs (packs: telegram-bot, reason: task_text)'
+            }
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.optional_skill_selection?.decision, 'recommended_missing_packs');
+        assert.deepEqual(result.optional_skill_selection?.selected_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.recommended_missing_pack_ids, ['telegram-bot']);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /missing pack recommendation\(s\): telegram-bot/i);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /compact skill catalog/i);
+        assert.match(text, /^OptionalSkillDecision: policy=advisory; decision=recommended_missing_packs;/mu);
+        assert.match(text, /^OptionalSkillRecommendedMissingPacks: telegram-bot$/mu);
+        assert.match(text, /^OptionalSkillCatalog: garda-agent-orchestrator\/live\/config\/skills-headlines\.json$/mu);
+        assert.match(text, /^OptionalSkillTaskStartInstruction: .*compact skill catalog/mu);
+    });
 });

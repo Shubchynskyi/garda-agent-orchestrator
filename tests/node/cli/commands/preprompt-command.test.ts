@@ -787,6 +787,9 @@ test('preprompt task --json shows optional skill selection preview from headline
         assert.equal(optionalSkills.selected_installed_skill_activation_ready, false);
         assert.match(String(optionalSkills.selected_installed_skill_activation_blocker || ''), /requires a current materialized selection artifact/i);
         assert.deepEqual(optionalSkills.selected_installed_skill_activation_commands, []);
+        assert.match(String(optionalSkills.skill_catalog_path || ''), /garda-agent-orchestrator\/live\/config\/skills-headlines\.json/);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /Selected optional skill\(s\): node-backend/);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /activate the selected skill/i);
         assert.match(String(optionalSkills.visible_summary_line || ''), /Optional skills: node-backend/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
@@ -955,6 +958,8 @@ test('preprompt task text output reports required optional-skill blocker before 
         const output = result.logs.join('\n');
         assert.match(output, /GARDA_PREPROMPT_TASK/);
         assert.match(output, /OptionalSkillTaskStartBlocker:/);
+        assert.match(output, /OptionalSkillTaskStartInstruction:/);
+        assert.match(output, /Selected optional skill\(s\): node-backend/);
         assert.match(output, /requires a materialized current-cycle selection artifact/i);
         assert.deepEqual(result.errors, []);
     } finally {
@@ -1227,6 +1232,9 @@ test('preprompt task --json recomputes advisory optional-skill preview instead o
         assert.equal(optionalSkills.artifact_present, true);
         assert.equal(optionalSkills.decision, 'as_is');
         assert.deepEqual(optionalSkills.selected_installed_skills, []);
+        assert.match(String(optionalSkills.skill_catalog_path || ''), /garda-agent-orchestrator\/live\/config\/skills-headlines\.json/);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /No specialized optional skill selected/);
+        assert.match(String(optionalSkills.task_start_instruction || ''), /Compact catalog: garda-agent-orchestrator\/live\/config\/skills-headlines\.json/);
         assert.match(String(optionalSkills.visible_summary_line || ''), /^Optional skills: as_is \(reason: /);
         assert.equal(optionalSkills.blocker, null);
     } finally {

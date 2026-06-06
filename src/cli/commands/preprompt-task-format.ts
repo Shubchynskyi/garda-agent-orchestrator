@@ -56,6 +56,10 @@ export function formatTaskBriefText(result: Record<string, unknown>): string {
     if (optionalSkillTaskStartBlocker) {
         lines.push(`OptionalSkillTaskStartBlocker: ${optionalSkillTaskStartBlocker}`);
     }
+    const optionalSkillTaskStartInstruction = getOptionalSkillTaskStartInstruction(result);
+    if (optionalSkillTaskStartInstruction) {
+        lines.push(`OptionalSkillTaskStartInstruction: ${optionalSkillTaskStartInstruction}`);
+    }
     const startupScopeBlocker = String(commands?.startup_scope_blocker || '').trim();
     if (startupScopeBlocker) {
         lines.push(`StartupScopeBlocker: ${startupScopeBlocker}`);
@@ -106,4 +110,17 @@ export function getOptionalSkillTaskStartBlocker(result: Record<string, unknown>
         return null;
     }
     return blocker;
+}
+
+export function getOptionalSkillTaskStartInstruction(result: Record<string, unknown>): string | null {
+    const diagnostics = result.diagnostics;
+    if (!diagnostics || typeof diagnostics !== 'object' || Array.isArray(diagnostics)) {
+        return null;
+    }
+    const optionalSkills = (diagnostics as Record<string, unknown>).optional_skills;
+    if (!optionalSkills || typeof optionalSkills !== 'object' || Array.isArray(optionalSkills)) {
+        return null;
+    }
+    const instruction = String((optionalSkills as Record<string, unknown>).task_start_instruction || '').trim();
+    return instruction || null;
 }
