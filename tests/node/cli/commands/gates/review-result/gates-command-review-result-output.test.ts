@@ -32,6 +32,26 @@ import {
 
 describe('gates command review result - review output', () => {
 
+    function removeInvocationDelegationTimestamps(repoRoot: string, taskId: string): void {
+        const timelinePath = path.join(getOrchestratorRoot(repoRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
+        const lines = fs.readFileSync(timelinePath, 'utf8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((line) => {
+                const event = JSON.parse(line) as Record<string, unknown>;
+                if (event.event_type === 'REVIEWER_INVOCATION_ATTESTED') {
+                    const details = event.details && typeof event.details === 'object' && !Array.isArray(event.details)
+                        ? event.details as Record<string, unknown>
+                        : {};
+                    delete details.delegation_started_at_utc;
+                    delete details.launched_at_utc;
+                    event.details = details;
+                }
+                return JSON.stringify(event);
+            });
+        fs.writeFileSync(timelinePath, `${lines.join('\n')}\n`, 'utf8');
+    }
+
     it('record-review-result rejects review output paths that escape through symlinked directories', async (t) => {
         const repoRoot = createTempRepo();
         const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-output-outside-'));
@@ -288,6 +308,206 @@ describe('gates command review result - review output', () => {
         assert.ok(capturedLogs.some((line) => line.includes('close or release the reviewer sub-agent session')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-result rejects path-mode output written before delegation-start evidence with stdin recovery', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-742-early-output';
+        try {
+            const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: fixture.reviewContextPath,
+                reviewerIdentity: fixture.reviewerIdentity
+            });
+            const reviewOutputDir = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                'reviews',
+                taskId,
+                'code'
+            );
+            const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+            fs.mkdirSync(reviewOutputDir, { recursive: true });
+            fs.writeFileSync(reviewOutputPath, [
+                '# Review',
+                '',
+                '## Validation Notes',
+                'Validated `src/cli/commands/gate-review-handlers/result/review-result-handlers.ts` and the delegated reviewer ordering recovery path with concrete receipt timing, provenance, path-mode mtime, and stdin-rematerialization checks so this fixture is substantive.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Deferred Findings',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+            const beforeDelegationStarted = new Date(Date.parse(TEST_REVIEW_LAUNCHED_AT_UTC) - 1000);
+            fs.utimesSync(reviewOutputPath, beforeDelegationStarted, beforeDelegationStarted);
+
+            const result = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', fixture.preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ], { cwd: repoRoot });
+
+            assert.notEqual(result.exitCode, 0);
+            const errors = result.errors.join('\n');
+            assert.match(errors, /Review output path-mode timing is impossible/);
+            assert.match(errors, /review_output_source_mtime_utc .* is earlier than delegation_started_at_utc/);
+            assert.match(errors, /Safe recovery: rerun record-review-result by piping the same delegated reviewer output through stdin/);
+            assert.match(errors, /PowerShell-safe command:/);
+            assert.match(errors, /Get-Content -Raw -LiteralPath/);
+            assert.match(errors, /review-output\.md' \| node/);
+            assert.match(errors, /node (?:bin\/garda\.js|garda-agent-orchestrator\/bin\/garda\.js) gate record-review-result/);
+            assert.match(errors, /--review-output-stdin/);
+            assert.match(errors, /--reviewer-identity 'agent:T-742-early-output-reviewer'/);
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+            assert.equal(fs.existsSync(reviewOutputPath), true);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('record-review-result rejects path-mode output when delegation-start timing is ambiguous', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-742-ambiguous-output';
+        try {
+            const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: fixture.reviewContextPath,
+                reviewerIdentity: fixture.reviewerIdentity
+            });
+            removeInvocationDelegationTimestamps(repoRoot, taskId);
+            const reviewOutputDir = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'runtime',
+                'tmp',
+                'reviews',
+                taskId,
+                'code'
+            );
+            const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+            fs.mkdirSync(reviewOutputDir, { recursive: true });
+            fs.writeFileSync(reviewOutputPath, [
+                '# Review',
+                '',
+                '## Validation Notes',
+                'Validated `src/cli/commands/gate-review-handlers/result/review-result-handlers.ts` for ambiguous delegated timing rejection, receipt rollback, and stdin recovery guidance.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Deferred Findings',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+
+            const result = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', fixture.preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ], { cwd: repoRoot });
+
+            assert.notEqual(result.exitCode, 0);
+            const errors = result.errors.join('\n');
+            assert.match(errors, /Review output path-mode timing is ambiguous/);
+            assert.match(errors, /delegation_started_at_utc is missing or invalid/);
+            assert.match(errors, /Get-Content -Raw -LiteralPath/);
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('record-review-result prints stdin pipe recovery for canonical raw output paths too', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-742-canonical-early-output';
+        try {
+            const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+            attestReviewerInvocationForTest({
+                repoRoot,
+                taskId,
+                reviewType: 'code',
+                reviewContextPath: fixture.reviewContextPath,
+                reviewerIdentity: fixture.reviewerIdentity
+            });
+            const reviewOutputPath = path.join(fixture.reviewsRoot, `${taskId}-code-review-output.md`);
+            fs.writeFileSync(reviewOutputPath, [
+                '# Review',
+                '',
+                '## Validation Notes',
+                'Validated `src/cli/commands/gate-review-handlers/result/review-result-handlers.ts` and canonical raw review output path recovery for delegated review timing, stdin rematerialization, and receipt rollback behavior with concrete path-mode mtime evidence.',
+                '',
+                '## Findings by Severity',
+                'none',
+                '',
+                '## Deferred Findings',
+                'none',
+                '',
+                '## Residual Risks',
+                'none',
+                '',
+                '## Verdict',
+                'REVIEW PASSED'
+            ].join('\n'), 'utf8');
+            const beforeDelegationStarted = new Date(Date.parse(TEST_REVIEW_LAUNCHED_AT_UTC) - 1000);
+            fs.utimesSync(reviewOutputPath, beforeDelegationStarted, beforeDelegationStarted);
+
+            const result = await runCliWithCapturedOutput([
+                'gate',
+                'record-review-result',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--preflight-path', fixture.preflightPath,
+                '--review-output-path', reviewOutputPath,
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent',
+                '--reviewer-identity', fixture.reviewerIdentity
+            ], { cwd: repoRoot });
+
+            assert.notEqual(result.exitCode, 0);
+            const errors = result.errors.join('\n');
+            assert.match(errors, /Review output path-mode timing is impossible/);
+            assert.match(errors, /Get-Content -Raw -LiteralPath/);
+            assert.match(errors, new RegExp(`${taskId}-code-review-output\\.md' \\| node`));
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code.md`)), false);
+            assert.equal(fs.existsSync(path.join(fixture.reviewsRoot, `${taskId}-code-receipt.json`)), false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('record-review-result accepts stdin reviewer output only through the same audited raw-artifact path', async () => {
