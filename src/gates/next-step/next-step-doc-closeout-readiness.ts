@@ -365,6 +365,14 @@ function shouldDefaultDocImpactBehaviorChanged(
     return hasNonDocumentationPreflightScope(preflight, repoRoot);
 }
 
+function shouldDefaultInternalOnlyBehaviorChanged(
+    preflight: Record<string, unknown> | null,
+    repoRoot: string,
+    docsUpdated: string[]
+): boolean {
+    return docsUpdated.length === 0 && hasNonDocumentationPreflightScope(preflight, repoRoot);
+}
+
 export function buildDocImpactCommand(
     cliPrefix: string,
     taskId: string,
@@ -379,6 +387,7 @@ export function buildDocImpactCommand(
     ])].sort();
     const changelogUpdated = docsUpdated.some((filePath) => isChangelogPath(filePath));
     const behaviorChanged = shouldDefaultDocImpactBehaviorChanged(preflight, repoRoot, docsUpdated);
+    const internalOnlyBehaviorChanged = shouldDefaultInternalOnlyBehaviorChanged(preflight, repoRoot, docsUpdated);
     const parts = [
         `${cliPrefix} gate doc-impact-gate`,
         `--task-id ${quoteCommandValue(taskId)}`,
@@ -393,8 +402,11 @@ export function buildDocImpactCommand(
         parts.push(`--changelog-updated ${changelogUpdated ? 'true' : 'false'}`);
     } else {
         parts.push('--decision "NO_DOC_UPDATES"');
-        parts.push('--behavior-changed false');
+        parts.push(`--behavior-changed ${internalOnlyBehaviorChanged ? 'true' : 'false'}`);
         parts.push('--changelog-updated false');
+        if (internalOnlyBehaviorChanged) {
+            parts.push('--project-memory-updated true');
+        }
     }
     if (requiresSensitiveScopeDocAcknowledgement(preflight)) {
         parts.push('--sensitive-scope-reviewed true');
@@ -403,7 +415,9 @@ export function buildDocImpactCommand(
         ? behaviorChanged
             ? '--rationale "Changelog and implementation files changed in the current preflight; recording documentation impact as behavior-changing by default. Adjust only if the changelog entry is not user-visible behavior."'
             : '--rationale "Documentation or changelog files were changed in the current preflight; next-step records them without requiring a fresh code/test review when non-doc scope is unchanged."'
-        : '--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."');
+        : internalOnlyBehaviorChanged
+            ? '--rationale "Implementation files changed with no user-facing documentation paths; recording internal-only behavior evidence. Update task-scoped project memory before running if this command reports missing internal evidence."'
+            : '--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."');
     parts.push('--repo-root "."');
     return parts.join(' ');
 }

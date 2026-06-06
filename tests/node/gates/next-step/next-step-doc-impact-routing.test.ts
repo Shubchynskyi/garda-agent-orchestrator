@@ -1969,9 +1969,10 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('gate doc-impact-gate'));
         assert.ok(!result.commands[0].command.includes('<'));
         assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
-        assert.ok(result.commands[0].command.includes('--behavior-changed false'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed true'));
         assert.ok(result.commands[0].command.includes('--changelog-updated false'));
-        assert.ok(result.commands[0].command.includes('--rationale "No user-facing documentation impact detected by next-step; adjust this command before running if docs or behavior changed."'));
+        assert.ok(result.commands[0].command.includes('--project-memory-updated true'));
+        assert.ok(result.commands[0].command.includes('--rationale "Implementation files changed with no user-facing documentation paths; recording internal-only behavior evidence. Update task-scoped project memory before running if this command reports missing internal evidence."'));
     });
 
     it('suggests DOCS_UPDATED when changelog changed in the current preflight', () => {
