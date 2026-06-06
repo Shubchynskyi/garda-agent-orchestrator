@@ -35,7 +35,7 @@ export function buildProjectMemoryImpactCommand(
         `--mode ${quoteCommandValue(projectMemory.mode)}`,
         `--preflight-path "${preflightCommandPath}"`
     ];
-    if (projectMemory.evidence_status === 'BLOCKED' && projectMemory.affected_memory_files.length > 0) {
+    if (projectMemory.update_needed === true && projectMemory.affected_memory_files.length > 0) {
         parts.push('--confirm-updated');
         for (const file of projectMemory.affected_memory_files) {
             parts.push(`--updated-memory-file ${quoteCommandValue(file)}`);

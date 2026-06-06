@@ -536,9 +536,14 @@ function writePreflight(
     return preflightPath;
 }
 
-function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
+function seedCompilePass(
+    repoRoot: string,
+    taskId: string,
+    timestampUtc?: string,
+    changedFiles: string[] = ['src/app.ts']
+): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
-    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
         timestamp_utc: timestampUtc || new Date().toISOString(),
         task_id: taskId,
@@ -1349,6 +1354,33 @@ describe('gates/next-step', () => {
         assert.equal(result.project_memory?.evidence_status, 'CURRENT');
         assert.equal(result.project_memory?.status, 'NO_UPDATE_NEEDED');
         assert.ok(result.commands[0].command.includes('gate completion-gate'));
+    });
+
+    it('prints a project-memory confirmation command when missing evidence already has known affected files', () => {
+        const repoRoot = makeTempRepo();
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'update' });
+        seedProjectMemory(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const changedFiles = ['src/gates/project-memory-impact.ts'];
+        const impactedSourcePath = path.join(repoRoot, changedFiles[0]);
+        fs.mkdirSync(path.dirname(impactedSourcePath), { recursive: true });
+        fs.writeFileSync(impactedSourcePath, 'export const impacted = true;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+        seedCompilePass(repoRoot, TASK_ID, undefined, changedFiles);
+        seedReviewGatePass(repoRoot, TASK_ID);
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'project-memory-impact');
+        assert.equal(result.project_memory?.evidence_status, 'MISSING');
+        assert.equal(result.project_memory?.update_needed, true);
+        assert.match(result.commands[0].command, /--mode "update"/);
+        assert.match(result.commands[0].command, /--confirm-updated/);
+        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md"/);
+        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/decisions\.md"/);
+        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/risks\.md"/);
     });
 
     it('prints a ready-to-run project-memory confirmation command when current evidence is blocked', () => {
