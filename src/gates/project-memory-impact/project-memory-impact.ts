@@ -10,7 +10,8 @@ import { toRepoPath, uniqueSorted } from './project-memory-impact-common';
 import {
     buildProjectMemoryVisibleSummary,
     compareImpactArtifactToExpected,
-    readImpactArtifact
+    readImpactArtifact,
+    resolveLifecycleCompactStatus
 } from './project-memory-impact-artifacts';
 import {
     buildAffectedMemoryPaths,
@@ -152,6 +153,12 @@ export function getProjectMemoryImpactLifecycleEvidence(input: {
     const compactRefreshed = actual.update_evidence.status === 'NOT_REQUIRED'
         ? false
         : readUpdateEvidence(runtime.updateArtifactPath)?.compact_refreshed ?? null;
+    const lifecycleCompactStatus = resolveLifecycleCompactStatus({
+        compactStatus: actual.compact.status,
+        impactStatus: actual.status,
+        evidenceStatus,
+        compactRefreshed
+    });
     return {
         required: true,
         enabled: true,
@@ -166,7 +173,7 @@ export function getProjectMemoryImpactLifecycleEvidence(input: {
         update_needed: actual.update_needed,
         affected_memory_files: actual.affected_memory_files,
         updated_memory_files: actual.update_evidence.updated_memory_files,
-        compact_status: actual.compact.status,
+        compact_status: lifecycleCompactStatus,
         compact_refreshed: compactRefreshed,
         visible_summary_line: buildProjectMemoryVisibleSummary({
             required: true,
@@ -176,7 +183,7 @@ export function getProjectMemoryImpactLifecycleEvidence(input: {
             status: actual.status,
             updateNeeded: actual.update_needed,
             updatedMemoryFiles: actual.update_evidence.updated_memory_files,
-            compactStatus: actual.compact.status,
+            compactStatus: lifecycleCompactStatus,
             compactRefreshed
         }),
         violations

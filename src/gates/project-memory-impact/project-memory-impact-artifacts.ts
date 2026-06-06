@@ -9,6 +9,7 @@ import {
     type ProjectMemoryImpactArtifact,
     type ProjectMemoryImpactEvidenceStatus,
     type ProjectMemoryImpactStatus,
+    type ProjectMemoryLifecycleCompactStatus,
     type ProjectMemoryUpdateEvidenceStatus
 } from './project-memory-impact-types';
 
@@ -191,7 +192,7 @@ export function buildProjectMemoryVisibleSummary(input: {
     status: ProjectMemoryImpactStatus | null;
     updateNeeded: boolean | null;
     updatedMemoryFiles: readonly string[];
-    compactStatus: string | null;
+    compactStatus: ProjectMemoryLifecycleCompactStatus | null;
     compactRefreshed: boolean | null;
 }): string {
     const statusText = input.status || input.evidenceStatus;
@@ -207,4 +208,21 @@ export function buildProjectMemoryVisibleSummary(input: {
         `compact_refreshed=${input.compactRefreshed == null ? 'unknown' : input.compactRefreshed}`
     ];
     return parts.join('; ');
+}
+
+export function resolveLifecycleCompactStatus(input: {
+    compactStatus: 'OK' | 'MISSING' | 'OVERFLOW';
+    impactStatus: ProjectMemoryImpactStatus | null;
+    evidenceStatus: ProjectMemoryImpactEvidenceStatus;
+    compactRefreshed: boolean | null;
+}): ProjectMemoryLifecycleCompactStatus {
+    if (
+        input.compactStatus === 'OVERFLOW'
+        && input.impactStatus === 'UPDATED'
+        && input.evidenceStatus === 'CURRENT'
+        && input.compactRefreshed === true
+    ) {
+        return 'REFRESHED_OVERFLOW_ACKNOWLEDGED';
+    }
+    return input.compactStatus;
 }

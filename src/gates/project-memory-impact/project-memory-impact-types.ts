@@ -5,6 +5,7 @@ export type ProjectMemoryImpactStatus = 'OFF' | 'NO_UPDATE_NEEDED' | 'UPDATE_NEE
 export type ProjectMemoryUpdateEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'VALID' | 'STALE' | 'TAMPERED' | 'INVALID';
 export type ProjectMemoryImpactEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'CURRENT' | 'STALE' | 'BLOCKED' | 'INVALID';
 export type ProjectMemoryChangedFilesSource = 'preflight' | 'explicit';
+export type ProjectMemoryLifecycleCompactStatus = 'OK' | 'MISSING' | 'OVERFLOW' | 'REFRESHED_OVERFLOW_ACKNOWLEDGED';
 
 export const PROJECT_MEMORY_IMPACT_ASSESSED_EVENT = 'PROJECT_MEMORY_IMPACT_ASSESSED';
 export const PROJECT_MEMORY_IMPACT_BLOCKED_EVENT = 'PROJECT_MEMORY_IMPACT_BLOCKED';
@@ -93,7 +94,7 @@ export interface ProjectMemoryImpactLifecycleEvidence {
     update_needed: boolean | null;
     affected_memory_files: string[];
     updated_memory_files: string[];
-    compact_status: 'OK' | 'MISSING' | 'OVERFLOW' | null;
+    compact_status: ProjectMemoryLifecycleCompactStatus | null;
     compact_refreshed: boolean | null;
     visible_summary_line: string;
     violations: string[];

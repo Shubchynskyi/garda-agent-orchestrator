@@ -263,6 +263,121 @@ describe('assessProjectMemoryImpact', () => {
         });
     });
 
+    it('acknowledges refreshed compact overflow in lifecycle summaries after valid update evidence', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-113';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: ['src/gates/project-memory-impact.ts']
+            }, null, 2), 'utf8');
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.writeFileSync(path.join(memoryRoot, 'compact.md'), 'x'.repeat(13000), 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId,
+                preflightPath,
+                confirmUpdated: true,
+                updatedMemoryFiles: [
+                    'garda-agent-orchestrator/live/docs/project-memory/commands.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+                ]
+            });
+            assert.equal(result.artifact.status, 'UPDATED');
+            assert.equal(result.artifact.compact.status, 'OVERFLOW');
+            assert.ok(result.updateEvidenceToWrite);
+            fs.mkdirSync(path.dirname(result.artifactPath), { recursive: true });
+            fs.mkdirSync(path.dirname(result.updateArtifactPath), { recursive: true });
+            fs.writeFileSync(result.updateArtifactPath, JSON.stringify(result.updateEvidenceToWrite, null, 2), 'utf8');
+            fs.writeFileSync(result.artifactPath, JSON.stringify(result.artifact, null, 2), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+            assert.equal(evidence.evidence_status, 'CURRENT');
+            assert.equal(evidence.status, 'UPDATED');
+            assert.equal(evidence.compact_status, 'REFRESHED_OVERFLOW_ACKNOWLEDGED');
+            assert.equal(evidence.compact_refreshed, true);
+            assert.equal(evidence.visible_summary_line.includes('compact=OVERFLOW'), false);
+            assert.ok(evidence.visible_summary_line.includes('compact=REFRESHED_OVERFLOW_ACKNOWLEDGED'));
+        });
+    });
+
+    it('does not acknowledge refreshed compact overflow when lifecycle impact evidence is stale', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-114';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: ['src/gates/project-memory-impact.ts']
+            }, null, 2), 'utf8');
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.writeFileSync(path.join(memoryRoot, 'compact.md'), 'x'.repeat(13000), 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId,
+                preflightPath,
+                confirmUpdated: true,
+                updatedMemoryFiles: [
+                    'garda-agent-orchestrator/live/docs/project-memory/commands.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+                    'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+                ]
+            });
+            assert.equal(result.artifact.status, 'UPDATED');
+            assert.ok(result.updateEvidenceToWrite);
+            fs.mkdirSync(path.dirname(result.artifactPath), { recursive: true });
+            fs.mkdirSync(path.dirname(result.updateArtifactPath), { recursive: true });
+            fs.writeFileSync(result.updateArtifactPath, JSON.stringify(result.updateEvidenceToWrite, null, 2), 'utf8');
+            fs.writeFileSync(result.artifactPath, JSON.stringify(result.artifact, null, 2), 'utf8');
+            fs.writeFileSync(preflightPath, JSON.stringify({ changed_files: [] }, null, 2), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+            assert.equal(evidence.evidence_status, 'STALE');
+            assert.equal(evidence.status, 'UPDATED');
+            assert.equal(evidence.compact_status, 'OVERFLOW');
+            assert.equal(evidence.compact_refreshed, true);
+            assert.ok(evidence.visible_summary_line.includes('compact=OVERFLOW'));
+            assert.equal(evidence.visible_summary_line.includes('compact=REFRESHED_OVERFLOW_ACKNOWLEDGED'), false);
+        });
+    });
+
+    it('does not acknowledge compact overflow when update evidence is missing', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-115';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({
+                changed_files: ['src/gates/project-memory-impact.ts']
+            }, null, 2), 'utf8');
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.writeFileSync(path.join(memoryRoot, 'compact.md'), 'x'.repeat(13000), 'utf8');
+
+            const result = assessProjectMemoryImpact({ repoRoot, taskId, preflightPath });
+            assert.equal(result.artifact.status, 'UPDATE_NEEDED');
+            assert.equal(result.artifact.update_evidence.status, 'MISSING');
+            fs.mkdirSync(path.dirname(result.artifactPath), { recursive: true });
+            fs.writeFileSync(result.artifactPath, JSON.stringify(result.artifact, null, 2), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+            assert.equal(evidence.evidence_status, 'CURRENT');
+            assert.equal(evidence.status, 'UPDATE_NEEDED');
+            assert.equal(evidence.compact_status, 'OVERFLOW');
+            assert.equal(evidence.compact_refreshed, null);
+            assert.ok(evidence.visible_summary_line.includes('compact=OVERFLOW'));
+            assert.equal(evidence.visible_summary_line.includes('compact=REFRESHED_OVERFLOW_ACKNOWLEDGED'), false);
+        });
+    });
+
     it('reports malformed lifecycle impact artifacts as INVALID instead of throwing', () => {
         withTempRepo((repoRoot) => {
             writeProjectMemoryWorkflowConfig(repoRoot);
