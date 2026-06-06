@@ -178,6 +178,24 @@ describe('gates/build-review-context prompt artifacts and scoped hashes', () => 
             assert.equal(manifest.artifacts.prompt_template.artifact_sha256, result.reviewer_handoff.prompt_template.artifact_sha256);
             assert.equal(manifest.artifacts.output_template.artifact_path, result.reviewer_handoff.output_template.artifact_path);
             assert.equal(manifest.artifacts.output_template.artifact_sha256, result.reviewer_handoff.output_template.artifact_sha256);
+            assert.deepEqual(manifest.evidence_roles.historical_authorization, [
+                'task_mode',
+                'task_mode.dirty_workspace_baseline'
+            ]);
+            assert.deepEqual(manifest.evidence_roles.current_verification, [
+                'preflight',
+                'scoped_diff',
+                'compile_gate',
+                'full_suite_validation',
+                'manual_validation',
+                'tree_state'
+            ]);
+            assert.equal(manifest.artifacts.task_mode.evidence_role, 'historical_authorization');
+            assert.equal(manifest.artifacts.task_mode.current_verification_source, false);
+            assert.equal(manifest.artifacts.task_mode.dirty_workspace_baseline.file_hashes_are_current, false);
+            assert.equal(manifest.artifacts.task_mode.dirty_workspace_baseline.evidence_role, 'historical_authorization_snapshot');
+            assert.ok(String(result.reviewer_handoff.instructions.join('\n')).includes('separates historical task-mode authorization snapshots from current verification bindings'));
+            assert.ok(String(result.reviewer_handoff.instructions.join('\n')).includes('Do not treat dirty_workspace_baseline.file_hashes from task-mode evidence as current file hashes'));
             assert.equal(manifest.artifacts.preflight.artifact_path, preflightPath.replace(/\\/g, '/'));
             assert.equal(manifest.artifacts.compile_gate.artifact_path.endsWith('/T-901-scope-compile-gate.json'), true);
             assert.equal(manifest.task_evidence.task_row.source_path.endsWith('/TASK.md'), true);

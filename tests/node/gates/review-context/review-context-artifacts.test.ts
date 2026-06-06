@@ -104,6 +104,14 @@ describe('gates/review-context-artifacts', () => {
             promptTemplateArtifactSha256: 'prompt-template-sha',
             outputTemplateArtifactSha256: 'output-template-sha',
             selectedSkill,
+            taskModePath: path.join('garda-agent-orchestrator', 'runtime', 'task-mode', 'T-001-task-mode.json'),
+            taskModeSha256: 'task-mode-sha',
+            taskModeEvidence: {
+                dirty_workspace_baseline: {
+                    changed_files: ['src/example.ts'],
+                    file_hashes: { 'src/example.ts': 'entry-sha' }
+                }
+            },
             preflightPath: path.join('garda-agent-orchestrator', 'runtime', 'reviews', 'T-001-preflight.json'),
             preflightSha256: 'preflight-sha',
             scopedDiffExpected: true,
@@ -121,6 +129,21 @@ describe('gates/review-context-artifacts', () => {
         assert.equal(result.evidenceManifest.review_type, 'code');
         assert.equal(result.evidenceManifest.selected_skill, selectedSkill);
         assert.equal(result.evidenceManifest.task_evidence, taskEvidence);
+        assert.deepEqual(result.evidenceManifest.evidence_roles, {
+            historical_authorization: [
+                'task_mode',
+                'task_mode.dirty_workspace_baseline'
+            ],
+            current_verification: [
+                'preflight',
+                'scoped_diff',
+                'compile_gate',
+                'full_suite_validation',
+                'manual_validation',
+                'tree_state'
+            ],
+            instruction: 'Historical task-mode authorization snapshots describe what was authorized at task entry. Use current verification artifacts for current file hashes, scoped diffs, compile/full-suite status, and review tree state.'
+        });
 
         const artifacts = result.evidenceManifest.artifacts as Record<string, Record<string, unknown>>;
         assert.equal(artifacts.review_context.artifact_path, outputPath.replace(/\\/g, '/'));
@@ -133,6 +156,24 @@ describe('gates/review-context-artifacts', () => {
         assert.equal(artifacts.prompt_template.artifact_sha256, 'prompt-template-sha');
         assert.equal(artifacts.output_template.artifact_path, paths.outputTemplateArtifactPath.replace(/\\/g, '/'));
         assert.equal(artifacts.output_template.artifact_sha256, 'output-template-sha');
+        assert.equal(artifacts.task_mode.artifact_path, 'garda-agent-orchestrator/runtime/task-mode/T-001-task-mode.json');
+        assert.equal(artifacts.task_mode.artifact_sha256, 'task-mode-sha');
+        assert.equal(artifacts.task_mode.evidence_role, 'historical_authorization');
+        assert.equal(artifacts.task_mode.current_verification_source, false);
+        assert.deepEqual(artifacts.task_mode.current_verification_artifacts, [
+            'preflight',
+            'scoped_diff',
+            'compile_gate',
+            'full_suite_validation',
+            'manual_validation',
+            'tree_state'
+        ]);
+        const taskModeDirtyBaseline = artifacts.task_mode.dirty_workspace_baseline as Record<string, unknown>;
+        assert.equal(taskModeDirtyBaseline.present, true);
+        assert.equal(taskModeDirtyBaseline.evidence_role, 'historical_authorization_snapshot');
+        assert.equal(taskModeDirtyBaseline.file_hashes_are_current, false);
+        assert.equal(taskModeDirtyBaseline.changed_file_count, 1);
+        assert.equal(taskModeDirtyBaseline.file_hash_count, 1);
         assert.equal(artifacts.preflight.artifact_sha256, 'preflight-sha');
         assert.equal(artifacts.scoped_diff.expected, true);
         assert.equal(artifacts.scoped_diff.diff_cache_path, gitDiff.cache_path);
