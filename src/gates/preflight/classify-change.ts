@@ -96,6 +96,18 @@ export function classifyChange(options: ClassifyChangeOptions) {
         }
     });
 
+    const scopeClassification = classifyScopeCategory(normalizedFiles, codeLike, runtimeRoots, {
+        ordinaryDocPaths: classificationConfig.ordinary_doc_paths,
+        protectedControlPlaneRoots: classificationConfig.protected_control_plane_roots,
+        testTriggerRegexes: classificationConfig.test_trigger_regexes,
+        sqlOrMigrationRegexes: classificationConfig.sql_or_migration_regexes,
+        dbTriggerRegexes: classificationConfig.db_trigger_regexes,
+        securityTriggerRegexes: classificationConfig.security_trigger_regexes,
+        apiTriggerRegexes: classificationConfig.api_trigger_regexes,
+        dependencyTriggerRegexes: classificationConfig.dependency_trigger_regexes
+    });
+    const testOnlyDomainReviewSuppressed = scopeClassification.category === 'test-only';
+
     const refactorIntentTriggered = hasRefactorIntent(taskIntent);
     const refactorHeuristicReasons = buildRefactorHeuristicReasons({
         runtimeChanged: pathTriggers.runtimeChanged,
@@ -119,7 +131,9 @@ export function classifyChange(options: ClassifyChangeOptions) {
         changedLinesTotal,
         performanceHeuristicMinLines
     });
-    const performanceTriggered = pathTriggers.performancePathTriggered || performanceHeuristicTriggered;
+    const rawPerformanceTriggered = pathTriggers.performancePathTriggered || performanceHeuristicTriggered;
+    const apiTriggered = pathTriggers.apiTriggered && !testOnlyDomainReviewSuppressed;
+    const performanceTriggered = rawPerformanceTriggered && !testOnlyDomainReviewSuppressed;
 
     const fastPathEligible = (
         pathTriggers.runtimeChanged
@@ -132,7 +146,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
 
     let mode = 'FULL_PATH';
     if (fastPathEligible && !pathTriggers.dbTriggered && !pathTriggers.securityTriggered && !refactorTriggered
-        && !pathTriggers.apiTriggered && !pathTriggers.dependencyTriggered && !pathTriggers.infraTriggered && !performanceTriggered) {
+        && !apiTriggered && !pathTriggers.dependencyTriggered && !pathTriggers.infraTriggered && !performanceTriggered) {
         mode = 'FAST_PATH';
     }
 
@@ -142,7 +156,7 @@ export function classifyChange(options: ClassifyChangeOptions) {
         dbTriggered: pathTriggers.dbTriggered,
         securityTriggered: pathTriggers.securityTriggered,
         refactorTriggered,
-        apiTriggered: pathTriggers.apiTriggered,
+        apiTriggered,
         testTriggered: pathTriggers.testTriggered,
         performanceTriggered,
         infraTriggered: pathTriggers.infraTriggered,
@@ -150,17 +164,6 @@ export function classifyChange(options: ClassifyChangeOptions) {
         reviewCapabilities
     });
     const zeroDiffDetected = normalizedFiles.length === 0 && changedLinesTotal === 0;
-
-    const scopeClassification = classifyScopeCategory(normalizedFiles, codeLike, runtimeRoots, {
-        ordinaryDocPaths: classificationConfig.ordinary_doc_paths,
-        protectedControlPlaneRoots: classificationConfig.protected_control_plane_roots,
-        testTriggerRegexes: classificationConfig.test_trigger_regexes,
-        sqlOrMigrationRegexes: classificationConfig.sql_or_migration_regexes,
-        dbTriggerRegexes: classificationConfig.db_trigger_regexes,
-        securityTriggerRegexes: classificationConfig.security_trigger_regexes,
-        apiTriggerRegexes: classificationConfig.api_trigger_regexes,
-        dependencyTriggerRegexes: classificationConfig.dependency_trigger_regexes
-    });
 
     return {
         detection_source: detectionSource,
@@ -194,7 +197,9 @@ export function classifyChange(options: ClassifyChangeOptions) {
             db_weak_signal_files: pathTriggers.dbWeakSignalFiles,
             db_project_evidence: pathTriggers.dbProjectEvidence,
             security: pathTriggers.securityTriggered,
-            api: pathTriggers.apiTriggered,
+            api: apiTriggered,
+            api_path_changed_files: pathTriggers.apiTriggeredFiles,
+            api_test_only_suppressed_files: testOnlyDomainReviewSuppressed ? pathTriggers.apiTriggeredFiles : [],
             test: pathTriggers.testTriggered,
             performance: performanceTriggered,
             infra: pathTriggers.infraTriggered,
@@ -208,6 +213,8 @@ export function classifyChange(options: ClassifyChangeOptions) {
             ordinary_doc_path_patterns: classificationConfig.ordinary_doc_paths,
             test_ordinary_doc_suppressed_files: pathTriggers.testOrdinaryDocSuppressedFiles,
             performance_path_changed_files: pathTriggers.performancePathTriggeredFiles,
+            performance_test_only_suppressed_files: testOnlyDomainReviewSuppressed ? pathTriggers.performancePathTriggeredFiles : [],
+            performance_test_only_suppressed_heuristic: testOnlyDomainReviewSuppressed && performanceHeuristicTriggered,
             performance_cache_candidate_files: pathTriggers.ordinaryCacheMaintenanceFiles,
             performance_cache_intent: pathTriggers.performanceCacheIntent,
             performance_cache_suppressed_files: pathTriggers.performanceCacheSuppressedFiles,

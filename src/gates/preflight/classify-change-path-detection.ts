@@ -38,6 +38,7 @@ export interface PathDetectionResult {
     dbProjectEvidence: string[];
     dbTriggered: boolean;
     securityTriggered: boolean;
+    apiTriggeredFiles: string[];
     apiTriggered: boolean;
     dependencyTriggered: boolean;
     infraTriggered: boolean;
@@ -93,7 +94,8 @@ export function detectPathTriggers(input: PathDetectionInput): PathDetectionResu
     const dbTriggered = dbStrongChangedFiles.length > 0
         || (dbWeakSignalFiles.length > 0 && dbProjectEvidence.length > 0);
     const securityTriggered = normalizedFiles.some((p: string) => callbacks.testMatch(p, classificationConfig.security_trigger_regexes));
-    const apiTriggered = normalizedFiles.some((p: string) => callbacks.testMatch(p, classificationConfig.api_trigger_regexes));
+    const apiTriggeredFiles = normalizedFiles.filter((p: string) => callbacks.testMatch(p, classificationConfig.api_trigger_regexes));
+    const apiTriggered = apiTriggeredFiles.length > 0;
     const dependencyTriggered = normalizedFiles.some((p: string) => callbacks.testMatch(p, classificationConfig.dependency_trigger_regexes));
     const infraTriggered = normalizedFiles.some((p: string) => callbacks.testMatch(p, classificationConfig.infra_trigger_regexes));
 
@@ -143,6 +145,7 @@ export function detectPathTriggers(input: PathDetectionInput): PathDetectionResu
         dbProjectEvidence,
         dbTriggered,
         securityTriggered,
+        apiTriggeredFiles,
         apiTriggered,
         dependencyTriggered,
         infraTriggered,

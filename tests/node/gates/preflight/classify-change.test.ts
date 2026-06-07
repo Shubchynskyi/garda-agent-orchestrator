@@ -281,6 +281,58 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.test, true);
         });
 
+        it('suppresses api and performance domain reviews for pure test-only maintenance', () => {
+            const result = classifyChange({
+                normalizedFiles: [
+                    'tests/api/routes.test.ts',
+                    'tests/performance/latency.test.ts'
+                ],
+                taskIntent: 'Split large API and performance test suites',
+                changedLinesTotal: 80,
+                additionsTotal: 42,
+                deletionsTotal: 38,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, api: true, performance: true, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.triggers.api, false);
+            assert.equal(result.triggers.performance, false);
+            assert.equal(result.required_reviews.test, true);
+            assert.equal(result.required_reviews.api, false);
+            assert.equal(result.required_reviews.performance, false);
+            assert.deepEqual((result.triggers as Record<string, unknown>).api_path_changed_files, ['tests/api/routes.test.ts']);
+            assert.deepEqual((result.triggers as Record<string, unknown>).api_test_only_suppressed_files, ['tests/api/routes.test.ts']);
+            assert.deepEqual((result.triggers as Record<string, unknown>).performance_path_changed_files, ['tests/performance/latency.test.ts']);
+            assert.deepEqual((result.triggers as Record<string, unknown>).performance_test_only_suppressed_files, ['tests/performance/latency.test.ts']);
+        });
+
+        it('suppresses performance heuristic for large api-shaped test-only maintenance', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/api/RequestContract.test.ts'],
+                taskIntent: 'Split large API contract test suite',
+                changedLinesTotal: 180,
+                additionsTotal: 92,
+                deletionsTotal: 88,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, api: true, performance: true, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.api, false);
+            assert.equal(result.triggers.performance, false);
+            assert.equal(result.required_reviews.api, false);
+            assert.equal(result.required_reviews.performance, false);
+            assert.equal(result.required_reviews.test, true);
+            assert.deepEqual((result.triggers as Record<string, unknown>).api_test_only_suppressed_files, ['tests/api/RequestContract.test.ts']);
+            assert.equal((result.triggers as Record<string, unknown>).performance_test_only_suppressed_heuristic, true);
+        });
+
         it('keeps protected control-plane documentation as docs-only without ordinary-doc trust', () => {
             const result = classifyChange({
                 normalizedFiles: ['garda-agent-orchestrator/live/docs/agent-rules/00-core.md'],
