@@ -347,6 +347,10 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
             console.log(`ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
             console.log(`ReviewerLaunchInputArtifactSha256: ${existingLaunchInputArtifactSha256}`);
+            console.log('StandbyResumeState: first_class_resumable_not_review_evidence');
+            console.log(`StandbyResumeInstruction: If the delegated reviewer session already reported standby completion, resume that same session and send the exact StandbyResumeInput line before recording delegation start.`);
+            console.log(`StandbyResumeInput: ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
+            console.log(`StandbyResumeInputSha256: ${existingLaunchInputArtifactSha256}`);
             console.log(`CopyPasteReviewerLaunchPromptSha256: ${stringSha256(copyPasteReviewerLaunchPrompt)}`);
             console.log('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags.');
             console.log('AttestationState: prepared');
@@ -631,6 +635,10 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`ReviewerLaunchArtifactSha256: ${launchArtifactSha256}`);
     console.log(`ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
     console.log(`ReviewerLaunchInputArtifactSha256: ${launchInputArtifactSha256}`);
+    console.log('StandbyResumeState: first_class_resumable_not_review_evidence');
+    console.log(`StandbyResumeInstruction: If the delegated reviewer session already reported standby completion, resume that same session and send the exact StandbyResumeInput line before recording delegation start.`);
+    console.log(`StandbyResumeInput: ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
+    console.log(`StandbyResumeInputSha256: ${launchInputArtifactSha256}`);
     console.log(`CopyPasteReviewerLaunchPromptSha256: ${copyPasteReviewerLaunchPromptSha256}`);
     console.log('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags.');
     console.log('AttestationState: prepared');

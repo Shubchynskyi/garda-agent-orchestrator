@@ -37,6 +37,7 @@ export interface DelegatedReviewReadinessRouteOptions {
     acceptedVerdictTokens: string;
     hiddenTimingTrustRemediation: string | null;
     reusedExistingReview: boolean;
+    standbyResumeHint: string | null;
     instructions: {
         opaqueHandoff: string;
         freshContextLaunch: string;
@@ -115,6 +116,7 @@ export function resolveDelegatedReviewReadinessRoute(
                     `Required review '${options.reviewType}' has prepared launch metadata for the current routing event and review context. ` +
                     `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff, then immediately run record-reviewer-delegation-started with the provider/controller invocation id so the gate records the real delegation start timestamp before the reviewer returns. For launch_artifact_path mode, pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256; do not invent a --launch-input-artifact-sha256 flag. Do not reconstruct reviewer prompts from memory. ` +
                     `Provider-owned placeholders in the command are only --provider-invocation-id and --attestation-source; replace them with the delegated reviewer launch result after provider launch. Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed. ` +
+                    `${options.standbyResumeHint ? `${options.standbyResumeHint} ` : ''}` +
                     `${REVIEWER_STANDBY_HANDOFF_GUIDANCE} ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
                     `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,

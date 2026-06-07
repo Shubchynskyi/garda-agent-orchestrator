@@ -2608,6 +2608,17 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskId,
             state
         );
+        const standbyResumeHint = launchArtifactEvidence.state === 'prepared'
+            && launchArtifactEvidence.launchInputArtifactPath
+            && launchArtifactEvidence.launchInputArtifactSha256
+            ? (
+                `ReviewerStandbyResumeHint: if reviewer '${reviewerIdentity}' already reported standby completion before launch input delivery, ` +
+                `resume the same provider session and send exactly ` +
+                `"ReviewerLaunchInputArtifactPath: ${normalizePath(launchArtifactEvidence.launchInputArtifactPath)}" ` +
+                `before running record-reviewer-delegation-started; launch_input_sha256=${launchArtifactEvidence.launchInputArtifactSha256}; ` +
+                `the standby completion is not review evidence.`
+            )
+            : null;
         const reviewRoutingChain = buildReviewGateChainStatusSummary({
             repoRoot,
             eventsRoot,
@@ -2693,6 +2704,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             acceptedVerdictTokens,
             hiddenTimingTrustRemediation: getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state),
             reusedExistingReview: state.reusedExistingReview,
+            standbyResumeHint,
             instructions: {
                 opaqueHandoff: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
                 freshContextLaunch: REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,

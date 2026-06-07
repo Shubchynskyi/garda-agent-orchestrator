@@ -1455,6 +1455,10 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('Do not reconstruct reviewer prompts from memory'));
         assert.ok(result.reason.includes('Provider-owned placeholders in the command are only --provider-invocation-id and --attestation-source'));
         assert.ok(result.reason.includes('Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed'));
+        assert.ok(result.reason.includes(`ReviewerStandbyResumeHint: if reviewer '${reviewerIdentity}' already reported standby completion before launch input delivery`));
+        assert.ok(result.reason.includes(`ReviewerLaunchInputArtifactPath: ${launchInputArtifactPath.replace(/\\/g, '/')}`));
+        assert.ok(result.reason.includes(`launch_input_sha256=${fileSha256(launchInputArtifactPath)}`));
+        assert.ok(result.reason.includes('the standby completion is not review evidence'));
         assert.ok(result.reason.includes('create or reserve the clean-context reviewer session as standby'));
         assert.ok(result.reason.includes('resume that same session and send the exact ReviewerLaunchInputArtifactPath'));
         assert.ok(result.reason.includes('A standby completion before launch input delivery is normal provider handshake noise, not review evidence'));
