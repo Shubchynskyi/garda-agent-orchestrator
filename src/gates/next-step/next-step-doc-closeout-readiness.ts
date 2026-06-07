@@ -372,7 +372,10 @@ function shouldDefaultInternalOnlyBehaviorChanged(
     repoRoot: string,
     docsUpdated: string[]
 ): boolean {
-    return docsUpdated.length === 0 && hasNonDocumentationPreflightScope(preflight, repoRoot);
+    const scopeCategory = String(preflight?.scope_category || '').trim().toLowerCase();
+    return docsUpdated.length === 0
+        && scopeCategory !== 'test-only'
+        && hasNonDocumentationPreflightScope(preflight, repoRoot);
 }
 
 export function buildDocImpactCommand(

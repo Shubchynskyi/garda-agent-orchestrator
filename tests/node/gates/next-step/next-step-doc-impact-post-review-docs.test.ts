@@ -305,6 +305,37 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--rationale "Implementation files changed with no user-facing documentation paths; recording internal-only behavior evidence. Update task-scoped project memory before running if this command reports missing internal evidence."'));
     });
 
+    it('does not default pure test-only maintenance to behavior-changing doc impact', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'node'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'split-maintenance.test.ts'), 'import "node:test";\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, test: true },
+            { changedFiles: ['tests/node/split-maintenance.test.ts'], seedPostPreflight: false }
+        );
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'test-only';
+        preflight.scope_category_reasons = ['test_only_files=1'];
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed false'));
+        assert.ok(!result.commands[0].command.includes('--project-memory-updated true'));
+        assert.ok(!result.commands[0].command.includes('--project-memory-update-not-needed true'));
+        assert.ok(!result.commands[0].command.includes('Implementation files changed'));
+        assert.ok(result.commands[0].command.includes('No user-facing documentation impact detected by next-step'));
+    });
+
     it('suggests DOCS_UPDATED when changelog changed in the current preflight', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n\n- Updated behavior notes.\n', 'utf8');
