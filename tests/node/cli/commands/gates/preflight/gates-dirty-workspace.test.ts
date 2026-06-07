@@ -79,6 +79,16 @@ function seedBaselineAgentsFile(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# baseline\n', 'utf8');
 }
 
+function runWithRepoCwd<T>(repoRoot: string, callback: () => T): T {
+    const previousCwd = process.cwd();
+    process.chdir(repoRoot);
+    try {
+        return callback();
+    } finally {
+        process.chdir(previousCwd);
+    }
+}
+
 describe('cli/commands/gates — dirty-workspace and isolation', () => {
     it('blocks classify-change when workspace was already dirty before task-mode entry without explicit isolation', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
@@ -89,28 +99,30 @@ describe('cli/commands/gates — dirty-workspace and isolation', () => {
         initializeGitRepo(repoRoot);
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
-        fs.writeFileSync(appPath, 'const a = 2;\nconst b = 3;\nconsole.log(a + b);\n', 'utf8');
+        fs.writeFileSync(appPath, 'const changedA = 20;\nconst changedB = 30;\nconsole.log(changedA + changedB);\n', 'utf8');
         backdateFileMtime(appPath);
 
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Clarify dirty workspace preflight guard'
-        });
-        const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
-        assert.equal(rulePackResult.exitCode, 0);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
-
-        assert.throws(
-            () => runClassifyChangeCommand({
+        runWithRepoCwd(repoRoot, () => {
+            runEnterTaskMode({
                 repoRoot,
                 taskId,
-                taskIntent: 'Clarify dirty workspace preflight guard',
-                emitMetrics: false
-            }),
-            /Workspace already contained modified files before task-mode entry: src\/app\.ts\..*--use-staged/
-        );
+                taskSummary: 'Clarify dirty workspace preflight guard'
+            });
+            const rulePackResult = loadTaskEntryRulePack(repoRoot, taskId);
+            assert.equal(rulePackResult.exitCode, 0);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
+
+            assert.throws(
+                () => runClassifyChangeCommand({
+                    repoRoot,
+                    taskId,
+                    taskIntent: 'Clarify dirty workspace preflight guard',
+                    emitMetrics: false
+                }),
+                /Workspace already contained modified files before task-mode entry: src\/app\.ts\..*--use-staged/
+            );
+        });
 
         const eventTypes = readTaskTimelineEvents(repoRoot, taskId).map((event) => event.event_type);
         assert.ok(eventTypes.includes('PREFLIGHT_STARTED'));

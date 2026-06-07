@@ -21,6 +21,16 @@ import {
     runClassifyChangeCommand
 } from '../../gate-test-seed-helpers';
 
+function runWithRepoCwd<T>(repoRoot: string, callback: () => T): T {
+    const previousCwd = process.cwd();
+    process.chdir(repoRoot);
+    try {
+        return callback();
+    } finally {
+        process.chdir(previousCwd);
+    }
+}
+
 describe('failed-review remediation refresh with staged-mode', { concurrency: false }, () => {
     it('allows refreshing preflight scope using --use-staged during remediation', () => {
         const repoRoot = createTempRepo();
@@ -39,26 +49,30 @@ describe('failed-review remediation refresh with staged-mode', { concurrency: fa
         runGit(repoRoot, ['add', 'src/app.ts']);
         runGit(repoRoot, ['commit', '-m', 'feat: v1']);
 
-        runEnterTaskMode({
-            repoRoot,
-            taskId,
-            taskSummary: 'Test staged remediation'
+        runWithRepoCwd(repoRoot, () => {
+            runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Test staged remediation'
+            });
+            loadTaskEntryRulePack(repoRoot, taskId);
+            runHandshakeForTask(repoRoot, taskId);
+            runShellSmokeForTask(repoRoot, taskId);
         });
-        loadTaskEntryRulePack(repoRoot, taskId);
-        runHandshakeForTask(repoRoot, taskId);
-        runShellSmokeForTask(repoRoot, taskId);
 
         // 2. Initial preflight (git_auto)
-        fs.writeFileSync(appPath, 'console.log("v2");\n', 'utf8');
+        fs.writeFileSync(appPath, 'console.log("v2 implementation");\n', 'utf8');
         backdateFileMtime(appPath);
         
         const preflightPath = path.join(getReviewsRoot(repoRoot), `${taskId}-preflight.json`);
-        runClassifyChangeCommand({
-            repoRoot,
-            taskId,
-            taskIntent: 'v2 implementation',
-            outputPath: preflightPath,
-            emitMetrics: false
+        runWithRepoCwd(repoRoot, () => {
+            runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'v2 implementation',
+                outputPath: preflightPath,
+                emitMetrics: false
+            });
         });
 
         const preflightV1 = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
@@ -67,20 +81,22 @@ describe('failed-review remediation refresh with staged-mode', { concurrency: fa
 
         // 3. Simulate remediation fix (staged)
         // Stage the fix, and have some other dirty file
-        fs.writeFileSync(appPath, 'console.log("v3 fix");\n', 'utf8');
+        fs.writeFileSync(appPath, 'console.log("v3 remediation fix");\n', 'utf8');
         runGit(repoRoot, ['add', 'src/app.ts']);
         
         const otherFile = path.join(repoRoot, 'src', 'other.ts');
         fs.writeFileSync(otherFile, '// unrelated dirty file\n', 'utf8');
 
         // 4. Refresh preflight using --use-staged
-        const result = runClassifyChangeCommand({
-            repoRoot,
-            taskId,
-            taskIntent: 'v3 remediation fix',
-            useStaged: true,
-            outputPath: preflightPath,
-            emitMetrics: false
+        const result = runWithRepoCwd(repoRoot, () => {
+            return runClassifyChangeCommand({
+                repoRoot,
+                taskId,
+                taskIntent: 'v3 remediation fix',
+                useStaged: true,
+                outputPath: preflightPath,
+                emitMetrics: false
+            });
         });
 
         const payload = JSON.parse(result.outputText);
