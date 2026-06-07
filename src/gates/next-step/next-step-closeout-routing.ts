@@ -86,6 +86,28 @@ function closeoutCommand(label: string, command: string): CloseoutRoutingCommand
     return { label, command };
 }
 
+function docImpactCommandClaimsProjectMemoryEvidence(command: string): boolean {
+    return /\s--project-memory-(updated|update-not-needed)\s+true(?:\s|$)/.test(` ${command} `);
+}
+
+function buildProjectMemoryImpactRoute(options: PostReviewCloseoutRoutingOptions): CloseoutRoutingRoute {
+    const staleDetails = options.projectMemory.violations.length > 0
+        ? ` Violations: ${options.projectMemory.violations.join('; ')}`
+        : '';
+    const affectedFiles = options.projectMemory.affectedMemoryFiles.length > 0
+        ? ` Affected memory files: ${options.projectMemory.affectedMemoryFiles.join(', ')}.`
+        : '';
+    return {
+        status: 'BLOCKED',
+        nextGate: 'project-memory-impact',
+        title: 'Record project memory impact.',
+        reason:
+            `Project memory maintenance is enabled before final closeout (${options.projectMemory.visibleSummaryLine}). ` +
+            `Record current project-memory impact evidence after upstream validation and before completion.${affectedFiles}${staleDetails}`,
+        commands: [options.projectMemory.command]
+    };
+}
+
 export function resolvePostReviewCloseoutRouteFromState(
     state: PostReviewCloseoutRouteState
 ): CloseoutRoutingRoute {
@@ -145,16 +167,6 @@ export function resolvePostReviewCloseoutRoute(
         };
     }
 
-    if (!options.docImpact.docImpactGatePassed) {
-        return {
-            status: 'BLOCKED',
-            nextGate: 'doc-impact-gate',
-            title: 'Record documentation impact.',
-            reason: `Completion requires an explicit docs decision. ${options.docImpact.compatibilityHint}`,
-            commands: [options.docImpact.command]
-        };
-    }
-
     if (options.fullSuite.enabled && !options.fullSuite.gatePassed) {
         if (options.fullSuite.notRequiredForDocsOnly) {
             return {
@@ -180,22 +192,27 @@ export function resolvePostReviewCloseoutRoute(
         };
     }
 
-    if (options.projectMemory.required && !options.projectMemory.evidenceCurrent) {
-        const staleDetails = options.projectMemory.violations.length > 0
-            ? ` Violations: ${options.projectMemory.violations.join('; ')}`
-            : '';
-        const affectedFiles = options.projectMemory.affectedMemoryFiles.length > 0
-            ? ` Affected memory files: ${options.projectMemory.affectedMemoryFiles.join(', ')}.`
-            : '';
+    if (
+        options.projectMemory.required
+        && !options.projectMemory.evidenceCurrent
+        && !options.docImpact.docImpactGatePassed
+        && docImpactCommandClaimsProjectMemoryEvidence(options.docImpact.command.command)
+    ) {
+        return buildProjectMemoryImpactRoute(options);
+    }
+
+    if (!options.docImpact.docImpactGatePassed) {
         return {
             status: 'BLOCKED',
-            nextGate: 'project-memory-impact',
-            title: 'Record project memory impact.',
-            reason:
-                `Project memory maintenance is enabled before final closeout (${options.projectMemory.visibleSummaryLine}). ` +
-                `Record current project-memory impact evidence after upstream validation and before completion.${affectedFiles}${staleDetails}`,
-            commands: [options.projectMemory.command]
+            nextGate: 'doc-impact-gate',
+            title: 'Record documentation impact.',
+            reason: `Completion requires an explicit docs decision. ${options.docImpact.compatibilityHint}`,
+            commands: [options.docImpact.command]
         };
+    }
+
+    if (options.projectMemory.required && !options.projectMemory.evidenceCurrent) {
+        return buildProjectMemoryImpactRoute(options);
     }
 
     if (!options.completion.completionGatePassed) {

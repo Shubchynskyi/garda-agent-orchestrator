@@ -267,6 +267,46 @@ describe('gates/next-step', () => {
 
     });
 
+    it('routes to project-memory-impact before doc-impact when internal-only doc-impact would claim project-memory-updated', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'update' });
+
+        seedProjectMemory(repoRoot);
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const changedFiles = ['src/gates/project-memory-impact.ts'];
+
+        const impactedSourcePath = path.join(repoRoot, changedFiles[0]);
+
+        fs.mkdirSync(path.dirname(impactedSourcePath), { recursive: true });
+
+        fs.writeFileSync(impactedSourcePath, 'export const impacted = true;\n', 'utf8');
+
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+
+        seedCompilePass(repoRoot, TASK_ID, undefined, changedFiles);
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+
+
+        assert.equal(result.next_gate, 'project-memory-impact', result.reason);
+
+        assert.equal(result.project_memory?.evidence_status, 'MISSING');
+
+        assert.match(result.commands[0].command, /gate project-memory-impact/);
+
+        assert.doesNotMatch(result.commands[0].command, /gate doc-impact-gate/);
+
+    });
+
 
 
     it('prints a ready-to-run project-memory confirmation command when current evidence is blocked', () => {

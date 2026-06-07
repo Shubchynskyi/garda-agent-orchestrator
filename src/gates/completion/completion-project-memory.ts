@@ -8,6 +8,11 @@ import {
     type TimelineEventEntry
 } from './completion-evidence';
 
+function docImpactClaimsProjectMemoryEvidence(docImpactEvidence?: Record<string, unknown> | null): boolean {
+    return docImpactEvidence?.project_memory_updated === true
+        || docImpactEvidence?.project_memory_update_not_needed === true;
+}
+
 export function validateProjectMemoryImpactForCompletion(input: {
     evidence: ProjectMemoryImpactLifecycleEvidence;
     orderedEvents: readonly TimelineEventEntry[];
@@ -53,7 +58,11 @@ export function validateProjectMemoryImpactForCompletion(input: {
         input.orderedEvents,
         (entry) => entry.event_type === 'DOC_IMPACT_ASSESSED'
     );
-    if (docImpactEvent && impactEvent.sequence <= docImpactEvent.sequence) {
+    if (
+        docImpactEvent
+        && impactEvent.sequence <= docImpactEvent.sequence
+        && !docImpactClaimsProjectMemoryEvidence(input.docImpactEvidence)
+    ) {
         violations.push('Project memory impact evidence must be recorded after doc-impact-gate for the current completion cycle.');
     }
     if (input.fullSuiteValidationEnabled) {
