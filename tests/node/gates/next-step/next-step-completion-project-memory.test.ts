@@ -142,6 +142,79 @@ describe('gates/next-step', () => {
 
     });
 
+    it('labels accepted updated project-memory overflow as advisory when compact was not refreshed', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeProjectMemoryWorkflowConfig(repoRoot, { enabled: true, mode: 'update' });
+
+        seedProjectMemory(repoRoot);
+
+        const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+
+        fs.writeFileSync(path.join(memoryRoot, 'compact.md'), 'x'.repeat(13000), 'utf8');
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const changedFiles = ['src/gates/project-memory-impact.ts'];
+
+        const impactedSourcePath = path.join(repoRoot, changedFiles[0]);
+
+        fs.mkdirSync(path.dirname(impactedSourcePath), { recursive: true });
+
+        fs.writeFileSync(impactedSourcePath, 'export const impacted = true;\n', 'utf8');
+
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles });
+
+        seedCompilePass(repoRoot, TASK_ID, undefined, changedFiles);
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+
+        const impact = assessProjectMemoryImpact({
+            repoRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            confirmUpdated: true,
+            updatedMemoryFiles: [
+                'garda-agent-orchestrator/live/docs/project-memory/commands.md',
+                'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+                'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+                'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+            ]
+        });
+
+        assert.ok(impact.updateEvidenceToWrite);
+
+        writeJson(impact.updateArtifactPath, impact.updateEvidenceToWrite);
+
+        writeJson(impact.artifactPath, impact.artifact);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'completion-gate', result.reason);
+
+        assert.equal(result.project_memory?.evidence_status, 'CURRENT');
+
+        assert.equal(result.project_memory?.status, 'UPDATED');
+
+        assert.equal(result.project_memory?.compact_status, 'UPDATED_OVERFLOW_NOT_REFRESHED');
+
+        assert.equal(result.project_memory?.compact_refreshed, false);
+
+        assert.ok(result.project_memory?.visible_summary_line.includes('compact=UPDATED_OVERFLOW_NOT_REFRESHED'));
+
+        assert.ok(result.project_memory?.visible_summary_line.includes('compact_refreshed=not_refreshed_update_accepted'));
+
+        assert.equal(result.project_memory?.visible_summary_line.includes('compact=OVERFLOW; compact_refreshed=false'), false);
+
+        assert.ok(formatNextStepText(result).includes('compact=UPDATED_OVERFLOW_NOT_REFRESHED'));
+
+    });
+
 
 
     it('prints a project-memory confirmation command when missing evidence already has known affected files', () => {

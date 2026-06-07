@@ -9,6 +9,7 @@ export type ProjectMemoryLifecycleCompactStatus =
     | 'OK'
     | 'MISSING'
     | 'OVERFLOW'
+    | 'UPDATED_OVERFLOW_NOT_REFRESHED'
     | 'OVERFLOW_NON_BLOCKING_NO_UPDATE'
     | 'REFRESHED_OVERFLOW_ACKNOWLEDGED';
 

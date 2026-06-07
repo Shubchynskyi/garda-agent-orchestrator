@@ -375,6 +375,20 @@ describe('assessProjectMemoryImpact', () => {
 
             assert.equal(result.artifact.status, 'UPDATED');
             assert.equal(result.updateEvidenceToWrite?.compact_refreshed, false);
+            assert.ok(result.updateEvidenceToWrite);
+            fs.mkdirSync(path.dirname(result.artifactPath), { recursive: true });
+            fs.mkdirSync(path.dirname(result.updateArtifactPath), { recursive: true });
+            fs.writeFileSync(result.updateArtifactPath, JSON.stringify(result.updateEvidenceToWrite, null, 2), 'utf8');
+            fs.writeFileSync(result.artifactPath, JSON.stringify(result.artifact, null, 2), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+            assert.equal(evidence.evidence_status, 'CURRENT');
+            assert.equal(evidence.status, 'UPDATED');
+            assert.equal(evidence.compact_status, 'UPDATED_OVERFLOW_NOT_REFRESHED');
+            assert.equal(evidence.compact_refreshed, false);
+            assert.ok(evidence.visible_summary_line.includes('compact=UPDATED_OVERFLOW_NOT_REFRESHED'));
+            assert.ok(evidence.visible_summary_line.includes('compact_refreshed=not_refreshed_update_accepted'));
+            assert.equal(evidence.visible_summary_line.includes('compact=OVERFLOW; compact_refreshed=false'), false);
         });
     });
 
