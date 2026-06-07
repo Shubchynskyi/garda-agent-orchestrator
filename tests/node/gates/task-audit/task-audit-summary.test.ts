@@ -145,6 +145,11 @@ describe('gates/task-audit-summary', () => {
                 outcome: 'PASS',
                 decision: 'NO_DOC_UPDATES'
             });
+            fs.writeFileSync(
+                path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'compact.md'),
+                'x'.repeat(13000),
+                'utf8'
+            );
             writeProjectMemoryImpactArtifact(tmpDir, TASK_ID);
             writeIntegrityEventSequence(eventsDir, TASK_ID, [
                 { event_type: 'TASK_MODE_ENTERED' },
@@ -171,9 +176,16 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.gates.find(g => g.gate === 'project-memory-impact')?.status, 'PASS');
             assert.equal(result.final_closeout.project_memory?.evidence_status, 'CURRENT');
             assert.equal(result.final_closeout.project_memory?.status, 'NO_UPDATE_NEEDED');
+            assert.equal(result.final_closeout.project_memory?.compact_status, 'OVERFLOW_NON_BLOCKING_NO_UPDATE');
             const rendered = formatTaskAuditSummaryText(result);
             assert.ok(rendered.includes('Project memory: enabled; mode=check'));
-            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes('Project memory: enabled; mode=check'));
+            assert.ok(rendered.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
+            assert.ok(rendered.includes('compact_refreshed=not_required'));
+            assert.equal(rendered.includes('compact=OVERFLOW; compact_refreshed=false'), false);
+            const finalMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+            assert.ok(finalMarkdown.includes('Project memory: enabled; mode=check'));
+            assert.ok(finalMarkdown.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
+            assert.ok(finalMarkdown.includes('compact_refreshed=not_required'));
         });
 
         it('does not block final closeout on historical project-memory events after maintenance is disabled', () => {

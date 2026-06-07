@@ -196,6 +196,9 @@ export function buildProjectMemoryVisibleSummary(input: {
     compactRefreshed: boolean | null;
 }): string {
     const statusText = input.status || input.evidenceStatus;
+    const compactRefreshedText = input.compactStatus === 'OVERFLOW_NON_BLOCKING_NO_UPDATE'
+        ? 'not_required'
+        : input.compactRefreshed == null ? 'unknown' : String(input.compactRefreshed);
     const parts = [
         `Project memory: ${input.enabled ? 'enabled' : 'disabled'}`,
         `mode=${input.mode}`,
@@ -205,7 +208,7 @@ export function buildProjectMemoryVisibleSummary(input: {
         `update_needed=${input.updateNeeded == null ? 'unknown' : input.updateNeeded}`,
         `updated_files=${input.updatedMemoryFiles.length}`,
         `compact=${input.compactStatus || 'unknown'}`,
-        `compact_refreshed=${input.compactRefreshed == null ? 'unknown' : input.compactRefreshed}`
+        `compact_refreshed=${compactRefreshedText}`
     ];
     return parts.join('; ');
 }
@@ -223,6 +226,13 @@ export function resolveLifecycleCompactStatus(input: {
         && input.compactRefreshed === true
     ) {
         return 'REFRESHED_OVERFLOW_ACKNOWLEDGED';
+    }
+    if (
+        input.compactStatus === 'OVERFLOW'
+        && input.impactStatus === 'NO_UPDATE_NEEDED'
+        && input.evidenceStatus === 'CURRENT'
+    ) {
+        return 'OVERFLOW_NON_BLOCKING_NO_UPDATE';
     }
     return input.compactStatus;
 }

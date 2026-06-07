@@ -5,7 +5,12 @@ export type ProjectMemoryImpactStatus = 'OFF' | 'NO_UPDATE_NEEDED' | 'UPDATE_NEE
 export type ProjectMemoryUpdateEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'VALID' | 'STALE' | 'TAMPERED' | 'INVALID';
 export type ProjectMemoryImpactEvidenceStatus = 'NOT_REQUIRED' | 'MISSING' | 'CURRENT' | 'STALE' | 'BLOCKED' | 'INVALID';
 export type ProjectMemoryChangedFilesSource = 'preflight' | 'explicit';
-export type ProjectMemoryLifecycleCompactStatus = 'OK' | 'MISSING' | 'OVERFLOW' | 'REFRESHED_OVERFLOW_ACKNOWLEDGED';
+export type ProjectMemoryLifecycleCompactStatus =
+    | 'OK'
+    | 'MISSING'
+    | 'OVERFLOW'
+    | 'OVERFLOW_NON_BLOCKING_NO_UPDATE'
+    | 'REFRESHED_OVERFLOW_ACKNOWLEDGED';
 
 export const PROJECT_MEMORY_IMPACT_ASSESSED_EVENT = 'PROJECT_MEMORY_IMPACT_ASSESSED';
 export const PROJECT_MEMORY_IMPACT_BLOCKED_EVENT = 'PROJECT_MEMORY_IMPACT_BLOCKED';

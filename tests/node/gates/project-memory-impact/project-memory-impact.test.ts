@@ -263,6 +263,41 @@ describe('assessProjectMemoryImpact', () => {
         });
     });
 
+    it('labels no-update compact overflow as non-blocking in lifecycle summaries', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-104b';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({ changed_files: [] }, null, 2), 'utf8');
+            const compactPath = path.join(
+                repoRoot,
+                'garda-agent-orchestrator',
+                'live',
+                'docs',
+                'project-memory',
+                'compact.md'
+            );
+            fs.writeFileSync(compactPath, 'x'.repeat(13000), 'utf8');
+
+            const result = assessProjectMemoryImpact({ repoRoot, taskId, preflightPath });
+            assert.equal(result.artifact.status, 'NO_UPDATE_NEEDED');
+            assert.equal(result.artifact.compact.status, 'OVERFLOW');
+            fs.mkdirSync(path.dirname(result.artifactPath), { recursive: true });
+            fs.writeFileSync(result.artifactPath, JSON.stringify(result.artifact, null, 2), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+            assert.equal(evidence.evidence_status, 'CURRENT');
+            assert.equal(evidence.status, 'NO_UPDATE_NEEDED');
+            assert.equal(evidence.compact_status, 'OVERFLOW_NON_BLOCKING_NO_UPDATE');
+            assert.equal(evidence.compact_refreshed, false);
+            assert.ok(evidence.visible_summary_line.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
+            assert.ok(evidence.visible_summary_line.includes('compact_refreshed=not_required'));
+            assert.equal(evidence.visible_summary_line.includes('compact=OVERFLOW; compact_refreshed=false'), false);
+        });
+    });
+
     it('acknowledges refreshed compact overflow in lifecycle summaries after valid update evidence', () => {
         withTempRepo((repoRoot) => {
             writeProjectMemoryWorkflowConfig(repoRoot);
