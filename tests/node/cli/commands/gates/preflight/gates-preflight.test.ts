@@ -766,6 +766,56 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change keeps raw profile diagnostics aligned when preflight suppresses capability defaults', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-balanced-required-review-parity.json');
+        const taskId = 'T-930-balanced-review-parity';
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'balanced');
+        seedInitAnswers(repoRoot);
+        const taskSummary = 'Align profile guardrail diagnostics with enforced required reviews';
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: ['src/app.ts', 'tests/app.test.ts'],
+            taskId,
+            taskIntent: taskSummary,
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.profile_selection.effective_profile, 'balanced');
+        assert.equal(payload.required_reviews.code, true);
+        assert.equal(payload.required_reviews.test, true);
+        assert.equal(payload.required_reviews.security, false);
+        assert.equal(payload.required_reviews.refactor, false);
+        const byReviewType = new Map(
+            payload.profile_guardrails.decisions.map((decision: Record<string, unknown>) => [decision.review_type, decision])
+        );
+        for (const reviewType of ['security', 'refactor']) {
+            const decision = byReviewType.get(reviewType) as Record<string, unknown> | undefined;
+            assert.equal(decision?.effective_value, false);
+            assert.equal(decision?.decision, 'not_required_by_preflight');
+            assert.match(String(decision?.reason || ''), new RegExp(`required_reviews\\.${reviewType}=false`));
+        }
+        assert.equal((byReviewType.get('code') as Record<string, unknown> | undefined)?.effective_value, true);
+        assert.equal((byReviewType.get('test') as Record<string, unknown> | undefined)?.effective_value, true);
+        assert.deepEqual(payload.budget_forecast.required_reviews, ['code', 'test']);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change ignores generated runtime artifacts for test-only review routing', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-generated-runtime-artifacts.json');

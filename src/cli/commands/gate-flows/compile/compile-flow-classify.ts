@@ -83,7 +83,18 @@ function reconcileProfileGuardrailsWithRequiredReviews(
             }
             const decisionRecord = decision as Record<string, unknown>;
             const reviewType = typeof decisionRecord.review_type === 'string' ? decisionRecord.review_type : '';
-            if (!reviewType || requiredReviews[reviewType] !== true || decisionRecord.effective_value === true) {
+            if (!reviewType) {
+                return decision;
+            }
+            if (requiredReviews[reviewType] !== true && decisionRecord.effective_value === true) {
+                return {
+                    ...decisionRecord,
+                    effective_value: false,
+                    decision: 'not_required_by_preflight',
+                    reason: `${reviewType} review not required because preflight required_reviews.${reviewType}=false; profile diagnostics must match lifecycle review requirements`
+                };
+            }
+            if (requiredReviews[reviewType] !== true || decisionRecord.effective_value === true) {
                 return decision;
             }
 
