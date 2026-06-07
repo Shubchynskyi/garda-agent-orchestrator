@@ -1,0 +1,415 @@
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { formatFinalUserReport } from '../../../../src/gates/task-audit/task-audit-summary';
+
+import {
+    fs,
+    path,
+    spawn,
+    createHash,
+    execFileSync,
+    buildTaskAuditSummary,
+    formatTaskAuditSummaryText,
+    formatFinalCloseoutMarkdown,
+    synchronizeFinalCloseoutArtifacts,
+    readReviewTrustSummary,
+    readReviewTrustSummaryFromReviewGate,
+    ensureSkillsHeadlinesCurrent,
+    getWorkspaceSnapshot,
+    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
+    NODE_BACKEND_SKILL_SOURCE,
+    computeFileSha256,
+    computeTaskTextSha256,
+    writeEvent,
+    writePreflight,
+    writeArtifact,
+    writeIntegrityEventSequence,
+    appendIntegrityEvent,
+    buildReviewRecordedTelemetryDetails,
+    writePassedLifecycleWithReviewRecorded,
+    writeWorkflowConfig,
+    writeProjectMemoryWorkflowConfig,
+    seedProjectMemory,
+    writeProjectMemoryImpactArtifact,
+    writePathsConfig,
+    writePassedLifecycle,
+    makeIndependentReviewGateCheck,
+    makeReviewerInvocationProvenance,
+    makeDelegatedRouting,
+    writeRequiredCodeScenario,
+    buildCurrentTaskAuditSummary,
+    assertReviewIntegrity,
+    assertReviewIntegrityBlocksFinalCloseout,
+    writeCurrentIndependentReviewFixture,
+    initGitRepo,
+    writeActiveCompletionLock,
+    makeTempDir,
+    type TaskAuditSummaryResult
+} from './task-audit-summary-fixtures';
+
+
+describe('gates/task-audit-summary', () => {
+    let tmpDir: string;
+    let eventsDir: string;
+    let reviewsDir: string;
+    const TASK_ID = 'T-AUDIT-1';
+
+    beforeEach(() => {
+        tmpDir = makeTempDir();
+        eventsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+        reviewsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        writeWorkflowConfig(tmpDir, false);
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    describe('buildTaskAuditSummary', () => {
+
+        it('builds a canonical final closeout payload from task-mode, review-gate, doc-impact, and token-economy evidence', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 6000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'TASK_MODE_ENTERED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Task mode entered.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 5000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'RULE_PACK_LOADED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Rule pack loaded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 4000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Handshake diagnostics recorded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 3000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Shell smoke recorded.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) - 2000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'PREFLIGHT_CLASSIFIED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Preflight classified.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPILE_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Compile gate passed.',
+                details: {
+                    output_telemetry: {
+                        estimated_saved_chars: 62,
+                        estimated_saved_tokens: 62,
+                        raw_char_count: 248,
+                        filtered_char_count: 186,
+                        raw_token_count_estimate: 180,
+                        filtered_token_count_estimate: 118
+                    }
+                }
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 250).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'REVIEW_PHASE_STARTED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Review phase started.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 500).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'REVIEW_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Review gate passed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 750).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'DOC_IMPACT_ASSESSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Doc impact assessed.'
+            });
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: new Date(Date.parse(now) + 1000).toISOString(),
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-task-mode.json', {
+                requested_depth: 2,
+                effective_depth: 2,
+                active_profile: 'balanced'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                mode: 'FULL_PATH',
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 42 },
+                required_reviews: { code: true, test: true }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', {
+                verdicts: {
+                    code: 'REVIEW PASSED',
+                    test: 'TEST REVIEW PASSED'
+                }
+            });
+            const crypto = require('node:crypto');
+            const codeReviewContent = '# Code Review\n## Verdict\nREVIEW PASSED';
+            const testReviewContent = '# Test Review\nTEST REVIEW PASSED';
+            writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'code',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: true
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-test-review-context.json', {
+                task_id: TASK_ID,
+                review_type: 'test',
+                reviewer_routing: {
+                    actual_execution_mode: 'same_agent_fallback',
+                    reviewer_session_id: `self:${TASK_ID}`,
+                    fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                    capability_level: 'single_agent_only',
+                    delegation_required: false,
+                    expected_execution_mode: 'same_agent_fallback',
+                    fallback_allowed: true,
+                    fallback_reason_required: true
+                }
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-code.md', codeReviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-test.md', testReviewContent);
+            writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'code',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(codeReviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                trust_level: 'LOCAL_ASSERTED'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-test-receipt.json', {
+                schema_version: 2,
+                task_id: TASK_ID,
+                review_type: 'test',
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-test-review-context.json`)),
+                review_artifact_sha256: crypto.createHash('sha256').update(testReviewContent, 'utf8').digest('hex'),
+                reviewer_execution_mode: 'same_agent_fallback',
+                reviewer_identity: `self:${TASK_ID}`,
+                reviewer_fallback_reason: 'direct Codex provider_entrypoint cannot supply attested reviewer launch evidence',
+                trust_level: 'LOCAL_ASSERTED'
+            });
+            writeArtifact(reviewsDir, TASK_ID, '-doc-impact.json', {
+                decision: 'DOCS_UPDATED',
+                behavior_changed: false,
+                changelog_updated: false,
+                docs_updated: ['docs/cli-reference.md']
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assertReviewIntegrityBlocksFinalCloseout(result, 'same_agent_fallback');
+            assert.equal(result.final_closeout.implementation_summary.requested_depth, 2);
+            assert.equal(result.final_closeout.implementation_summary.effective_depth, 2);
+            assert.equal(result.final_closeout.implementation_summary.path_mode, 'FULL_PATH');
+            assert.deepEqual(result.final_closeout.implementation_summary.review_verdicts, {
+                code: 'REVIEW PASSED',
+                test: 'TEST REVIEW PASSED'
+            });
+            assert.equal(result.final_closeout.review_trust?.status, 'UNAVAILABLE');
+            assert.ok(result.final_closeout.review_trust?.visible_summary_line?.includes('incomplete or invalid'));
+            assert.ok(result.final_closeout.review_trust?.policy_summary_line?.includes('asserted local review cannot satisfy mandatory independent review'));
+            assert.equal(result.final_closeout.review_integrity_attestation?.same_agent_fallback_observed, true);
+            assert.equal(result.final_closeout.review_integrity_attestation?.fake_or_fallback_artifacts_observed, true);
+            assert.equal(result.final_closeout.implementation_summary.docs_updated, true);
+            assert.deepEqual(result.final_closeout.docs.docs_updated, ['docs/cli-reference.md']);
+            assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('Suppressed output: ~62 chars'));
+            assert.equal(result.evidence.find((entry) => entry.kind === 'final-closeout-json')?.exists, false);
+        });
+
+        it('includes full-suite validation telemetry in final closeout token economy', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'FULL_SUITE_VALIDATION_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Full-suite validation passed.',
+                details: {
+                    output_telemetry: {
+                        estimated_saved_chars: 420,
+                        estimated_saved_tokens: 105,
+                        raw_char_count: 600,
+                        filtered_char_count: 180,
+                        raw_token_count_estimate: 150,
+                        filtered_token_count_estimate: 45
+                    }
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_closeout.token_economy?.total_estimated_saved_chars, 420);
+            assert.equal(result.final_closeout.token_economy?.total_estimated_saved_tokens, 105);
+            assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('full-suite validation output ~420 chars'));
+        });
+
+        it('keeps task metadata inference working when TASK.md notes cell is empty', () => {
+            const now = new Date().toISOString();
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P2 | reliability/review-context-canonicalization | Unify review-context artifact naming and make all review gates use one canonical path family | gpt-5.4 | 2026-04-15 | strict | |'
+            ].join('\n'), 'utf8');
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 12 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'git commit -m "fix(orchestration): review context canonicalization"');
+        });
+
+        it('keeps scope inference deterministic when changed_files order differs', () => {
+            const now = new Date().toISOString();
+            fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+                '# TASK.md',
+                '',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+                '| T-AUDIT-1 | 🟩 DONE | P2 | reliability/deterministic-commit-scope | Keep final report commit scope deterministic | gpt-5.4 | 2026-04-15 | balanced | |'
+            ].join('\n'), 'utf8');
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/validators/verify.ts', 'src/materialization/init.ts'],
+                metrics: { changed_lines_total: 18 },
+                required_reviews: {}
+            });
+            const first = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/materialization/init.ts', 'src/validators/verify.ts'],
+                metrics: { changed_lines_total: 18 },
+                required_reviews: {}
+            });
+            const second = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(first.final_report_contract.commit_command_suggestion, second.final_report_contract.commit_command_suggestion);
+            assert.equal(first.final_report_contract.commit_command_suggestion, 'git commit -m "fix(materialization): deterministic commit scope"');
+        });
+
+        it('falls back to the conventional commit template when task metadata is unavailable', () => {
+            const now = new Date().toISOString();
+            writeEvent(eventsDir, TASK_ID, {
+                timestamp_utc: now,
+                task_id: TASK_ID,
+                event_type: 'COMPLETION_GATE_PASSED',
+                outcome: 'PASS',
+                actor: 'gate',
+                message: 'Completion gate passed.'
+            });
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/gates/task-audit-summary.ts'],
+                metrics: { changed_lines_total: 8 },
+                required_reviews: {}
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.final_report_contract.commit_command_template, 'git commit -m "<type>(<scope>): <summary>"');
+            assert.equal(result.final_report_contract.commit_command_suggestion, 'git commit -m "<type>(<scope>): <summary>"');
+            assert.deepEqual(result.final_report_contract.required_order, [
+                'short agent-authored summary of what changed',
+                'verbatim Garda final user report'
+            ]);
+        });
+
+    });
+});
