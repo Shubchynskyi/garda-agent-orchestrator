@@ -12,11 +12,19 @@ export interface SpawnStreamedOptions {
     timeoutMs?: number;
     signal?: AbortSignal;
     env?: Record<string, string | undefined>;
+    onSpawn?: (child: SpawnedProcessInfo) => void;
     onStdout?: (chunk: string) => void;
     onStderr?: (chunk: string) => void;
     inheritStdio?: boolean;
     maxBuffer?: number;
     capturePolicy?: OutputCapturePolicy;
+}
+
+export interface SpawnedProcessInfo {
+    pid: number | null;
+    command: string;
+    args: readonly string[];
+    shell: boolean;
 }
 
 export interface SpawnStreamedResult {
@@ -42,6 +50,17 @@ export interface CapturedOutput {
     text: string;
     truncated: boolean;
     originalBytes: number;
+}
+
+function notifySpawnedProcess(
+    callback: ((child: SpawnedProcessInfo) => void) | undefined,
+    info: SpawnedProcessInfo
+): void {
+    try {
+        callback?.(info);
+    } catch (_error) {
+        // Spawn observers are diagnostic hooks and must not disrupt child lifecycle cleanup.
+    }
 }
 
 const PROCESS_TERMINATION_SIGNALS: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
@@ -313,6 +332,12 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
         }
 
         const child: ChildProcess = childProcess.spawn(command, args, spawnOpts);
+        notifySpawnedProcess(opts.onSpawn, {
+            pid: child.pid ?? null,
+            command,
+            args,
+            shell: false
+        });
 
         function cleanup(): void {
             if (timeoutHandle) {
@@ -469,6 +494,7 @@ export interface SpawnShellCommandOptions {
     timeoutMs?: number;
     signal?: AbortSignal;
     env?: Record<string, string | undefined>;
+    onSpawn?: (child: SpawnedProcessInfo) => void;
     onStdout?: (chunk: string) => void;
     onStderr?: (chunk: string) => void;
     maxBuffer?: number;
@@ -531,7 +557,15 @@ export function spawnShellCommand(
         if (opts.env) {
             spawnOptions.env = { ...process.env, ...opts.env };
         }
-        const child: ChildProcess = childProcess.spawn(getWindowsCommandProcessor(), ['/d', '/s', '/c', commandLine], spawnOptions);
+        const shellCommand = getWindowsCommandProcessor();
+        const shellArgs = ['/d', '/s', '/c', commandLine];
+        const child: ChildProcess = childProcess.spawn(shellCommand, shellArgs, spawnOptions);
+        notifySpawnedProcess(opts.onSpawn, {
+            pid: child.pid ?? null,
+            command: shellCommand,
+            args: shellArgs,
+            shell: true
+        });
 
         function cleanup(): void {
             if (timeoutHandle) {

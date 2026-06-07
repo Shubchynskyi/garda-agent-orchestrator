@@ -33,6 +33,9 @@ import {
     classifyChange,
     getClassificationConfig
 } from '../../../../src/gates/preflight/classify-change';
+import {
+    resolveFullSuiteValidationRunMarkerPath
+} from '../../../../src/gates/full-suite/full-suite-validation-run-marker';
 
 function writeFullSuitePreflight(
     repoRoot: string,
@@ -1069,6 +1072,55 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.status, 'FAILED');
             assert.equal(artifact.timed_out, true);
             assert.ok(artifact.warnings.some((line: string) => line.includes('timeout cleanup removed generated lock')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation clears the running marker after terminal evidence is recorded', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-run-marker-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'pass-with-marker.js');
+            fs.writeFileSync(
+                helperScript,
+                'process.stdout.write("marker success\\n"); process.exit(0);',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 10,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after_compile_before_reviews'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-RUN-MARKER-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-RUN-MARKER',
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-RUN-MARKER',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            assert.equal(fs.existsSync(resolveFullSuiteValidationRunMarkerPath(tempDir, 'T-RUN-MARKER')), false);
+            const artifactPath = path.join(reviewsDir, 'T-RUN-MARKER-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

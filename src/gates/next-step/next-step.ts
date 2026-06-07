@@ -39,6 +39,9 @@ import {
     loadFullSuiteValidationConfig,
     resolveWorkflowConfigPath
 } from '../full-suite/full-suite-validation';
+import {
+    readInterruptedFullSuiteValidationRunMarker
+} from '../full-suite/full-suite-validation-run-marker';
 import type {
     ReviewTrustSummary
 } from '../review/review-trust-summary';
@@ -1386,6 +1389,18 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         preflightSha256,
         currentFailedFullSuite: currentFailedFullSuiteValidation
     });
+    const currentCompileGateTimestamp = String(
+        summary.gates.find((gate: GateOutcome) => gate.gate === 'compile-gate')?.timestamp_utc || ''
+    ).trim() || null;
+    const interruptedFullSuiteRun = fullSuiteConfig.enabled && !fullSuiteGatePassed && !fullSuiteNotRequiredForCurrentScope
+        ? readInterruptedFullSuiteValidationRunMarker(
+            repoRoot,
+            taskId,
+            preflightPath,
+            preflightSha256,
+            currentCompileGateTimestamp
+        )
+        : null;
     const reviewLaunchPlan = applyFullSuiteReadinessToReviewLaunchPlan(
         buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
@@ -2260,7 +2275,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         timeoutForecastLine: fullSuiteTimeoutForecastLine,
         command: fullSuiteCommand,
         navigatorCommand,
-        nextReviewType: reviewLaunchPlan.next_review_type
+        nextReviewType: reviewLaunchPlan.next_review_type,
+        interruptedRun: interruptedFullSuiteRun
     });
     if (fullSuiteValidationRoute) {
         return buildResult({

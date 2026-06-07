@@ -112,6 +112,21 @@ describe('spawnStreamed', () => {
         assert.match(combined, /chunk2/);
     });
 
+    it('treats onSpawn observer failures as non-fatal diagnostics', async () => {
+        let observedPid: number | null = null;
+        const result = await spawnStreamed(process.execPath, ['-e', 'console.log("still runs")'], {
+            timeoutMs: 5000,
+            onSpawn(child) {
+                observedPid = child.pid;
+                throw new Error('observer failed');
+            }
+        });
+
+        assert.equal(result.exitCode, 0);
+        assert.match(result.stdout, /still runs/);
+        assert.equal(typeof observedPid, 'number');
+    });
+
     it('rejects with ENOENT for missing executable', async () => {
         await assert.rejects(
             () => spawnStreamed('__nonexistent_executable_12345__', [], { timeoutMs: 5000 }),
@@ -419,6 +434,33 @@ describe('shell-surface hardening', () => {
             const result = await spawnShellCommand(fixture.scriptPath, [], { timeoutMs: 500 });
             assert.equal(result.timedOut, true);
             assert.notEqual(result.exitCode, 0);
+        } finally {
+            fixture.cleanup();
+        }
+    });
+
+    it('spawnShellCommand reports shell child process diagnostics without disrupting execution', async () => {
+        if (process.platform !== 'win32') return;
+        const fixture = createNodeBatchFixture('console.log("shellspawn")');
+        try {
+            let observedPid: number | null = null;
+            let observedShell = false;
+            let observedCommand = '';
+            const result = await spawnShellCommand(fixture.scriptPath, [], {
+                timeoutMs: 5000,
+                onSpawn(child) {
+                    observedPid = child.pid;
+                    observedShell = child.shell;
+                    observedCommand = child.command;
+                    throw new Error('observer failed');
+                }
+            });
+
+            assert.equal(result.exitCode, 0);
+            assert.match(result.stdout, /shellspawn/);
+            assert.equal(typeof observedPid, 'number');
+            assert.equal(observedShell, true);
+            assert.match(observedCommand, /cmd(?:\.exe)?$/i);
         } finally {
             fixture.cleanup();
         }

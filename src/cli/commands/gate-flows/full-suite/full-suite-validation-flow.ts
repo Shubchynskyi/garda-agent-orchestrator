@@ -53,6 +53,11 @@ import {
     formatGeneratedLockCleanupObservation
 } from './full-suite-validation-lock-cleanup';
 import { buildWorkflowConfigWorkBlockedResult } from './full-suite-validation-workflow-config';
+import {
+    clearFullSuiteValidationRunMarker,
+    updateFullSuiteValidationRunMarkerChildProcess,
+    writeFullSuiteValidationRunMarker
+} from '../../../../gates/full-suite/full-suite-validation-run-marker';
 
 export { shouldOmitSuccessfulFullSuiteOutput } from './full-suite-validation-output-retention';
 export type {
@@ -285,11 +290,20 @@ export async function runFullSuiteValidationCommand(
     let outputLines: string[] = [];
     const executionConfig = resolveEffectiveFullSuiteValidationConfig(repoRoot, config);
     const startedAtMs = Date.now();
+    writeFullSuiteValidationRunMarker({
+        repoRoot,
+        taskId,
+        command: config.command,
+        cwd: repoRoot,
+        timeoutMs: executionConfig.timeout_ms,
+        cycleBinding
+    });
     try {
         const execution = await executeCommandAsync(config.command, {
             cwd: repoRoot,
             env: buildFullSuiteValidationCommandEnv(),
-            timeoutMs: executionConfig.timeout_ms
+            timeoutMs: executionConfig.timeout_ms,
+            onSpawn: (child) => updateFullSuiteValidationRunMarkerChildProcess(repoRoot, taskId, child)
         });
         commandExitCode = execution.exitCode;
         timedOut = execution.timedOut;
@@ -375,6 +389,7 @@ export async function runFullSuiteValidationCommand(
             output_telemetry: blockedResult.output_telemetry,
             output_retention: blockedResult.output_retention
         });
+        clearFullSuiteValidationRunMarker(repoRoot, taskId);
         return {
             outputText: `${formatFullSuiteValidationResult(blockedResult)}\n`,
             exitCode: EXIT_GATE_FAILURE
@@ -415,6 +430,7 @@ export async function runFullSuiteValidationCommand(
         output_telemetry: result.output_telemetry,
         output_retention: result.output_retention
     });
+    clearFullSuiteValidationRunMarker(repoRoot, taskId);
 
     return {
         outputText: `${formatFullSuiteValidationResult(result)}\n`,

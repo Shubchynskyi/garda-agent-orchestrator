@@ -66,6 +66,128 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
     });
 
+    it('routes interrupted missing evidence to recovery instead of a fresh not-yet-run prompt', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            interruptedRun: {
+                markerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json',
+                startedAtUtc: '2026-06-07T01:02:03.000Z',
+                command: 'npm test',
+                timeoutMs: 600000,
+                gatePid: 12345,
+                gateProcessAlive: false,
+                childPid: 12346,
+                childProcessAlive: true,
+                childCommand: 'node',
+                descendantProcessCandidates: [
+                    {
+                        pid: 12347,
+                        parentPid: 12346,
+                        commandLine: 'node --test .node-build/tests/node/full-suite-child.test.js'
+                    }
+                ],
+                processScanWarning: null
+            }
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-validation');
+        assert.equal(route?.title, 'Recover interrupted full-suite validation run.');
+        assert.match(route?.reason || '', /no terminal full-suite artifact was materialized/);
+        assert.match(route?.reason || '', /child pid 12346 is still alive/);
+        assert.match(route?.reason || '', /Live descendant candidates/);
+        assert.match(route?.reason || '', /pid=12347/);
+        assert.match(route?.reason || '', /Interrupted command: npm test/);
+        assert.match(route?.reason || '', /Retry command: npm test/);
+        assert.match(route?.reason || '', /terminate only task-owned processes/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+    });
+
+    it('routes active interrupted markers to wait instead of starting a duplicate full-suite run', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            interruptedRun: {
+                markerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json',
+                startedAtUtc: '2026-06-07T01:02:03.000Z',
+                command: 'npm test',
+                timeoutMs: 600000,
+                gatePid: 12345,
+                gateProcessAlive: true,
+                childPid: 12346,
+                childProcessAlive: true,
+                childCommand: 'npm',
+                descendantProcessCandidates: [],
+                processScanWarning: null
+            }
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-validation');
+        assert.equal(route?.title, 'Wait for active full-suite validation run.');
+        assert.match(route?.reason || '', /Do not start a second full-suite run/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
+    });
+
+    it('redacts secret-looking process and command text in interrupted recovery output', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            commandText: 'API_TOKEN=super-secret npm test',
+            interruptedRun: {
+                markerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json',
+                startedAtUtc: '2026-06-07T01:02:03.000Z',
+                command: 'AUTH_TOKEN=interrupted-secret npm test',
+                timeoutMs: 600000,
+                gatePid: 12345,
+                gateProcessAlive: false,
+                childPid: 12346,
+                childProcessAlive: true,
+                childCommand: 'API_TOKEN=child-secret node',
+                descendantProcessCandidates: [
+                    {
+                        pid: 12347,
+                        parentPid: 12346,
+                        commandLine: 'PASSWORD=worker-secret node --test'
+                    }
+                ],
+                processScanWarning: null
+            }
+        });
+
+        const reason = route?.reason || '';
+        assert.doesNotMatch(reason, /super-secret|interrupted-secret|child-secret|worker-secret/);
+        assert.match(reason, /<redacted>/);
+    });
+
+    it('keeps recovery conservative when no descendant process evidence is available', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            interruptedRun: {
+                markerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json',
+                startedAtUtc: '2026-06-07T01:02:03.000Z',
+                command: 'npm test',
+                timeoutMs: 600000,
+                gatePid: 12345,
+                gateProcessAlive: false,
+                childPid: 12346,
+                childProcessAlive: false,
+                childCommand: 'npm',
+                descendantProcessCandidates: [],
+                processScanWarning: null
+            }
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-validation');
+        assert.match(route?.reason || '', /No live descendant process candidates/);
+        assert.match(route?.reason || '', /do not kill generic node\.exe/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+    });
+
     it('routes non-timeout failures back to implementation via navigator', () => {
         const route = resolveNextStepFullSuiteValidationRoute({
             ...BASE_OPTIONS,

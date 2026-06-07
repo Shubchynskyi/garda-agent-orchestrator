@@ -7,7 +7,8 @@ import {
     buildWindowsBatchCommandLine,
     spawnShellCommand,
     spawnStreamed,
-    spawnSyncWithTimeout
+    spawnSyncWithTimeout,
+    type SpawnedProcessInfo
 } from '../../core/subprocess';
 import { assertDependentValidationChainReady } from '../../core/dependent-validation-chains';
 import { redactSecretText } from '../../core/redaction';
@@ -20,6 +21,7 @@ export interface ExecuteCommandOptions {
     env?: Record<string, string | undefined>;
     timeoutMs?: number;
     signal?: AbortSignal | null;
+    onSpawn?: (child: SpawnedProcessInfo) => void;
 }
 
 export interface AsyncCommandExecutionResult {
@@ -195,13 +197,15 @@ export async function executeCommandAsync(commandText: string, options: ExecuteC
             cwd,
             env,
             timeoutMs,
-            signal: options.signal ?? undefined
+            signal: options.signal ?? undefined,
+            onSpawn: options.onSpawn
         })
         : await spawnStreamed(executablePath, args, {
             cwd,
             env,
             timeoutMs,
-            signal: options.signal ?? undefined
+            signal: options.signal ?? undefined,
+            onSpawn: options.onSpawn
         });
 
     if (result.timedOut) {

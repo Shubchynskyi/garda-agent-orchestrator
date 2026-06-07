@@ -7,6 +7,9 @@ import {
 import {
     buildCommand
 } from './next-step-command-formatters';
+import {
+    redactSecretText
+} from '../../core/redaction';
 import type {
     NextStepCommand,
     NextStepStatus
@@ -18,6 +21,24 @@ export interface NextStepFullSuiteValidationRoute {
     title: string;
     reason: string;
     commands: NextStepCommand[];
+}
+
+export interface InterruptedFullSuiteValidationRunRouteInput {
+    markerPath: string;
+    startedAtUtc: string;
+    command: string;
+    timeoutMs: number;
+    gatePid: number;
+    gateProcessAlive: boolean;
+    childPid: number | null;
+    childProcessAlive: boolean | null;
+    childCommand: string | null;
+    descendantProcessCandidates?: Array<{
+        pid: number;
+        parentPid: number | null;
+        commandLine: string;
+    }>;
+    processScanWarning?: string | null;
 }
 
 export interface NextStepFullSuiteValidationRoutingOptions {
@@ -35,6 +56,7 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     command: string;
     navigatorCommand: string;
     nextReviewType: string | null;
+    interruptedRun?: InterruptedFullSuiteValidationRunRouteInput | null;
 }
 
 export function resolveNextStepFullSuiteValidationRoute(
@@ -118,6 +140,14 @@ function resolveAfterCompileBeforeReviewsRoute(
     }
 
     if (!options.gatePassed) {
+        const interruptedRoute = buildInterruptedRunRecoveryRoute(
+            options,
+            'Recover interrupted full-suite validation run.',
+            'Recover the interrupted full-suite run before launching independent reviewers.'
+        );
+        if (interruptedRoute) {
+            return interruptedRoute;
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'full-suite-validation',
@@ -175,6 +205,14 @@ function resolveBeforeTestReviewRoute(
     }
 
     if (!options.gatePassed) {
+        const interruptedRoute = buildInterruptedRunRecoveryRoute(
+            options,
+            'Recover interrupted full-suite validation run.',
+            'Recover the interrupted full-suite run before launching the mandatory test reviewer.'
+        );
+        if (interruptedRoute) {
+            return interruptedRoute;
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'full-suite-validation',
@@ -194,6 +232,86 @@ function resolveBeforeTestReviewRoute(
     }
 
     return null;
+}
+
+function buildInterruptedRunRecoveryRoute(
+    options: NextStepFullSuiteValidationRoutingOptions,
+    title: string,
+    retryInstruction: string
+): NextStepFullSuiteValidationRoute | null {
+    const interruptedRun = options.interruptedRun;
+    if (!interruptedRun) {
+        return null;
+    }
+    if (interruptedRun.gateProcessAlive) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'full-suite-validation',
+            title: 'Wait for active full-suite validation run.',
+            reason:
+                `A full-suite validation run started at ${interruptedRun.startedAtUtc} and is still active for the current compiled scope. ` +
+                `The run marker is ${interruptedRun.markerPath}; gate pid ${interruptedRun.gatePid} is still alive. ` +
+                `Do not start a second full-suite run. Wait for the active run to write terminal evidence, or inspect only task-owned processes if the run appears stuck. ` +
+                `Interrupted command: ${redactDiagnosticText(interruptedRun.command)}. Timeout configured for this run: ${interruptedRun.timeoutMs} ms. ${options.timeoutForecastLine || ''}`.trim(),
+            commands: [
+                buildCommand(
+                    'Rerun navigator after the active full-suite run completes',
+                    options.navigatorCommand
+                )
+            ]
+        };
+    }
+
+    const childState = interruptedRun.childPid == null
+        ? 'no child PID was recorded'
+        : interruptedRun.childProcessAlive
+            ? `child pid ${interruptedRun.childPid} is still alive`
+            : `child pid ${interruptedRun.childPid} is no longer alive`;
+    const childCommand = interruptedRun.childCommand
+        ? ` Child command: ${redactDiagnosticText(interruptedRun.childCommand)}.`
+        : '';
+    const descendantCandidates = interruptedRun.descendantProcessCandidates || [];
+    const descendantState = descendantCandidates.length > 0
+        ? ` Live descendant candidates from the recorded child process: ${formatProcessCandidates(descendantCandidates)}.`
+        : interruptedRun.processScanWarning
+            ? ` No descendant process candidates were listed because process scanning failed: ${redactDiagnosticText(interruptedRun.processScanWarning)}.`
+            : ' No live descendant process candidates were discovered from the recorded child pid; do not kill generic node.exe or IDE/Codex Node processes without separate task-owned command-line or working-directory evidence.';
+
+    return {
+        status: 'BLOCKED',
+        nextGate: 'full-suite-validation',
+        title,
+        reason:
+            `A previous full-suite validation run started at ${interruptedRun.startedAtUtc}, but no terminal full-suite artifact was materialized for the current compiled scope. ` +
+            `The run marker is ${interruptedRun.markerPath}; gate pid ${interruptedRun.gatePid} is no longer alive; ${childState}.${childCommand}${descendantState} ` +
+            `Inspect and terminate only task-owned processes confirmed by the marker, descendant scan, command line, or working-directory evidence, then rerun full-suite-validation. ${retryInstruction} ` +
+            `Interrupted command: ${redactDiagnosticText(interruptedRun.command)}. Retry command: ${redactDiagnosticText(options.commandText)}. Timeout configured for the interrupted run: ${interruptedRun.timeoutMs} ms. ${options.timeoutForecastLine || ''}`.trim(),
+        commands: [
+            buildCommand(
+                'Recover and rerun full-suite validation',
+                options.command
+            )
+        ]
+    };
+}
+
+function formatProcessCandidates(candidates: Array<{
+    pid: number;
+    parentPid: number | null;
+    commandLine: string;
+}>): string {
+    return candidates.slice(0, 5).map((candidate) => {
+        const parent = candidate.parentPid == null ? 'unknown' : String(candidate.parentPid);
+        const redactedCommandLine = redactDiagnosticText(candidate.commandLine);
+        const commandLine = redactedCommandLine.length > 160
+            ? `${redactedCommandLine.slice(0, 157)}...`
+            : redactedCommandLine;
+        return `pid=${candidate.pid}, ppid=${parent}, command=${commandLine || '<unavailable>'}`;
+    }).join('; ');
+}
+
+function redactDiagnosticText(text: string): string {
+    return redactSecretText(text);
 }
 
 function buildRetryRoute(
