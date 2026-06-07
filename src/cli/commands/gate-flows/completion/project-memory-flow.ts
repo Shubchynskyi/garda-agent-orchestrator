@@ -22,6 +22,8 @@ export interface ProjectMemoryImpactCommandOptions {
     changedFiles?: unknown;
     confirmUpdated?: unknown;
     updatedMemoryFiles?: unknown;
+    skippedMemoryFiles?: unknown;
+    skipUnchangedCandidatesRationale?: string;
     mode?: string;
     artifactPath?: string;
     updateArtifactPath?: string;
@@ -66,8 +68,17 @@ function buildProjectMemoryRemediationCommand(
         parts.push(`--preflight-path ${quoteCliValue(toRepoDisplayPath(repoRoot, artifact.preflight_path))}`);
     }
     parts.push('--confirm-updated');
-    for (const file of artifact.affected_memory_files) {
+    for (const file of artifact.update_evidence.updated_memory_files) {
         parts.push(`--updated-memory-file ${quoteCliValue(file)}`);
+    }
+    const updated = new Set(artifact.update_evidence.updated_memory_files);
+    for (const file of artifact.affected_memory_files.filter((candidate) => !updated.has(candidate))) {
+        parts.push(`--skipped-memory-file ${quoteCliValue(file)}`);
+    }
+    if (artifact.update_evidence.updated_memory_files.length === 0) {
+        parts.push('--skip-unchanged-candidates-rationale "Current project-memory content already covers these candidate files; no durable map change is needed for this task impact."');
+    } else {
+        parts.push('--skip-unchanged-candidates-rationale "Unedited candidate files already cover this task impact; only the listed project-memory files changed."');
     }
     parts.push('--repo-root "."');
     return parts.join(' ');
@@ -106,6 +117,12 @@ function formatProjectMemoryImpactOutput(input: {
     if (artifact.update_evidence.status !== 'NOT_REQUIRED') {
         lines.push(`UpdateEvidenceStatus: ${artifact.update_evidence.status}`);
         lines.push(`UpdateEvidence: ${normalizePath(input.updateArtifactPath)}`);
+        if (artifact.update_evidence.skipped_memory_files.length > 0) {
+            lines.push('SkippedCandidateMemoryFiles:');
+            for (const file of artifact.update_evidence.skipped_memory_files) {
+                lines.push(`  - ${file}`);
+            }
+        }
     }
     if (artifact.violations.length > 0) {
         lines.push('Violations:');
@@ -139,6 +156,8 @@ export function runProjectMemoryImpactCommand(
         changedFiles,
         confirmUpdated: parseBooleanOption(options.confirmUpdated, false),
         updatedMemoryFiles: expandValueList(options.updatedMemoryFiles, { splitDelimiters: false }),
+        skippedMemoryFiles: expandValueList(options.skippedMemoryFiles, { splitDelimiters: false }),
+        skipUnchangedCandidatesRationale: options.skipUnchangedCandidatesRationale || null,
         modeOverride,
         artifactPath: options.artifactPath || null,
         updateArtifactPath: options.updateArtifactPath || null

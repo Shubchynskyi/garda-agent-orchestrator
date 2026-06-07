@@ -241,6 +241,7 @@ export function assessProjectMemoryImpact(options: ProjectMemoryImpactOptions): 
             status: 'NOT_REQUIRED',
             path: normalizePath(runtime.updateArtifactPath),
             updated_memory_files: [],
+            skipped_memory_files: [],
             missing_updated_memory_files: [],
             invalid_reasons: []
         };
@@ -259,6 +260,8 @@ export function assessProjectMemoryImpact(options: ProjectMemoryImpactOptions): 
             impactFingerprint,
             affectedMemoryFiles,
             updatedMemoryFiles: options.updatedMemoryFiles || [],
+            skippedMemoryFiles: options.skippedMemoryFiles || [],
+            skipUnchangedCandidatesRationale: options.skipUnchangedCandidatesRationale || null,
             compactSha256: compact.sha256,
             previousCompactSha256
         });

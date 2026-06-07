@@ -119,10 +119,12 @@ test('project-memory-impact CLI prints a ready-to-run remediation command when a
         assert.match(output, /--mode "strict"/);
         assert.match(output, /--changed-file "src\/gates\/project-memory-impact\.ts"/);
         assert.match(output, /--confirm-updated/);
-        assert.match(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
-        assert.match(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md"/);
-        assert.match(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/decisions\.md"/);
-        assert.match(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/risks\.md"/);
+        assert.doesNotMatch(output, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+        assert.match(output, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+        assert.match(output, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md"/);
+        assert.match(output, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/decisions\.md"/);
+        assert.match(output, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/risks\.md"/);
+        assert.match(output, /--skip-unchanged-candidates-rationale /);
         assert.match(output, /MemoryWriteContract:/);
         assert.ok(output.includes(PROJECT_MEMORY_MAP_WRITE_CONTRACT));
 
@@ -135,6 +137,13 @@ test('project-memory-impact CLI prints a ready-to-run remediation command when a
         const updatePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'project-memory', 'T-200A-update.json');
         const update = JSON.parse(fs.readFileSync(updatePath, 'utf8')) as Record<string, unknown>;
         assert.equal(update.status, 'UPDATED');
+        assert.deepEqual(update.updated_memory_files, []);
+        assert.deepEqual(update.skipped_memory_files, [
+            'garda-agent-orchestrator/live/docs/project-memory/commands.md',
+            'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+            'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+            'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+        ]);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -177,6 +186,51 @@ test('project-memory-impact CLI accepts confirmed update evidence', async () => 
         const update = JSON.parse(fs.readFileSync(updatePath, 'utf8')) as Record<string, unknown>;
         assert.equal(update.status, 'UPDATED');
         assert.equal((update.updated_memory_files as unknown[]).length, 4);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('project-memory-impact CLI accepts partial update evidence with skipped candidate rationale', async () => {
+    const repoRoot = createTempRepo();
+    try {
+        const baseArgs = [
+            'gate',
+            'project-memory-impact',
+            '--task-id',
+            'T-201P',
+            '--mode',
+            'strict',
+            '--changed-file',
+            'src/gates/project-memory-impact.ts',
+            '--repo-root',
+            repoRoot
+        ];
+        const first = await runCliWithCapturedOutput(baseArgs);
+        assert.equal(first.exitCode, 3);
+
+        const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+        fs.appendFileSync(path.join(memoryRoot, 'commands.md'), '\nCurrent command guidance changed.\n', 'utf8');
+        const confirmed = await runCliWithCapturedOutput([
+            ...baseArgs,
+            '--confirm-updated',
+            '--updated-memory-file',
+            path.join(memoryRoot, 'commands.md'),
+            '--skip-unchanged-candidates-rationale',
+            'Other candidate memory files already describe the current durable contracts; only command guidance changed.'
+        ]);
+
+        assert.equal(confirmed.exitCode, 0);
+        const updatePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'project-memory', 'T-201P-update.json');
+        const update = JSON.parse(fs.readFileSync(updatePath, 'utf8')) as Record<string, unknown>;
+        assert.deepEqual(update.updated_memory_files, [
+            'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+        ]);
+        assert.deepEqual(update.skipped_memory_files, [
+            'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+            'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+            'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+        ]);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -243,7 +297,7 @@ test('project-memory-impact CLI rejects incomplete explicit updated-memory-file 
 
         assert.equal(result.exitCode, 3);
         const output = result.logs.join('\n');
-        assert.match(output, /Confirmed update evidence is missing affected memory files/);
+        assert.match(output, /Confirmed update evidence does not account for affected memory files/);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

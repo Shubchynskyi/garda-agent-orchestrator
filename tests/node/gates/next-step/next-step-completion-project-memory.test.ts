@@ -259,13 +259,11 @@ describe('gates/next-step', () => {
 
         assert.match(result.commands[0].command, /--confirm-updated/);
 
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+        assert.doesNotMatch(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
 
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md"/);
+        assert.match(result.commands[0].command, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
 
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/decisions\.md"/);
-
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/risks\.md"/);
+        assert.match(result.commands[0].command, /--skip-unchanged-candidates-rationale /);
 
     });
 
@@ -395,13 +393,11 @@ describe('gates/next-step', () => {
 
         assert.match(result.commands[0].command, /--confirm-updated/);
 
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
+        assert.doesNotMatch(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
 
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/compact\.md"/);
+        assert.match(result.commands[0].command, /--skipped-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/commands\.md"/);
 
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/decisions\.md"/);
-
-        assert.match(result.commands[0].command, /--updated-memory-file "garda-agent-orchestrator\/live\/docs\/project-memory\/risks\.md"/);
+        assert.match(result.commands[0].command, /--skip-unchanged-candidates-rationale /);
 
     });
 

@@ -29,6 +29,8 @@ export interface ProjectMemoryImpactOptions {
     changedFiles?: string[];
     confirmUpdated?: boolean;
     updatedMemoryFiles?: string[];
+    skippedMemoryFiles?: string[];
+    skipUnchangedCandidatesRationale?: string | null;
     modeOverride?: ProjectMemoryMaintenanceMode | null;
     artifactPath?: string | null;
     updateArtifactPath?: string | null;
@@ -42,6 +44,9 @@ export interface ProjectMemoryUpdateEvidence {
     impact_fingerprint_sha256: string;
     updated_memory_files: string[];
     updated_file_hashes: Record<string, string>;
+    skipped_memory_files: string[];
+    skipped_file_hashes: Record<string, string>;
+    skip_unchanged_candidates_rationale: string | null;
     compact_refreshed: boolean;
     compact_sha256: string | null;
 }
@@ -78,6 +83,7 @@ export interface ProjectMemoryImpactArtifact {
         status: ProjectMemoryUpdateEvidenceStatus;
         path: string;
         updated_memory_files: string[];
+        skipped_memory_files: string[];
         missing_updated_memory_files: string[];
         invalid_reasons: string[];
     };

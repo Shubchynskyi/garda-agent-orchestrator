@@ -237,6 +237,145 @@ describe('assessProjectMemoryImpact', () => {
         });
     });
 
+    it('accepts partial project-memory updates when skipped candidates have a concrete rationale', () => {
+        withTempRepo((repoRoot) => {
+            initializeGitRepo(repoRoot);
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.appendFileSync(path.join(memoryRoot, 'commands.md'), '\nCurrent command guidance changed.\n', 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112b',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true,
+                skipUnchangedCandidatesRationale: 'Other candidate memory files already describe the current durable contracts; only command guidance changed.'
+            });
+
+            assert.equal(result.artifact.status, 'UPDATED');
+            assert.deepEqual(result.artifact.update_evidence.updated_memory_files, [
+                'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+            ]);
+            assert.deepEqual(result.artifact.update_evidence.skipped_memory_files, [
+                'garda-agent-orchestrator/live/docs/project-memory/compact.md',
+                'garda-agent-orchestrator/live/docs/project-memory/decisions.md',
+                'garda-agent-orchestrator/live/docs/project-memory/risks.md'
+            ]);
+            assert.ok(result.updateEvidenceToWrite);
+        });
+    });
+
+    it('accepts persisted skipped candidate evidence only while skipped files remain unchanged', () => {
+        withTempRepo((repoRoot) => {
+            initializeGitRepo(repoRoot);
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.appendFileSync(path.join(memoryRoot, 'commands.md'), '\nCurrent command guidance changed.\n', 'utf8');
+
+            const confirmed = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112e',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true,
+                skipUnchangedCandidatesRationale: 'Other candidate memory files already describe the current durable contracts; only command guidance changed.'
+            });
+            assert.ok(confirmed.updateEvidenceToWrite);
+            fs.mkdirSync(path.dirname(confirmed.updateArtifactPath), { recursive: true });
+            fs.writeFileSync(confirmed.updateArtifactPath, JSON.stringify(confirmed.updateEvidenceToWrite, null, 2), 'utf8');
+
+            const current = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112e',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts']
+            });
+            assert.equal(current.artifact.status, 'UPDATED');
+            assert.equal(current.artifact.update_evidence.status, 'VALID');
+
+            fs.appendFileSync(path.join(memoryRoot, 'compact.md'), '\nSkipped candidate changed after evidence.\n', 'utf8');
+            const tampered = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112e',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts']
+            });
+            assert.equal(tampered.artifact.status, 'BLOCKED');
+            assert.equal(tampered.artifact.update_evidence.status, 'TAMPERED');
+            assert.ok(tampered.artifact.violations.some((violation) => violation.includes('Skipped memory file hash changed')));
+        });
+    });
+
+    it('rejects persisted skipped candidate evidence when rationale or hashes are incomplete', () => {
+        withTempRepo((repoRoot) => {
+            initializeGitRepo(repoRoot);
+            const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+            fs.appendFileSync(path.join(memoryRoot, 'commands.md'), '\nCurrent command guidance changed.\n', 'utf8');
+
+            const confirmed = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112f',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true,
+                skipUnchangedCandidatesRationale: 'Other candidate memory files already describe the current durable contracts; only command guidance changed.'
+            });
+            assert.ok(confirmed.updateEvidenceToWrite);
+            const incompleteEvidence = {
+                ...confirmed.updateEvidenceToWrite,
+                skipped_file_hashes: {},
+                skip_unchanged_candidates_rationale: ''
+            };
+            fs.mkdirSync(path.dirname(confirmed.updateArtifactPath), { recursive: true });
+            fs.writeFileSync(confirmed.updateArtifactPath, JSON.stringify(incompleteEvidence, null, 2), 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112f',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts']
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('require --skip-unchanged-candidates-rationale')));
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('Skipped memory file hash changed')));
+        });
+    });
+
+    it('rejects skipped project-memory candidates without a concrete rationale', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112c',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true,
+                skippedMemoryFiles: ['garda-agent-orchestrator/live/docs/project-memory/commands.md'],
+                skipUnchangedCandidatesRationale: 'Replace me placeholder rationale for skipped memory candidates.'
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('must be concrete')));
+            assert.equal(result.updateEvidenceToWrite, null);
+        });
+    });
+
+    it('rejects rationale-only confirmation when current project-memory diff cannot be inferred', () => {
+        withTempRepo((repoRoot) => {
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId: 'T-112d',
+                modeOverride: 'strict',
+                changedFiles: ['src/gates/project-memory-impact.ts'],
+                confirmUpdated: true,
+                skipUnchangedCandidatesRationale: 'Candidate memory files already describe the current durable contracts.'
+            });
+
+            assert.equal(result.artifact.status, 'BLOCKED');
+            assert.ok(result.artifact.violations.some((violation) => violation.includes('could not be inferred safely')));
+            assert.equal(result.updateEvidenceToWrite, null);
+        });
+    });
+
     it('keeps compact overflow advisory when no durable update is affected', () => {
         withTempRepo((repoRoot) => {
             const compactPath = path.join(

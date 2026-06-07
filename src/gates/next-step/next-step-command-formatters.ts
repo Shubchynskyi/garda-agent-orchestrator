@@ -37,9 +37,14 @@ export function buildProjectMemoryImpactCommand(
     ];
     if (projectMemory.update_needed === true && projectMemory.affected_memory_files.length > 0) {
         parts.push('--confirm-updated');
-        for (const file of projectMemory.affected_memory_files) {
+        for (const file of projectMemory.updated_memory_files) {
             parts.push(`--updated-memory-file ${quoteCommandValue(file)}`);
         }
+        const updated = new Set(projectMemory.updated_memory_files);
+        for (const file of projectMemory.affected_memory_files.filter((candidate) => !updated.has(candidate))) {
+            parts.push(`--skipped-memory-file ${quoteCommandValue(file)}`);
+        }
+        parts.push('--skip-unchanged-candidates-rationale "Current project-memory content already covers unedited candidate files; no additional durable map change is needed for this task impact."');
     }
     parts.push('--repo-root "."');
     return parts.join(' ');
