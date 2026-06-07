@@ -53,6 +53,55 @@ async function captureConsoleAsync(fn: () => Promise<unknown>): Promise<{ lines:
 const REPO_ROOT = findRepoRoot();
 const CLI_ENTRY = path.join(REPO_ROOT, 'bin', 'garda.js');
 const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
+const CLEANUP_POLICY_CLI_TIMEOUT_MS = 90_000;
+const CLEANUP_POLICY_RUNTIME_LOCK_TIMEOUT_MS = 15_000;
+
+type CleanupPolicyCliResult = ReturnType<typeof spawnSync>;
+
+function textOutput(value: string | Buffer | null | undefined): string {
+    if (typeof value === 'string') {
+        return value;
+    }
+    return value ? value.toString('utf8') : '';
+}
+
+function combinedOutput(result: CleanupPolicyCliResult): string {
+    return `${textOutput(result.stdout)}\n${textOutput(result.stderr)}`;
+}
+
+function spawnCleanupPolicyCli(args: string[]): CleanupPolicyCliResult {
+    return spawnSync(process.execPath, [
+        CLI_ENTRY,
+        'cleanup',
+        'policy',
+        ...args
+    ], {
+        cwd: NEUTRAL_CWD,
+        encoding: 'utf8',
+        timeout: CLEANUP_POLICY_CLI_TIMEOUT_MS,
+        windowsHide: true,
+        env: {
+            ...process.env,
+            // Keep launcher lock waits below the outer test timeout so failures
+            // report the lock root cause instead of surfacing as status=null.
+            GARDA_LAUNCHER_RUNTIME_LOCK_TIMEOUT_MS: String(CLEANUP_POLICY_RUNTIME_LOCK_TIMEOUT_MS)
+        }
+    });
+}
+
+function buildCliFailureMessage(result: CleanupPolicyCliResult): string {
+    const error = result.error instanceof Error ? result.error : null;
+    const errorCode = error && 'code' in error ? String((error as NodeJS.ErrnoException).code || '') : '';
+    return [
+        combinedOutput(result),
+        `status=${result.status === null ? 'null' : String(result.status)}`,
+        `signal=${result.signal === null ? 'null' : result.signal}`,
+        `error=${error ? error.message : 'none'}`,
+        `error_code=${errorCode || 'none'}`,
+        `timeout_ms=${CLEANUP_POLICY_CLI_TIMEOUT_MS}`,
+        `runtime_lock_timeout_ms=${CLEANUP_POLICY_RUNTIME_LOCK_TIMEOUT_MS}`
+    ].join('\n');
+}
 
 const TEMPLATE_POLICY = {
     version: 1,
@@ -106,21 +155,14 @@ test('cleanup policy --json shows the current persisted review artifact policy',
             JSON.stringify(TEMPLATE_RUNTIME_RETENTION, null, 2)
         );
 
-        const result = spawnSync(process.execPath, [
-            CLI_ENTRY,
-            'cleanup',
-            'policy',
+        const result = spawnCleanupPolicyCli([
             '--target-root', tmpDir,
             '--json'
-        ], {
-            cwd: NEUTRAL_CWD,
-            encoding: 'utf8',
-            timeout: 30_000
-        });
+        ]);
 
-        const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
+        const combined = buildCliFailureMessage(result);
         assert.equal(result.status, 0, combined);
-        const parsed = JSON.parse(result.stdout);
+        const parsed = JSON.parse(textOutput(result.stdout));
         assert.equal(parsed.action, 'show');
         assert.equal(parsed.policy.retention_mode, 'full');
         assert.equal(parsed.policy.compress_after_days, 7);
@@ -147,22 +189,15 @@ test('cleanup policy persists updates through CLI flags', () => {
             JSON.stringify(TEMPLATE_RUNTIME_RETENTION, null, 2)
         );
 
-        const result = spawnSync(process.execPath, [
-            CLI_ENTRY,
-            'cleanup',
-            'policy',
+        const result = spawnCleanupPolicyCli([
             '--target-root', tmpDir,
             '--retention-mode', 'summary',
             '--compress-after-days', '14',
             '--preserve-gate-receipts', 'no',
             '--gate-receipt-suffix', '-task-mode.json'
-        ], {
-            cwd: NEUTRAL_CWD,
-            encoding: 'utf8',
-            timeout: 30_000
-        });
+        ]);
 
-        const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
+        const combined = buildCliFailureMessage(result);
         assert.equal(result.status, 0, combined);
         assert.ok(combined.includes('GARDA_CLEANUP_POLICY'), combined);
         assert.ok(combined.includes('Action: update'), combined);
@@ -206,22 +241,15 @@ test('cleanup policy --json round-trips daily maintenance dry-run during updates
             }, null, 2)
         );
 
-        const result = spawnSync(process.execPath, [
-            CLI_ENTRY,
-            'cleanup',
-            'policy',
+        const result = spawnCleanupPolicyCli([
             '--target-root', tmpDir,
             '--retention-mode', 'summary',
             '--json'
-        ], {
-            cwd: NEUTRAL_CWD,
-            encoding: 'utf8',
-            timeout: 30_000
-        });
+        ]);
 
-        const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
+        const combined = buildCliFailureMessage(result);
         assert.equal(result.status, 0, combined);
-        const parsed = JSON.parse(result.stdout);
+        const parsed = JSON.parse(textOutput(result.stdout));
         assert.equal(parsed.action, 'update');
         assert.equal(parsed.runtime_retention_policy.daily_maintenance.enabled, true);
         assert.equal(parsed.runtime_retention_policy.daily_maintenance.dry_run, true);
@@ -259,19 +287,12 @@ test('cleanup policy reset restores bundled template defaults', () => {
             }, null, 2)
         );
 
-        const result = spawnSync(process.execPath, [
-            CLI_ENTRY,
-            'cleanup',
-            'policy',
+        const result = spawnCleanupPolicyCli([
             'reset',
             '--target-root', tmpDir
-        ], {
-            cwd: NEUTRAL_CWD,
-            encoding: 'utf8',
-            timeout: 30_000
-        });
+        ]);
 
-        const combined = `${result.stdout || ''}\n${result.stderr || ''}`;
+        const combined = buildCliFailureMessage(result);
         assert.equal(result.status, 0, combined);
         assert.ok(combined.includes('Action: reset'), combined);
 
