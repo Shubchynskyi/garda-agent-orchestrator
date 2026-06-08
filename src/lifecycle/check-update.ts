@@ -5,8 +5,8 @@ export {
     cleanupOldUpdateTempRoots,
     getUpdateTempRoot,
     resolveNpmUpdateSourceSpec
-} from './check-update-source';
-export { runCheckUpdate } from './check-update-runner';
+} from './check-update/check-update-source';
+export { runCheckUpdate } from './check-update/check-update-runner';
 export type {
     AcquiredUpdateSource,
     AcquireUpdateSourceOptions,
@@ -19,4 +19,4 @@ export type {
     ResolvedNpmUpdateSource,
     ResolveInstalledPackageRootOptions,
     ResolveNpmUpdateSourceSpecOptions
-} from './check-update-types';
+} from './check-update/check-update-types';

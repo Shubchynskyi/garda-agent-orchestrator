@@ -1,2 +1,2 @@
-export * from './uninstall-helpers';
-export * from './uninstall-runner';
+export * from './uninstall/uninstall-helpers';
+export * from './uninstall/uninstall-runner';
