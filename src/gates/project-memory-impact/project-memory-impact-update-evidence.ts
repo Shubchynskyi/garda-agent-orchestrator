@@ -62,7 +62,7 @@ function arraysEqual(left: readonly string[], right: readonly string[]): boolean
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function collectChangedProjectMemoryFiles(repoRoot: string, bundleRoot: string): { files: string[]; error: string | null } {
+export function collectChangedProjectMemoryFiles(repoRoot: string, bundleRoot: string): { files: string[]; error: string | null } {
     const liveMemoryDir = resolveLiveProjectMemoryDir(bundleRoot);
     const repoRelativeMemoryDir = toRepoPath(path.relative(repoRoot, liveMemoryDir));
     const result = spawnSyncWithTimeout('git', [

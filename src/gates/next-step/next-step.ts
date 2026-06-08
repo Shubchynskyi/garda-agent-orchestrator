@@ -1410,7 +1410,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         taskId,
         preflightPath
     });
-    const projectMemorySummary = buildProjectMemoryNextStepSummary(projectMemoryEvidence);
+    const projectMemorySummary = buildProjectMemoryNextStepSummary(repoRoot, projectMemoryEvidence);
     const reviewPolicy = resolveReviewPolicy(preflight, workflowReviewPolicy);
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)

@@ -13,7 +13,7 @@ export {
     resolveNextStep
 } from '../../../../src/gates/next-step';
 export { extractExplicitLinkedChildTaskIds } from '../../../../src/gates/next-step/next-step-task-queue';
-export { assessProjectMemoryImpact } from '../../../../src/gates/project-memory-impact';
+export { assessProjectMemoryImpact, getProjectMemoryImpactLifecycleEvidence } from '../../../../src/gates/project-memory-impact';
 export { buildRulePackArtifact } from '../../../../src/gates/rule-pack';
 export { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
 export { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from '../../../../src/gates/task-audit/task-audit-summary';

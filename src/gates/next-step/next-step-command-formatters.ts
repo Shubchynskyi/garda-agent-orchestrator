@@ -35,13 +35,21 @@ export function buildProjectMemoryImpactCommand(
         `--mode ${quoteCommandValue(projectMemory.mode)}`,
         `--preflight-path "${preflightCommandPath}"`
     ];
-    if (projectMemory.update_needed === true && projectMemory.affected_memory_files.length > 0) {
+    if (
+        projectMemory.update_needed === true
+        && projectMemory.affected_memory_files.length > 0
+        && !projectMemory.command_update_inference_error
+    ) {
         parts.push('--confirm-updated');
-        for (const file of projectMemory.updated_memory_files) {
+        const updatedMemoryFiles = projectMemory.command_updated_memory_files;
+        const updatedMemoryFileSet = new Set(updatedMemoryFiles);
+        const skippedMemoryFiles = projectMemory.command_skipped_memory_files.length > 0
+            ? projectMemory.command_skipped_memory_files
+            : projectMemory.affected_memory_files.filter((candidate) => !updatedMemoryFileSet.has(candidate));
+        for (const file of updatedMemoryFiles) {
             parts.push(`--updated-memory-file ${quoteCommandValue(file)}`);
         }
-        const updated = new Set(projectMemory.updated_memory_files);
-        for (const file of projectMemory.affected_memory_files.filter((candidate) => !updated.has(candidate))) {
+        for (const file of skippedMemoryFiles) {
             parts.push(`--skipped-memory-file ${quoteCommandValue(file)}`);
         }
         parts.push('--skip-unchanged-candidates-rationale "Current project-memory content already covers unedited candidate files; no additional durable map change is needed for this task impact."');
@@ -169,6 +177,18 @@ export function formatNextStepText(result: NextStepResult): string {
     }
     if (result.project_memory) {
         lines.push(result.project_memory.visible_summary_line);
+        if (result.project_memory.command_updated_memory_files.length > 0) {
+            lines.push(`ProjectMemoryCommandUpdatedFiles: ${result.project_memory.command_updated_memory_files.join(', ')}`);
+        }
+        if (
+            result.project_memory.command_skipped_memory_files.length > 0
+            && !result.project_memory.command_update_inference_error
+        ) {
+            lines.push(`ProjectMemoryCommandSkippedFiles: ${result.project_memory.command_skipped_memory_files.join(', ')}`);
+        }
+        if (result.project_memory.command_update_inference_error) {
+            lines.push(`ProjectMemoryCommandUpdateInference: ${result.project_memory.command_update_inference_error}`);
+        }
     }
     if (result.optional_skill_selection) {
         const optionalSkills = result.optional_skill_selection;

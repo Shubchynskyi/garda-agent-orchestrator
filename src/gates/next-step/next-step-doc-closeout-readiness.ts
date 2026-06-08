@@ -1,11 +1,17 @@
 import * as path from 'node:path';
 
 import {
+    resolveBundleNameForTarget
+} from '../../core/constants';
+import {
     type ProjectMemoryImpactEvidenceStatus,
     type ProjectMemoryImpactStatus,
     getProjectMemoryImpactLifecycleEvidence,
     routeProjectMemoryImpact
 } from '../project-memory-impact/project-memory-impact';
+import {
+    collectChangedProjectMemoryFiles
+} from '../project-memory-impact/project-memory-impact-update-evidence';
 import {
     getClassificationConfig,
     isDocumentationLikePath,
@@ -43,6 +49,9 @@ export interface NextStepProjectMemorySummary {
     update_needed: boolean | null;
     affected_memory_files: string[];
     updated_memory_files: string[];
+    command_updated_memory_files: string[];
+    command_skipped_memory_files: string[];
+    command_update_inference_error: string | null;
     compact_status: string | null;
     compact_refreshed: boolean | null;
     artifact_path: string;
@@ -442,9 +451,65 @@ export function buildDocImpactCompatibilityHint(): string {
     ].join(' ');
 }
 
+function resolveProjectMemoryCommandUpdateSplit(
+    repoRoot: string,
+    evidence: ReturnType<typeof getProjectMemoryImpactLifecycleEvidence>
+): { updated: string[]; skipped: string[]; error: string | null } {
+    const affected = [...evidence.affected_memory_files].map(normalizePath).filter(Boolean).sort();
+    if (evidence.update_needed !== true || affected.length === 0) {
+        return {
+            updated: [...evidence.updated_memory_files].map(normalizePath).filter(Boolean).sort(),
+            skipped: [],
+            error: null
+        };
+    }
+    const evidenceUpdated = [...evidence.updated_memory_files].map(normalizePath).filter(Boolean).sort();
+    if (evidence.evidence_status === 'CURRENT' && evidence.status === 'UPDATED' && evidenceUpdated.length > 0) {
+        const updatedSet = new Set(evidenceUpdated);
+        return {
+            updated: evidenceUpdated,
+            skipped: affected.filter((candidate) => !updatedSet.has(candidate)),
+            error: null
+        };
+    }
+    const bundleRoot = path.join(repoRoot, resolveBundleNameForTarget(repoRoot));
+    const changed = collectChangedProjectMemoryFiles(repoRoot, bundleRoot);
+    if (changed.error) {
+        return {
+            updated: [],
+            skipped: affected,
+            error: changed.error
+        };
+    }
+    const affectedSet = new Set(affected);
+    const changedProjectMemoryFiles = changed.files
+        .map(normalizePath)
+        .filter(Boolean)
+        .sort();
+    const extraChangedFiles = changedProjectMemoryFiles.filter((file) => !affectedSet.has(file));
+    if (extraChangedFiles.length > 0) {
+        return {
+            updated: [],
+            skipped: [],
+            error: `Current changed project-memory files include non-candidate files: ${extraChangedFiles.join(', ')}.`
+        };
+    }
+    const updated = changedProjectMemoryFiles
+        .filter((file) => affectedSet.has(file))
+        .sort();
+    const updatedSet = new Set(updated);
+    return {
+        updated,
+        skipped: affected.filter((candidate) => !updatedSet.has(candidate)),
+        error: null
+    };
+}
+
 export function buildProjectMemoryNextStepSummary(
+    repoRoot: string,
     evidence: ReturnType<typeof getProjectMemoryImpactLifecycleEvidence>
 ): NextStepProjectMemorySummary {
+    const commandUpdateSplit = resolveProjectMemoryCommandUpdateSplit(repoRoot, evidence);
     return {
         enabled: evidence.enabled,
         required: evidence.required,
@@ -454,6 +519,9 @@ export function buildProjectMemoryNextStepSummary(
         update_needed: evidence.update_needed,
         affected_memory_files: [...evidence.affected_memory_files],
         updated_memory_files: [...evidence.updated_memory_files],
+        command_updated_memory_files: commandUpdateSplit.updated,
+        command_skipped_memory_files: commandUpdateSplit.skipped,
+        command_update_inference_error: commandUpdateSplit.error,
         compact_status: evidence.compact_status,
         compact_refreshed: evidence.compact_refreshed,
         artifact_path: evidence.artifact_path,
