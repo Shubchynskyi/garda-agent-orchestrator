@@ -429,7 +429,7 @@ describe('next-step refactor contract baseline', () => {
 
     it('shell-quotes selected optional-skill ids in the executable activation command', () => {
         const repoRoot = makeContractRepo();
-        const unsafeSkillId = 'node" ; Write-Output injected #';
+        const unsafeSkillId = 'node" ; echo injected #';
         fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
         seedStartedTask(repoRoot, TASK_ID);
@@ -444,25 +444,46 @@ describe('next-step refactor contract baseline', () => {
         const command = result.commands[0]?.command || '';
 
         assert.equal(result.next_gate, 'activate-optional-skill');
-        assert.match(command, /--skill-id 'node" ; Write-Output injected #'/u);
-        assert.doesNotMatch(command, /--skill-id "node" ; Write-Output injected #"/u);
+        assert.match(command, /--skill-id 'node" ; echo injected #'/u);
+        assert.doesNotMatch(command, /--skill-id "node" ; echo injected #"/u);
 
-        const argvProbePath = path.join(repoRoot, 'argv-probe.ps1');
-        fs.writeFileSync(
-            argvProbePath,
-            '$args | ForEach-Object { "ARG=$_"}',
-            'utf8'
-        );
-        const probeCommand = command.replace(/^node bin\/garda\.js/u, `powershell -NoProfile -ExecutionPolicy Bypass -File '${argvProbePath.replace(/'/g, "''")}'`);
-        const probe = childProcess.spawnSync(
-            'powershell',
-            ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', probeCommand],
-            { cwd: repoRoot, encoding: 'utf8' }
-        );
+        const quotePosixShellArg = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+        const probe = process.platform === 'win32'
+            ? (() => {
+                const argvProbePath = path.join(repoRoot, 'argv-probe.ps1');
+                fs.writeFileSync(
+                    argvProbePath,
+                    '$args | ForEach-Object { "ARG=$_"}',
+                    'utf8'
+                );
+                const probeCommand = command.replace(/^node bin\/garda\.js/u, `powershell -NoProfile -ExecutionPolicy Bypass -File '${argvProbePath.replace(/'/g, "''")}'`);
+                return childProcess.spawnSync(
+                    'powershell',
+                    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', probeCommand],
+                    { cwd: repoRoot, encoding: 'utf8' }
+                );
+            })()
+            : (() => {
+                const argvProbePath = path.join(repoRoot, 'argv-probe.cjs');
+                fs.writeFileSync(
+                    argvProbePath,
+                    'for (const arg of process.argv.slice(2)) console.log(`ARG=${arg}`);\n',
+                    'utf8'
+                );
+                const probeCommand = command.replace(
+                    /^node bin\/garda\.js/u,
+                    `${quotePosixShellArg(process.execPath)} ${quotePosixShellArg(argvProbePath)}`
+                );
+                return childProcess.spawnSync(
+                    'sh',
+                    ['-c', probeCommand],
+                    { cwd: repoRoot, encoding: 'utf8' }
+                );
+            })();
         const probeOutput = `${probe.stdout || ''}\n${probe.stderr || ''}`;
         assert.equal(probe.status, 0, probeOutput);
         assert.match(probeOutput, /ARG=--skill-id/u);
-        assert.match(probeOutput, /ARG=node.*Write-Output injected #/u);
+        assert.match(probeOutput, /ARG=node.*echo injected #/u);
         assert.doesNotMatch(probeOutput, /^injected$/mu);
     });
 
