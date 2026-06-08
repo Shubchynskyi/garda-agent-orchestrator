@@ -1445,4 +1445,79 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(result.commands[0].command.includes('--changed-file "src/app.ts"'));
         assert.ok(result.commands[0].command.includes('--changed-file "src/extra.ts"'));
     });
+
+    it('does not reintroduce stale protected dirty-baseline files into stale preflight refresh commands', () => {
+        const repoRoot = makeTempRepo();
+        const legacyPath = path.join(repoRoot, 'src', 'legacy.ts');
+        fs.writeFileSync(legacyPath, 'export const legacy = 1;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        fs.appendFileSync(legacyPath, 'export const temporary = 2;\n', 'utf8');
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh stale protected dirty baseline scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: baselineSnapshot.changed_files,
+            dirtyWorkspaceBaseline: {
+                detection_source: baselineSnapshot.detection_source,
+                include_untracked: baselineSnapshot.include_untracked,
+                changed_files: baselineSnapshot.changed_files,
+                changed_files_sha256: baselineSnapshot.changed_files_sha256,
+                scope_sha256: baselineSnapshot.scope_sha256,
+                file_hashes: Object.fromEntries(
+                    baselineSnapshot.changed_files.map((changedFile) => [
+                        changedFile,
+                        fileSha256(path.join(repoRoot, changedFile))
+                    ])
+                )
+            }
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: baselineSnapshot.changed_files
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        fs.writeFileSync(legacyPath, 'export const legacy = 1;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /no longer current: \[src\/legacy\.ts\]/);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('--changed-file "src/legacy.ts"'));
+    });
+
+    it('drops line-ending-restored files from stale preflight refresh commands', () => {
+        const repoRoot = makeTempRepo();
+        const eolPath = path.join(repoRoot, 'src', 'line-ending.ts');
+        fs.writeFileSync(eolPath, 'export const lineEnding = 1;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        fs.writeFileSync(eolPath, 'export const lineEnding = 1;\r\n', 'utf8');
+        const staleScope = ['src/app.ts', 'src/line-ending.ts'];
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: staleScope
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        fs.writeFileSync(eolPath, 'export const lineEnding = 1;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /no longer current: \[src\/line-ending\.ts\]/);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('--changed-file "src/line-ending.ts"'));
+    });
 });

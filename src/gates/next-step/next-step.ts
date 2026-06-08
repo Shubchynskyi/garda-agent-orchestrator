@@ -254,6 +254,9 @@ import {
     type NextStepProjectMemorySummary
 } from './next-step-doc-closeout-readiness';
 import {
+    readCurrentGitWorkspaceSnapshot
+} from './next-step-docs-delta-readiness';
+import {
     buildClassifyChangeCommand,
     buildCompileGateCommand,
     buildCompletionGateCommand,
@@ -1192,6 +1195,27 @@ export function buildReviewReuseCandidatesForDiagnostics(text: string, affectedR
     return buildReuseCandidates(text, affectedReviewLanes);
 }
 
+function getCurrentWorkspaceRefreshChangedFiles(
+    repoRoot: string,
+    preflight: Record<string, unknown> | null,
+    fallbackChangedFiles: string[] | undefined
+): string[] | undefined {
+    const detectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
+    if (detectionSource !== 'explicit_changed_files') {
+        return fallbackChangedFiles;
+    }
+    const includeUntracked = typeof preflight?.include_untracked === 'boolean'
+        ? preflight.include_untracked
+        : true;
+    const currentSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
+    if (!currentSnapshot) {
+        return fallbackChangedFiles;
+    }
+    return [...new Set(
+        currentSnapshot.changed_files.map((entry: string) => normalizePath(entry)).filter(Boolean)
+    )].sort();
+}
+
 function getBuildReviewContextReuseCandidateHint(
     eventsRoot: string,
     taskId: string,
@@ -2034,10 +2058,14 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
-            changedFiles: (reviewGateAlreadyPassed
-                ? effectivePreflightWorkspaceReadiness.currentChangedFiles
-                : effectiveStrictPreGuardWorkspaceReadiness.currentChangedFiles)
-                ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+            changedFiles: getCurrentWorkspaceRefreshChangedFiles(
+                repoRoot,
+                preflight,
+                (reviewGateAlreadyPassed
+                    ? effectivePreflightWorkspaceReadiness.currentChangedFiles
+                    : effectiveStrictPreGuardWorkspaceReadiness.currentChangedFiles)
+                    ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+            )
         }),
         coherentCycleReadiness,
         navigatorCommand,
@@ -2327,8 +2355,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskModePath,
             preflightCommandPath,
             includePlannedScope: false,
-            changedFiles: preflightWorkspaceReadiness.currentChangedFiles
-                ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+            changedFiles: getCurrentWorkspaceRefreshChangedFiles(
+                repoRoot,
+                preflight,
+                preflightWorkspaceReadiness.currentChangedFiles
+                    ?? getPreflightRefreshChangedFiles(taskMode, preflight)
+            )
         }),
         compileCommand: buildCompileGateCommand(
             repoRoot,
