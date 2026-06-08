@@ -6,15 +6,15 @@
   },
   "LOCAL_UI_TEXT": {
     "appTitle": "Garda UI",
-    "loadingWorkspaceReport": "Загрузка отчёта workspace...",
+    "loadingWorkspaceReport": "Загрузка отчёта по рабочей области...",
     "tasksTab": "Задачи",
-    "workflowTab": "Рабочий конфиг",
+    "workflowTab": "Конфигурация рабочего процесса",
     "initSettingsTab": "Настройки инициализации",
     "projectMemoryTab": "Память проекта",
-    "backupsTab": "Бэкапы",
-    "backupsTabIntro": "Вкладка Backups показывает rollback-снимки из инвентаря бэкапов, настройки auto-backup из workflow config и guarded restore actions, когда UI-сервер запущен с `--actions`.",
-    "backupsInventoryTitle": "Инвентарь бэкапов",
-    "backupsEmpty": "В инвентаре нет бэкапов.",
+    "backupsTab": "Резервные копии",
+    "backupsTabIntro": "Вкладка «Резервные копии» показывает снимки для отката из инвентаря, настройки автоматического резервного копирования из конфигурации рабочего процесса и защищённые действия восстановления, если UI-сервер запущен с `--actions`.",
+    "backupsInventoryTitle": "Инвентарь резервных копий",
+    "backupsEmpty": "В инвентаре нет резервных копий.",
     "backupsSnapshotsRoot": "Корень снимков",
     "backupRootPresent": "есть",
     "backupRootMissing": "нет",
@@ -23,24 +23,24 @@
     "backupSizeColumn": "Размер",
     "backupReasonColumn": "Причина",
     "backupStatusColumn": "Состояние",
-    "backupRestoreColumn": "Восстановление",
+    "backupRestoreColumn": "Восстановить",
     "backupReasonUpdate": "обновление",
     "backupReasonScheduled": "по расписанию",
     "backupsActionsDisabled": "Управляемые действия отключены.",
-    "backupRestoreUnavailable": "Восстановление для этого бэкапа недоступно.",
-    "restoreBackup": "Восстановить бэкап",
-    "backupsAutoBackupTitle": "Auto-backup",
+    "backupRestoreUnavailable": "Восстановление этой резервной копии недоступно.",
+    "restoreBackup": "Восстановить резервную копию",
+    "backupsAutoBackupTitle": "Автоматическое резервное копирование",
     "backupAutoEnabled": "Включено",
     "backupAutoIntervalDays": "Интервал (дней)",
-    "backupAutoKeepLatest": "Хранить последних",
-    "backupsAutoBackupHelp": "Если auto-backup включён, daily maintenance может создавать плановые rollback backups, когда подошёл интервал. Preview показывает точную команду перед сохранением.",
-    "backupsRestorePreviewHelp": "Выберите бэкап и нажмите Preview command, чтобы увидеть guarded restore перед запуском.",
+    "backupAutoKeepLatest": "Хранить последние",
+    "backupsAutoBackupHelp": "Если автоматическое резервное копирование включено, ежедневное обслуживание может создавать плановые снимки для отката, когда наступает заданный интервал. Предварительный просмотр показывает точную команду перед сохранением.",
+    "backupsRestorePreviewHelp": "Выберите резервную копию и нажмите «Показать команду», чтобы увидеть защищённую команду восстановления перед запуском.",
     "instructionsTab": "Инструкции",
     "actionsTab": "Действия",
-    "noticeActionsEnabled": "Детали задач загружаются по запросу с локального сервера. Сервер привязан к 127.0.0.1 и останавливается при завершении этого CLI-процесса. Управляемые действия включены только для allow-listed команд.",
-    "noticeActionsDisabled": "Детали задач загружаются по запросу с локального сервера. Сервер привязан к 127.0.0.1 и останавливается при завершении этого CLI-процесса. Управляемые действия отключены, если сервер не запущен с --actions.",
+    "noticeActionsEnabled": "Детали задач загружаются по запросу с локального сервера. Сервер привязан к 127.0.0.1 и останавливается при завершении этого CLI-процесса. Управляемые действия включены только для команд из разрешённого списка.",
+    "noticeActionsDisabled": "Детали задач загружаются по запросу с локального сервера. Сервер привязан к 127.0.0.1 и останавливается при завершении этого CLI-процесса. Управляемые действия отключены, если сервер не запущен с `--actions`.",
     "languageTitle": "Язык",
-    "languageHelp": "Язык UI хранится локально в этой странице браузера. Команды, task IDs, config keys, enum values, file paths и raw outputs не переводятся.",
+    "languageHelp": "Язык интерфейса хранится локально на этой странице браузера. Команды, ID задач, ключи конфигурации, значения перечислений, пути к файлам и необработанный вывод не переводятся.",
     "serverStatusTitle": "Статус сервера",
     "loadingServerSession": "Загрузка сессии сервера...",
     "iAmHere": "Я здесь",
@@ -52,13 +52,13 @@
     "gardaSwitchStateOn": "Включено",
     "gardaSwitchStateOff": "Отключено",
     "gardaSwitchStateUnknown": "Неизвестно",
-    "gardaSwitchHelp": "Включает или отключает корневые Garda-инструкции для этого workspace.",
-    "gardaSwitchActionsDisabled": "Чтобы переключать отсюда, запустите UI с управляемыми действиями:",
-    "gardaSwitchUnknownHelp": "Состояние переключателя неизвестно; выберите нужную команду после проверки workspace.",
+    "gardaSwitchHelp": "Включает или отключает корневые инструкции Garda для этой рабочей области.",
+    "gardaSwitchActionsDisabled": "Чтобы переключать состояние отсюда, запустите UI с управляемыми действиями:",
+    "gardaSwitchUnknownHelp": "Состояние переключателя неизвестно; выберите нужную команду после проверки рабочей области.",
     "gardaSwitchUnavailable": "Переключение скрыто, пока текущее состояние Garda неизвестно.",
     "turnGardaOn": "Включить",
     "turnGardaOff": "Отключить",
-    "searchTasks": "Поиск задач",
+    "searchTasks": "Искать задачи",
     "allStatuses": "Все статусы",
     "allPriorities": "Все приоритеты",
     "idColumn": "ID",
@@ -72,28 +72,28 @@
     "taskDetailTitle": "Детали задачи",
     "chooseTask": "Выберите задачу и нажмите «Загрузить детали».",
     "dataCompact": "Компактно",
-    "dataFull": "Полностью",
+    "dataFull": "Полные данные",
     "dataOnDemand": "По запросу",
     "dataBlockers": "Блокеры",
-    "compactDetailState": "Закрытая задача показана по строке очереди; загрузите детали, если нужны архивные артефакты.",
-    "onDemandDetailState": "Открытая задача показана из TASK.md; детали загружаются только когда нужны runtime events или артефакты.",
+    "compactDetailState": "Закрытая задача показана из строки очереди; загрузите детали, если нужны архивные артефакты.",
+    "onDemandDetailState": "Открытая задача показана из TASK.md; загружайте детали только когда нужны события выполнения или артефакты.",
     "fullDetailState": "Полные артефакты задачи загружены с локального сервера.",
     "blockerDetailState": "В TASK.md задача помечена как заблокированная.",
-    "runtimeDiagnosticsTitle": "Runtime-диагностика",
-    "noRuntimeDiagnostics": "Runtime-диагностика не сообщает проблем.",
+    "runtimeDiagnosticsTitle": "Диагностика выполнения",
+    "noRuntimeDiagnostics": "Диагностика выполнения не сообщает о проблемах.",
     "taskActionsTitle": "Команды задачи",
-    "taskActionsHelp": "Команды конкретной задачи находятся здесь, чтобы вкладка действий была только про обслуживание workspace.",
-    "taskCommandNextStep": "Следующий шаг lifecycle",
+    "taskActionsHelp": "Команды конкретной задачи находятся здесь, чтобы вкладка «Действия» оставалась посвящена обслуживанию рабочей области.",
+    "taskCommandNextStep": "Следующий шаг процесса",
     "taskCommandStats": "Статистика задачи",
     "taskCommandEvents": "События задачи",
     "taskCommandReset": "Сбросить задачу",
-    "taskCommandNextStepDescription": "Запрашивает у Garda следующий обязательный lifecycle-шаг для этой задачи. Может продвинуть workflow state и требует подтверждения.",
-    "taskCommandResetDescription": "Переоткрывает задачу через защищённый gate task-reset. Нужно включить task-reset и ввести подтверждение.",
-    "taskCommandStatsDescription": "Показывает focused counters и runtime summary для этой задачи.",
-    "taskCommandEventsDescription": "Показывает timeline событий задачи, который используют gate summaries.",
-    "taskCommandPreviewHelp": "Запуск next-step требует подтверждения.",
+    "taskCommandNextStepDescription": "Запрашивает у Garda следующий обязательный шаг жизненного цикла для этой задачи. Может изменить состояние рабочего процесса и требует подтверждения.",
+    "taskCommandResetDescription": "Переоткрывает задачу через защищённый gate `task-reset`. Нужно включить `task-reset` и ввести подтверждение.",
+    "taskCommandStatsDescription": "Показывает целевые счётчики и сводку выполнения для этой задачи.",
+    "taskCommandEventsDescription": "Показывает хронологию событий задачи, которую используют сводки gate-проверок.",
+    "taskCommandPreviewHelp": "Запуск следующего шага требует подтверждения.",
     "taskCommandUnavailable": "Запустите `garda ui --actions`, чтобы выполнять команды задачи с этой страницы.",
-    "taskResetUnavailable": "Task reset отключён. Сначала включите workflow setting task_reset.enabled, затем запускайте подтверждённый reset.",
+    "taskResetUnavailable": "Сброс задачи отключён. Сначала включите настройку рабочего процесса `task_reset.enabled`, затем запускайте подтверждённый сброс.",
     "showTaskPlan": "Показать план",
     "taskPlanTitle": "План задачи",
     "planPath": "Путь к плану",
@@ -105,16 +105,16 @@
     "overviewDone": "Готовые",
     "overviewBlocked": "Заблокированные",
     "overviewWarnings": "Предупреждения",
-    "metaRepo": "Repo",
+    "metaRepo": "Репозиторий",
     "metaTasks": "Задачи",
     "metaWarnings": "Предупреждения",
     "warningsTitle": "Предупреждения",
     "noMatchingTasks": "Нет подходящих задач.",
     "loadDetails": "Загрузить детали",
-    "noWorkflowSettings": "Настройки workflow недоступны.",
-    "initBlockTitle": "Init",
-    "agentInitBlockTitle": "Агентский init",
-    "initCommandsTitle": "Команды init",
+    "noWorkflowSettings": "Настройки рабочего процесса недоступны.",
+    "initBlockTitle": "Инициализация",
+    "agentInitBlockTitle": "Инициализация агента",
+    "initCommandsTitle": "Команды инициализации",
     "initStatusPresent": "Загружено",
     "initStatusMissing": "Файл не найден",
     "initStatusInvalid": "Файл некорректен",
@@ -129,24 +129,24 @@
     "openColumn": "Переход",
     "openMemoryFile": "Открыть",
     "noProjectMemoryFiles": "Файлы памяти проекта недоступны.",
-    "workflowConfigPath": "Файл конфига",
-    "workflowStatus": "Состояние конфига",
-    "workflowStatusPresent": "Конфиг загружен. Предупреждения появятся здесь только если файл нельзя прочитать или разобрать.",
+    "workflowConfigPath": "Файл конфигурации",
+    "workflowStatus": "Состояние конфигурации",
+    "workflowStatusPresent": "Конфигурация загружена. Предупреждения появятся здесь только если файл нельзя прочитать или разобрать.",
     "workflowStatusMissing": "Файл не найден; показаны значения по умолчанию",
     "workflowStatusInvalid": "Файл некорректен; показаны значения по умолчанию",
-    "workflowWarningTitle": "Проблема с конфигом",
-    "workflowCommandPreview": "Предпросмотр команды",
-    "workflowCommandPreviewHelp": "Выберите настройку и нажмите «Показать команду», чтобы увидеть точную audited-команду перед сохранением.",
+    "workflowWarningTitle": "Проблема с конфигурацией",
+    "workflowCommandPreview": "Предварительный просмотр команды",
+    "workflowCommandPreviewHelp": "Выберите настройку и нажмите «Показать команду», чтобы увидеть точную проверяемую команду перед сохранением.",
     "actionsPreviewHelp": "Выберите действие и нажмите «Показать команду», чтобы увидеть точную разрешённую команду перед запуском.",
     "resultStatusPreviewed": "Только предпросмотр",
     "resultStatusExecuted": "Применено",
     "resultStatusConfirmationRequired": "Нужно подтверждение",
     "resultStatusDisabled": "Отключено",
     "resultStatusUnavailable": "Недоступно",
-    "workflowGroupValidation": "Проверки и тестовый lifecycle",
-    "workflowGroupReview": "Порядок review",
+    "workflowGroupValidation": "Проверки и тестовый цикл",
+    "workflowGroupReview": "Порядок ревью",
     "workflowGroupScope": "Лимиты размера задачи",
-    "workflowGroupMemory": "Project memory",
+    "workflowGroupMemory": "Память проекта",
     "workflowGroupSafety": "Защищённые режимы",
     "configSettingColumn": "Настройка",
     "descriptionColumn": "Описание",
@@ -155,7 +155,7 @@
     "changeColumn": "Изменить",
     "noFixedOptions": "Фиксированных опций нет",
     "freeValueHelp": "Введите значение по смыслу описания.",
-    "reviewCycleAutoSplitDependency": "Auto-split влияет только на blocking mode: review_cycle_guard.action должен быть BLOCK_FOR_OPERATOR_DECISION. При WARN_ONLY эта настройка информационная.",
+    "reviewCycleAutoSplitDependency": "Авторазбиение влияет только на режим блокировки: `review_cycle_guard.action` должен быть `BLOCK_FOR_OPERATOR_DECISION`. При `WARN_ONLY` эта настройка носит информационный характер.",
     "minutesLabel": "Минуты",
     "secondsLabel": "Секунды",
     "durationStoredAsMs": "Для Garda сохраняется в миллисекундах.",
@@ -165,7 +165,7 @@
     "instructionAreaColumn": "Раздел",
     "instructionDescriptionColumn": "Описание",
     "guardedEditor": "Защищённый редактор",
-    "guardedEditorHelp": "Изменения выполняются через проверяемые команды `garda workflow set`. Сначала можно посмотреть команду, затем сохранить с подтверждением.",
+    "guardedEditorHelp": "Изменения выполняются через проверяемые команды `garda workflow set`. Предварительный просмотр показывает точную команду, а сохранение требует подтверждения.",
     "settingEditsDisabled": "Редактирование настроек отключено. Перезапустите с",
     "settingEditsDisabledTail": "чтобы включить управляемое изменение настроек.",
     "noEditableSettings": "Нет доступных безопасных настроек для редактирования.",
@@ -208,13 +208,13 @@
     "serverUnavailableTail": "в терминале.",
     "actionsDisabled": "Действия отключены. Перезапустите с",
     "actionsDisabledTail": "чтобы показать разрешённые команды.",
-    "actionsIntro": "Действия workspace — это фиксированные команды Garda. Команды конкретной задачи находятся в деталях этой задачи; backup restore commands находятся во вкладке Backups.",
-    "actionsTaskMoved": "Откройте задачу на вкладке «Задачи», чтобы увидеть next-step, stats и events команды.",
+    "actionsIntro": "Действия рабочей области — это фиксированные команды Garda. Команды конкретной задачи находятся в деталях этой задачи; команды восстановления резервных копий находятся во вкладке «Резервные копии».",
+    "actionsTaskMoved": "Откройте задачу на вкладке «Задачи», чтобы увидеть команды следующего шага, статистики и событий.",
     "mutatingAction": "Вносит изменения в workspace или runtime.",
-    "htmlReportMutation": "Создаёт или обновляет HTML-отчёт в runtime/reports.",
-    "cleanupMutation": "Удаляет или сжимает runtime-артефакты по retention policy.",
+    "htmlReportMutation": "Создаёт или обновляет HTML-отчёт в `runtime/reports`.",
+    "cleanupMutation": "Удаляет или сжимает артефакты выполнения согласно политике хранения.",
     "gardaSwitchMutation": "Перемещает управляемые корневые instruction-файлы между активным и неактивным хранилищем.",
-    "safeAction": "Только читает данные или показывает dry-run.",
+    "safeAction": "Только читает данные или показывает пробный запуск.",
     "action": "Действие",
     "run": "Выполнить",
     "actionUnavailable": "Недоступно",
@@ -224,28 +224,28 @@
     "loadingTaskPrefix": "Загрузка",
     "unableToLoadDetails": "Не удалось загрузить детали: HTTP",
     "events": "События",
-    "gatePass": "Успешные gates",
-    "gateFail": "Проваленные gates",
-    "fullSuiteState": "Статус full-suite",
-    "fullSuiteDuration": "Длительность full-suite",
-    "fullSuiteTitle": "Full-suite validation",
+    "gatePass": "Успешные проверки",
+    "gateFail": "Проваленные проверки",
+    "fullSuiteState": "Статус полной проверки",
+    "fullSuiteDuration": "Длительность полной проверки",
+    "fullSuiteTitle": "Валидация полного набора",
     "fullSuiteCommand": "Команда",
     "fullSuitePlacement": "Место",
     "fullSuiteFreshness": "Актуальность",
     "fullSuiteTimeoutForecast": "Прогноз таймаута",
-    "fullSuiteArtifact": "Evidence-артефакт",
-    "fullSuiteOutput": "Output-артефакт",
-    "fullSuiteSummary": "Summary",
+    "fullSuiteArtifact": "Артефакт с доказательствами",
+    "fullSuiteOutput": "Артефакт вывода",
+    "fullSuiteSummary": "Сводка",
     "changedLines": "Изменённые строки",
-    "gateTimeline": "Лента gates",
-    "gateTimelineHelp": "Это summary последнего runtime-цикла; статус задачи выше остаётся статусом из TASK.md.",
+    "gateTimeline": "Хронология проверок",
+    "gateTimelineHelp": "Это сводка последнего цикла выполнения; статус задачи выше остаётся статусом из TASK.md.",
     "blockers": "Блокеры",
     "noBlockers": "Блокеры не найдены.",
-    "reviews": "Review",
+    "reviews": "Ревью",
     "artifacts": "Артефакты",
     "existingArtifacts": "Есть артефакты",
     "missingArtifacts": "Отсутствуют артефакты",
-    "artifactPath": "Путь артефакта"
+    "artifactPath": "Путь к артефакту"
   },
   "LOCAL_UI_SETTING_TEXT": {
     "full-suite-enabled": {
@@ -254,23 +254,23 @@
     },
     "full-suite-command": {
       "label": "Команда полной проверки",
-      "description": "Команда, которую запускает full-suite gate, когда обязательная полная проверка включена."
+      "description": "Команда, которую запускает gate полной проверки, когда обязательная полная проверка включена."
     },
     "full-suite-timeout-ms": {
       "label": "Таймаут полной проверки",
       "description": "Максимальное время выполнения команды полной проверки в миллисекундах."
     },
     "full-suite-green-summary-max-lines": {
-      "label": "Размер успешного отчёта full-suite",
-      "description": "Сколько строк успешного вывода full-suite сохранять в компактных evidence задачи."
+      "label": "Размер успешного отчёта полной проверки",
+      "description": "Сколько строк успешного вывода полной проверки сохранять в компактных доказательствах задачи."
     },
     "full-suite-red-failure-chunk-lines": {
-      "label": "Размер блока ошибки full-suite",
+      "label": "Размер блока ошибки полной проверки",
       "description": "Сколько строк неуспешного вывода сохранять в одном компактном блоке ошибки."
     },
     "full-suite-out-of-scope-failure-policy": {
       "label": "Ошибки вне scope задачи",
-      "description": "Что делать, если full-suite нашёл проблему за пределами текущей задачи.",
+      "description": "Что делать, если полная проверка нашла проблему за пределами текущей задачи.",
       "options": {
         "AUDIT_AND_BLOCK": {
           "label": "Записать и заблокировать",
@@ -283,26 +283,26 @@
       }
     },
     "full-suite-placement": {
-      "label": "Место full-suite в lifecycle",
-      "description": "На каком этапе lifecycle задачи запускать обязательный full-suite gate.",
+      "label": "Место полной проверки в жизненном цикле",
+      "description": "На каком этапе жизненного цикла задачи запускать обязательный gate полной проверки.",
       "options": {
         "after_compile_before_reviews": {
-          "label": "После compile, перед review",
-          "description": "Запускает full-suite после успешной компиляции и до старта review."
+          "label": "После компиляции, перед ревью",
+          "description": "Запускает полную проверку после успешной компиляции и до старта ревью."
         },
         "before_test_review": {
-          "label": "Перед test review",
-          "description": "Запускает full-suite прямо перед тем, как test review нужен evidence."
+          "label": "Перед тестовым ревью",
+          "description": "Запускает полную проверку прямо перед тем, как тестовому ревью потребуются доказательства."
         },
         "before_completion": {
           "label": "Перед завершением",
-          "description": "Откладывает full-suite до финального completion path."
+          "description": "Откладывает полную проверку до финального пути завершения."
         }
       }
     },
     "review-execution-policy": {
       "label": "Режим запуска review",
-      "description": "Определяет, какие review могут идти параллельно, а какие должны ждать code review.",
+      "description": "Определяет, какие ревью могут идти параллельно, а какие должны ждать code review.",
       "options": {
         "parallel_all": {
           "label": "Все параллельно",
@@ -310,7 +310,7 @@
         },
         "test_after_code": {
           "label": "Test после code",
-          "description": "Только test ждёт текущий code PASS; остальные review независимы."
+          "description": "Только test ждёт текущий code PASS; остальные ревью независимы."
         },
         "code_first_optional": {
           "label": "Code сначала для optional",
@@ -328,7 +328,7 @@
     },
     "scope-budget-action": {
       "label": "Реакция на превышение scope",
-      "description": "Что делать, когда задача превысила настроенный scope budget.",
+      "description": "Что делать, когда задача превысила настроенный бюджет охвата.",
       "options": {
         "BLOCK_FOR_SPLIT": {
           "label": "Блокировать до разбиения",
@@ -341,32 +341,32 @@
       }
     },
     "scope-budget-profiles": {
-      "label": "Профили для scope budget",
-      "description": "Task profiles, для которых действует контроль размера. Unknown legacy values показываются явно и не удаляются молча."
+      "label": "Профили для бюджета охвата",
+      "description": "Профили задач, для которых действует контроль размера. Неизвестные устаревшие значения показываются явно и не удаляются молча."
     },
     "scope-budget-max-files": {
       "label": "Лимит файлов",
-      "description": "Максимальное число изменённых файлов до реакции scope budget guard."
+      "description": "Максимальное число изменённых файлов до реакции защиты бюджета охвата."
     },
     "scope-budget-max-changed-lines": {
       "label": "Лимит изменённых строк",
-      "description": "Максимальное число изменённых строк до реакции scope budget guard."
+      "description": "Максимальное число изменённых строк до реакции защиты бюджета охвата."
     },
     "scope-budget-max-required-reviews": {
       "label": "Лимит review lanes",
-      "description": "Максимальное число обязательных review lanes до реакции scope budget guard."
+      "description": "Максимальное число обязательных review lanes до реакции защиты бюджета охвата."
     },
     "scope-budget-max-review-tokens": {
-      "label": "Лимит review tokens",
-      "description": "Максимальная оценка токенов на review до реакции scope budget guard."
+      "label": "Лимит токенов на ревью",
+      "description": "Максимальная оценка токенов на ревью до реакции защиты бюджета охвата."
     },
     "review-cycle-enabled": {
-      "label": "Контроль review-циклов",
-      "description": "Отслеживает повторяющиеся не-test review loops, чтобы они не съели слишком много работы."
+      "label": "Контроль циклов ревью",
+      "description": "Отслеживает повторяющиеся не-test циклы ревью, чтобы они не забирали слишком много работы."
     },
     "review-cycle-action": {
-      "label": "Реакция на review-loop",
-      "description": "Что делать, если повторные review attempts превысили лимиты.",
+      "label": "Реакция на цикл ревью",
+      "description": "Что делать, если повторные попытки ревью превысили лимиты.",
       "options": {
         "BLOCK_FOR_OPERATOR_DECISION": {
           "label": "Ждать решение оператора",
@@ -379,27 +379,27 @@
       }
     },
     "review-cycle-max-failed-non-test-reviews": {
-      "label": "Лимит проваленных non-test review",
-      "description": "Сколько проваленных non-test review attempts допускается до реакции guard."
+      "label": "Лимит проваленных non-test ревью",
+      "description": "Сколько проваленных non-test попыток ревью допускается до реакции защиты."
     },
     "review-cycle-max-total-non-test-reviews": {
-      "label": "Общий лимит non-test review",
-      "description": "Сколько всего non-test review attempts допускается до реакции guard."
+      "label": "Общий лимит non-test ревью",
+      "description": "Сколько всего non-test попыток ревью допускается до реакции защиты."
     },
     "review-cycle-excluded-review-types": {
-      "label": "Исключённые review types",
-      "description": "Review lanes, которые review-cycle guard игнорирует. Значения выбираются из известных review contract keys и текущего capability config."
+      "label": "Исключённые типы ревью",
+      "description": "Review lanes, которые игнорирует защита review-cycle. Значения выбираются из известных ключей review contract и текущей конфигурации возможностей."
     },
     "review-cycle-auto-split-enabled": {
-      "label": "Авто-предложение split",
-      "description": "Разрешает auto-split prompt только когда review-cycle action блокирует до решения оператора."
+      "label": "Автопредложение разбиения",
+      "description": "Разрешает подсказку auto-split только когда действие review-cycle блокирует до решения оператора."
     },
     "project-memory-enabled": {
-      "label": "Проверка project memory",
-      "description": "Включает closeout-проверку того, нужно ли обновить durable project memory."
+      "label": "Проверка памяти проекта",
+      "description": "Включает проверку при закрытии задачи: нужно ли обновить устойчивую память проекта."
     },
     "project-memory-mode": {
-      "label": "Режим project memory",
+      "label": "Режим памяти проекта",
       "description": "Насколько строго workflow требует работу с project memory.",
       "options": {
         "off": {
@@ -421,20 +421,20 @@
       }
     },
     "project-memory-run-before-final-closeout": {
-      "label": "Запускать memory check до closeout",
-      "description": "Запускает project-memory maintenance перед финальным completion step."
+      "label": "Запускать проверку памяти до закрытия",
+      "description": "Запускает обслуживание памяти проекта перед финальным шагом завершения."
     },
     "project-memory-require-user-approval-for-writes": {
-      "label": "Подтверждение записи memory",
-      "description": "Требует явного согласия пользователя перед записью project-memory файлов."
+      "label": "Подтверждение записи в память",
+      "description": "Требует явного согласия пользователя перед записью файлов памяти проекта."
     },
     "project-memory-max-compact-summary-chars": {
-      "label": "Размер compact memory summary",
-      "description": "Максимальный размер generated compact project-memory summary в символах."
+      "label": "Размер компактной сводки памяти",
+      "description": "Максимальный размер сгенерированной компактной сводки памяти проекта в символах."
     },
     "project-memory-read-strategy": {
-      "label": "Стратегия чтения memory",
-      "description": "Как агент должен читать durable memory на старте задачи.",
+      "label": "Стратегия чтения памяти",
+      "description": "Как агент должен читать устойчивую память на старте задачи.",
       "options": {
         "index_first": {
           "label": "Сначала индекс",
@@ -443,28 +443,28 @@
       }
     },
     "project-memory-impact-retention-days": {
-      "label": "Хранение memory impact artifacts",
-      "description": "Сколько дней хранить артефакты project-memory impact."
+      "label": "Хранение артефактов влияния памяти",
+      "description": "Сколько дней хранить артефакты влияния памяти проекта."
     },
     "task-reset-enabled": {
-      "label": "Команды reset/discard задач",
+      "label": "Команды сброса/отмены задач",
       "description": "Разрешает подтверждённые мутации reset или discard для задач."
     },
     "auto-backup-enabled": {
-      "label": "Плановые auto-backup",
-      "description": "Разрешает daily maintenance создавать плановые rollback backups, когда подошёл интервал."
+      "label": "Плановые резервные копии",
+      "description": "Разрешает ежедневному обслуживанию создавать плановые снимки для отката, когда наступает заданный интервал."
     },
     "auto-backup-interval-days": {
-      "label": "Интервал auto-backup",
-      "description": "Минимальное число дней между успешными плановыми backups."
+      "label": "Интервал резервного копирования",
+      "description": "Минимальное число дней между успешными плановыми резервными копиями."
     },
     "auto-backup-keep-latest": {
-      "label": "Хранение auto-backup",
-      "description": "Сколько последних backups оставить после создания планового backup."
+      "label": "Хранение резервных копий",
+      "description": "Сколько последних резервных копий оставить после создания плановой копии."
     },
     "garda-self-guard": {
       "label": "Защита control-plane Garda",
-      "description": "Определяет, могут ли агенты напрямую входить в защищённую control-plane работу Garda.",
+      "description": "Определяет, могут ли агенты напрямую входить в защищённую работу control-plane Garda.",
       "options": {
         "deny_agent_entry": {
           "label": "Включено",
@@ -507,12 +507,12 @@
       "description": "Оставляет неканонические provider entrypoints редиректами, когда это возможно."
     },
     "CollectedVia": {
-      "label": "Источник init answers",
-      "description": "Показывает provenance init answers: `AGENT_INIT_PROMPT.md`, `CLI_INTERACTIVE` или `CLI_NONINTERACTIVE`."
+      "label": "Источник ответов инициализации",
+      "description": "Показывает происхождение ответов инициализации: `AGENT_INIT_PROMPT.md`, `CLI_INTERACTIVE` или `CLI_NONINTERACTIVE`."
     },
     "ActiveAgentFiles": {
-      "label": "Активные agent files",
-      "description": "Root/provider instruction files, выбранные при инициализации."
+      "label": "Активные файлы агента",
+      "description": "Корневые/provider instruction-файлы, выбранные при инициализации."
     },
     "UpdatedAt": {
       "label": "Последнее обновление",
@@ -527,79 +527,79 @@
       "description": "Пройден ли checkpoint языка ассистента."
     },
     "ActiveAgentFilesConfirmed": {
-      "label": "Agent files подтверждены",
-      "description": "Был ли явно подтверждён набор active agent files."
+      "label": "Файлы агента подтверждены",
+      "description": "Был ли явно подтверждён набор активных файлов агента."
     },
     "ProjectRulesUpdated": {
-      "label": "Project rules подтверждены",
-      "description": "Были ли project rules просмотрены или приняты во время agent init."
+      "label": "Правила проекта подтверждены",
+      "description": "Были ли правила проекта просмотрены или приняты во время инициализации агента."
     },
     "SkillsPromptCompleted": {
-      "label": "Skills prompt завершён",
+      "label": "Подсказка по skills завершена",
       "description": "Пройден ли checkpoint с подсказкой по skills."
     },
     "OrdinaryDocPathsConfirmed": {
-      "label": "Обычные docs подтверждены",
-      "description": "Подтверждены ли user-owned docs, которые не считаются generated rules."
+      "label": "Обычные документы подтверждены",
+      "description": "Подтверждены ли пользовательские документы, которые не считаются сгенерированными правилами."
     },
     "OrdinaryDocPaths": {
-      "label": "Обычные docs",
-      "description": "User-owned documentation paths, которые Garda может упоминать как обычную документацию."
+      "label": "Обычные документы",
+      "description": "Пути к пользовательской документации, которую Garda может упоминать как обычную документацию."
     },
     "VerificationPassed": {
-      "label": "Verification прошёл",
-      "description": "Прошла ли post-init проверка workspace."
+      "label": "Проверка пройдена",
+      "description": "Прошла ли post-init проверка рабочей области."
     },
     "ManifestValidationPassed": {
-      "label": "Manifest валиден",
-      "description": "Прошла ли проверка protected control-plane manifest."
+      "label": "Манифест валиден",
+      "description": "Прошла ли проверка защищённого control-plane manifest."
     },
     "LastSeededFullSuiteCommand": {
-      "label": "Seeded full-suite command",
-      "description": "Тестовая команда, записанная в workflow config во время init."
+      "label": "Заданная команда полной проверки",
+      "description": "Тестовая команда, записанная в конфигурацию рабочего процесса во время инициализации."
     },
     "ProjectMemoryInitialized": {
-      "label": "Project memory initialized",
-      "description": "Зафиксировал ли agent-init инициализацию project memory."
+      "label": "Память проекта инициализирована",
+      "description": "Зафиксировал ли agent-init инициализацию памяти проекта."
     },
     "ProjectMemoryValidated": {
-      "label": "Project memory validated",
-      "description": "Зафиксировал ли agent-init успешную проверку project memory."
+      "label": "Память проекта проверена",
+      "description": "Зафиксировал ли agent-init успешную проверку памяти проекта."
     },
     "ProjectMemoryMode": {
-      "label": "Project memory mode",
-      "description": "Режим bootstrap project memory, записанный agent init."
+      "label": "Режим памяти проекта",
+      "description": "Режим bootstrap памяти проекта, записанный agent init."
     },
     "ProjectMemoryDir": {
-      "label": "Папка project memory",
-      "description": "Директория с durable project memory."
+      "label": "Папка памяти проекта",
+      "description": "Директория с устойчивой памятью проекта."
     },
     "ProjectMemoryReadFirst": {
-      "label": "Project memory read-first files",
-      "description": "Файлы, которые агент читает перед focused memory files."
+      "label": "Файлы памяти для первичного чтения",
+      "description": "Файлы, которые агент читает перед сфокусированными файлами памяти."
     },
     "ProjectMemorySummaryRule": {
-      "label": "Project memory summary rule",
-      "description": "Generated rule file со summary project memory."
+      "label": "Правило сводки памяти проекта",
+      "description": "Сгенерированный rule-файл со сводкой памяти проекта."
     },
     "ProjectMemoryBootstrapReport": {
-      "label": "Project memory bootstrap report",
-      "description": "Runtime report от bootstrap project memory."
+      "label": "Отчёт bootstrap памяти проекта",
+      "description": "Runtime-отчёт bootstrap памяти проекта."
     },
     "ProjectMemoryWarnings": {
-      "label": "Project memory warnings",
-      "description": "Предупреждения bootstrap или validation project memory."
+      "label": "Предупреждения памяти проекта",
+      "description": "Предупреждения bootstrap или проверки памяти проекта."
     },
     "memory-enabled": {
-      "label": "Memory maintenance включён",
-      "description": "Проверяет ли workflow durable project memory перед closeout."
+      "label": "Обслуживание памяти включено",
+      "description": "Проверяет ли workflow устойчивую память проекта перед closeout."
     },
     "memory-mode": {
-      "label": "Режим memory maintenance",
+      "label": "Режим обслуживания памяти",
       "description": "Текущий режим: off, check, update или strict."
     },
     "memory-run-before-closeout": {
-      "label": "Запуск до final closeout",
+      "label": "Запуск до финального closeout",
       "description": "Запускается ли project-memory gate перед завершением задачи."
     },
     "memory-require-approval": {
@@ -608,39 +608,39 @@
     },
     "memory-read-strategy": {
       "label": "Стратегия чтения",
-      "description": "Как агент должен читать project memory на старте задачи."
+      "description": "Как агент должен читать память проекта на старте задачи."
     },
     "memory-initialized": {
-      "label": "Initialized в agent init",
+      "label": "Инициализировано в agent init",
       "description": "Зафиксировал ли agent-init инициализацию памяти проекта."
     },
     "memory-validated": {
-      "label": "Validated в agent init",
+      "label": "Проверено в agent init",
       "description": "Зафиксировал ли agent-init успешную проверку памяти проекта."
     },
     "memory-dir": {
       "label": "Папка памяти",
-      "description": "Директория с user-owned durable memory files."
+      "description": "Директория с пользовательскими файлами устойчивой памяти."
     },
     "memory-read-first": {
       "label": "Читать первыми",
-      "description": "Файлы, которые агент должен читать перед focused memory files."
+      "description": "Файлы, которые агент должен читать перед сфокусированными файлами памяти."
     },
     "memory-summary-rule": {
-      "label": "Generated summary rule",
-      "description": "Generated rule file со summary project memory для старта агента."
+      "label": "Сгенерированное правило сводки",
+      "description": "Сгенерированный rule-файл со сводкой памяти проекта для старта агента."
     },
     "memory-bootstrap-report": {
-      "label": "Bootstrap report",
-      "description": "Runtime report от bootstrap или проверки project memory."
+      "label": "Bootstrap-отчёт",
+      "description": "Runtime-отчёт bootstrap или проверки памяти проекта."
     },
     "reinit": {
-      "title": "Re-init workspace",
-      "description": "Пересобирает generated Garda files из текущих init answers. Используется после изменения choices инициализации."
+      "title": "Повторная инициализация рабочей области",
+      "description": "Пересобирает сгенерированные файлы Garda из текущих ответов инициализации. Используется после изменения вариантов инициализации."
     },
     "agent-init": {
       "title": "Агентский init",
-      "description": "Записывает hard onboarding checkpoints: active agent files, project rules, skills prompt и готовность project memory."
+      "description": "Записывает обязательные onboarding checkpoints: активные файлы агента, правила проекта, подсказку по skills и готовность памяти проекта."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -650,69 +650,69 @@
     },
     "garda-agent-orchestrator/live/docs/project-memory/compact.md": {
       "label": "compact.md",
-      "description": "Короткая карта проекта и routing hints для старта задачи."
+      "description": "Короткая карта проекта и подсказки по маршрутизации для старта задачи."
     },
     "garda-agent-orchestrator/live/docs/project-memory/context.md": {
       "label": "context.md",
-      "description": "Домен, цели проекта и общий scope."
+      "description": "Домен, цели проекта и общий охват."
     },
     "garda-agent-orchestrator/live/docs/project-memory/stack.md": {
       "label": "stack.md",
-      "description": "Языки, frameworks, инфраструктура, зависимости и fallback для custom stack."
+      "description": "Языки, фреймворки, инфраструктура, зависимости и запасные варианты для нестандартного стека."
     },
     "garda-agent-orchestrator/live/docs/project-memory/architecture.md": {
       "label": "architecture.md",
-      "description": "Архитектура, границы компонентов и integration points."
+      "description": "Архитектура, границы компонентов и точки интеграции."
     },
     "garda-agent-orchestrator/live/docs/project-memory/module-map.md": {
       "label": "module-map.md",
-      "description": "Области репозитория, path ownership и где смотреть типовые изменения."
+      "description": "Области репозитория, владельцы путей и места для поиска типовых изменений."
     },
     "garda-agent-orchestrator/live/docs/project-memory/commands.md": {
       "label": "commands.md",
-      "description": "Build, test, dev, release и verification команды."
+      "description": "Команды сборки, тестирования, разработки, релиза и проверки."
     },
     "garda-agent-orchestrator/live/docs/project-memory/conventions.md": {
       "label": "conventions.md",
-      "description": "Coding standards, naming rules и workflow conventions вне agent-rules."
+      "description": "Стандарты кода, правила именования и договорённости рабочего процесса вне agent-rules."
     },
     "garda-agent-orchestrator/live/docs/project-memory/decisions.md": {
       "label": "decisions.md",
-      "description": "Архитектурные и процессные решения с rationale."
+      "description": "Архитектурные и процессные решения с обоснованием."
     },
     "garda-agent-orchestrator/live/docs/project-memory/risks.md": {
       "label": "risks.md",
-      "description": "Known risks, fragile paths, security notes и compatibility constraints."
+      "description": "Известные риски, хрупкие пути, заметки по безопасности и ограничения совместимости."
     }
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
       "label": "Статус",
-      "description": "Запускает команду статуса Garda для этого workspace."
+      "description": "Запускает команду статуса Garda для этой рабочей области."
     },
     "doctor": {
       "label": "Диагностика",
-      "description": "Проверяет init answers, manifest, generated files, locks и bundle health. Команда только читает данные и не чистит workspace."
+      "description": "Проверяет ответы инициализации, манифест, сгенерированные файлы, блокировки и состояние пакета. Команда только читает данные и не очищает рабочую область."
     },
     "html-report": {
       "label": "Сгенерировать HTML-отчёт",
       "description": "Создаёт или обновляет HTML-отчёт Garda с ленивой загрузкой деталей задач."
     },
     "cleanup-preview": {
-      "label": "Предпросмотр очистки runtime",
-      "description": "Dry-run очистки runtime. Показывает кандидатов из task events, reviews, reports, backups, rollbacks, metrics и working plans по retention limits. Ничего не удаляет."
+      "label": "Предварительный просмотр очистки выполнения",
+      "description": "Пробный запуск очистки выполнения. Показывает кандидатов среди событий задач, ревью, отчётов, резервных копий, откатов, метрик и рабочих планов за пределами политики хранения. Ничего не удаляет."
     },
     "cleanup-apply": {
-      "label": "Применить очистку runtime",
-      "description": "Применяет ту же retention cleanup, которую показывает preview. Риск: старые runtime evidence могут быть удалены или сжаты, поэтому сначала проверьте preview и не запускайте во время активной задачи."
+      "label": "Применить очистку выполнения",
+      "description": "Применяет ту же очистку по политике хранения, которую показывает предварительный просмотр. Риск: старые доказательные артефакты выполнения могут быть удалены или сжаты, поэтому сначала проверьте предварительный просмотр и не запускайте команду во время активной задачи."
     },
     "garda-on": {
       "label": "Включить Garda",
-      "description": "Восстанавливает управляемые Garda root instruction файлы после `garda off`."
+      "description": "Восстанавливает управляемые корневые instruction-файлы Garda после `garda off`."
     },
     "garda-off": {
       "label": "Отключить Garda",
-      "description": "Убирает управляемые Garda root instruction файлы в runtime/switch/off и включает off-mode ignore block."
+      "description": "Перемещает управляемые корневые instruction-файлы Garda в `runtime/switch/off` и включает блок игнорирования для off-режима."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
@@ -720,44 +720,44 @@
     "Export": "Экспорт",
     "Maintenance": "Обслуживание",
     "Garda switch": "Переключатель Garda",
-    "Workspace": "Workspace"
+    "Workspace": "Рабочая область"
   },
   "LOCAL_UI_INSTRUCTION_TEXT": {
     "task-execution": {
       "title": "Выполнение задачи",
-      "body": "Начинайте и продолжайте задачу через `garda next-step \"<task-id>\" --repo-root \".\"`. Напечатанная команда считается текущим router result; после каждого gate возвращайтесь к next-step."
+      "body": "Начинайте и продолжайте задачу через `garda next-step \"<task-id>\" --repo-root \".\"`. Напечатанная команда считается текущим результатом маршрутизатора; после каждой gate-проверки возвращайтесь к next-step."
     },
     "task-inspection": {
       "title": "Просмотр задачи",
-      "body": "Детали конкретной задачи открываются только на вкладке «Задачи». Компактные строки берутся из TASK.md; загрузка деталей читает events, blockers, reviews и artifact links только для выбранной задачи."
+      "body": "Детали конкретной задачи открываются только на вкладке «Задачи». Компактные строки берутся из TASK.md; загрузка деталей читает события, блокеры, ревью и ссылки на артефакты только для выбранной задачи."
     },
     "review-execution-modes": {
       "title": "Режимы запуска review",
       "body": "`parallel_all` запускает lanes независимо. `test_after_code` заставляет test ждать code. `code_first_optional` заставляет выбранные specialist reviews ждать code и оставляет test downstream. `strict_sequential` запускает обязательные review lanes по очереди."
     },
     "workflow-guards": {
-      "title": "Workflow guards",
-      "body": "Scope budget guards ловят слишком большие задачи. Review-cycle guards ловят повторяющиеся failed review loops. Project-memory maintenance проверяет, нужен ли focused update durable memory перед closeout."
+      "title": "Защиты рабочего процесса",
+      "body": "Ограничения размера ловят слишком большие задачи. Защита review-циклов ловит повторяющиеся неудачные циклы ревью. Обслуживание памяти проекта проверяет, нужно ли обновить устойчивую память перед закрытием задачи."
     },
     "workflow-configuration": {
-      "title": "Рабочий конфиг",
-      "body": "Вкладка «Рабочий конфиг» показывает человеческое название, реальный параметр в скобках, понятные опции и команду изменения. Сохранение запускает audited `garda workflow set`, если UI стартовал с `--actions`."
+      "title": "Конфигурация рабочего процесса",
+      "body": "Вкладка «Конфигурация рабочего процесса» показывает понятное название, реальный параметр в скобках, доступные опции и команду изменения. Сохранение запускает проверяемую команду `garda workflow set`, если UI стартовал с `--actions`."
     },
     "init-settings": {
       "title": "Настройки инициализации",
-      "body": "Вкладка «Настройки инициализации» показывает текущие init answers, hard checkpoints агентского init и две основные команды: re-init для пересборки generated files и agent-init для завершения onboarding."
+      "body": "Вкладка «Настройки инициализации» показывает текущие ответы инициализации, обязательные checkpoints агентской инициализации и две основные команды: re-init для пересборки сгенерированных файлов и agent-init для завершения onboarding."
     },
     "project-memory": {
       "title": "Память проекта",
-      "body": "Вкладка «Память проекта» показывает текущий режим memory maintenance, состояние project memory из agent-init, read-first файлы и содержимое durable memory files."
+      "body": "Вкладка «Память проекта» показывает текущий режим обслуживания памяти, состояние памяти проекта из agent-init, файлы read-first и содержимое устойчивых файлов памяти."
     },
     "backups": {
-      "title": "Бэкапы",
-      "body": "Вкладка Backups показывает rollback-снимки из инвентаря бэкапов, настройки auto-backup из workflow config и guarded restore actions, когда UI-сервер запущен с `--actions`."
+      "title": "Резервные копии",
+      "body": "Вкладка «Резервные копии» показывает снимки для отката из инвентаря, настройки автоматического резервного копирования из конфигурации рабочего процесса и защищённые действия восстановления, если UI-сервер запущен с `--actions`."
     },
     "workspace-actions": {
-      "title": "Действия workspace",
-      "body": "Вкладка «Действия» содержит фиксированные workspace-команды: status, doctor, генерацию HTML-отчёта, очистку runtime и переключение Garda. Команды конкретной задачи находятся в деталях выбранной задачи; backup restore commands находятся только во вкладке Backups."
+      "title": "Действия рабочей области",
+      "body": "Вкладка «Действия» содержит фиксированные команды рабочей области: status, doctor, генерацию HTML-отчёта, очистку выполнения и переключение Garda. Команды конкретной задачи находятся в деталях выбранной задачи; команды восстановления резервных копий находятся только во вкладке «Резервные копии»."
     }
   }
 }
