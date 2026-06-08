@@ -1580,4 +1580,182 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(command.includes('--changed-file "src/app.ts"'));
         assert.ok(!command.includes('--changed-file "<path>"'));
     });
+
+    it('expands dirty-baseline directory placeholders before printing classify-change refresh scope', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
+        fs.mkdirSync(path.join(repoRoot, 'src', 'generated'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'generated', 'new-feature.ts'), 'export const generatedFeature = true;\n', 'utf8');
+        const dirtyWorkspaceBaseline = {
+            detection_source: 'git_auto',
+            include_untracked: true,
+            changed_files: ['src/generated'],
+            changed_files_sha256: sha256Text('src/generated'),
+            scope_sha256: sha256Text('src/generated'),
+            file_hashes: {}
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh protected preflight from dirty directory baseline',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: [],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED');
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/generated/new-feature.ts"'));
+        assert.ok(!command.includes('--changed-file "src/generated"'));
+        assert.ok(!command.includes('--changed-file "<path>"'));
+    });
+
+    it('preserves deleted tracked file path when replaced by an untracked directory', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'src', 'generated'), 'export const oldGenerated = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
+        fs.rmSync(path.join(repoRoot, 'src', 'generated'));
+        fs.mkdirSync(path.join(repoRoot, 'src', 'generated'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'generated', 'new-feature.ts'), 'export const generatedFeature = true;\n', 'utf8');
+        const dirtyWorkspaceBaseline = {
+            detection_source: 'git_auto',
+            include_untracked: true,
+            changed_files: ['src/generated'],
+            changed_files_sha256: sha256Text('src/generated'),
+            scope_sha256: sha256Text('src/generated'),
+            file_hashes: {}
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh protected preflight from file-to-directory replacement',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: [],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED');
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/generated"'));
+        assert.ok(command.includes('--changed-file "src/generated/new-feature.ts"'));
+    });
+
+    it('preserves unsafe directory placeholders in classify-change refresh scope', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
+        fs.mkdirSync(path.join(repoRoot, 'src', 'generated'), { recursive: true });
+        const absoluteDirectory = normalizeForTimeline(path.join(repoRoot, 'src', 'generated'));
+        const dirtyWorkspaceBaseline = {
+            detection_source: 'git_auto',
+            include_untracked: true,
+            changed_files: [
+                '../outside-generated',
+                absoluteDirectory
+            ],
+            changed_files_sha256: sha256Text(`../outside-generated\n${absoluteDirectory}`),
+            scope_sha256: sha256Text(`../outside-generated\n${absoluteDirectory}`),
+            file_hashes: {}
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh protected preflight from unsafe directory baseline',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: [],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED');
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "../outside-generated"'));
+        assert.ok(command.includes(`--changed-file "${absoluteDirectory}"`));
+    });
+
+    it('preserves symlink directory placeholders in classify-change refresh scope', { skip: process.platform === 'win32' }, () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: [] });
+        fs.mkdirSync(path.join(repoRoot, 'outside-generated'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'outside-generated', 'hidden.ts'), 'export const hidden = true;\n', 'utf8');
+        fs.symlinkSync(path.join(repoRoot, 'outside-generated'), path.join(repoRoot, 'src', 'linked-generated'), 'dir');
+        const dirtyWorkspaceBaseline = {
+            detection_source: 'git_auto',
+            include_untracked: true,
+            changed_files: ['src/linked-generated'],
+            changed_files_sha256: sha256Text('src/linked-generated'),
+            scope_sha256: sha256Text('src/linked-generated'),
+            file_hashes: {}
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh protected preflight from symlink directory baseline',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: [],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED');
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/linked-generated"'));
+    });
 });

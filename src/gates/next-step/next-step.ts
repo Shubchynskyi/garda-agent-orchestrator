@@ -2045,7 +2045,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             selfGuardDeny: isGardaSelfGuardDenyAgentEntry(repoRoot),
             selfGuardGuidance: formatGardaSelfGuardProtectedControlPlaneGuidance(),
             selfGuardPolicyChangeCommand: buildGardaSelfGuardPolicyChangeCommand(cliPrefix),
-            orchestratorWorkRestartCommand: buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode)
+            orchestratorWorkRestartCommand: buildOrchestratorWorkRestartCommand(repoRoot, cliPrefix, taskId, taskMode)
         },
         workspaceReadiness: reviewGateAlreadyPassed
             ? effectivePreflightWorkspaceReadiness

@@ -1,3 +1,6 @@
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
     selectRulePackFiles
 } from '../review-context/review-context-token-economy';
@@ -49,6 +52,92 @@ function buildProtectedOperatorConfirmationCommandParts(): string[] {
     ];
 }
 
+function readGitPathLines(repoRoot: string, args: string[]): string[] | null {
+    try {
+        const output = childProcess.execFileSync('git', ['-C', repoRoot, ...args], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 10000
+        });
+        return String(output || '').split(/\r?\n/).map((entry) => normalizePath(entry)).filter(Boolean);
+    } catch {
+        return null;
+    }
+}
+
+function readCurrentWorkspaceChangedFiles(repoRoot: string): { changedFiles: string[]; reliable: boolean } {
+    const trackedChangedFiles = readGitPathLines(repoRoot, ['diff', '--name-only', '--diff-filter=ACDMRTUXB', 'HEAD', '--']);
+    const untrackedChangedFiles = readGitPathLines(repoRoot, ['ls-files', '--others', '--exclude-standard']);
+    if (trackedChangedFiles === null || untrackedChangedFiles === null) {
+        return { changedFiles: [], reliable: false };
+    }
+    return {
+        changedFiles: [...new Set([
+            ...trackedChangedFiles,
+            ...untrackedChangedFiles
+        ])].sort(),
+        reliable: true
+    };
+}
+
+function isSafeRepoRelativePath(relativePath: string): boolean {
+    const normalizedPath = normalizePath(relativePath).replace(/\/+$/, '');
+    if (!normalizedPath || normalizedPath === '.' || path.isAbsolute(normalizedPath)) {
+        return false;
+    }
+    return !normalizedPath.split('/').includes('..');
+}
+
+function isPlainDirectoryPlaceholder(repoRoot: string, relativePath: string): boolean {
+    if (!isSafeRepoRelativePath(relativePath)) {
+        return false;
+    }
+    const absolutePath = path.resolve(repoRoot, relativePath);
+    if (!fs.existsSync(absolutePath)) {
+        return false;
+    }
+    const fileStatus = fs.lstatSync(absolutePath);
+    return fileStatus.isDirectory() && !fileStatus.isSymbolicLink();
+}
+
+function expandDirectoryPlaceholdersForCommand(repoRoot: string, scopeFiles: string[]): string[] {
+    const normalizedScopeFiles = [...new Set(scopeFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
+    if (normalizedScopeFiles.length === 0) {
+        return [];
+    }
+    const currentWorkspace = readCurrentWorkspaceChangedFiles(repoRoot);
+    if (!currentWorkspace.reliable) {
+        return normalizedScopeFiles;
+    }
+    const currentChangedFiles = currentWorkspace.changedFiles;
+    if (currentChangedFiles.length === 0) {
+        return normalizedScopeFiles.filter((entry) => {
+            return !isPlainDirectoryPlaceholder(repoRoot, entry);
+        });
+    }
+
+    const expanded = new Set<string>();
+    for (const scopeFile of normalizedScopeFiles) {
+        if (currentChangedFiles.includes(scopeFile)) {
+            expanded.add(scopeFile);
+        }
+        const prefix = `${scopeFile.replace(/\/+$/, '')}/`;
+        const matchingCurrentFiles = currentChangedFiles.filter((changedFile) => changedFile.startsWith(prefix));
+        if (matchingCurrentFiles.length > 0) {
+            for (const matchingFile of matchingCurrentFiles) {
+                expanded.add(matchingFile);
+            }
+            continue;
+        }
+
+        if (isPlainDirectoryPlaceholder(repoRoot, scopeFile)) {
+            continue;
+        }
+        expanded.add(scopeFile);
+    }
+    return [...expanded].sort();
+}
+
 export function quoteProviderForCommand(provider: string | null): string {
     if (provider) {
         return quoteCommandValue(provider);
@@ -77,6 +166,7 @@ export function buildEnterTaskModeCommand(
 }
 
 export function buildOrchestratorWorkRestartCommand(
+    repoRoot: string,
     cliPrefix: string,
     taskId: string,
     taskMode: Record<string, unknown> | null,
@@ -112,9 +202,7 @@ export function buildOrchestratorWorkRestartCommand(
         : dirtyBaselineChangedFiles.length > 0
             ? dirtyBaselineChangedFiles
             : plannedChangedFiles;
-    const mergedPlannedChangedFiles = [...new Set(
-        restartScopeFiles
-    )].sort();
+    const mergedPlannedChangedFiles = expandDirectoryPlaceholdersForCommand(repoRoot, restartScopeFiles);
     for (const plannedChangedFile of mergedPlannedChangedFiles) {
         parts.push(`--planned-changed-file ${quoteCommandValue(plannedChangedFile)}`);
     }
@@ -188,7 +276,7 @@ export function buildClassifyChangeCommand(params: {
     const changedFiles = params.changedFiles || (params.includePlannedScope
         ? getTaskModeAuthorizedChangedFiles(params.taskMode)
         : []);
-    for (const changedFile of changedFiles) {
+    for (const changedFile of expandDirectoryPlaceholdersForCommand(params.repoRoot, changedFiles)) {
         parts.push(`--changed-file ${quoteCommandValue(changedFile)}`);
     }
     parts.push(...buildTaskModePathCommandParts(params.repoRoot, params.taskId, params.taskModePath));

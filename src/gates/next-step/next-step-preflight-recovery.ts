@@ -206,7 +206,7 @@ export function readFailedGateRecovery(
             `Latest PREFLIGHT_FAILED event (seq ${latestPreflightFailure.sequence}) contains a protected control-plane recovery signal. ` +
             'Run the deterministic recovery command rebuilt from current task-mode and workspace state before reclassifying, after fresh operator approval for protected task-mode entry.',
         label: 'Restart task mode with orchestrator work',
-        command: buildOrchestratorWorkRestartCommand(cliPrefix, taskId, taskMode, currentChangedFiles)
+        command: buildOrchestratorWorkRestartCommand(repoRoot, cliPrefix, taskId, taskMode, currentChangedFiles)
     };
 }
 

@@ -1465,6 +1465,61 @@ describe('gates/next-step protected recovery', () => {
         assert.ok(!command.includes('gate classify-change'));
     });
 
+    it('expands dirty workspace baseline directory placeholders in protected recovery command', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        writeJson(path.join(repoRoot, 'package.json'), { name: 'garda-agent-orchestrator' });
+        const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(workflowConfigPath, workflowConfig);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'generated'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'generated', 'new-feature.ts'), 'export const generatedFeature = true;\n', 'utf8');
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Recover protected manifest drift from directory placeholder',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: [],
+            dirtyWorkspaceBaseline: {
+                detection_source: 'git_auto',
+                include_untracked: true,
+                changed_files: ['src/generated'],
+                changed_files_sha256: sha256Text('src/generated'),
+                scope_sha256: sha256Text('src/generated'),
+                file_hashes: {}
+            }
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_FAILED', 'FAIL', {
+            error:
+                'Trusted protected control-plane manifest drift detected before preflight classification: src/generated. ' +
+                'Restart task mode with: node bin/garda.js gate enter-task-mode --task-id "T-EVIL" --orchestrator-work --repo-root "."'
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
+        assert.ok(command.includes('--planned-changed-file "src/generated/new-feature.ts"'));
+        assert.ok(!command.includes('--planned-changed-file "src/generated"'));
+        assert.ok(!command.includes('T-EVIL'));
+        assert.ok(!command.includes('gate classify-change'));
+    });
+
     it('does not use protected recovery hints when startup rule-pack evidence is not current', () => {
         const repoRoot = makeTempRepo();
         appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
