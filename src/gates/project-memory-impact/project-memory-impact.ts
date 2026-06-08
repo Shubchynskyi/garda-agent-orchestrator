@@ -248,7 +248,7 @@ export function assessProjectMemoryImpact(options: ProjectMemoryImpactOptions): 
     let updateEvidenceToWrite: ProjectMemoryUpdateEvidence | null = null;
     const violations: string[] = [];
 
-    if (options.confirmUpdated === true) {
+    if (options.confirmUpdated === true && updateNeeded) {
         const previousImpact = readImpactArtifact(runtime.artifactPath).artifact;
         const previousCompactSha256 = previousImpact?.impact_fingerprint_sha256 === impactFingerprint
             ? previousImpact.compact.sha256

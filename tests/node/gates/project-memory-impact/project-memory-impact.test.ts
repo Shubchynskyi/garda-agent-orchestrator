@@ -437,6 +437,40 @@ describe('assessProjectMemoryImpact', () => {
         });
     });
 
+    it('ignores confirm-updated evidence when current impact resolves to no-update-needed', () => {
+        withTempRepo((repoRoot) => {
+            writeProjectMemoryWorkflowConfig(repoRoot);
+            const taskId = 'T-104c';
+            const reviewsDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({ changed_files: [] }, null, 2), 'utf8');
+
+            const result = assessProjectMemoryImpact({
+                repoRoot,
+                taskId,
+                preflightPath,
+                confirmUpdated: true,
+                updatedMemoryFiles: ['garda-agent-orchestrator/live/docs/project-memory/compact.md']
+            });
+
+            assert.equal(result.artifact.status, 'NO_UPDATE_NEEDED');
+            assert.equal(result.artifact.update_evidence.status, 'NOT_REQUIRED');
+            assert.deepEqual(result.artifact.update_evidence.updated_memory_files, []);
+            assert.equal(result.updateEvidenceToWrite, null);
+
+            fs.mkdirSync(path.dirname(result.artifactPath), { recursive: true });
+            fs.writeFileSync(result.artifactPath, JSON.stringify(result.artifact, null, 2), 'utf8');
+
+            const evidence = getProjectMemoryImpactLifecycleEvidence({ repoRoot, taskId, preflightPath });
+            assert.equal(evidence.evidence_status, 'CURRENT');
+            assert.equal(evidence.status, 'NO_UPDATE_NEEDED');
+            assert.equal(evidence.update_needed, false);
+            assert.equal(evidence.compact_refreshed, false);
+            assert.equal(evidence.violations.length, 0);
+        });
+    });
+
     it('acknowledges refreshed compact overflow in lifecycle summaries after valid update evidence', () => {
         withTempRepo((repoRoot) => {
             writeProjectMemoryWorkflowConfig(repoRoot);
