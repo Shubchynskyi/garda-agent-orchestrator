@@ -293,6 +293,82 @@ describe('gates/task-audit-summary', () => {
             assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(expectedLine));
         });
 
+        it('counts historical stale failed review attempts before a fresh pass', () => {
+            writeWorkflowConfig(tmpDir, false);
+            writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                { event_type: 'TASK_MODE_ENTERED' },
+                { event_type: 'RULE_PACK_LOADED' },
+                { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                { event_type: 'PREFLIGHT_CLASSIFIED' },
+                { event_type: 'COMPILE_GATE_PASSED' },
+                { event_type: 'REVIEW_PHASE_STARTED' },
+                { event_type: 'REVIEW_GATE_PASSED' },
+                { event_type: 'DOC_IMPACT_ASSESSED' },
+                { event_type: 'COMPLETION_GATE_PASSED' }
+            ]);
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/cli/commands/gate-review-handlers/result/review-result-handlers.ts'],
+                metrics: { changed_lines_total: 38 },
+                required_reviews: { code: false }
+            });
+
+            function recordCodeAttempt(verdictToken: string, reviewerIdentity: string, historicalStale = false): void {
+                const reviewContent = `# Code Review\n\n## Verdict\n${verdictToken}\n`;
+                writeArtifact(reviewsDir, TASK_ID, '-code.md', reviewContent);
+                writeArtifact(reviewsDir, TASK_ID, '-code-review-context.json', {
+                    task_id: TASK_ID,
+                    review_type: 'code',
+                    reviewer_routing: makeDelegatedRouting(reviewerIdentity)
+                });
+                writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', {
+                    schema_version: 2,
+                    task_id: TASK_ID,
+                    review_type: 'code',
+                    preflight_sha256: null,
+                    review_context_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-code-review-context.json`)),
+                    review_artifact_sha256: createHash('sha256').update(reviewContent, 'utf8').digest('hex'),
+                    reviewer_execution_mode: 'delegated_subagent',
+                    reviewer_identity: reviewerIdentity,
+                    reviewer_fallback_reason: null,
+                    trust_level: 'INDEPENDENT_AUDITED',
+                    historical_stale_review_result: historicalStale,
+                    review_result_scope: historicalStale ? 'historical_stale_after_remediation' : 'current'
+                });
+                appendIntegrityEvent(eventsDir, TASK_ID, {
+                    event_type: 'REVIEW_RECORDED',
+                    details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code')
+                });
+            }
+
+            recordCodeAttempt('REVIEW FAILED', 'agent:code-reviewer-fail-1', true);
+            recordCodeAttempt('CODE REVIEW FAILED', 'agent:code-reviewer-fail-2', true);
+            recordCodeAttempt('REVIEW PASSED', 'agent:code-reviewer-pass');
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.equal(result.review_attempt_summary?.total_attempts, 3);
+            assert.deepEqual(result.review_attempt_summary?.review_types, [
+                {
+                    review_type: 'code',
+                    total_attempts: 3,
+                    pass_count: 1,
+                    fail_count: 2,
+                    reused_count: 0,
+                    missing_or_invalid_count: 0
+                }
+            ]);
+            const expectedLine = 'Review attempts: total=3; code(pass=1, fail=2, reused=0, missing/invalid=0)';
+            assert.equal(result.review_attempt_summary?.visible_summary_line, expectedLine);
+            assert.ok(formatTaskAuditSummaryText(result).includes(expectedLine));
+            assert.ok(formatFinalCloseoutMarkdown(result.final_closeout).includes(expectedLine));
+        });
+
         it('falls back to immutable snapshot artifacts when no REVIEW_RECORDED telemetry exists', () => {
             writeWorkflowConfig(tmpDir, false);
             writeIntegrityEventSequence(eventsDir, TASK_ID, [

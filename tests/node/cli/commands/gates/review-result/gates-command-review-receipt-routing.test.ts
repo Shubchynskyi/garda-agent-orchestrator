@@ -949,6 +949,123 @@ describe('gates command review receipt - routing', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('record-review-result preserves failed stale reviewer output as historical review evidence after remediation drift', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-766-stale-failed-result';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot, 'Codex');
+        initializeGitRepo(repoRoot);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 2;\n', 'utf8');
+        runGit(repoRoot, ['add', 'src/app.ts']);
+        const stagedSnapshot = getWorkspaceSnapshot(repoRoot, 'git_staged_only', false, []);
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            detection_source: 'git_staged_only',
+            scope_category: 'code',
+            changed_files: ['src/app.ts'],
+            metrics: {
+                changed_lines_total: stagedSnapshot.changed_lines_total,
+                changed_files_sha256: stagedSnapshot.changed_files_sha256,
+                scope_content_sha256: stagedSnapshot.scope_content_sha256,
+                scope_sha256: stagedSnapshot.scope_sha256
+            },
+            required_reviews: {
+                code: true,
+                db: false,
+                security: false,
+                refactor: false,
+                api: false,
+                test: false,
+                performance: false,
+                infra: false,
+                dependency: false
+            },
+            triggers: { runtime_changed: true, runtime_code_changed: true }
+        });
+        prepareCurrentReviewPhase(repoRoot, taskId, preflightPath, 'Codex');
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const tokenConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'token-economy.json');
+        const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
+        buildReviewContext({
+            reviewType: 'code',
+            depth: 2,
+            preflightPath,
+            tokenEconomyConfigPath: tokenConfigPath,
+            scopedDiffMetadataPath: path.join(reviewsRoot, `${taskId}-code-scoped.json`),
+            outputPath: reviewContextPath,
+            repoRoot
+        });
+
+        const reviewerIdentity = 'agent:test-stale-failed-result-reviewer';
+        const routing = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-routing',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+        assert.equal(routing.exitCode, 0, routing.errors.join('\n'));
+        attestReviewerInvocationForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewContextPath,
+            reviewerIdentity
+        });
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'const value = 3;\n', 'utf8');
+        const reviewOutputDir = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code');
+        fs.mkdirSync(reviewOutputDir, { recursive: true });
+        const reviewOutputPath = path.join(reviewOutputDir, 'review-output.md');
+        fs.writeFileSync(reviewOutputPath, [
+            '# Review',
+            '',
+            'Validated the original staged review snapshot and found a defect before the main agent changed `src/app.ts` during remediation.',
+            '',
+            '## Findings by Severity',
+            '- Medium: `src/app.ts:1` stale failed review finding is historical evidence and must not disappear from review accounting.',
+            '',
+            '## Residual Risks',
+            'none',
+            '',
+            '## Verdict',
+            'REVIEW FAILED'
+        ].join('\n'), 'utf8');
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-result',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--preflight-path', preflightPath,
+            '--review-output-path', reviewOutputPath,
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', reviewerIdentity
+        ], { cwd: repoRoot });
+
+        assert.equal(result.exitCode, 0, result.errors.join('\n'));
+        assert.ok(result.logs.some((line: string) => line.includes('HistoricalStaleReviewResult: true')));
+        const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
+        const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
+        assert.equal(fs.existsSync(artifactPath), true);
+        assert.equal(fs.existsSync(receiptPath), true);
+        assert.match(fs.readFileSync(artifactPath, 'utf8'), /REVIEW FAILED/);
+        const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(receipt.historical_stale_review_result, true);
+        assert.equal(receipt.review_result_scope, 'historical_stale_after_remediation');
+        assert.match(String(receipt.historical_stale_review_reason || ''), /current reviewer-visible tree state is stale/);
+        const events = readTaskTimelineEvents(repoRoot, taskId);
+        const reviewRecordedEvents = events.filter((event) => event.event_type === 'REVIEW_RECORDED');
+        assert.equal(reviewRecordedEvents.length, 1);
+        const reviewRecordedDetails = reviewRecordedEvents[0].details as Record<string, unknown>;
+        assert.equal(reviewRecordedDetails.historical_stale_review_result, true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('record-review-result rejects stale reviewer prompt artifacts before materializing review output', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-265-stale-prompt-result';

@@ -107,6 +107,10 @@ interface ReviewMaterializationAnalysis {
     findingsEvidence: ReviewFindingsEvidence;
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 interface ReviewResultHandlersDependencies {
     analyzeEarlyReviewMaterialization: (options: {
         artifactPath: string;
@@ -311,6 +315,7 @@ async function recordReviewReceiptFromArtifacts(options: {
     rawReviewOutputSha256?: string | null;
     rawReviewOutputSourceMtimeUtc?: string | null;
     reviewMaterializationFidelity?: string | null;
+    historicalStaleReviewResultReason?: string | null;
     taskModePath?: string | null;
     reviewerExecutionMode: ReviewerExecutionMode;
     reviewerIdentity: string;
@@ -340,11 +345,13 @@ async function recordReviewReceiptFromArtifacts(options: {
         preflightPayload: preflight,
         requireStrictBindingMetadata: options.requireStrictBindingMetadata
     });
-    assertReviewTreeStateFresh({
+    const historicalStaleReviewResultReason = options.historicalStaleReviewResultReason || null;
+    assertReviewTreeStateFreshOrHistoricalFailure({
         repoRoot: options.repoRoot,
         reviewContext: parsedReviewContext,
         contextPath: options.contextPath,
-        gateName: 'record-review-receipt'
+        gateName: 'record-review-receipt',
+        allowHistoricalFailedReviewResult: Boolean(historicalStaleReviewResultReason)
     });
     resolveReviewerPromptArtifactBinding({
         repoRoot: options.repoRoot,
@@ -484,6 +491,11 @@ async function recordReviewReceiptFromArtifacts(options: {
     (receipt as unknown as Record<string, unknown>).review_output_source_mtime_utc =
         options.rawReviewOutputSourceMtimeUtc || null;
     (receipt as unknown as Record<string, unknown>).review_materialization_fidelity = options.reviewMaterializationFidelity || 'exact';
+    if (historicalStaleReviewResultReason) {
+        (receipt as unknown as Record<string, unknown>).historical_stale_review_result = true;
+        (receipt as unknown as Record<string, unknown>).review_result_scope = 'historical_stale_after_remediation';
+        (receipt as unknown as Record<string, unknown>).historical_stale_review_reason = historicalStaleReviewResultReason;
+    }
 
     const receiptPayloadSha256 = createHash('sha256')
         .update(`${JSON.stringify(receipt, null, 2)}\n`)
@@ -524,6 +536,47 @@ function appendSafeReviewOutputRetryInstruction(error: unknown, taskId: string, 
         return error instanceof Error ? error : new Error(message);
     }
     return new Error(`${message}\n\n${instruction}`);
+}
+
+function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown>): string | null {
+    const treeState = isPlainRecord(reviewContext.tree_state)
+        ? reviewContext.tree_state
+        : null;
+    const sha256 = String(treeState?.tree_state_sha256 ?? treeState?.treeStateSha256 ?? '').trim().toLowerCase();
+    return sha256 || null;
+}
+
+function isFailedReviewVerdictToken(verdictToken: string, expectedFailVerdict: string): boolean {
+    const normalizedVerdict = verdictToken.trim().toUpperCase();
+    const normalizedExpectedFail = expectedFailVerdict.trim().toUpperCase();
+    return normalizedVerdict === normalizedExpectedFail || normalizedVerdict.endsWith(' REVIEW FAILED');
+}
+
+function assertReviewTreeStateFreshOrHistoricalFailure(options: {
+    repoRoot: string;
+    reviewContext: Record<string, unknown>;
+    contextPath: string;
+    gateName: string;
+    allowHistoricalFailedReviewResult: boolean;
+}): string | null {
+    try {
+        assertReviewTreeStateFresh({
+            repoRoot: options.repoRoot,
+            reviewContext: options.reviewContext,
+            contextPath: options.contextPath,
+            gateName: options.gateName
+        });
+        return null;
+    } catch (error: unknown) {
+        if (!options.allowHistoricalFailedReviewResult) {
+            throw error;
+        }
+        if (!getReviewContextTreeStateSha256(options.reviewContext)) {
+            throw error;
+        }
+        const reason = error instanceof Error ? error.message : String(error);
+        return reason.trim() || 'review context tree-state became stale before failed review result materialization';
+    }
 }
 
 function parseUtcTimestampMs(value: unknown): number | null {
@@ -646,6 +699,7 @@ async function handleRecordReviewResultWithDependencies(
             `\n\n${buildSafeReviewOutputRetryInstruction(taskId, reviewType)}`
         );
     }
+    const failedReviewVerdict = isFailedReviewVerdictToken(verdictToken, expectedFailVerdict);
     const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = dependencies.parseReviewerIdentity(
         options,
         "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
@@ -685,12 +739,14 @@ async function handleRecordReviewResultWithDependencies(
             taskModePath: String(options.taskModePath || '').trim()
         });
     }
+    let historicalStaleReviewResultReason: string | null = null;
     if (parsedReviewContext.tree_state != null) {
-        assertReviewTreeStateFresh({
+        historicalStaleReviewResultReason = assertReviewTreeStateFreshOrHistoricalFailure({
             repoRoot,
             reviewContext: parsedReviewContext,
             contextPath,
-            gateName: 'record-review-result'
+            gateName: 'record-review-result',
+            allowHistoricalFailedReviewResult: failedReviewVerdict
         });
     }
 
@@ -724,11 +780,12 @@ async function handleRecordReviewResultWithDependencies(
             taskModePath: String(options.taskModePath || '').trim()
         });
     }
-    assertReviewTreeStateFresh({
+    historicalStaleReviewResultReason = historicalStaleReviewResultReason || assertReviewTreeStateFreshOrHistoricalFailure({
         repoRoot,
         reviewContext: parsedReviewContext,
         contextPath,
-        gateName: 'record-review-result'
+        gateName: 'record-review-result',
+        allowHistoricalFailedReviewResult: failedReviewVerdict
     });
     resolveReviewerPromptArtifactBinding({
         repoRoot,
@@ -787,6 +844,7 @@ async function handleRecordReviewResultWithDependencies(
             rawReviewOutputSha256,
             rawReviewOutputSourceMtimeUtc: reviewOutput.reviewOutputSourceMtimeUtc,
             reviewMaterializationFidelity,
+            historicalStaleReviewResultReason,
             taskModePath: String(options.taskModePath || '').trim(),
             reviewerExecutionMode,
             reviewerIdentity,
@@ -805,6 +863,10 @@ async function handleRecordReviewResultWithDependencies(
         console.log(`ReviewOutputPath: ${normalizePath(reviewOutput.reviewOutputPath)}`);
         console.log(`ReviewOutputSha256: ${rawReviewOutputSha256 || 'n/a'}`);
         console.log(`ReviewMaterializationFidelity: ${reviewMaterializationFidelity}`);
+        if (historicalStaleReviewResultReason) {
+            console.log('HistoricalStaleReviewResult: true');
+            console.log(`HistoricalStaleReviewReason: ${historicalStaleReviewResultReason}`);
+        }
         if (reviewOutput.reviewOutputSourcePath) {
             console.log(`ReviewOutputSourcePath: ${normalizePath(reviewOutput.reviewOutputSourcePath)}`);
         }
