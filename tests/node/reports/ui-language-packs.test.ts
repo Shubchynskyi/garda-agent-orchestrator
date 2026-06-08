@@ -47,14 +47,14 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.equal(getLocalUiText('ru').initSettingsTab, 'Настройки инициализации');
     assert.equal(getLocalUiText('ru').taskQueueStatus, 'Статус в очереди');
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-enabled'].label, 'Обязательная полная проверка');
-    assert.match(getLocalUiText('ru').backupsTabIntro, /workflow config/u);
-    assert.match(LOCAL_UI_SETTING_TEXT.ru['auto-backup-enabled'].description || '', /daily maintenance/u);
+    assert.match(getLocalUiText('ru').backupsTabIntro, /конфигурации рабочего процесса/u);
+    assert.match(LOCAL_UI_SETTING_TEXT.ru['auto-backup-enabled'].description || '', /ежедневному обслуживанию/u);
     assert.match(LOCAL_UI_SETTING_TEXT.uk['auto-backup-enabled'].description || '', /daily maintenance/u);
     assert.match(LOCAL_UI_INIT_SETTING_TEXT.ru['CollectedVia'].description || '', /CLI_NONINTERACTIVE/u);
     assert.match(LOCAL_UI_INIT_SETTING_TEXT.uk['CollectedVia'].description || '', /CLI_NONINTERACTIVE/u);
     assert.equal(getLocalUiText('uk').tasksTab, 'Задачі');
     assert.equal(getLocalUiText('uk').initSettingsTab, 'Параметри ініціалізації');
-    assert.equal(getLocalUiText('uk').workflowTab, 'Конфігурація workflow');
+    assert.equal(getLocalUiText('uk').workflowTab, 'Конфігурація робочого процесу');
     assert.equal(getLocalUiText('uk').gardaSwitchState, 'Стан');
     assert.equal(getLocalUiText('uk').run, 'Запустити');
     assert.doesNotMatch(getLocalUiText('uk').guardedEditorHelp, /^Changes use/u);

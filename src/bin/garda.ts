@@ -282,6 +282,9 @@ export function loadCliMainModule(packageRoot: string): CliMainModule {
                     waitForRuntimeBuildLock(runtimeRoot, runtimeLoadDeadline);
                     const remainingMs = getRemainingMilliseconds(runtimeLoadDeadline);
                     if (remainingMs <= 0) {
+                        if (hasFallback) {
+                            break;
+                        }
                         throw error;
                     }
                     sleepSync(Math.min(RUNTIME_LOAD_RETRY_DELAY_MS, remainingMs));

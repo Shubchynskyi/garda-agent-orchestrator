@@ -777,7 +777,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await fakeDocument.elements['language-select'].dispatch('change');
         assert.deepEqual(storedLanguageCalls.at(-1), ['garda.ui.language', 'ru']);
         assert.match(fakeDocument.elements.detail.innerHTML, /События/u);
-        assert.match(fakeDocument.elements.detail.innerHTML, /Статус full-suite/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Статус полной проверки/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
 
         sessionFetchFails = true;
