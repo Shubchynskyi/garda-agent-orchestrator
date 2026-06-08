@@ -14,6 +14,9 @@ import {
     getReviewExecutionPreparationOrder,
     type EffectiveReviewExecutionPolicyMode
 } from '../../core/review-execution-policy';
+import {
+    formatKnownNonBlockingSignals
+} from '../shared/known-nonblocking-signals';
 export { buildCommitCommandSuggestion } from './task-audit-summary-commit-suggestion';
 export { formatFinalUserReport } from './task-audit-summary-final-report';
 
@@ -237,6 +240,10 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
 
     if (closeout.project_memory?.visible_summary_line) {
         lines.push(closeout.project_memory.visible_summary_line);
+    }
+    const knownNonBlockingSignalsLine = formatKnownNonBlockingSignals(closeout.known_non_blocking_signals || []);
+    if (knownNonBlockingSignalsLine) {
+        lines.push(knownNonBlockingSignalsLine);
     }
 
     if (closeout.token_economy?.visible_summary_line) {
@@ -468,6 +475,10 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.project_memory?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.project_memory.visible_summary_line}`);
+    }
+    const knownNonBlockingSignalsLine = formatKnownNonBlockingSignals(summary.final_closeout.known_non_blocking_signals || []);
+    if (knownNonBlockingSignalsLine) {
+        lines.push(`  ${knownNonBlockingSignalsLine}`);
     }
     if (summary.final_closeout.token_economy?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.token_economy.visible_summary_line}`);

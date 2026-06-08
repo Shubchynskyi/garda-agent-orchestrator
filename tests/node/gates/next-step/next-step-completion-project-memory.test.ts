@@ -269,7 +269,14 @@ describe('gates/next-step', () => {
 
         assert.equal(result.project_memory?.visible_summary_line.includes('compact=OVERFLOW; compact_refreshed=false'), false);
 
+        assert.ok(result.known_non_blocking_signals.some((signal) => (
+            signal.id === 'project_memory_updated_compact_overflow_accepted'
+            && signal.action_required === false
+        )));
+
         assert.ok(formatNextStepText(result).includes('compact=UPDATED_OVERFLOW_NOT_REFRESHED'));
+
+        assert.ok(formatNextStepText(result).includes('KnownNonBlockingSignals: project_memory_updated_compact_overflow_accepted(action_required=false)'));
 
     });
 

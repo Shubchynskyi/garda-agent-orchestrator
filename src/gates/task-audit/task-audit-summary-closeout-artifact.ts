@@ -25,6 +25,9 @@ import type {
 } from './task-audit-summary-collectors';
 import { parseOptionalNumber } from './task-audit-summary-collectors';
 import { buildFinalCloseoutProjectMemorySummary } from './task-audit-summary-project-memory';
+import {
+    collectKnownNonBlockingSignals
+} from '../shared/known-nonblocking-signals';
 
 export interface BuildFinalCloseoutArtifactInput {
     repoRoot: string;
@@ -98,6 +101,11 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
     const plannedChangedFiles = readTaskModePlannedChangedFiles(input.taskMode);
     const dirtyWorkspaceBaselineChangedFiles = readTaskModeDirtyWorkspaceBaselineChangedFiles(input.taskMode);
 
+    const projectMemory = buildFinalCloseoutProjectMemorySummary(input.projectMemoryImpactEvidence) as FinalCloseoutProjectMemorySummary;
+    const knownNonBlockingSignals = collectKnownNonBlockingSignals({
+        projectMemory
+    });
+
     return {
         schema_version: 1,
         event_source: 'task-audit-summary',
@@ -170,7 +178,8 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
             review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(input.reviewExecutionPolicyMode)
         },
         docs: input.docsSummary,
-        project_memory: buildFinalCloseoutProjectMemorySummary(input.projectMemoryImpactEvidence) as FinalCloseoutProjectMemorySummary,
+        project_memory: projectMemory,
+        known_non_blocking_signals: knownNonBlockingSignals,
         token_economy: input.tokenEconomy,
         task_queue_status_contract: buildTaskQueueStatusContract(input.taskId),
         agent_report: {

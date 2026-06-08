@@ -46,6 +46,7 @@ import {
     type TaskAuditSummaryResult
 } from './task-audit-summary-fixtures';
 import { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
+import { formatFinalUserReport } from '../../../../src/gates/task-audit/task-audit-summary';
 
 
 describe('gates/task-audit-summary', () => {
@@ -177,15 +178,24 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.project_memory?.evidence_status, 'CURRENT');
             assert.equal(result.final_closeout.project_memory?.status, 'NO_UPDATE_NEEDED');
             assert.equal(result.final_closeout.project_memory?.compact_status, 'OVERFLOW_NON_BLOCKING_NO_UPDATE');
+            assert.ok(result.final_closeout.known_non_blocking_signals?.some((signal) => (
+                signal.id === 'project_memory_no_update_compact_overflow_accepted'
+                && signal.action_required === false
+            )));
             const rendered = formatTaskAuditSummaryText(result);
             assert.ok(rendered.includes('Project memory: enabled; mode=check'));
             assert.ok(rendered.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
             assert.ok(rendered.includes('compact_refreshed=not_required'));
+            assert.ok(rendered.includes('KnownNonBlockingSignals: project_memory_no_update_compact_overflow_accepted(action_required=false)'));
             assert.equal(rendered.includes('compact=OVERFLOW; compact_refreshed=false'), false);
             const finalMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
             assert.ok(finalMarkdown.includes('Project memory: enabled; mode=check'));
             assert.ok(finalMarkdown.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
             assert.ok(finalMarkdown.includes('compact_refreshed=not_required'));
+            assert.ok(finalMarkdown.includes('KnownNonBlockingSignals: project_memory_no_update_compact_overflow_accepted(action_required=false)'));
+            const finalUserReport = formatFinalUserReport(result.final_closeout);
+            assert.ok(finalUserReport.includes('Known Non-Blocking Signals:'));
+            assert.ok(finalUserReport.includes('project_memory_no_update_compact_overflow_accepted(action_required=false)'));
         });
 
         it('does not block final closeout on historical project-memory events after maintenance is disabled', () => {

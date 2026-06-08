@@ -198,7 +198,10 @@ describe('gates/task-audit-summary', () => {
             assert.ok(!renderedReport.includes('PathMode:'));
             assert.ok(!renderedReport.includes('Commit Readiness:'));
             assert.ok(!renderedReport.includes('Operator Question:'));
-            assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nWARNING: suspicious or insufficiently verified review timing\/evidence detected for db\(too_short_without_strong_provider_evidence\)\..*$/u);
+            assert.match(
+                renderedReport.trimEnd(),
+                /Review Timing Warning:\nWARNING: suspicious or insufficiently verified review timing\/evidence detected for db\(too_short_without_strong_provider_evidence\)\..*\n\nKnown Non-Blocking Signals:\nnone$/u
+            );
         });
 
     });

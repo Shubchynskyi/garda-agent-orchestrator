@@ -52,6 +52,10 @@ import {
     resolvePathInsideRepo
 } from '../shared/helpers';
 import {
+    collectKnownNonBlockingSignals,
+    type KnownNonBlockingSignal
+} from '../shared/known-nonblocking-signals';
+import {
     resolveBundleNameForTarget
 } from '../../core/constants';
 import {
@@ -410,6 +414,7 @@ export interface NextStepResult {
     optional_skill_selection: NextStepOptionalSkillSelectionSummary | null;
     warnings: string[];
     invalidation_impact: NextStepInvalidationImpactSummary | null;
+    known_non_blocking_signals: KnownNonBlockingSignal[];
     review_cycle_block: NextStepReviewCycleBlock | null;
     final_report: NextStepFinalReportSummary | null;
 }
@@ -1024,6 +1029,12 @@ function buildResult(params: {
     }
     const missingArtifacts = params.status === 'DONE' ? [] : params.missingArtifacts;
     const invalidationImpact = buildInvalidationImpactSummary(params);
+    const knownNonBlockingSignals = collectKnownNonBlockingSignals({
+        projectMemory: params.projectMemory || null,
+        nextGate: params.nextGate,
+        reason: params.reason,
+        commands: params.commands
+    });
     return {
         schema_version: 1,
         task_id: params.taskId,
@@ -1046,6 +1057,7 @@ function buildResult(params: {
         optional_skill_selection: params.optionalSkillSelection || null,
         warnings: params.warnings || [],
         invalidation_impact: invalidationImpact,
+        known_non_blocking_signals: knownNonBlockingSignals,
         review_cycle_block: params.reviewCycleBlock || null,
         final_report: params.finalReport || null
     };

@@ -5,6 +5,7 @@ import type {
 } from '../task-events-summary/task-events-summary';
 import type { EffectiveReviewExecutionPolicyMode } from '../../core/review-execution-policy';
 import type { TaskQueueStatusContract } from '../../core/task-queue-status-contract';
+import type { KnownNonBlockingSignal } from '../shared/known-nonblocking-signals';
 import type {
     BlockerEntry,
     EvidenceArtifact,
@@ -52,6 +53,7 @@ export interface FinalCloseoutArtifact {
     } | null;
     docs: FinalCloseoutDocsSummary;
     project_memory?: FinalCloseoutProjectMemorySummary | null;
+    known_non_blocking_signals?: KnownNonBlockingSignal[];
     token_economy: ReturnType<typeof buildTokenEconomySummary> | null;
     task_queue_status_contract?: TaskQueueStatusContract;
     agent_report?: {

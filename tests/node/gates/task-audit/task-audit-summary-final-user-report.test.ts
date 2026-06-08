@@ -167,7 +167,7 @@ describe('gates/task-audit-summary final user report rendering', () => {
         }));
 
         assert.ok(renderedReport.includes('Review Verdicts:\nnone required'));
-        assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone$/u);
+        assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone\n\nKnown Non-Blocking Signals:\nnone$/u);
     });
 
     it('renders BLOCKED status when final closeout is not ready', () => {
@@ -258,6 +258,6 @@ describe('gates/task-audit-summary final user report rendering', () => {
 
         assert.ok(renderedReport.includes('Profile: strict'));
         assert.ok(renderedReport.includes('test(2): passed (0m 50s / 2m 05s)'));
-        assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone$/u);
+        assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone\n\nKnown Non-Blocking Signals:\nnone$/u);
     });
 });

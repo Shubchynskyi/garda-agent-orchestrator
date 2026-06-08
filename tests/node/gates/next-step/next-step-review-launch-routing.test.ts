@@ -1476,6 +1476,15 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--provider-invocation-id "<provider-owned invocation id from delegated reviewer launch result>"'));
         assert.ok(result.commands[0].command.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
         assert.ok(result.commands[0].command.includes('--launch-input-mode "launch_artifact_path"'));
+        assert.ok(result.known_non_blocking_signals.some((signal) => (
+            signal.id === 'reviewer_standby_resume_provider_handshake'
+            && signal.action_required === false
+        )));
+        assert.ok(result.known_non_blocking_signals.some((signal) => (
+            signal.id === 'reviewer_provider_owned_placeholder_values'
+            && signal.action_required === false
+        )));
+        assert.ok(formatNextStepText(result).includes('KnownNonBlockingSignals: reviewer_standby_resume_provider_handshake(action_required=false); reviewer_provider_owned_placeholder_values(action_required=false)'));
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
         assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchInputArtifactPath)}"`));
@@ -1557,6 +1566,10 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
         assert.ok(result.commands[0].command.includes('--fork-context false'));
         assert.ok(result.commands[0].command.includes('--record-invocation'));
+        assert.ok(result.known_non_blocking_signals.some((signal) => (
+            signal.id === 'reviewer_provider_owned_placeholder_values'
+            && signal.action_required === false
+        )));
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--reviewer-launch-artifact-path "garda-agent-orchestrator/runtime/tmp/reviews/${TASK_ID}/code/reviewer-launch.json"`));
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));

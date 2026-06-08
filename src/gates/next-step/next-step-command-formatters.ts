@@ -14,6 +14,9 @@ import type {
 import type {
     NextStepProjectMemorySummary
 } from './next-step-doc-closeout-readiness';
+import {
+    formatKnownNonBlockingSignals
+} from '../shared/known-nonblocking-signals';
 
 export function buildCommand(label: string, command: string): NextStepCommand {
     return { label, command };
@@ -266,6 +269,10 @@ export function formatNextStepText(result: NextStepResult): string {
         lines.push(`  AffectedReviewLanes: ${result.invalidation_impact.affected_review_lanes.join(', ') || 'none'}`);
         lines.push(`  MinimalRecoveryChain: ${result.invalidation_impact.minimal_recovery_chain.join(' -> ') || 'none'}`);
         lines.push(`  ReuseCandidates: ${result.invalidation_impact.reuse_candidates.join('; ') || 'none indicated'}`);
+    }
+    const knownNonBlockingSignalsLine = formatKnownNonBlockingSignals(result.known_non_blocking_signals || []);
+    if (knownNonBlockingSignalsLine) {
+        lines.push(knownNonBlockingSignalsLine);
     }
     lines.push(result.task_queue_status_contract.visible_summary_line);
     if (result.missing_artifacts.length > 0) {
