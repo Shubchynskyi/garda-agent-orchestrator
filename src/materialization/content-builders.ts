@@ -16,8 +16,8 @@ export {
     INSTALL_BACKUP_CANDIDATE_PATHS,
     getClaudeOrchestratorAllowEntries,
     extractManagedBlockFromContent
-} from './content-builders-shared';
-export * from './content-builders-task-queue';
-export * from './content-builders-entrypoints';
-export * from './content-builders-provider-bridges';
-export * from './content-builders-config';
+} from './content-builders/content-builders-shared';
+export * from './content-builders/content-builders-task-queue';
+export * from './content-builders/content-builders-entrypoints';
+export * from './content-builders/content-builders-provider-bridges';
+export * from './content-builders/content-builders-config';
