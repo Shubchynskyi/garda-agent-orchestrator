@@ -96,9 +96,25 @@ Repository CI mirrors the same contract in `.github/workflows/ci.yml`:
 
 1. `npm run typecheck`
 2. `npm run lint`
-3. `npm test` (runs on Node 22.13+ and Node 24)
+3. focused Node foundation test jobs for unit, gates, CLI, lifecycle, and binary/materialization coverage (runs on Node 22.13+ and Node 24)
+4. gate and CLI test jobs use `GARDA_NODE_FOUNDATION_TEST_SHARDS=2` for parallel file execution while preserving fail-closed aggregate results
+5. `npm run validate:release:fast` on Linux and Windows
+6. cross-platform lifecycle smoke on Linux, macOS, and Windows (Node 22.13+ and Node 24)
+
+Local release proof remains stricter than the CI fast release matrix:
+
+1. `npm run release:preflight`
+2. `npm run validate:release-readiness`
+3. `npm run test:release-smoke`
 4. `npm run validate:release`
-5. cross-platform lifecycle smoke on Linux, macOS, and Windows (Node 22.13+ and Node 24)
+
+Full-suite optimization compatibility guardrails:
+
+- Do not replace mandatory full-suite validation with focused shards, smoke tests, or `validate:release:fast`; optimized modes may only change how equivalent full-suite evidence is produced and aggregated.
+- Do not depend on ignored local runtime state, `.node-build/` leftovers, duration history, or machine-local cache state for CI/release correctness. Every official CI job starts from checkout, `npm ci`, and an explicit build/test command.
+- Keep optimized test execution cross-platform for Linux, Windows, and macOS. Shell snippets used in CI must stay portable or be explicitly scoped with a compatible shell.
+- Keep failure forensics useful: shard runners and full-suite validation must preserve enough logs, failing test identity, duration, command, and aggregate exit status for release triage.
+- Any command migration must leave `npm run release:preflight` and `npm run validate:release` as the operator-facing final proof path unless release-readiness validation and docs are updated in the same change.
 
 The lifecycle smoke installs from a `file://` clone of the current workflow branch, not implicitly from the repository default branch. That keeps pull-request and branch runs aligned with the code under test.
 

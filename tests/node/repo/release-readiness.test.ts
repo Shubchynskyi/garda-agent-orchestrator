@@ -176,6 +176,8 @@ function buildCiWorkflow(options: BuildCiWorkflowOptions = {}): string {
         includeNode ? '      node-version:\n        - \'22.13.0\'\n        - \'24\'' : '',
         '  steps:',
         '    - run: npm run test:cli',
+        '      env:',
+        '        GARDA_NODE_FOUNDATION_TEST_SHARDS: 2',
         'test-lifecycle:',
         '  strategy:',
         '    matrix:',
@@ -256,7 +258,9 @@ function createReadinessFixture(openChecklistItem?: string): string {
         path.join(repoRoot, 'docs', 'node-platform-foundation.md'),
         [
             '### npm run validate:release',
-            'The cross-platform lifecycle smoke proves update runtime behavior.'
+            'The cross-platform lifecycle smoke proves update runtime behavior.',
+            'Full-suite optimization compatibility guardrails',
+            'GARDA_NODE_FOUNDATION_TEST_SHARDS'
         ].join('\n')
     );
     writeFile(
@@ -514,6 +518,60 @@ test('release readiness fails when Node matrix markers are outside required CI j
         assert.equal(result.passed, false);
         assert.match(output, /RELEASE_READINESS_FAILED/);
         assert.ok(result.violations.some(v => v.startsWith('ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when CLI tests are not sharded in CI', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        const workflowPath = path.join(repoRoot, '.github', 'workflows', 'ci.yml');
+        writeFile(
+            workflowPath,
+            fs.readFileSync(workflowPath, 'utf8').replace(
+                /test-cli:[\s\S]*?test-lifecycle:/u,
+                [
+                    'test-cli:',
+                    '  strategy:',
+                    '    matrix:',
+                    '      node-version:',
+                    '        - \'22.13.0\'',
+                    '        - \'24\'',
+                    '  steps:',
+                    '    - run: npm run test:cli',
+                    'test-lifecycle:'
+                ].join('\n')
+            )
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /test-cli present\+sharded=false/);
+        assert.ok(result.violations.some(v => v.startsWith('ci:')));
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when full-suite optimization guardrails are missing from platform docs', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        writeFile(
+            path.join(repoRoot, 'docs', 'node-platform-foundation.md'),
+            [
+                '### npm run validate:release',
+                'The cross-platform lifecycle smoke proves update runtime behavior.'
+            ].join('\n')
+        );
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.ok(result.violations.some(v => v.startsWith('runtime-state:')), output);
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

@@ -233,7 +233,8 @@ function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean;
         && stringArraysEqual(extractYamlListAfterKey(testGatesJob, 'node-version'), supportedNodeLines)
         && testGatesJob.includes('GARDA_NODE_FOUNDATION_TEST_SHARDS');
     const testCliOk = testCliJob !== null
-        && stringArraysEqual(extractYamlListAfterKey(testCliJob, 'node-version'), supportedNodeLines);
+        && stringArraysEqual(extractYamlListAfterKey(testCliJob, 'node-version'), supportedNodeLines)
+        && testCliJob.includes('GARDA_NODE_FOUNDATION_TEST_SHARDS');
     const testLifecycleOk = testLifecycleJob !== null
         && stringArraysEqual(extractYamlListAfterKey(testLifecycleJob, 'node-version'), supportedNodeLines);
     const testBinOk = testBinJob !== null
@@ -252,7 +253,7 @@ function validateCiRuntimeMatrixContract(ciWorkflow: string): { passed: boolean;
         details: [
             `test-unit present=${testUnitOk}`,
             `test-gates present+sharded=${testGatesOk}`,
-            `test-cli present=${testCliOk}`,
+            `test-cli present+sharded=${testCliOk}`,
             `test-lifecycle present=${testLifecycleOk}`,
             `test-bin present=${testBinOk}`,
             `validate-release node-version=${releaseNodeVersions.join(', ') || 'missing'}`,
@@ -421,12 +422,14 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         checks,
         violations,
         'runtime-state',
-        'operator docs keep doctor, manifest validation, task-event timelines, and derived-index recovery visible',
+        'operator docs keep doctor, manifest validation, task-event timelines, derived-index recovery, and full-suite optimization guardrails visible',
         cliReference.includes('garda doctor') &&
             cliReference.includes('garda gate validate-manifest') &&
             cliReference.includes('runtime/task-events/<task-id>.jsonl') &&
             runMethods.includes('gate validate-manifest') &&
-            platformDocs.includes('cross-platform lifecycle smoke'),
+            platformDocs.includes('cross-platform lifecycle smoke') &&
+            platformDocs.includes('Full-suite optimization compatibility guardrails') &&
+            platformDocs.includes('GARDA_NODE_FOUNDATION_TEST_SHARDS'),
         ['docs/cli-reference.md, docs/run-methods.md, docs/node-platform-foundation.md']
     );
 
