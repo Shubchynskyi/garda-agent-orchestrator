@@ -5,6 +5,7 @@ import { redactPath } from '../core/redaction';
 import { DEFAULT_LOCK_TIMEOUT_MS, LOCK_CONTENTION_WARN_THRESHOLD, LOCK_OWNER_COMMAND_MAX_LENGTH, MAX_LOCK_RETRIES } from './task-events-locking-types';
 import type { LockContentionLevel, LockOptions } from './task-events-locking-types';
 
+// Root module retained for lock-wait source-contract tests; timeline exports re-route grouped imports.
 export function toPositiveInteger(value: unknown, fallback: number): number {
     const parsed = Number.parseInt(String(value), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;

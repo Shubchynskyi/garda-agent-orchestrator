@@ -12,6 +12,7 @@ import { detectCodeChanged } from '../gates/preflight/preflight-code-change';
 import { loadFullSuiteValidationConfig } from '../gates/full-suite/full-suite-validation';
 import { parseTaskIdJsonlFileName, RESERVED_TASK_EVENT_TIMELINE_NAMES } from '../core/task-ids';
 
+// Root module retained for source-contract tests; timeline exports re-route grouped imports.
 const SUMMARY_VERSION = 2;
 const SUMMARY_FILE_NAME = '.timeline-summary.json';
 const SUMMARY_LOCK_FILE_NAME = '.timeline-summary.lock';

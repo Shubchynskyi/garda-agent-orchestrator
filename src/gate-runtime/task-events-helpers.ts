@@ -4,6 +4,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { assertCanonicalTaskId } from '../core/task-ids';
 import { stringSha256 } from './hash';
 
+// Root module retained for mutable CommonJS test hooks; timeline exports re-route grouped imports.
 const JSONL_READ_CHUNK_SIZE = 64 * 1024;
 
 export function toTrimmedString(value: unknown): string {

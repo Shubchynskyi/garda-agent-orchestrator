@@ -302,4 +302,3 @@ export async function appendMandatoryTaskEventAsync(
     assertMandatoryAppendCommitted(result, eventType);
     return result;
 }
-

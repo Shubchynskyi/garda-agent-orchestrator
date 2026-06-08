@@ -7,6 +7,7 @@ import {
     toTrimmedString
 } from './task-events-helpers';
 
+// Root module retained for source-contract tests; timeline exports re-route grouped imports.
 export interface InspectTaskEventResult {
     source_path: string;
     status: string;
