@@ -16,6 +16,17 @@ export function sanitizeCliValue(value: string): string {
     return String(value || '').replace(/"/g, '\'').trim();
 }
 
+export function quoteCliToken(value: string): string {
+    const text = String(value || '');
+    if (/["$`]/.test(text)) {
+        if (process.platform === 'win32') {
+            return `'${text.replace(/'/g, "''")}'`;
+        }
+        return `'${text.replace(/'/g, "'\\''")}'`;
+    }
+    return `"${text.replace(/\\/g, '\\\\')}"`;
+}
+
 export function hydrateGateUsage(
     gateName: string,
     repoRoot: string,
@@ -118,8 +129,8 @@ export function buildStartupScopeBlocker(
 
 export function buildOptionalSkillActivationCommand(repoRoot: string, taskId: string, skillId: string): string {
     return getGateHelpEntry('activate-optional-skill', repoRoot).usage[0]
-        .split('<task-id>').join(taskId)
-        .split('<selected-skill-id>').join(skillId);
+        .split('"<task-id>"').join(quoteCliToken(taskId))
+        .split('"<selected-skill-id>"').join(quoteCliToken(skillId));
 }
 
 export function buildStartupCommands(

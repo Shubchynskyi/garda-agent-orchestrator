@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { fileSha256, joinOrchestratorPath, resolvePathInsideRepo, toPosix } from '../shared/helpers';
 import {
     computeOptionalSkillTaskTextSha256,
+    buildCurrentCycleOptionalSkillActivationIndex,
     getActivatedCurrentCycleOptionalSkillReferenceLoads,
     getOptionalSkillSelectionArtifactViolations,
     isOptionalSkillSelectionPolicyConfigured,
@@ -303,8 +304,10 @@ export function readOptionalSkillsSummary(
         };
     }
     const currentCycleReferenceLoads = getActivatedCurrentCycleOptionalSkillReferenceLoads(artifact.payload, timelineEvidence);
+    const currentCycleActivationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, timelineEvidence);
     const usedSkillIds = selectedSkillIds.filter((entry) => (
-        currentCycleReferenceLoads.some((load) => load.skillId === entry)
+        currentCycleActivationIndex.has(entry)
+        || currentCycleReferenceLoads.some((load) => load.skillId === entry)
     ));
     let usageSummaryLine = visibleSummaryLine;
     const reasonMatch = visibleSummaryLine?.match(/\(reason:\s*([^)]+)\)\s*$/i);

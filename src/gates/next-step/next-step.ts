@@ -75,7 +75,9 @@ import {
     type TaskModeMarkdownWorkingPlanMetadata
 } from '../task-mode/task-mode';
 import {
-    readOptionalSkillSelectionArtifact
+    buildCurrentCycleOptionalSkillActivationIndex,
+    readOptionalSkillSelectionArtifact,
+    readOptionalSkillSelectionTimelineEvidence
 } from '../../runtime/optional-skill-selection';
 import {
     readStartupCycleReadiness
@@ -228,6 +230,7 @@ import {
     buildProjectMemoryImpactCommand,
     formatNextStepInlineList,
     formatNextStepInlineValue,
+    quoteCommandValue,
     toRepoDisplayPath
 } from './next-step-command-formatters';
 export { formatNextStepText } from './next-step-command-formatters';
@@ -362,9 +365,12 @@ export interface NextStepProfileSummary {
 export interface NextStepOptionalSkillSelectionSummary {
     artifact_path: string | null;
     artifact_present: boolean;
+    timeline_invalid_json: boolean;
     policy_mode: string | null;
     decision: string | null;
     selected_skill_ids: string[];
+    activated_skill_ids: string[];
+    pending_activation_skill_ids: string[];
     recommended_missing_pack_ids: string[];
     as_is_reason: string | null;
     visible_summary_line: string | null;
@@ -873,7 +879,10 @@ function buildOptionalSkillTaskStartInstruction(input: {
     if (input.selectedSkillIds.length > 0) {
         const skillList = input.selectedSkillIds.join(', ');
         if (input.activationCommands.length > 0) {
-            return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the chosen role/skill.`;
+            if (input.policyMode === 'required' || input.policyMode === 'strict') {
+                return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the required chosen role/skill.`;
+            }
+            return `Selected advisory optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
         }
         return `Selected optional skill(s): ${skillList}. Rerun the navigator until classify-change materializes current-cycle selection evidence, then activate the selected skill before implementation.`;
     }
@@ -913,14 +922,31 @@ function buildOptionalSkillSelectionSummary(
     const visibleSummaryLine = String(preflightOptionalRecord.visible_summary_line || artifactPayload?.visible_summary_line || '').trim() || null;
     const skillCatalogPath = String(artifactPayload?.headlines_path || '').trim() || null;
     const activationCommands = selectedSkillIds.map((skillId) => (
-        `${cliPrefix} gate activate-optional-skill --task-id "${taskId}" --skill-id "${skillId}" --repo-root "."`
+        `${cliPrefix} gate activate-optional-skill --task-id ${quoteCommandValue(taskId)} --skill-id ${quoteCommandValue(skillId)} --repo-root "."`
     ));
+    const timelineEvidence = artifactPayload
+        ? readOptionalSkillSelectionTimelineEvidence(
+            path.join(repoRoot, resolveBundleNameForTarget(repoRoot)),
+            taskId
+        )
+        : null;
+    const timelineInvalidJson = timelineEvidence?.invalidJson === true;
+    const activationIndex = artifactPayload && timelineEvidence && !timelineEvidence.invalidJson
+        ? buildCurrentCycleOptionalSkillActivationIndex(artifactPayload, timelineEvidence)
+        : new Map<string, number>();
+    const activatedSkillIds = selectedSkillIds.filter((skillId) => activationIndex.has(skillId));
+    const pendingActivationSkillIds = decision === 'selected_installed_skills'
+        ? selectedSkillIds.filter((skillId) => !activationIndex.has(skillId))
+        : [];
     return {
         artifact_path: artifactPath || null,
         artifact_present: resolvedArtifactPath ? fs.existsSync(resolvedArtifactPath) : false,
+        timeline_invalid_json: timelineInvalidJson,
         policy_mode: policyMode,
         decision,
         selected_skill_ids: selectedSkillIds,
+        activated_skill_ids: activatedSkillIds,
+        pending_activation_skill_ids: pendingActivationSkillIds,
         recommended_missing_pack_ids: recommendedMissingPackIds,
         as_is_reason: asIsReason,
         visible_summary_line: visibleSummaryLine,
@@ -935,6 +961,27 @@ function buildOptionalSkillSelectionSummary(
             activationCommands: decision === 'selected_installed_skills' ? activationCommands : []
         })
     };
+}
+
+function getPendingOptionalSkillActivationCommand(
+    optionalSkillSelection: NextStepOptionalSkillSelectionSummary | null
+): { skillId: string; command: string } | null {
+    if (!optionalSkillSelection || optionalSkillSelection.decision !== 'selected_installed_skills') {
+        return null;
+    }
+    if (optionalSkillSelection.timeline_invalid_json) {
+        return null;
+    }
+    if (optionalSkillSelection.policy_mode !== 'required' && optionalSkillSelection.policy_mode !== 'strict') {
+        return null;
+    }
+    const pendingSkillId = optionalSkillSelection.pending_activation_skill_ids[0];
+    if (!pendingSkillId) {
+        return null;
+    }
+    const skillIndex = optionalSkillSelection.selected_skill_ids.indexOf(pendingSkillId);
+    const command = skillIndex >= 0 ? optionalSkillSelection.activation_commands[skillIndex] : null;
+    return command ? { skillId: pendingSkillId, command } : null;
 }
 
 function buildResult(params: {
@@ -1917,6 +1964,28 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         });
     }
 
+    if (
+        optionalSkillSelectionSummary?.decision === 'selected_installed_skills'
+        && optionalSkillSelectionSummary.timeline_invalid_json
+        && (optionalSkillSelectionSummary.policy_mode === 'required' || optionalSkillSelectionSummary.policy_mode === 'strict')
+    ) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'task-events-summary',
+            title: 'Repair malformed task timeline before optional-skill activation.',
+            reason:
+                'The current task timeline JSONL is malformed, so current-cycle optional-skill activation evidence cannot be read reliably. ' +
+                'Do not run activate-optional-skill until task-event integrity is repaired; otherwise newly appended SKILL_SELECTED events may remain invisible to the navigator.',
+            commands: [
+                buildCommand(
+                    'Inspect task timeline integrity',
+                    `${cliPrefix} gate task-events-summary --task-id ${quoteCommandValue(taskId)} --as-json --repo-root "."`
+                )
+            ]
+        });
+    }
+
     const coherentCycleReadiness = readCoherentCycleReadiness(
         repoRoot,
         eventsRoot,
@@ -2220,6 +2289,26 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     const strictDecompositionBlock = buildStrictDecompositionContinuationBlock();
     if (strictDecompositionBlock) {
         return strictDecompositionBlock;
+    }
+
+    const pendingOptionalSkillActivation = getPendingOptionalSkillActivationCommand(optionalSkillSelectionSummary);
+    if (pendingOptionalSkillActivation) {
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'activate-optional-skill',
+            title: 'Activate the selected optional skill.',
+            reason:
+                `Current preflight selected optional skill ${formatNextStepInlineValue(pendingOptionalSkillActivation.skillId)}, ` +
+                'but the current task cycle has no matching activation evidence yet. ' +
+                'Record activation before compile, review, implementation, or closeout so selected-skill diagnostics and final audit describe the same current-cycle state.',
+            commands: [
+                buildCommand(
+                    `Activate optional skill ${pendingOptionalSkillActivation.skillId}`,
+                    pendingOptionalSkillActivation.command
+                )
+            ]
+        });
     }
 
     const compileReadiness = preflight

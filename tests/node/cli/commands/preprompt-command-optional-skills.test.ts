@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
 import { COMMAND_SUMMARY } from '../../../../src/cli/commands/cli-helpers';
@@ -173,6 +174,58 @@ function seedProjectMemoryAgentInitState(
     );
 }
 
+function sha256File(filePath: string): string {
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function writeSelectedNodeBackendOptionalSkillArtifact(
+    repoRoot: string,
+    taskId: string,
+    options: {
+        policyMode: 'advisory' | 'required' | 'strict';
+        preflightPath: string;
+    }
+): void {
+    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    const artifactPath = path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-optional-skill-selection.json`);
+    fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+    fs.writeFileSync(
+        artifactPath,
+        JSON.stringify({
+            schema_version: 1,
+            event_source: 'optional-skill-selection',
+            task_id: taskId,
+            timestamp_utc: new Date().toISOString(),
+            policy_mode: options.policyMode,
+            decision: 'selected_installed_skills',
+            selected_installed_skills: [
+                {
+                    id: 'node-backend',
+                    pack: 'node-backend',
+                    source: 'installed_optional',
+                    allowed_skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md',
+                    reason_codes: ['task_signals', 'changed_path_signals'],
+                    matches: {
+                        task_signals: ['node-backend'],
+                        changed_path_signals: ['orders.ts']
+                    }
+                }
+            ],
+            recommended_missing_packs: [],
+            as_is_reason: null,
+            task_text_present: true,
+            task_text_sha256: computeOptionalSkillTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+            changed_paths: ['src/api/orders.ts'],
+            preflight_path: options.preflightPath.replace(/\\/g, '/'),
+            preflight_sha256: sha256File(options.preflightPath),
+            headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+            headlines_sha256: null,
+            visible_summary_line: 'Optional skills: node-backend (reason: task_text+paths)'
+        }, null, 2),
+        'utf8'
+    );
+}
+
 test('preprompt task --json shows optional skill selection preview from headlines-based selection', async () => {
     const repoRoot = createTempRepo();
     const taskId = 'T-149';
@@ -232,6 +285,120 @@ test('preprompt task --json shows optional skill selection preview from headline
         assert.match(String(optionalSkills.task_start_instruction || ''), /Selected optional skill\(s\): node-backend/);
         assert.match(String(optionalSkills.task_start_instruction || ''), /activate the selected skill/i);
         assert.match(String(optionalSkills.visible_summary_line || ''), /Optional skills: node-backend/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json keeps current advisory optional-skill activation guidance non-blocking', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'advisory',
+            includePersistedHeadlines: true
+        });
+        writeSelectedNodeBackendOptionalSkillArtifact(repoRoot, taskId, {
+            policyMode: 'advisory',
+            preflightPath
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.policy_mode, 'advisory');
+        assert.equal(optionalSkills.selected_installed_skill_activation_ready, true);
+        assert.match(
+            String(optionalSkills.task_start_instruction || ''),
+            /Selected advisory optional skill\(s\): node-backend/
+        );
+        assert.match(
+            String(optionalSkills.task_start_instruction || ''),
+            /If you use the selected skill, run the activation command\(s\)/
+        );
+        assert.match(
+            String(optionalSkills.task_start_instruction || ''),
+            /otherwise continue with the normal navigator command/
+        );
+        assert.doesNotMatch(
+            String(optionalSkills.task_start_instruction || ''),
+            /Run the activation command\(s\) before implementation so the timeline records the required chosen role\/skill/
+        );
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('preprompt task --json keeps current required optional-skill activation guidance mandatory', async () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-149';
+    try {
+        seedTaskQueue(repoRoot, taskId, '🟨 IN_PROGRESS');
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        fs.writeFileSync(
+            taskPath,
+            fs.readFileSync(taskPath, 'utf8').replace(
+                'Update app flow',
+                'Implement request validation for a Node.js API endpoint'
+            ),
+            'utf8'
+        );
+        seedInitAnswers(repoRoot, 'Codex');
+        const preflightPath = writePreflight(repoRoot, taskId, {
+            changed_files: ['src/api/orders.ts']
+        });
+
+        const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+        seedNodeBackendOptionalSkillFixture(bundleRoot, {
+            policyMode: 'required',
+            includePersistedHeadlines: true
+        });
+        writeSelectedNodeBackendOptionalSkillArtifact(repoRoot, taskId, {
+            policyMode: 'required',
+            preflightPath
+        });
+
+        const result = await runCliWithCapturedOutput(
+            ['preprompt', 'task', '--task-id', taskId, '--json'],
+            { cwd: repoRoot }
+        );
+
+        assert.equal(result.exitCode, 0);
+        const payload = JSON.parse(result.logs.join('\n')) as Record<string, unknown>;
+        const diagnostics = payload.diagnostics as Record<string, unknown>;
+        const optionalSkills = diagnostics.optional_skills as Record<string, unknown>;
+        assert.equal(optionalSkills.policy_mode, 'required');
+        assert.equal(optionalSkills.selected_installed_skill_activation_ready, true);
+        assert.match(
+            String(optionalSkills.task_start_instruction || ''),
+            /Selected optional skill\(s\): node-backend/
+        );
+        assert.match(
+            String(optionalSkills.task_start_instruction || ''),
+            /Run the activation command\(s\) before implementation so the timeline records the required chosen role\/skill/
+        );
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

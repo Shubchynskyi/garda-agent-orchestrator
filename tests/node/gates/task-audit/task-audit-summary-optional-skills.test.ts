@@ -839,6 +839,87 @@ describe('gates/task-audit-summary', () => {
             assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: node-backend (reason: task_text+paths)');
         });
 
+        it('counts current-cycle optional-skill activation as usage before a reference-load event exists', () => {
+            fs.writeFileSync(
+                path.join(eventsDir, `${TASK_ID}.jsonl`),
+                [
+                    JSON.stringify({
+                        timestamp_utc: '2026-01-01T00:00:01.000Z',
+                        event_type: 'SKILL_SELECTED',
+                        details: {
+                            skill_id: 'node-backend',
+                            trigger_reason: 'optional_skill_selection'
+                        }
+                    })
+                ].join('\n'),
+                'utf8'
+            );
+            writePreflight(reviewsDir, TASK_ID, {
+                changed_files: ['src/api/orders.ts'],
+                metrics: { changed_lines_total: 10 },
+                required_reviews: {}
+            });
+
+            const bundleConfigDir = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config');
+            fs.mkdirSync(bundleConfigDir, { recursive: true });
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'optional-skill-selection-policy.json'),
+                JSON.stringify({ version: 1, mode: 'advisory' }, null, 2),
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(bundleConfigDir, 'skill-packs.json'),
+                JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
+                'utf8'
+            );
+            fs.cpSync(
+                NODE_BACKEND_SKILL_SOURCE,
+                path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'skills', 'node-backend'),
+                { recursive: true }
+            );
+            const currentHeadlines = ensureSkillsHeadlinesCurrent(path.join(tmpDir, 'garda-agent-orchestrator'));
+
+            writeArtifact(reviewsDir, TASK_ID, '-optional-skill-selection.json', {
+                schema_version: 1,
+                event_source: 'optional-skill-selection',
+                task_id: TASK_ID,
+                timestamp_utc: '2026-01-01T00:00:00.000Z',
+                policy_mode: 'advisory',
+                decision: 'selected_installed_skills',
+                selected_installed_skills: [
+                    {
+                        id: 'node-backend',
+                        pack: 'node-backend',
+                        source: 'installed_optional',
+                        allowed_skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md',
+                        reason_codes: ['task_signals', 'changed_path_signals'],
+                        matches: { task_signals: ['node backend'], changed_path_signals: ['src/api/'] }
+                    }
+                ],
+                recommended_missing_packs: [],
+                as_is_reason: null,
+                task_text_present: true,
+                task_text_sha256: computeTaskTextSha256('Implement request validation for a Node.js API endpoint'),
+                changed_paths: ['src/api/orders.ts'],
+                preflight_path: path.join(reviewsDir, `${TASK_ID}-preflight.json`).replace(/\\/g, '/'),
+                preflight_sha256: computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`)),
+                headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
+                headlines_sha256: currentHeadlines.sha256,
+                visible_summary_line: 'Optional skills: node-backend (reason: task_text+paths)'
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+
+            assert.deepEqual(result.final_closeout.optional_skills?.selected_skill_ids, ['node-backend']);
+            assert.deepEqual(result.final_closeout.optional_skills?.used_skill_ids, ['node-backend']);
+            assert.equal(result.final_closeout.optional_skills?.visible_summary_line, 'Optional skills: node-backend (reason: task_text+paths)');
+        });
+
         it('does not overstate optional-skill usage when the artifact was selected but never activated', () => {
             fs.writeFileSync(path.join(eventsDir, `${TASK_ID}.jsonl`), '', 'utf8');
             writePreflight(reviewsDir, TASK_ID, {

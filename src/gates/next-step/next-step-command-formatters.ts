@@ -180,8 +180,17 @@ export function formatNextStepText(result: NextStepResult): string {
             `decision=${optionalSkills.decision || 'unknown'}; artifact=${optionalSkills.artifact_path || 'none'}; ` +
             `present=${optionalSkills.artifact_present}`
         );
+        if (optionalSkills.timeline_invalid_json) {
+            lines.push('OptionalSkillTimelineInvalidJson: true');
+        }
         if (optionalSkills.selected_skill_ids.length > 0) {
             lines.push(`OptionalSkillSelected: ${optionalSkills.selected_skill_ids.join(', ')}`);
+        }
+        if (optionalSkills.activated_skill_ids.length > 0) {
+            lines.push(`OptionalSkillActivatedCurrentCycle: ${optionalSkills.activated_skill_ids.join(', ')}`);
+        }
+        if (optionalSkills.pending_activation_skill_ids.length > 0) {
+            lines.push(`OptionalSkillPendingActivation: ${optionalSkills.pending_activation_skill_ids.join(', ')}`);
         }
         if (optionalSkills.recommended_missing_pack_ids.length > 0) {
             lines.push(`OptionalSkillRecommendedMissingPacks: ${optionalSkills.recommended_missing_pack_ids.join(', ')}`);

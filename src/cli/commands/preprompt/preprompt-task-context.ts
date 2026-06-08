@@ -456,7 +456,10 @@ function buildOptionalSkillTaskStartInstruction(input: {
     if (input.selectedSkillIds.length > 0) {
         const skillList = input.selectedSkillIds.join(', ');
         if (input.activationReady && input.activationCommands.length > 0) {
-            return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the chosen role/skill.`;
+            if (input.policyMode === 'required' || input.policyMode === 'strict') {
+                return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the required chosen role/skill.`;
+            }
+            return `Selected advisory optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
         }
         return `Selected optional skill(s): ${skillList}. Materialize the current-cycle selection artifact with classify-change before implementation, then activate the selected skill.`;
     }
