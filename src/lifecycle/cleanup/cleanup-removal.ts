@@ -12,6 +12,9 @@ import { LIFECYCLE_OPERATION_LOCK_DIR_NAME } from '../lock/lifecycle-lock';
 import { ensureWithinRoot, removePathRecursive } from '../generic-utils';
 import { buildRuntimeRetentionPreview } from '../runtime-policy/runtime-retention-policy';
 import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
+import {
+    resolveRuntimeCleanupStandardPaths
+} from './runtime-cleanup-ownership';
 import type { CleanupItem, RetentionPolicy } from './cleanup-types';
 
 export interface ProcessCleanupCandidatesResult {
@@ -552,11 +555,12 @@ function collectTaskScopedArtifactInventory(
     activeTaskIds: ReadonlySet<string>,
     taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
+    const standardPaths = resolveRuntimeCleanupStandardPaths(runtimeDir);
     return [
-        ...collectTaskReviewArtifactsInventory(path.join(runtimeDir, 'reviews'), activeTaskIds, taskIdFilter),
-        ...collectTaskTimelineArtifactsInventory(path.join(runtimeDir, 'task-events'), activeTaskIds, taskIdFilter),
-        ...collectTaskWorkingPlanArtifactsInventory(path.join(runtimeDir, 'plans'), activeTaskIds, taskIdFilter),
-        ...collectTaskProjectMemoryArtifactsInventory(path.join(runtimeDir, 'project-memory'), activeTaskIds, taskIdFilter)
+        ...collectTaskReviewArtifactsInventory(standardPaths.reviewsDir, activeTaskIds, taskIdFilter),
+        ...collectTaskTimelineArtifactsInventory(standardPaths.taskEventsDir, activeTaskIds, taskIdFilter),
+        ...collectTaskWorkingPlanArtifactsInventory(standardPaths.plansDir, activeTaskIds, taskIdFilter),
+        ...collectTaskProjectMemoryArtifactsInventory(standardPaths.projectMemoryDir, activeTaskIds, taskIdFilter)
     ];
 }
 
@@ -569,29 +573,30 @@ function addCandidateTaskId(taskIds: Set<string>, taskId: string | null, activeT
 
 function collectTaskScopedArtifactTaskIds(runtimeDir: string, activeTaskIds: ReadonlySet<string>): string[] {
     const taskIds = new Set<string>();
+    const standardPaths = resolveRuntimeCleanupStandardPaths(runtimeDir);
 
-    for (const entry of directoryEntries(path.join(runtimeDir, 'reviews'))) {
+    for (const entry of directoryEntries(standardPaths.reviewsDir)) {
         if (parseActiveReviewArtifactTaskId(entry, activeTaskIds)) {
             continue;
         }
         addCandidateTaskId(
             taskIds,
-            parseReviewArtifactTaskId(path.join(runtimeDir, 'reviews', entry), entry),
+            parseReviewArtifactTaskId(path.join(standardPaths.reviewsDir, entry), entry),
             activeTaskIds
         );
     }
 
-    for (const entry of directoryEntries(path.join(runtimeDir, 'task-events'))) {
+    for (const entry of directoryEntries(standardPaths.taskEventsDir)) {
         if (entry.endsWith('.jsonl') && entry !== 'all-tasks.jsonl') {
             addCandidateTaskId(taskIds, entry.replace(/\.jsonl$/, ''), activeTaskIds);
         }
     }
 
-    for (const entry of directoryEntries(path.join(runtimeDir, 'plans'))) {
+    for (const entry of directoryEntries(standardPaths.plansDir)) {
         addCandidateTaskId(taskIds, parseMarkdownWorkingPlanTaskId(entry), activeTaskIds);
     }
 
-    for (const entry of directoryEntries(path.join(runtimeDir, 'project-memory'))) {
+    for (const entry of directoryEntries(standardPaths.projectMemoryDir)) {
         addCandidateTaskId(taskIds, parseProjectMemoryArtifactTaskId(entry), activeTaskIds);
     }
 
@@ -668,7 +673,7 @@ export function collectRuntimeRetentionCandidates(
 }
 
 export function collectIsolationSandbox(runtimeDir: string, maxAgeDays: number, now: Date): CleanupItem[] {
-    const sandboxDir = path.join(runtimeDir, '.isolation-sandbox');
+    const sandboxDir = resolveRuntimeCleanupStandardPaths(runtimeDir).isolationSandboxDir;
     if (!fs.existsSync(sandboxDir)) return [];
 
     const items: CleanupItem[] = [];
@@ -726,7 +731,7 @@ export function collectStaleLifecycleLock(runtimeDir: string): CleanupItem[] {
 }
 
 export function collectStaleTaskEventLockCandidates(bundleRoot: string): CleanupItem[] {
-    const taskEventsDir = path.join(bundleRoot, 'runtime', 'task-events');
+    const taskEventsDir = resolveRuntimeCleanupStandardPaths(path.join(bundleRoot, 'runtime')).taskEventsDir;
     const inspection = scanTaskEventLocks(bundleRoot);
 
     return inspection.locks
@@ -761,28 +766,20 @@ export function collectStandardCandidates(
     now: Date,
     activeTaskIds: ReadonlySet<string> = new Set<string>()
 ): CleanupItem[] {
-    const backupsDir = path.join(runtimeDir, 'backups');
-    const taskEventsDir = path.join(runtimeDir, 'task-events');
-    const updateReportsDir = path.join(runtimeDir, 'update-reports');
-    const updateRollbacksDir = path.join(runtimeDir, 'update-rollbacks');
-    const bundleBackupsDir = path.join(runtimeDir, 'bundle-backups');
-    const testScratchDir = path.join(runtimeDir, '.test-scratch');
-    const cacheDir = path.join(runtimeDir, 'cache');
-    const reportsDir = path.join(runtimeDir, 'reports');
-    const updateTempDir = path.join(runtimeDir, 'update-temp');
+    const standardPaths = resolveRuntimeCleanupStandardPaths(runtimeDir);
 
     return [
-        ...collectTimestampedDirs(backupsDir, 'backups', policy.maxBackups, policy.maxAgeDays, now),
-        ...collectTimestampedDirs(bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
-        ...collectOrphanedCompletenessCaches(taskEventsDir, activeTaskIds),
+        ...collectTimestampedDirs(standardPaths.backupsDir, 'backups', policy.maxBackups, policy.maxAgeDays, now),
+        ...collectTimestampedDirs(standardPaths.bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
+        ...collectOrphanedCompletenessCaches(standardPaths.taskEventsDir, activeTaskIds),
         ...collectRuntimeRootTempFiles(runtimeDir, policy.maxAgeDays, now),
         ...collectRuntimeTmp(runtimeDir, policy.maxAgeDays, now, activeTaskIds),
-        ...collectAgedEntries(testScratchDir, 'test-scratch', policy.maxAgeDays, now),
-        ...collectAgedEntries(cacheDir, 'cache', policy.maxAgeDays, now),
-        ...collectAgedEntries(reportsDir, 'reports', policy.maxAgeDays, now),
-        ...collectAgedEntries(updateTempDir, 'update-temp', policy.maxAgeDays, now),
-        ...collectUpdateNamedDirs(updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
-        ...collectUpdateNamedDirs(updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
+        ...collectAgedEntries(standardPaths.testScratchDir, 'test-scratch', policy.maxAgeDays, now),
+        ...collectAgedEntries(standardPaths.cacheDir, 'cache', policy.maxAgeDays, now),
+        ...collectAgedEntries(standardPaths.reportsDir, 'reports', policy.maxAgeDays, now),
+        ...collectAgedEntries(standardPaths.updateTempDir, 'update-temp', policy.maxAgeDays, now),
+        ...collectUpdateNamedDirs(standardPaths.updateRollbacksDir, 'update-rollbacks', policy.maxUpdateRollbacks, policy.maxAgeDays, now),
+        ...collectUpdateNamedDirs(standardPaths.updateReportsDir, 'update-reports', policy.maxUpdateReports, policy.maxAgeDays, now)
     ];
 }
 

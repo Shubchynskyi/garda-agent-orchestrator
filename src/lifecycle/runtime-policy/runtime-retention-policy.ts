@@ -16,6 +16,7 @@ import {
     taskIdsEqualCaseInsensitive
 } from '../../core/task-ids';
 import { validateManagedConfigByName } from '../../schemas/config-artifacts';
+import { isTaskScopedRuntimeCandidateCategory } from '../cleanup/runtime-cleanup-ownership';
 
 export type RuntimeRetentionTier =
     | 'active_evidence'
@@ -288,6 +289,9 @@ function parseTaskIdFromProjectMemoryArtifact(fileName: string): string | null {
 }
 
 function parseTaskIdFromCandidatePath(candidatePath: string, category: string): string | null {
+    if (!isTaskScopedRuntimeCandidateCategory(category)) {
+        return null;
+    }
     const fileName = path.basename(candidatePath);
     switch (category) {
         case 'reviews':
