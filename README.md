@@ -208,6 +208,16 @@ Garda was not started from scratch in this repository. Earlier versions were dev
 - Commit message format is project-defined; conventional commits are optional.
 - For detailed deployment, lifecycle, and configuration information, see the `docs/` directory.
 
+## Support GARDA
+
+GARDA is an independent open-source project for governed AI coding workflows.
+
+Support helps cover AI tokens, model subscriptions, release validation,
+documentation, compatibility testing, and maintenance.
+
+- Ko-fi: https://ko-fi.com/gardaworkflow
+- Crypto: https://nowpayments.io/donation/garda
+
 ## License
 
 Apache License 2.0. See `LICENSE`.
