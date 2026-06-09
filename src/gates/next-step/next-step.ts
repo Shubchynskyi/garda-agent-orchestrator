@@ -2741,15 +2741,25 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskId,
             state
         );
-        const standbyResumeHint = launchArtifactEvidence.state === 'prepared'
+        const oneShotLaunchHint = launchArtifactEvidence.state === 'prepared'
             && launchArtifactEvidence.launchInputArtifactPath
             && launchArtifactEvidence.launchInputArtifactSha256
             ? (
-                `ReviewerStandbyResumeHint: if reviewer '${reviewerIdentity}' already reported standby completion before launch input delivery, ` +
-                `resume the same provider session and send exactly ` +
+                `ReviewerOneShotLaunchHint: launch a fresh delegated reviewer once with the exact opaque handoff ` +
+                `ReviewerLaunchInputArtifactPath: ${normalizePath(launchArtifactEvidence.launchInputArtifactPath)} ` +
+                `(launch_input_sha256=${launchArtifactEvidence.launchInputArtifactSha256}) ` +
+                `or CopyPasteReviewerLaunchPrompt from prepare-reviewer-launch, then run record-reviewer-delegation-started immediately after provider launch.`
+            )
+            : null;
+        const providerFallbackHint = launchArtifactEvidence.state === 'prepared'
+            && launchArtifactEvidence.launchInputArtifactPath
+            && launchArtifactEvidence.launchInputArtifactSha256
+            ? (
+                `ReviewerStandbyResumeHint: if reviewer '${reviewerIdentity}' already reported standby or STANDBY_READY completion before launch input delivery, ` +
+                `resume only when the provider truly supports same-session resume and send exactly ` +
                 `"ReviewerLaunchInputArtifactPath: ${normalizePath(launchArtifactEvidence.launchInputArtifactPath)}" ` +
                 `before running record-reviewer-delegation-started; launch_input_sha256=${launchArtifactEvidence.launchInputArtifactSha256}; ` +
-                `the standby completion is not review evidence.`
+                `this handshake is not review evidence.`
             )
             : null;
         const reviewRoutingChain = buildReviewGateChainStatusSummary({
@@ -2837,7 +2847,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             acceptedVerdictTokens,
             hiddenTimingTrustRemediation: getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state),
             reusedExistingReview: state.reusedExistingReview,
-            standbyResumeHint,
+            oneShotLaunchHint,
+            providerFallbackHint,
             instructions: {
                 opaqueHandoff: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
                 freshContextLaunch: REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,

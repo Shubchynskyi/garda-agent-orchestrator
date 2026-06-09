@@ -4,8 +4,17 @@ export const REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION =
 export const REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION =
     'Launch a real subagent using built-in tools; if for some reason that is impossible right now, you must stop and report this to the user; this is expected behavior in this repository.';
 
+export const REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION =
+    'After `prepare-reviewer-launch`, launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath, then immediately run `record-reviewer-delegation-started` with provider/controller invocation id plus exact launch-input evidence before the reviewer returns.';
+
 export const REVIEWER_DELEGATION_STARTED_INSTRUCTION =
     'After `prepare-reviewer-launch`, launch the real delegated reviewer and immediately run `record-reviewer-delegation-started` with provider/controller invocation id plus exact launch-input evidence. Treat `complete-reviewer-launch` as post-return completion/finalization evidence, not as reviewer start.';
+
+export const REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION =
+    'Provider fallback only: if the provider absolutely requires a reviewer session before launch input exists, keep that clean-context session in standby, then resume it and send the exact ReviewerLaunchInputArtifactPath after prepare-reviewer-launch.';
+
+export const REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE =
+    'A standby or STANDBY_READY completion before launch input delivery is provider handshake noise, not review evidence or review progress.';
 
 export const REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION =
     'Treat review context as an opaque handoff artifact. Do not open or summarize the generated review-context markdown, JSON, or scoped diff after a successful context build; pass the artifact path to the fresh delegated reviewer and inspect only gate status, paths, hashes, and reviewer output.';

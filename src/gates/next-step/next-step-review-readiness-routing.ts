@@ -1,3 +1,9 @@
+import {
+    REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION,
+    REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION,
+    REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE
+} from '../../gate-runtime/reviewer-session-contract';
+
 export type DelegatedReviewLaunchArtifactState = 'missing_or_invalid' | 'prepared' | 'delegation_started' | 'launched';
 
 export interface DelegatedReviewReadinessCommand {
@@ -37,7 +43,8 @@ export interface DelegatedReviewReadinessRouteOptions {
     acceptedVerdictTokens: string;
     hiddenTimingTrustRemediation: string | null;
     reusedExistingReview: boolean;
-    standbyResumeHint: string | null;
+    oneShotLaunchHint: string | null;
+    providerFallbackHint: string | null;
     instructions: {
         opaqueHandoff: string;
         freshContextLaunch: string;
@@ -55,8 +62,8 @@ export interface DelegatedReviewReadinessRouteOptions {
     };
 }
 
-const REVIEWER_STANDBY_HANDOFF_GUIDANCE =
-    'If the provider requires a reviewer session before the launch input exists, create or reserve the clean-context reviewer session as standby, then resume that same session and send the exact ReviewerLaunchInputArtifactPath after prepare-reviewer-launch. A standby completion before launch input delivery is normal provider handshake noise, not review evidence.';
+const REVIEWER_PROVIDER_FALLBACK_HANDOFF_GUIDANCE =
+    `${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION} ${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE}`;
 
 export function resolveDelegatedReviewReadinessRoute(
     options: DelegatedReviewReadinessRouteOptions
@@ -76,7 +83,7 @@ export function resolveDelegatedReviewReadinessRoute(
                 `Required review '${options.reviewType}' needs current REVIEWER_DELEGATION_ROUTED telemetry after the latest compile pass before a review receipt can be recorded. ` +
                 `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ` +
                 `${options.instructions.freshContextLaunch} ${options.instructions.sessionReuseBoundary} ` +
-                `${REVIEWER_STANDBY_HANDOFF_GUIDANCE} ` +
+                `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
                 `${options.reviewerReadinessChain} ${options.reviewRoutingChain}`,
             commands: [options.commands.recordRouting]
         };
@@ -101,7 +108,8 @@ export function resolveDelegatedReviewReadinessRoute(
                 reason:
                     `Required review '${options.reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. ` +
                     `This prepares hashes and prompt paths only; it is not completed invocation evidence. ` +
-                    `${REVIEWER_STANDBY_HANDOFF_GUIDANCE} ` +
+                    `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
+                    `${REVIEWER_PROVIDER_FALLBACK_HANDOFF_GUIDANCE} ` +
                     `${options.providerLaunchTargetSummary} ${options.reviewerReadinessChain} ${options.launchPreparationChain}`,
                 commands: [options.commands.prepareLaunch]
             };
@@ -116,8 +124,10 @@ export function resolveDelegatedReviewReadinessRoute(
                     `Required review '${options.reviewType}' has prepared launch metadata for the current routing event and review context. ` +
                     `Launch the delegated reviewer with the exact generated CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath as an opaque handoff, then immediately run record-reviewer-delegation-started with the provider/controller invocation id so the gate records the real delegation start timestamp before the reviewer returns. For launch_artifact_path mode, pass the ReviewerLaunchInputArtifactSha256 value to the CLI flag --launch-input-sha256; do not invent a --launch-input-artifact-sha256 flag. Do not reconstruct reviewer prompts from memory. ` +
                     `Provider-owned placeholders in the command are only --provider-invocation-id and --attestation-source; replace them with the delegated reviewer launch result after provider launch. Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed. ` +
-                    `${options.standbyResumeHint ? `${options.standbyResumeHint} ` : ''}` +
-                    `${REVIEWER_STANDBY_HANDOFF_GUIDANCE} ` +
+                    `${options.oneShotLaunchHint ? `${options.oneShotLaunchHint} ` : ''}` +
+                    `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
+                    `${options.providerFallbackHint ? `${options.providerFallbackHint} ` : ''}` +
+                    `${REVIEWER_PROVIDER_FALLBACK_HANDOFF_GUIDANCE} ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
                     `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.recordDelegationStarted]

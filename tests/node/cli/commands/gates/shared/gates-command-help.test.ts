@@ -297,13 +297,14 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.ok(helpOutput.includes('complete-reviewer-launch only after the reviewer returns'));
     });
 
-    it('explains pre-handoff reviewer identity in prepare launch help', () => {
+    it('explains one-shot reviewer launch as the default in prepare launch help', () => {
         const helpOutput = stripAnsi(buildGateHelpText('prepare-reviewer-launch', path.resolve('.')));
 
-        assert.ok(helpOutput.includes('provider/controller-assigned agent:<id>'));
-        assert.ok(helpOutput.includes('create or reserve a clean-context reviewer session before routing and preparing the handoff'));
-        assert.ok(helpOutput.includes('resume the same session and send the exact ReviewerLaunchInputArtifactPath'));
-        assert.ok(helpOutput.includes('standby completion is expected provider handshake noise, not review evidence'));
+        assert.ok(helpOutput.includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
+        assert.ok(helpOutput.includes('Provider fallback only'));
+        assert.ok(helpOutput.includes('use standby/resume for that same session after prepare-reviewer-launch'));
+        assert.ok(helpOutput.includes('STANDBY_READY completion before launch input delivery is handshake noise, not review evidence'));
+        assert.equal(helpOutput.includes('create or reserve a clean-context reviewer session before routing and preparing the handoff'), false);
     });
 
     it('does not treat --help as a standalone help request when it is a string option value', async () => {

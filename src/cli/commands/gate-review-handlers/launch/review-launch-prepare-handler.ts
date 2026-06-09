@@ -17,7 +17,10 @@ import {
 } from './review-launch-entrypoints';
 import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
-    REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION
+    REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION,
+    REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION,
+    REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION,
+    REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE
 } from '../../../../gate-runtime/reviewer-session-contract';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import {
@@ -27,8 +30,29 @@ import {
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
-const REVIEWER_STANDBY_HANDOFF_INSTRUCTION =
-    'If the provider requires a reviewer session before this launch input exists, keep that clean-context session in standby, then resume it and send the exact ReviewerLaunchInputArtifactPath after prepare-reviewer-launch. A standby completion before launch input delivery is expected provider handshake noise, not review evidence.';
+function printReviewerLaunchHandoffLines(
+    launchInputArtifactDisplayPath: string,
+    launchInputArtifactSha256: string
+): void {
+    console.log('OneShotLaunchState: default_handoff_ready_not_review_evidence');
+    console.log(`OneShotLaunchInstruction: ${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION}`);
+    console.log('StandbyResumeState: optional_provider_fallback_not_review_evidence');
+    console.log(`StandbyResumeInstruction: ${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION}`);
+    console.log(`StandbyResumeInput: ReviewerLaunchInputArtifactPath: ${launchInputArtifactDisplayPath}`);
+    console.log(`StandbyResumeInputSha256: ${launchInputArtifactSha256}`);
+    console.log(`ProviderFallbackNote: ${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE}`);
+}
+
+function buildReviewerLaunchNextAction(): string {
+    return (
+        `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
+        'Do not reconstruct reviewer prompts from memory. ' +
+        `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
+        `${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION} ` +
+        `${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE} ` +
+        'Immediately run record-reviewer-delegation-started with launch_input evidence, then run complete-reviewer-launch after reviewer completion.'
+    );
+}
 
 export interface PrepareReviewerLaunchHandlerDependencies {
     assertExplicitReviewContextRuntimeIdentity: typeof import('../index').assertExplicitReviewContextRuntimeIdentity;
@@ -347,16 +371,16 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
             console.log(`ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
             console.log(`ReviewerLaunchInputArtifactSha256: ${existingLaunchInputArtifactSha256}`);
-            console.log('StandbyResumeState: first_class_resumable_not_review_evidence');
-            console.log(`StandbyResumeInstruction: If the delegated reviewer session already reported standby completion, resume that same session and send the exact StandbyResumeInput line before recording delegation start.`);
-            console.log(`StandbyResumeInput: ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
-            console.log(`StandbyResumeInputSha256: ${existingLaunchInputArtifactSha256}`);
+            printReviewerLaunchHandoffLines(
+                toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath),
+                existingLaunchInputArtifactSha256
+            );
             console.log(`CopyPasteReviewerLaunchPromptSha256: ${stringSha256(copyPasteReviewerLaunchPrompt)}`);
             console.log('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags.');
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-            console.log(`NextAction: existing reviewer launch metadata is current; launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; if reviewer_identity is not known yet, create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id> used by routing and launch evidence. ${REVIEWER_STANDBY_HANDOFF_INSTRUCTION} Then immediately run record-reviewer-delegation-started with launch_input evidence. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION}`);
+            console.log(`NextAction: existing reviewer launch metadata is current; ${buildReviewerLaunchNextAction()}`);
             return;
         }
         if (
@@ -506,10 +530,11 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         generated_by: 'garda prepare-reviewer-launch',
         generated_at_utc: launchPreparedAtUtc,
         next_action: (
-            `Launch a fresh delegated reviewer with ${handoffArtifactNames} as opaque handoff artifacts; ` +
-            `${REVIEWER_STANDBY_HANDOFF_INSTRUCTION} ` +
+            `Launch a fresh delegated reviewer once with ${handoffArtifactNames} as opaque handoff artifacts using the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath. ` +
+            `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
             `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
-            'do not open or summarize the generated review context in the main agent. Then update only the ' +
+            `${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION} ${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE} ` +
+            'Do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
             'Run record-reviewer-delegation-started immediately after provider launch, then complete-reviewer-launch after the reviewer returns.'
         )
@@ -635,10 +660,10 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`ReviewerLaunchArtifactSha256: ${launchArtifactSha256}`);
     console.log(`ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
     console.log(`ReviewerLaunchInputArtifactSha256: ${launchInputArtifactSha256}`);
-    console.log('StandbyResumeState: first_class_resumable_not_review_evidence');
-    console.log(`StandbyResumeInstruction: If the delegated reviewer session already reported standby completion, resume that same session and send the exact StandbyResumeInput line before recording delegation start.`);
-    console.log(`StandbyResumeInput: ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
-    console.log(`StandbyResumeInputSha256: ${launchInputArtifactSha256}`);
+    printReviewerLaunchHandoffLines(
+        toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath),
+        launchInputArtifactSha256
+    );
     console.log(`CopyPasteReviewerLaunchPromptSha256: ${copyPasteReviewerLaunchPromptSha256}`);
     console.log('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags.');
     console.log('AttestationState: prepared');
@@ -655,7 +680,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`PreservePreparedFields: ${preservePreparedFields.join(', ')}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
-    console.log(`NextAction: launch the delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath; if reviewer_identity is not known yet, create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id> used by routing and launch evidence. ${REVIEWER_STANDBY_HANDOFF_INSTRUCTION} Do not reconstruct reviewer prompts from memory. ${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} Immediately run record-reviewer-delegation-started with launch_input evidence, then run complete-reviewer-launch after reviewer completion.`);
+    console.log(`NextAction: ${buildReviewerLaunchNextAction()}`);
 }
 
 ;
