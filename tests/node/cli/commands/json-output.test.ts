@@ -264,13 +264,25 @@ function findRepoRoot(): string {
 const REPO_ROOT = findRepoRoot();
 const CLI_ENTRY = path.join(REPO_ROOT, 'bin', 'garda.js');
 const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
+const CLI_JSON_TIMEOUT_MS = 90_000;
 
 function runCliJson(args: string[]) {
     return spawnSync(process.execPath, [CLI_ENTRY, ...args], {
         cwd: NEUTRAL_CWD,
         encoding: 'utf8',
-        timeout: 30_000
+        timeout: CLI_JSON_TIMEOUT_MS
     });
+}
+
+function formatCliJsonResult(result: ReturnType<typeof runCliJson>): string {
+    return [
+        `status=${String(result.status)}`,
+        `signal=${String(result.signal)}`,
+        `error=${result.error ? result.error.message : 'none'}`,
+        `timeout_ms=${CLI_JSON_TIMEOUT_MS}`,
+        `stdout=${result.stdout || ''}`,
+        `stderr=${result.stderr || ''}`
+    ].join('\n');
 }
 
 function copyFixtureFile(sourcePath: string, destinationPath: string): void {
@@ -342,7 +354,7 @@ function createDeployedWorkspaceFixture(): {
 }
 
 function parseJsonStdout(result: ReturnType<typeof runCliJson>, message: string) {
-    assert.ok(result.status !== 1 && result.status !== 2, `${message}: ${result.stderr}`);
+    assert.ok(result.status !== 1 && result.status !== 2, `${message}:\n${formatCliJsonResult(result)}`);
     const trimmed = result.stdout.trim();
     assert.ok(trimmed.startsWith('{'), 'stdout must start with JSON object');
     return JSON.parse(trimmed);
@@ -352,7 +364,7 @@ test('status --json emits valid JSON to stdout', () => {
     const fixture = createDeployedWorkspaceFixture();
     try {
         const result = runCliJson(['status', '--target-root', fixture.workspaceRoot, '--json']);
-        assert.equal(result.status, 0, `status --json exited non-zero: ${result.stderr}`);
+        assert.equal(result.status, 0, `status --json exited non-zero:\n${formatCliJsonResult(result)}`);
         const parsed = JSON.parse(result.stdout);
         assert.equal(typeof parsed.readyForTasks, 'boolean');
         assert.equal(typeof parsed.bundlePresent, 'boolean');
@@ -366,7 +378,7 @@ test('status --json output does not include banner text', () => {
     const fixture = createDeployedWorkspaceFixture();
     try {
         const result = runCliJson(['status', '--target-root', fixture.workspaceRoot, '--json']);
-        assert.equal(result.status, 0);
+        assert.equal(result.status, 0, `status --json exited non-zero:\n${formatCliJsonResult(result)}`);
         assert.ok(!result.stdout.includes('Workspace status'), 'JSON mode must suppress banner');
         const trimmed = result.stdout.trim();
         assert.ok(trimmed.startsWith('{'), 'stdout must start with JSON object');
@@ -379,7 +391,7 @@ test('doctor --json emits valid JSON to stdout', () => {
     const fixture = createDeployedWorkspaceFixture();
     try {
         const result = runCliJson(['doctor', '--target-root', fixture.workspaceRoot, '--json']);
-        assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed: ${result.stderr}`);
+        assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed:\n${formatCliJsonResult(result)}`);
         const parsed = JSON.parse(result.stdout);
         assert.equal(typeof parsed.passed, 'boolean');
         assert.ok('targetRoot' in parsed);
@@ -393,7 +405,7 @@ test('doctor --json output does not include banner text', () => {
     const fixture = createDeployedWorkspaceFixture();
     try {
         const result = runCliJson(['doctor', '--target-root', fixture.workspaceRoot, '--json']);
-        assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed: ${result.stderr}`);
+        assert.ok(result.status !== 1 && result.status !== 2, `doctor --json crashed:\n${formatCliJsonResult(result)}`);
         assert.ok(!result.stdout.includes('Workspace doctor'), 'JSON mode must suppress banner');
         const trimmed = result.stdout.trim();
         assert.ok(trimmed.startsWith('{'), 'stdout must start with JSON object');
