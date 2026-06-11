@@ -24,6 +24,30 @@ import {
     writePreflight
 } from './gates-command-review-launch-fixtures';
 
+const FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE = [
+    'STANDBY',
+    'standby',
+    'idle wait',
+    'idle reviewer',
+    'resumable session',
+    'resumable reviewer',
+    'reviewer reservation',
+    'pre-launch reviewer reservation',
+    'reserve a reviewer',
+    'keep the reviewer alive',
+    'wait for further instructions'
+];
+
+function assertNoDefaultReviewerReservationGuidance(text: string): void {
+    for (const forbiddenText of FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE) {
+        assert.equal(
+            text.includes(forbiddenText),
+            false,
+            `default reviewer launch guidance must not include ${forbiddenText}`
+        );
+    }
+}
+
 describe('cli/commands/gates review launch prepared metadata', () => {
     it('prepare-reviewer-launch writes current prepared launch metadata without attesting invocation', async () => {
         const repoRoot = createTempRepo();
@@ -226,6 +250,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
+        assertNoDefaultReviewerReservationGuidance(capturedLogs.join('\n'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -800,6 +825,7 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
+        assertNoDefaultReviewerReservationGuidance(capturedLogs.join('\n'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

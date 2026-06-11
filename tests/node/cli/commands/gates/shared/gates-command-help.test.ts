@@ -54,6 +54,30 @@ function getSourceCheckoutNestedCwd(): string {
     return path.join(path.resolve('.'), 'src', 'cli');
 }
 
+const FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE = [
+    'STANDBY',
+    'standby',
+    'idle wait',
+    'idle reviewer',
+    'resumable session',
+    'resumable reviewer',
+    'reviewer reservation',
+    'pre-launch reviewer reservation',
+    'reserve a reviewer',
+    'keep the reviewer alive',
+    'wait for further instructions'
+];
+
+function assertNoDefaultReviewerReservationGuidance(text: string): void {
+    for (const forbiddenText of FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE) {
+        assert.equal(
+            text.includes(forbiddenText),
+            false,
+            `default reviewer launch guidance must not include ${forbiddenText}`
+        );
+    }
+}
+
 describe('cli/commands/gates command help and syntax remediation', () => {
     it('splits quoted command lines', () => {
         assert.deepEqual(
@@ -295,12 +319,14 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.ok(helpOutput.includes('--launch-input-sha256 "<ReviewerLaunchInputArtifactSha256>"'));
         assert.ok(!helpOutput.includes('--launch-input-artifact-sha256'));
         assert.ok(helpOutput.includes('complete-reviewer-launch only after the reviewer returns'));
+        assertNoDefaultReviewerReservationGuidance(helpOutput);
     });
 
     it('explains one-shot reviewer launch as the default in prepare launch help', () => {
         const helpOutput = stripAnsi(buildGateHelpText('prepare-reviewer-launch', path.resolve('.')));
 
         assert.ok(helpOutput.includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
+        assertNoDefaultReviewerReservationGuidance(helpOutput);
     });
 
     it('does not treat --help as a standalone help request when it is a string option value', async () => {

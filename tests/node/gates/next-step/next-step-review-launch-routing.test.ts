@@ -50,6 +50,30 @@ const ALL_REVIEW_FLAGS = Object.freeze({
     dependency: false
 });
 
+const FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE = [
+    'STANDBY',
+    'standby',
+    'idle wait',
+    'idle reviewer',
+    'resumable session',
+    'resumable reviewer',
+    'reviewer reservation',
+    'pre-launch reviewer reservation',
+    'reserve a reviewer',
+    'keep the reviewer alive',
+    'wait for further instructions'
+];
+
+function assertNoDefaultReviewerReservationGuidance(text: string): void {
+    for (const forbiddenText of FORBIDDEN_DEFAULT_REVIEWER_RESERVATION_GUIDANCE) {
+        assert.equal(
+            text.includes(forbiddenText),
+            false,
+            `default reviewer launch guidance must not include ${forbiddenText}`
+        );
+    }
+}
+
 let tempRoots: string[] = [];
 const PROVIDER_ENV_KEYS = getProviderRuntimeEnvironmentKeys();
 
@@ -1512,6 +1536,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('ProviderLaunchTarget:'));
         assert.ok(result.reason.includes('launch clean-context reviewers'));
         assert.ok(result.reason.includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
+        assertNoDefaultReviewerReservationGuidance(`${result.reason}\n${result.commands.map((entry) => entry.command).join('\n')}`);
         assert.equal(result.commands[0].label, 'Prepare delegated reviewer launch metadata');
         assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
@@ -1598,6 +1623,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('launch clean-context reviewers'));
         assert.ok(result.reason.includes('launch artifact=prepared'));
         assert.ok(result.reason.includes('invocation=blocked until launch completion'));
+        assertNoDefaultReviewerReservationGuidance(`${result.reason}\n${result.commands.map((entry) => entry.command).join('\n')}`);
         assert.equal(result.commands[0].label, 'Record delegated reviewer start');
         assert.ok(result.commands[0].command.includes('gate record-reviewer-delegation-started'));
         assert.ok(result.commands[0].command.includes('--provider-invocation-id "<provider-owned invocation id from delegated reviewer launch result>"'));
