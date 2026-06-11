@@ -176,7 +176,10 @@ test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shard
             observedShardArgs.push(Array.from(args));
             const events = new (require('node:events').EventEmitter)();
             const exitCode = observedShardArgs.length === 2 ? 7 : 0;
-            setImmediate(() => events.emit('exit', exitCode));
+            setImmediate(() => {
+                events.emit('exit', exitCode);
+                events.emit('close', exitCode);
+            });
             return events as childProcess.ChildProcess;
         }) as typeof childProcess.spawn;
 
@@ -206,6 +209,62 @@ test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shard
     }
 });
 
+test('runNodeFoundationTests accepts cross-platform shard options and writes shard logs', async () => {
+    const { PassThrough } = require('node:stream') as typeof import('node:stream');
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const observedShardArgs: string[][] = [];
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-shard-log-dir',
+            path.join(buildResult.repoRoot, 'custom-shard-logs')
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            observedShardArgs.push(Array.from(args));
+            const shardNumber = observedShardArgs.length;
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            setImmediate(() => {
+                events.emit('exit', 0);
+                stdout.end(`stdout shard ${shardNumber}\n`);
+                stderr.end(`stderr shard ${shardNumber}\n`);
+                setImmediate(() => events.emit('close', 0));
+            });
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(observedShardArgs.length, 2);
+        assert.ok(observedShardArgs.every((args) => !args.includes('--garda-shards')));
+        assert.ok(observedShardArgs.every((args) => !args.includes('--garda-shard-log-dir')));
+        const logDir = path.join(buildResult.repoRoot, 'custom-shard-logs');
+        const logFiles = fs.readdirSync(logDir).sort();
+        assert.deepEqual(logFiles, ['shard-01-of-02.log', 'shard-02-of-02.log']);
+        assert.match(fs.readFileSync(path.join(logDir, logFiles[0]), 'utf8'), /stdout shard 1/);
+        assert.match(fs.readFileSync(path.join(logDir, logFiles[1]), 'utf8'), /stderr shard 2/);
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests auto-shards when the compiled test command would be too long', async () => {
     const { buildResult, cleanup } = createBuildResultFixture(260);
     const originalArgv = process.argv;
@@ -223,7 +282,10 @@ test('runNodeFoundationTests auto-shards when the compiled test command would be
         mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
             observedShardArgs.push(Array.from(args));
             const events = new (require('node:events').EventEmitter)();
-            setImmediate(() => events.emit('exit', 0));
+            setImmediate(() => {
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            });
             return events as childProcess.ChildProcess;
         }) as typeof childProcess.spawn;
 

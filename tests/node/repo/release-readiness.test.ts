@@ -83,6 +83,7 @@ function buildPackageJson(): string {
             'test:lifecycle': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/lifecycle',
             'test:bin': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/bin',
             'test:packaging': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/packaging/pack-smoke.test.ts',
+            'test:sharded': 'node scripts/node-foundation/build-scripts.cjs test.js --garda-shards 2',
             'test:full': 'node scripts/node-foundation/build-scripts.cjs test.js',
             'test:fast': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core'
         },

@@ -189,6 +189,7 @@ test('package.json exposes focused test shard scripts for targeted validation', 
         'test:lifecycle',
         'test:bin',
         'test:packaging',
+        'test:sharded',
         'test:full',
         'test:fast'
     ];
@@ -199,6 +200,7 @@ test('package.json exposes focused test shard scripts for targeted validation', 
 
     // test:packaging must exercise the compiled pack-smoke directly, not via npm test
     assert.match(scripts['test:packaging'], /pack-smoke\.test\.ts/);
+    assert.match(scripts['test:sharded'], /--garda-shards 2/);
     // test:full must rebuild before running to keep it self-contained
     assert.match(scripts['test:full'], /build.js node-foundation/);
 });

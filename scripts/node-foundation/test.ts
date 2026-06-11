@@ -5,8 +5,11 @@ import * as path from 'node:path';
 import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } from './build';
 
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
+const NODE_FOUNDATION_TEST_SHARD_LOG_DIR_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_LOG_DIR';
 const NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV = 'GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME';
 const NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT = 24_000;
+const GARDA_SHARDS_OPTION = '--garda-shards';
+const GARDA_SHARD_LOG_DIR_OPTION = '--garda-shard-log-dir';
 
 const NODE_TEST_OPTIONS_WITH_VALUE = new Set<string>([
     '--test-name-pattern',
@@ -29,13 +32,41 @@ function collectCompiledNodeFoundationTestFiles(buildResult: BuildResult): strin
         .map((relativePath: string) => path.join(buildResult.buildRoot, ...relativePath.split('/')));
 }
 
-function splitForwardedTestArgs(forwardedArgs: string[]): { optionArgs: string[]; fileTargets: string[]; } {
+function readOptionValue(args: string[], index: number, optionName: string): { value: string; consumedNext: boolean; } {
+    const arg = args[index];
+    if (arg.startsWith(`${optionName}=`)) {
+        return { value: arg.slice(optionName.length + 1), consumedNext: false };
+    }
+    const value = args[index + 1];
+    if (!value) {
+        throw new Error(`Missing value for ${optionName}.`);
+    }
+    return { value, consumedNext: true };
+}
+
+function parsePositiveInteger(value: string, label: string): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error(`${label} must be a positive integer.`);
+    }
+    return parsed;
+}
+
+function splitForwardedTestArgs(forwardedArgs: string[]): {
+    optionArgs: string[];
+    fileTargets: string[];
+    requestedShardCount: number | null;
+    requestedShardLogDir: string | null;
+} {
     const optionArgs: string[] = [];
     const fileTargets: string[] = [];
+    let requestedShardCount: number | null = null;
+    let requestedShardLogDir: string | null = null;
     let expectsOptionValue = false;
     let positionalOnly = false;
 
-    for (const arg of forwardedArgs) {
+    for (let index = 0; index < forwardedArgs.length; index += 1) {
+        const arg = forwardedArgs[index];
         if (expectsOptionValue) {
             optionArgs.push(arg);
             expectsOptionValue = false;
@@ -50,6 +81,24 @@ function splitForwardedTestArgs(forwardedArgs: string[]): { optionArgs: string[]
         if (arg === '--') {
             optionArgs.push(arg);
             positionalOnly = true;
+            continue;
+        }
+
+        if (arg === GARDA_SHARDS_OPTION || arg.startsWith(`${GARDA_SHARDS_OPTION}=`)) {
+            const { value, consumedNext } = readOptionValue(forwardedArgs, index, GARDA_SHARDS_OPTION);
+            requestedShardCount = parsePositiveInteger(value, GARDA_SHARDS_OPTION);
+            if (consumedNext) {
+                index += 1;
+            }
+            continue;
+        }
+
+        if (arg === GARDA_SHARD_LOG_DIR_OPTION || arg.startsWith(`${GARDA_SHARD_LOG_DIR_OPTION}=`)) {
+            const { value, consumedNext } = readOptionValue(forwardedArgs, index, GARDA_SHARD_LOG_DIR_OPTION);
+            requestedShardLogDir = value;
+            if (consumedNext) {
+                index += 1;
+            }
             continue;
         }
 
@@ -73,7 +122,7 @@ function splitForwardedTestArgs(forwardedArgs: string[]): { optionArgs: string[]
         throw new Error(`Missing value for Node test option '${optionArgs[optionArgs.length - 1]}'.`);
     }
 
-    return { optionArgs, fileTargets };
+    return { optionArgs, fileTargets, requestedShardCount, requestedShardLogDir };
 }
 
 function buildCompiledTestLookup(buildResult: BuildResult, compiledTestFiles: string[]): Map<string, string> {
@@ -262,7 +311,12 @@ function resolveAutoShardCount(selectedTestFiles: string[], optionArgs: string[]
     ));
 }
 
-function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs: string[], _fileTargets: string[]): number {
+function resolveNodeFoundationShardCount(
+    selectedTestFiles: string[],
+    optionArgs: string[],
+    _fileTargets: string[],
+    requestedShardCount: number | null
+): number {
     // Disable sharding only when an explicit --test-shard option is provided (manual shard selection).
     // Directory fileTargets expand to multiple files and should still benefit from GARDA_NODE_FOUNDATION_TEST_SHARDS.
     // Single-file targets still get shardCount=1 naturally since min(parsed, 1)=1.
@@ -270,15 +324,16 @@ function resolveNodeFoundationShardCount(selectedTestFiles: string[], optionArgs
         return 1;
     }
 
+    if (requestedShardCount !== null) {
+        return Math.max(1, Math.min(requestedShardCount, selectedTestFiles.length));
+    }
+
     const rawValue = String(process.env[NODE_FOUNDATION_TEST_SHARDS_ENV] || '').trim();
     if (!rawValue) {
         return resolveAutoShardCount(selectedTestFiles, optionArgs);
     }
 
-    const parsed = Number(rawValue);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-        throw new Error(`${NODE_FOUNDATION_TEST_SHARDS_ENV} must be a positive integer.`);
-    }
+    const parsed = parsePositiveInteger(rawValue, NODE_FOUNDATION_TEST_SHARDS_ENV);
 
     return Math.max(1, Math.min(parsed, selectedTestFiles.length));
 }
@@ -325,27 +380,77 @@ function runSingleNodeTestProcess(repoRoot: string, optionArgs: string[], select
     return result.status == null ? 1 : result.status;
 }
 
-function runNodeTestShard(repoRoot: string, optionArgs: string[], shardFiles: string[], shardIndex: number, shardCount: number): Promise<number> {
+function resolveShardLogDir(repoRoot: string, buildRoot: string, requestedShardLogDir: string | null): string {
+    const configuredLogDir = requestedShardLogDir || String(process.env[NODE_FOUNDATION_TEST_SHARD_LOG_DIR_ENV] || '').trim();
+    if (configuredLogDir) {
+        return path.resolve(repoRoot, configuredLogDir);
+    }
+    return path.join(buildRoot, 'test-shard-logs', `run-${process.pid}`);
+}
+
+function writeShardOutput(
+    stream: NodeJS.ReadableStream | null | undefined,
+    logStream: fs.WriteStream,
+    consoleStream: NodeJS.WritableStream
+): void {
+    if (!stream) {
+        return;
+    }
+    stream.on('data', (chunk: Buffer | string) => {
+        logStream.write(chunk);
+        consoleStream.write(chunk);
+    });
+}
+
+function runNodeTestShard(
+    repoRoot: string,
+    optionArgs: string[],
+    shardFiles: string[],
+    shardIndex: number,
+    shardCount: number,
+    shardLogDir: string
+): Promise<number> {
     return new Promise((resolve, reject) => {
+        fs.mkdirSync(shardLogDir, { recursive: true });
+        const logPath = path.join(shardLogDir, `shard-${String(shardIndex + 1).padStart(2, '0')}-of-${String(shardCount).padStart(2, '0')}.log`);
+        const logStream = fs.createWriteStream(logPath, { flags: 'w' });
         console.log(`NODE_FOUNDATION_TEST_SHARD_START ${shardIndex + 1}/${shardCount} files=${shardFiles.length}`);
+        console.log(`NODE_FOUNDATION_TEST_SHARD_LOG ${shardIndex + 1}/${shardCount} ${logPath}`);
         const child = childProcess.spawn(process.execPath, ['--test', ...optionArgs, ...shardFiles], {
             cwd: repoRoot,
-            stdio: 'inherit',
+            stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true
         });
-        child.once('error', reject);
+        let exitCode = 1;
+        writeShardOutput(child.stdout, logStream, process.stdout);
+        writeShardOutput(child.stderr, logStream, process.stderr);
+        child.once('error', (error) => {
+            logStream.destroy();
+            reject(error);
+        });
         child.once('exit', (code) => {
-            const exitCode = code == null ? 1 : code;
+            exitCode = code == null ? 1 : code;
+        });
+        child.once('close', () => {
             console.log(`NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode}`);
-            resolve(exitCode);
+            logStream.end(() => resolve(exitCode));
         });
     });
 }
 
-async function runShardedNodeTestProcesses(repoRoot: string, optionArgs: string[], selectedTestFiles: string[], shardCount: number): Promise<number> {
+async function runShardedNodeTestProcesses(
+    repoRoot: string,
+    buildRoot: string,
+    optionArgs: string[],
+    selectedTestFiles: string[],
+    shardCount: number,
+    requestedShardLogDir: string | null
+): Promise<number> {
     const shards = buildNodeFoundationTestShards(selectedTestFiles, shardCount);
+    const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
+    console.log(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${shardLogDir}`);
     const exitCodes = await Promise.all(shards.map((shardFiles, index) =>
-        runNodeTestShard(repoRoot, optionArgs, shardFiles, index, shards.length)
+        runNodeTestShard(repoRoot, optionArgs, shardFiles, index, shards.length, shardLogDir)
     ));
     return exitCodes.find((exitCode) => exitCode !== 0) || 0;
 }
@@ -371,17 +476,17 @@ export async function runNodeFoundationTests(): Promise<number> {
     const buildResult: BuildResult = buildNodeFoundation();
     const compiledTestFiles: string[] = collectCompiledNodeFoundationTestFiles(buildResult);
     const forwardedArgs = process.argv.slice(2);
-    const { optionArgs, fileTargets } = splitForwardedTestArgs(forwardedArgs);
+    const { optionArgs, fileTargets, requestedShardCount, requestedShardLogDir } = splitForwardedTestArgs(forwardedArgs);
     const selectedTestFiles = resolveSelectedTestFiles(buildResult, compiledTestFiles, fileTargets);
 
     if (compiledTestFiles.length === 0) {
         throw new Error('No Node foundation tests were found under .node-build/tests/node.');
     }
 
-    const shardCount = resolveNodeFoundationShardCount(selectedTestFiles, optionArgs, fileTargets);
+    const shardCount = resolveNodeFoundationShardCount(selectedTestFiles, optionArgs, fileTargets, requestedShardCount);
     const exitCode = shardCount === 1
         ? runSingleNodeTestProcess(repoRoot, optionArgs, selectedTestFiles)
-        : await runShardedNodeTestProcesses(repoRoot, optionArgs, selectedTestFiles, shardCount);
+        : await runShardedNodeTestProcesses(repoRoot, buildResult.buildRoot, optionArgs, selectedTestFiles, shardCount, requestedShardLogDir);
 
     if (exitCode !== 0) {
         return exitCode;

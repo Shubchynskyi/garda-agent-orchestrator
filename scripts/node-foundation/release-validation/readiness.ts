@@ -390,6 +390,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         'test:lifecycle',
         'test:bin',
         'test:packaging',
+        'test:sharded',
         'test:full'
     ]);
     const missingShardScripts = requiredTestShardScripts.filter((name) => !scripts[name]);
