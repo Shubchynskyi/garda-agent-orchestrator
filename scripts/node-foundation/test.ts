@@ -6,10 +6,13 @@ import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } fr
 
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
 const NODE_FOUNDATION_TEST_SHARD_LOG_DIR_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_LOG_DIR';
+const NODE_FOUNDATION_TEST_DURATION_FILE_ENV = 'GARDA_NODE_FOUNDATION_TEST_DURATION_FILE';
 const NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV = 'GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME';
 const NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT = 24_000;
+const NODE_FOUNDATION_TEST_SLOWEST_REPORT_COUNT = 10;
 const GARDA_SHARDS_OPTION = '--garda-shards';
 const GARDA_SHARD_LOG_DIR_OPTION = '--garda-shard-log-dir';
+const GARDA_DURATION_FILE_OPTION = '--garda-duration-file';
 
 const NODE_TEST_OPTIONS_WITH_VALUE = new Set<string>([
     '--test-name-pattern',
@@ -57,11 +60,13 @@ function splitForwardedTestArgs(forwardedArgs: string[]): {
     fileTargets: string[];
     requestedShardCount: number | null;
     requestedShardLogDir: string | null;
+    requestedDurationFile: string | null;
 } {
     const optionArgs: string[] = [];
     const fileTargets: string[] = [];
     let requestedShardCount: number | null = null;
     let requestedShardLogDir: string | null = null;
+    let requestedDurationFile: string | null = null;
     let expectsOptionValue = false;
     let positionalOnly = false;
 
@@ -102,6 +107,15 @@ function splitForwardedTestArgs(forwardedArgs: string[]): {
             continue;
         }
 
+        if (arg === GARDA_DURATION_FILE_OPTION || arg.startsWith(`${GARDA_DURATION_FILE_OPTION}=`)) {
+            const { value, consumedNext } = readOptionValue(forwardedArgs, index, GARDA_DURATION_FILE_OPTION);
+            requestedDurationFile = value;
+            if (consumedNext) {
+                index += 1;
+            }
+            continue;
+        }
+
         if (arg.startsWith('--')) {
             optionArgs.push(arg);
             if (!arg.includes('=') && NODE_TEST_OPTIONS_WITH_VALUE.has(arg)) {
@@ -122,7 +136,7 @@ function splitForwardedTestArgs(forwardedArgs: string[]): {
         throw new Error(`Missing value for Node test option '${optionArgs[optionArgs.length - 1]}'.`);
     }
 
-    return { optionArgs, fileTargets, requestedShardCount, requestedShardLogDir };
+    return { optionArgs, fileTargets, requestedShardCount, requestedShardLogDir, requestedDurationFile };
 }
 
 function buildCompiledTestLookup(buildResult: BuildResult, compiledTestFiles: string[]): Map<string, string> {
@@ -338,46 +352,257 @@ function resolveNodeFoundationShardCount(
     return Math.max(1, Math.min(parsed, selectedTestFiles.length));
 }
 
-function buildNodeFoundationTestShards(selectedTestFiles: string[], shardCount: number): string[][] {
-    const fileWithSizes = selectedTestFiles.map((file) => {
-        try {
-            return { file, size: fs.statSync(file).size };
-        } catch {
-            return { file, size: 0 };
-        }
-    });
+interface TestDurationTelemetryEntry {
+    file: string;
+    duration_ms: number;
+    samples: number;
+    updated_at_utc: string;
+}
 
-    // Sort files by size from heaviest to lightest
-    fileWithSizes.sort((a, b) => b.size - a.size);
+interface TestDurationTelemetry {
+    schema_version: 1;
+    updated_at_utc: string;
+    entries: Record<string, TestDurationTelemetryEntry>;
+}
+
+interface TestFileWeight {
+    file: string;
+    key: string;
+    weight: number;
+    durationMs: number | null;
+    fallbackSize: number;
+}
+
+interface NodeTestShardResult {
+    exitCode: number;
+    durationMs: number;
+    shardFiles: string[];
+}
+
+function resolveNodeFoundationRuntimeDir(repoRoot: string): string {
+    const nestedRoot = path.join(repoRoot, 'garda-agent-orchestrator');
+    if (fs.existsSync(nestedRoot) && fs.statSync(nestedRoot).isDirectory()) {
+        return path.join(nestedRoot, 'runtime');
+    }
+    return path.join(repoRoot, 'runtime');
+}
+
+function resolveDurationTelemetryPath(repoRoot: string, requestedDurationFile: string | null): string {
+    const configured = requestedDurationFile || String(process.env[NODE_FOUNDATION_TEST_DURATION_FILE_ENV] || '').trim();
+    if (configured) {
+        return path.resolve(repoRoot, configured);
+    }
+    return path.join(resolveNodeFoundationRuntimeDir(repoRoot), 'metrics', 'node-foundation-test-duration-telemetry.json');
+}
+
+function isTestDurationTelemetryEntry(value: unknown): value is TestDurationTelemetryEntry {
+    return !!value
+        && typeof value === 'object'
+        && !Array.isArray(value)
+        && typeof (value as TestDurationTelemetryEntry).file === 'string'
+        && typeof (value as TestDurationTelemetryEntry).duration_ms === 'number'
+        && Number.isFinite((value as TestDurationTelemetryEntry).duration_ms)
+        && (value as TestDurationTelemetryEntry).duration_ms > 0
+        && typeof (value as TestDurationTelemetryEntry).samples === 'number'
+        && Number.isFinite((value as TestDurationTelemetryEntry).samples)
+        && (value as TestDurationTelemetryEntry).samples > 0
+        && typeof (value as TestDurationTelemetryEntry).updated_at_utc === 'string';
+}
+
+function readTestDurationTelemetry(telemetryPath: string): TestDurationTelemetry {
+    const empty: TestDurationTelemetry = {
+        schema_version: 1,
+        updated_at_utc: new Date(0).toISOString(),
+        entries: {}
+    };
+    if (!fs.existsSync(telemetryPath)) {
+        return empty;
+    }
+    try {
+        const parsed = JSON.parse(fs.readFileSync(telemetryPath, 'utf8')) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            console.warn(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY_IGNORED malformed ${telemetryPath}`);
+            return empty;
+        }
+        const rawEntries = (parsed as { entries?: unknown }).entries;
+        if (!rawEntries || typeof rawEntries !== 'object' || Array.isArray(rawEntries)) {
+            console.warn(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY_IGNORED malformed ${telemetryPath}`);
+            return empty;
+        }
+        const entries: Record<string, TestDurationTelemetryEntry> = {};
+        for (const [key, value] of Object.entries(rawEntries)) {
+            if (!isTestDurationTelemetryEntry(value)) {
+                continue;
+            }
+            entries[key] = {
+                file: key,
+                duration_ms: value.duration_ms,
+                samples: Math.max(1, Math.trunc(value.samples)),
+                updated_at_utc: value.updated_at_utc
+            };
+        }
+        return {
+            schema_version: 1,
+            updated_at_utc: typeof (parsed as { updated_at_utc?: unknown }).updated_at_utc === 'string'
+                ? String((parsed as { updated_at_utc?: unknown }).updated_at_utc)
+                : new Date(0).toISOString(),
+            entries
+        };
+    } catch {
+        console.warn(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY_IGNORED unreadable ${telemetryPath}`);
+        return empty;
+    }
+}
+
+function compiledTestFileToTelemetryKey(buildResult: BuildResult, file: string): string {
+    const relativeToBuildRoot = normalizeCliPath(path.relative(buildResult.buildRoot, file));
+    if (!relativeToBuildRoot.startsWith('../') && !relativeToBuildRoot.startsWith('..\\')) {
+        return relativeToBuildRoot.replace(/\.js$/i, '.ts');
+    }
+    return normalizeCliPath(path.relative(buildResult.repoRoot, file)).replace(/\.js$/i, '.ts');
+}
+
+function buildTestFileWeights(
+    buildResult: BuildResult,
+    selectedTestFiles: string[],
+    telemetry: TestDurationTelemetry
+): TestFileWeight[] {
+    return selectedTestFiles.map((file) => {
+        const key = compiledTestFileToTelemetryKey(buildResult, file);
+        const entry = telemetry.entries[key];
+        let fallbackSize = 1;
+        try {
+            fallbackSize = Math.max(1, fs.statSync(file).size);
+        } catch {
+            fallbackSize = 1;
+        }
+        const durationMs = entry && Number.isFinite(entry.duration_ms) && entry.duration_ms > 0
+            ? entry.duration_ms
+            : null;
+        return {
+            file,
+            key,
+            weight: durationMs ?? fallbackSize,
+            durationMs,
+            fallbackSize
+        };
+    });
+}
+
+function printSlowestKnownTests(fileWeights: TestFileWeight[]): void {
+    const slowest = fileWeights
+        .filter((item) => item.durationMs !== null)
+        .sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0) || a.key.localeCompare(b.key))
+        .slice(0, NODE_FOUNDATION_TEST_SLOWEST_REPORT_COUNT);
+    if (slowest.length === 0) {
+        console.log('NODE_FOUNDATION_TEST_SLOWEST none');
+        return;
+    }
+    for (const item of slowest) {
+        console.log(`NODE_FOUNDATION_TEST_SLOWEST ${item.key} duration_ms=${Math.trunc(item.durationMs ?? 0)}`);
+    }
+}
+
+function buildNodeFoundationTestShards(
+    buildResult: BuildResult,
+    selectedTestFiles: string[],
+    shardCount: number,
+    telemetry: TestDurationTelemetry
+): string[][] {
+    const fileWeights = buildTestFileWeights(buildResult, selectedTestFiles, telemetry);
+    const knownDurationCount = fileWeights.filter((item) => item.durationMs !== null).length;
+
+    fileWeights.sort((a, b) => b.weight - a.weight || a.key.localeCompare(b.key));
 
     const shards = Array.from({ length: shardCount }, () => ({
         files: [] as string[],
-        totalSize: 0
+        totalWeight: 0
     }));
 
-    for (const item of fileWithSizes) {
+    for (const item of fileWeights) {
         let minShardIndex = 0;
-        let minSize = shards[0].totalSize;
+        let minWeight = shards[0].totalWeight;
         for (let i = 1; i < shardCount; i++) {
-            if (shards[i].totalSize < minSize) {
-                minSize = shards[i].totalSize;
+            if (shards[i].totalWeight < minWeight) {
+                minWeight = shards[i].totalWeight;
                 minShardIndex = i;
             }
         }
         shards[minShardIndex].files.push(item.file);
-        shards[minShardIndex].totalSize += item.size;
+        shards[minShardIndex].totalWeight += item.weight;
     }
+
+    const source = knownDurationCount === 0
+        ? 'size_fallback'
+        : knownDurationCount === fileWeights.length
+            ? 'duration'
+            : 'duration_with_size_fallback';
+    console.log(`NODE_FOUNDATION_TEST_SHARD_PLAN source=${source} duration_known=${knownDurationCount}/${fileWeights.length}`);
+    printSlowestKnownTests(fileWeights);
 
     return shards.map((s) => s.files).filter((files) => files.length > 0);
 }
 
-function runSingleNodeTestProcess(repoRoot: string, optionArgs: string[], selectedTestFiles: string[]): number {
+function recordTestDurationTelemetry(
+    telemetryPath: string,
+    telemetry: TestDurationTelemetry,
+    buildResult: BuildResult,
+    results: NodeTestShardResult[]
+): void {
+    const measurableResults = results.filter((result) => result.exitCode === 0 && result.shardFiles.length === 1);
+    if (measurableResults.length === 0) {
+        return;
+    }
+    const updatedAt = new Date().toISOString();
+    const nextEntries = { ...telemetry.entries };
+    for (const result of measurableResults) {
+        const key = compiledTestFileToTelemetryKey(buildResult, result.shardFiles[0]);
+        const previous = nextEntries[key];
+        const previousSamples = previous ? Math.max(1, Math.trunc(previous.samples)) : 0;
+        const nextSamples = Math.min(previousSamples + 1, 20);
+        const previousWeight = Math.min(previousSamples, 19);
+        const durationMs = Math.max(1, Math.trunc(result.durationMs));
+        const averagedDuration = previous
+            ? Math.round(((previous.duration_ms * previousWeight) + durationMs) / (previousWeight + 1))
+            : durationMs;
+        nextEntries[key] = {
+            file: key,
+            duration_ms: averagedDuration,
+            samples: nextSamples,
+            updated_at_utc: updatedAt
+        };
+    }
+    const nextTelemetry: TestDurationTelemetry = {
+        schema_version: 1,
+        updated_at_utc: updatedAt,
+        entries: Object.fromEntries(Object.entries(nextEntries).sort(([a], [b]) => a.localeCompare(b)))
+    };
+    fs.mkdirSync(path.dirname(telemetryPath), { recursive: true });
+    fs.writeFileSync(telemetryPath, `${JSON.stringify(nextTelemetry, null, 2)}\n`, 'utf8');
+    console.log(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY_UPDATED ${telemetryPath} entries=${Object.keys(nextTelemetry.entries).length}`);
+}
+
+function runSingleNodeTestProcess(
+    repoRoot: string,
+    buildResult: BuildResult,
+    optionArgs: string[],
+    selectedTestFiles: string[],
+    telemetryPath: string,
+    telemetry: TestDurationTelemetry
+): number {
+    const startedAt = Date.now();
     const result = childProcess.spawnSync(process.execPath, ['--test', ...optionArgs, ...selectedTestFiles], {
         cwd: repoRoot,
         stdio: 'inherit',
         windowsHide: true
     });
-    return result.status == null ? 1 : result.status;
+    const exitCode = result.status == null ? 1 : result.status;
+    recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, [{
+        exitCode,
+        durationMs: Math.max(1, Date.now() - startedAt),
+        shardFiles: selectedTestFiles
+    }]);
+    return exitCode;
 }
 
 function resolveShardLogDir(repoRoot: string, buildRoot: string, requestedShardLogDir: string | null): string {
@@ -409,11 +634,12 @@ function runNodeTestShard(
     shardIndex: number,
     shardCount: number,
     shardLogDir: string
-): Promise<number> {
+): Promise<NodeTestShardResult> {
     return new Promise((resolve, reject) => {
         fs.mkdirSync(shardLogDir, { recursive: true });
         const logPath = path.join(shardLogDir, `shard-${String(shardIndex + 1).padStart(2, '0')}-of-${String(shardCount).padStart(2, '0')}.log`);
         const logStream = fs.createWriteStream(logPath, { flags: 'w' });
+        const startedAt = Date.now();
         console.log(`NODE_FOUNDATION_TEST_SHARD_START ${shardIndex + 1}/${shardCount} files=${shardFiles.length}`);
         console.log(`NODE_FOUNDATION_TEST_SHARD_LOG ${shardIndex + 1}/${shardCount} ${logPath}`);
         const child = childProcess.spawn(process.execPath, ['--test', ...optionArgs, ...shardFiles], {
@@ -432,27 +658,33 @@ function runNodeTestShard(
             exitCode = code == null ? 1 : code;
         });
         child.once('close', () => {
-            console.log(`NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode}`);
-            logStream.end(() => resolve(exitCode));
+            const durationMs = Math.max(1, Date.now() - startedAt);
+            console.log(`NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode} duration_ms=${durationMs}`);
+            logStream.end(() => resolve({ exitCode, durationMs, shardFiles }));
         });
     });
 }
 
 async function runShardedNodeTestProcesses(
     repoRoot: string,
+    buildResult: BuildResult,
     buildRoot: string,
     optionArgs: string[],
     selectedTestFiles: string[],
     shardCount: number,
-    requestedShardLogDir: string | null
+    requestedShardLogDir: string | null,
+    telemetryPath: string,
+    telemetry: TestDurationTelemetry
 ): Promise<number> {
-    const shards = buildNodeFoundationTestShards(selectedTestFiles, shardCount);
+    const shards = buildNodeFoundationTestShards(buildResult, selectedTestFiles, shardCount, telemetry);
     const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
     console.log(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${shardLogDir}`);
-    const exitCodes = await Promise.all(shards.map((shardFiles, index) =>
+    console.log(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY ${telemetryPath}`);
+    const results = await Promise.all(shards.map((shardFiles, index) =>
         runNodeTestShard(repoRoot, optionArgs, shardFiles, index, shards.length, shardLogDir)
     ));
-    return exitCodes.find((exitCode) => exitCode !== 0) || 0;
+    recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, results);
+    return results.find((result) => result.exitCode !== 0)?.exitCode || 0;
 }
 
 function ensureReusablePublishRuntime(repoRoot: string): void {
@@ -476,8 +708,16 @@ export async function runNodeFoundationTests(): Promise<number> {
     const buildResult: BuildResult = buildNodeFoundation();
     const compiledTestFiles: string[] = collectCompiledNodeFoundationTestFiles(buildResult);
     const forwardedArgs = process.argv.slice(2);
-    const { optionArgs, fileTargets, requestedShardCount, requestedShardLogDir } = splitForwardedTestArgs(forwardedArgs);
+    const {
+        optionArgs,
+        fileTargets,
+        requestedShardCount,
+        requestedShardLogDir,
+        requestedDurationFile
+    } = splitForwardedTestArgs(forwardedArgs);
     const selectedTestFiles = resolveSelectedTestFiles(buildResult, compiledTestFiles, fileTargets);
+    const telemetryPath = resolveDurationTelemetryPath(buildResult.repoRoot, requestedDurationFile);
+    const telemetry = readTestDurationTelemetry(telemetryPath);
 
     if (compiledTestFiles.length === 0) {
         throw new Error('No Node foundation tests were found under .node-build/tests/node.');
@@ -485,8 +725,18 @@ export async function runNodeFoundationTests(): Promise<number> {
 
     const shardCount = resolveNodeFoundationShardCount(selectedTestFiles, optionArgs, fileTargets, requestedShardCount);
     const exitCode = shardCount === 1
-        ? runSingleNodeTestProcess(repoRoot, optionArgs, selectedTestFiles)
-        : await runShardedNodeTestProcesses(repoRoot, buildResult.buildRoot, optionArgs, selectedTestFiles, shardCount, requestedShardLogDir);
+        ? runSingleNodeTestProcess(repoRoot, buildResult, optionArgs, selectedTestFiles, telemetryPath, telemetry)
+        : await runShardedNodeTestProcesses(
+            repoRoot,
+            buildResult,
+            buildResult.buildRoot,
+            optionArgs,
+            selectedTestFiles,
+            shardCount,
+            requestedShardLogDir,
+            telemetryPath,
+            telemetry
+        );
 
     if (exitCode !== 0) {
         return exitCode;

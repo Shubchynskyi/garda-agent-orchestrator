@@ -265,6 +265,134 @@ test('runNodeFoundationTests accepts cross-platform shard options and writes sha
     }
 });
 
+test('runNodeFoundationTests balances shards with duration telemetry before size fallback', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture(1);
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const observedShardArgs: string[][] = [];
+    const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
+    const extraRelativePath = buildResult.copiedFiles[2].replace(/\.js$/i, '.ts');
+
+    fs.writeFileSync(durationFile, `${JSON.stringify({
+        schema_version: 1,
+        updated_at_utc: new Date(0).toISOString(),
+        entries: {
+            'tests/node/cli/commands/gates.test.ts': {
+                file: 'tests/node/cli/commands/gates.test.ts',
+                duration_ms: 1000,
+                samples: 2,
+                updated_at_utc: new Date(0).toISOString()
+            },
+            'tests/node/repo/build-root-serialization.test.ts': {
+                file: 'tests/node/repo/build-root-serialization.test.ts',
+                duration_ms: 900,
+                samples: 2,
+                updated_at_utc: new Date(0).toISOString()
+            },
+            [extraRelativePath]: {
+                file: extraRelativePath,
+                duration_ms: 100,
+                samples: 2,
+                updated_at_utc: new Date(0).toISOString()
+            }
+        }
+    }, null, 2)}\n`, 'utf8');
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-duration-file',
+            durationFile
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
+            observedShardArgs.push(Array.from(args));
+            const events = new (require('node:events').EventEmitter)();
+            setImmediate(() => {
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            });
+            return events as childProcess.ChildProcess;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(observedShardArgs.length, 2);
+        assert.deepEqual(observedShardArgs[0], [
+            '--test',
+            path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js')
+        ]);
+        assert.deepEqual(observedShardArgs[1], [
+            '--test',
+            path.join(buildResult.buildRoot, 'tests', 'node', 'repo', 'build-root-serialization.test.js'),
+            path.join(buildResult.buildRoot, ...buildResult.copiedFiles[2].split('/'))
+        ]);
+        assert.ok(observedShardArgs.every((args) => !args.includes('--garda-duration-file')));
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests refreshes compact duration telemetry from successful single-file shards', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-duration-file',
+            durationFile
+        ];
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = []) => {
+            const events = new (require('node:events').EventEmitter)();
+            setImmediate(() => {
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            });
+            return events as childProcess.ChildProcess;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        const telemetry = JSON.parse(fs.readFileSync(durationFile, 'utf8')) as {
+            entries: Record<string, { duration_ms: number; samples: number; }>;
+        };
+        assert.deepEqual(Object.keys(telemetry.entries).sort(), [
+            'tests/node/cli/commands/gates.test.ts',
+            'tests/node/repo/build-root-serialization.test.ts'
+        ]);
+        assert.ok(telemetry.entries['tests/node/cli/commands/gates.test.ts'].duration_ms > 0);
+        assert.equal(telemetry.entries['tests/node/repo/build-root-serialization.test.ts'].samples, 1);
+    } finally {
+        process.argv = originalArgv;
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests auto-shards when the compiled test command would be too long', async () => {
     const { buildResult, cleanup } = createBuildResultFixture(260);
     const originalArgv = process.argv;
