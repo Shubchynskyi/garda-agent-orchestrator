@@ -4,6 +4,9 @@ import {
     normalizePath,
     type ReviewDependencyTimelineEvent
 } from './review-launch-entrypoints';
+import {
+    reviewerIdentityMatchesDelegatedLaunchCycle
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
 
 export type ReviewerLaunchInputMode = 'copy_paste_prompt' | 'launch_artifact_path';
 
@@ -311,11 +314,84 @@ export function findMatchingReviewerLaunchPreparedEvent(
             && (!detailsTaskId || detailsTaskId === normalizedTaskId)
             && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
             && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === options.reviewerExecutionMode
-            && detailsReviewerIdentity === options.reviewerIdentity
+            && reviewerIdentityMatchesDelegatedLaunchCycle({
+                observedIdentity: detailsReviewerIdentity,
+                expectedIdentity: options.reviewerIdentity,
+                taskId: normalizedTaskId,
+                reviewType: normalizedReviewType
+            })
             && detailsReviewContextSha256 === normalizedReviewContextSha256
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
             && detailsLaunchBindingSha256 === normalizedLaunchBindingSha256
             && entry.integrity?.event_sha256 === normalizedPreparedLaunchEventSha256
+        ) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+export function findMatchingReviewerDelegationStartedEvent(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    options: {
+        taskId: string;
+        reviewType: string;
+        reviewerExecutionMode: 'delegated_subagent';
+        reviewerIdentity: string;
+        reviewContextSha256: string;
+        routingEventSha256: string;
+        launchBindingSha256: string;
+        preparedLaunchEventSha256: string;
+        providerInvocationId: string;
+        delegationStartedAtUtc: string;
+        minSequenceExclusive: number;
+    }
+): ReviewDependencyTimelineEvent | null {
+    const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
+    const normalizedTaskId = String(options.taskId || '').trim();
+    const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
+    const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
+    const normalizedProviderInvocationId = String(options.providerInvocationId || '').trim();
+    const normalizedDelegationStartedAtUtc = String(options.delegationStartedAtUtc || '').trim();
+    for (let index = timelineEvents.length - 1; index >= 0; index -= 1) {
+        const entry = timelineEvents[index];
+        const details = entry.details;
+        const detailsTaskId = String(details?.task_id || details?.taskId || '').trim();
+        const detailsReviewContextSha256 = String(details?.review_context_sha256 || details?.reviewContextSha256 || '')
+            .trim()
+            .toLowerCase();
+        const detailsRoutingEventSha256 = String(details?.routing_event_sha256 || details?.routingEventSha256 || '')
+            .trim()
+            .toLowerCase();
+        const detailsProviderInvocationId = String(
+            details?.provider_invocation_id
+                || details?.providerInvocationId
+                || details?.controller_invocation_id
+                || details?.controllerInvocationId
+                || ''
+        ).trim();
+        const detailsDelegationStartedAtUtc = String(
+            details?.delegation_started_at_utc || details?.delegationStartedAtUtc || ''
+        ).trim();
+        const detailsReviewerIdentity = String(
+            (details?.reviewer_session_id ?? details?.reviewerSessionId ?? details?.reviewer_identity ?? details?.reviewerIdentity) || ''
+        ).trim();
+        if (
+            entry.event_type === 'REVIEWER_DELEGATION_STARTED'
+            && entry.sequence > options.minSequenceExclusive
+            && (!detailsTaskId || detailsTaskId === normalizedTaskId)
+            && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
+            && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === options.reviewerExecutionMode
+            && reviewerIdentityMatchesDelegatedLaunchCycle({
+                observedIdentity: detailsReviewerIdentity,
+                expectedIdentity: options.reviewerIdentity,
+                taskId: normalizedTaskId,
+                reviewType: normalizedReviewType
+            })
+            && detailsReviewContextSha256 === normalizedReviewContextSha256
+            && detailsRoutingEventSha256 === normalizedRoutingEventSha256
+            && detailsProviderInvocationId === normalizedProviderInvocationId
+            && detailsDelegationStartedAtUtc === normalizedDelegationStartedAtUtc
         ) {
             return entry;
         }

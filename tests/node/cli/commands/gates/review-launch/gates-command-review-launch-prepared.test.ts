@@ -169,8 +169,6 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(String(launchArtifact.next_action).includes('this is expected behavior in this repository'));
         assert.ok(String(launchArtifact.next_action).includes('Launch a fresh delegated reviewer once'));
         assert.ok(String(launchArtifact.next_action).includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
-        assert.ok(String(launchArtifact.next_action).includes('Provider fallback only'));
-        assert.ok(String(launchArtifact.next_action).includes('STANDBY_READY completion before launch input delivery is provider handshake noise, not review evidence or review progress'));
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const launchPreparedEvent = events.find((event) => event.event_type === 'REVIEWER_LAUNCH_PREPARED');
         const launchPreparedIntegrity = launchPreparedEvent?.integrity as { event_sha256?: string } | undefined;
@@ -197,11 +195,6 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes(`ReviewerLaunchInputArtifactSha256: ${fileSha256ForTest(launchInputArtifactPath)}`)));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchState: default_handoff_ready_not_review_evidence')));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchInstruction: After `prepare-reviewer-launch`, launch one clean-context delegated reviewer')));
-        assert.ok(capturedLogs.some((line) => line.includes('StandbyResumeState: optional_provider_fallback_not_review_evidence')));
-        assert.ok(capturedLogs.some((line) => line.includes('StandbyResumeInstruction: Provider fallback only')));
-        assert.ok(capturedLogs.some((line) => line.includes(`StandbyResumeInput: ReviewerLaunchInputArtifactPath: ${launchInputArtifactPath.replace(/\\/g, '/')}`)));
-        assert.ok(capturedLogs.some((line) => line.includes(`StandbyResumeInputSha256: ${fileSha256ForTest(launchInputArtifactPath)}`)));
-        assert.ok(capturedLogs.some((line) => line.includes('ProviderFallbackNote: A standby or STANDBY_READY completion before launch input delivery is provider handshake noise, not review evidence or review progress.')));
         assert.ok(capturedLogs.some((line) => line.includes(`CopyPasteReviewerLaunchPromptSha256: ${copyPastePromptSha256}`)));
         assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags')));
@@ -230,8 +223,6 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('Required sections: Validation Notes, Findings by Severity, Deferred Findings, Residual Risks, Verdict.')));
         assert.ok(capturedLogs.some((line) => line.includes('Write the final review report to ReviewOutputPath when file writing is available')));
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: After `prepare-reviewer-launch`, launch one clean-context delegated reviewer')));
-        assert.ok(capturedLogs.some((line) => line.includes('Provider fallback only')));
-        assert.equal(capturedLogs.some((line) => line.includes('create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id>')), false);
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
@@ -806,16 +797,48 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: existing reviewer launch metadata is current')));
         assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchState: default_handoff_ready_not_review_evidence')));
-        assert.ok(capturedLogs.some((line) => line.includes('StandbyResumeState: optional_provider_fallback_not_review_evidence')));
-        assert.ok(capturedLogs.some((line) => line.includes('StandbyResumeInstruction: Provider fallback only')));
-        assert.ok(capturedLogs.some((line) => line.includes('StandbyResumeInput: ReviewerLaunchInputArtifactPath: ')));
-        assert.ok(capturedLogs.some((line) => line.includes('StandbyResumeInputSha256: ')));
-        assert.equal(capturedLogs.some((line) => line.includes('create or reserve a clean-context reviewer session first so the provider/controller assigns the agent:<id>')), false);
-        assert.ok(capturedLogs.some((line) => line.includes('Provider fallback only')));
-        assert.ok(capturedLogs.some((line) => line.includes('STANDBY_READY completion before launch input delivery is provider handshake noise, not review evidence or review progress')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch assigns planned reviewer identity when --reviewer-identity is omitted', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-776-F1-planned-identity';
+        const fixture = await seedRoutedReviewerLaunchFixture({
+            repoRoot,
+            taskId,
+            reviewerIdentity: 'agent:pending:T-776-F1-planned-identity-code'
+        });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
+
+        const previousExitCode = process.exitCode;
+        const previousCwd = process.cwd();
+        process.exitCode = 0;
+        let observedExitCode = 0;
+        try {
+            process.chdir(path.join(repoRoot, 'src'));
+            await runCliMainWithHandling([
+                'gate',
+                'prepare-reviewer-launch',
+                '--task-id', taskId,
+                '--review-type', 'code',
+                '--repo-root', repoRoot,
+                '--reviewer-execution-mode', 'delegated_subagent'
+            ]);
+            observedExitCode = process.exitCode ?? 0;
+        } finally {
+            process.chdir(previousCwd);
+            process.exitCode = previousExitCode;
+        }
+
+        assert.equal(observedExitCode, 0);
+        const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        assert.equal(launchArtifact.reviewer_identity, 'agent:pending:T-776-F1-planned-identity-code');
+        assert.equal(launchArtifact.planned_reviewer_identity, 'agent:pending:T-776-F1-planned-identity-code');
+        assert.equal(fixture.reviewerIdentity, 'agent:pending:T-776-F1-planned-identity-code');
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

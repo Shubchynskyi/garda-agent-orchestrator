@@ -546,6 +546,25 @@ async function recordReviewerDelegationStartedForTest(options: {
 function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void {
     const preparedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
     const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+    const normalizedLaunchArtifactPath = launchArtifactPath.replace(/\\/g, '/');
+    const orchestratorRootMarker = '/garda-agent-orchestrator/';
+    const markerIndex = normalizedLaunchArtifactPath.indexOf(orchestratorRootMarker);
+    assert.notEqual(markerIndex, -1, `Unexpected reviewer launch artifact path: ${normalizedLaunchArtifactPath}`);
+    const repoRoot = normalizedLaunchArtifactPath.slice(0, markerIndex);
+    const taskId = String(preparedArtifact.task_id || preparedArtifact.taskId || '').trim();
+    const reviewType = String(preparedArtifact.review_type || preparedArtifact.reviewType || '').trim().toLowerCase();
+    const reviewerExecutionMode = String(
+        preparedArtifact.reviewer_execution_mode || preparedArtifact.reviewerExecutionMode || ''
+    ).trim();
+    const reviewerIdentity = String(
+        preparedArtifact.reviewer_identity || preparedArtifact.reviewerIdentity || preparedArtifact.reviewer_session_id || ''
+    ).trim();
+    const reviewContextSha256 = String(preparedArtifact.review_context_sha256 || preparedArtifact.reviewContextSha256 || '').trim();
+    const routingEventSha256 = String(preparedArtifact.routing_event_sha256 || preparedArtifact.routingEventSha256 || '').trim();
+    const launchBindingSha256 = String(preparedArtifact.launch_binding_sha256 || preparedArtifact.launchBindingSha256 || '').trim();
+    const preparedLaunchEventSha256 = String(
+        preparedArtifact.prepared_launch_event_sha256 || preparedArtifact.preparedLaunchEventSha256 || ''
+    ).trim();
     fs.writeFileSync(launchArtifactPath, JSON.stringify({
         ...preparedArtifact,
         evidence_type: 'delegated_reviewer_launch',
@@ -563,6 +582,27 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
         launched_at_utc: '2026-04-28T00:00:00.000Z',
         fork_context: false
     }, null, 2) + '\n', 'utf8');
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'REVIEWER_DELEGATION_STARTED',
+        'INFO',
+        'Reviewer delegation started by test controller fixture.',
+        {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: reviewerExecutionMode,
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256,
+            launch_binding_sha256: launchBindingSha256,
+            prepared_launch_event_sha256: preparedLaunchEventSha256,
+            provider_invocation_id: 'test-invocation-265',
+            delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
+            launched_at_utc: '2026-04-28T00:00:00.000Z'
+        }
+    );
 }
 
 function fileSha256ForTest(filePath: string): string {

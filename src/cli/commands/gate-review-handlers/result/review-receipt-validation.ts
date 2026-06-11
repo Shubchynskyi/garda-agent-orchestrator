@@ -2,6 +2,10 @@ import {
     normalizeCompatibilityReviewerExecutionMode
 } from '../../../../gate-runtime/review-context';
 import {
+    isPlannedReviewerIdentity,
+    isResolvedReviewerIdentity
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
     normalizePath
 } from '../../../../gates/shared/helpers';
 
@@ -36,7 +40,12 @@ export function assertReviewReceiptRoutingMatchesContext(
             'Record review routing before writing the receipt.'
         );
     }
-    if (currentReviewerSessionId !== options.reviewerIdentity) {
+    const contextReviewerSessionMatches = currentReviewerSessionId === options.reviewerIdentity
+        || (
+            isPlannedReviewerIdentity(currentReviewerSessionId)
+            && isResolvedReviewerIdentity(options.reviewerIdentity)
+        );
+    if (!contextReviewerSessionMatches) {
         throw new Error(
             `Review receipt reviewer identity (${options.reviewerIdentity}) must match pre-recorded ` +
             `reviewer_routing.reviewer_session_id (${currentReviewerSessionId}).`

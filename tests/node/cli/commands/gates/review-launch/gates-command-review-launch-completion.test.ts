@@ -249,6 +249,85 @@ describe('cli/commands/gates review launch completion', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('complete-reviewer-launch accepts planned routing identity after delegation rebind', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-776-F1-planned-complete';
+        const plannedReviewerIdentity = `agent:pending:${taskId}-code`;
+        const resolvedReviewerIdentity = 'agent:cursor-planned-complete-reviewer';
+        const fixture = await seedRoutedReviewerLaunchFixture({
+            repoRoot,
+            taskId,
+            reviewerIdentity: plannedReviewerIdentity
+        });
+        const launchArtifactPath = fixture.launchArtifactPath;
+
+        const prepare = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+        assert.equal(prepare.exitCode, 0, prepare.errors.join('\n'));
+
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const launchInputSha256 = fileSha256ForTest(launchInputArtifactPath);
+        const started = await runCliWithCapturedOutput([
+            'gate',
+            'record-reviewer-delegation-started',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', resolvedReviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--provider-invocation-id', 'cursor-subagent-planned-complete',
+            '--attestation-source', 'cursor_subagent',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', launchInputArtifactPath,
+            '--launch-input-sha256', launchInputSha256,
+            '--fork-context', 'false'
+        ], { cwd: repoRoot });
+        assert.equal(started.exitCode, 0, started.errors.join('\n'));
+        const startedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.ok(
+            String(startedArtifact.record_invocation_command).includes(resolvedReviewerIdentity),
+            'delegation rebind must refresh record_invocation_command with resolved reviewer identity'
+        );
+        assert.ok(
+            !String(startedArtifact.record_invocation_command).includes(plannedReviewerIdentity),
+            'delegation rebind must not leave planned identity in record_invocation_command'
+        );
+
+        const complete = await runCliWithCapturedOutput([
+            'gate',
+            'complete-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', resolvedReviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath,
+            '--attestation-source', 'cursor_subagent',
+            '--launch-input-mode', 'launch_artifact_path',
+            '--launch-input-artifact-path', launchInputArtifactPath,
+            '--launch-input-sha256', launchInputSha256,
+            '--fork-context', 'false',
+            '--record-invocation'
+        ], { cwd: repoRoot });
+
+        assert.equal(complete.exitCode, 0, complete.errors.join('\n'));
+        assert.ok(complete.logs.some((line) => line.includes('REVIEWER_LAUNCH_COMPLETED: code')));
+        const completedArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(completedArtifact.attestation_state, 'launched');
+        assert.equal(completedArtifact.reviewer_identity, resolvedReviewerIdentity);
+        assert.equal(completedArtifact.planned_reviewer_identity, plannedReviewerIdentity);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('complete-reviewer-launch preserves immutable launch input artifact provenance', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-680-launch-input-artifact';

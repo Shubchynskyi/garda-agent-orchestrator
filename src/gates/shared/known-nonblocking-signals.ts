@@ -71,18 +71,6 @@ export function collectKnownNonBlockingSignals(input: {
         });
     }
 
-    const reason = String(input.reason || '');
-    if (/standby(?:\s+or\s+STANDBY_READY)?\s+completion before launch input delivery/iu.test(reason)) {
-        signals.push({
-            id: 'reviewer_standby_resume_provider_handshake',
-            source: 'reviewer-launch',
-            action_required: false,
-            summary:
-                'Delegated reviewer standby or STANDBY_READY completion before launch input delivery is provider handshake noise; ' +
-                'do not report it as review evidence, review progress, or a defect.'
-        });
-    }
-
     const commandText = (input.commands || []).map((entry) => entry.command).join('\n');
     if (/<provider-owned (?:invocation id|attestation source) from delegated reviewer launch result>/iu.test(commandText)) {
         signals.push({

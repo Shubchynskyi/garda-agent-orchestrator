@@ -274,10 +274,16 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             }
         }, `${taskId}-prior-preflight.json`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
-        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer');
+        const receiptReboundContextSha256 = 'f'.repeat(64);
+        seedReusableReviewEvidence(repoRoot, taskId, 'code', 'REVIEW PASSED', priorPreflightPath, reviewContextPath, 'agent:code-reviewer', {
+            receiptReviewContextSha256Override: receiptReboundContextSha256
+        });
         const priorReceipt = JSON.parse(
             fs.readFileSync(path.join(reviewsRoot, `${taskId}-code-receipt.json`), 'utf8')
         ) as Record<string, unknown>;
+        const priorProvenance = priorReceipt.reviewer_provenance as Record<string, unknown>;
+        assert.equal(priorReceipt.review_context_sha256, receiptReboundContextSha256);
+        assert.notEqual(priorProvenance.review_context_sha256, priorReceipt.review_context_sha256);
 
         const preflightPath = writePreflight(repoRoot, taskId, {
             changed_files: ['tests/app.test.ts'],
@@ -326,6 +332,10 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         assert.equal(
             refreshedReceipt.reused_from_review_tree_state_sha256,
             priorReceipt.review_tree_state_sha256
+        );
+        assert.equal(
+            refreshedReceipt.reused_from_review_context_sha256,
+            priorReceipt.review_context_sha256
         );
         assert.equal(
             refreshedReceipt.code_scope_sha256,
@@ -381,7 +391,7 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
         assert.deepEqual(secondRefreshedReceipt.reviewer_provenance, firstReuseProvenance);
         assert.equal(
             secondRefreshedReceipt.reused_from_review_context_sha256,
-            firstReuseProvenance.review_context_sha256
+            priorReceipt.review_context_sha256
         );
         assert.equal(
             secondRefreshedReceipt.reused_from_receipt_sha256,

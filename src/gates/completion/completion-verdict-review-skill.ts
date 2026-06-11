@@ -6,6 +6,7 @@ import {
     normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../../gate-runtime/review-context';
+import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
     DEFAULT_REVIEW_EXECUTION_POLICY_MODE,
     type EffectiveReviewExecutionPolicyMode
@@ -838,7 +839,16 @@ export function validateReviewSkillEvidence(
                             `(${routingExecutionMode}) and review-context (${actualExecutionMode}).`
                         );
                     }
-                    if (routingSessionId && reviewerSessionId && routingSessionId !== reviewerSessionId) {
+                    if (
+                        routingSessionId
+                        && reviewerSessionId
+                        && !reviewerIdentityMatchesDelegatedLaunchCycle({
+                            observedIdentity: routingSessionId,
+                            expectedIdentity: reviewerSessionId,
+                            taskId: normalizeTimelineDetailString(receipt?.task_id) || '',
+                            reviewType: key
+                        })
+                    ) {
                         result.violations.push(
                             `Required review '${key}' has inconsistent reviewer identity between REVIEWER_DELEGATION_ROUTED telemetry ` +
                             `(${routingSessionId}) and review-context (${reviewerSessionId}).`

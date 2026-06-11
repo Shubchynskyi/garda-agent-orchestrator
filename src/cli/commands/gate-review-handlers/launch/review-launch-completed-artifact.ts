@@ -7,6 +7,9 @@ import {
 } from './review-launch-entrypoints';
 import { isTaskOwnedReviewTempPath } from '../../gates-artifacts';
 import {
+    resolveLaunchBindingReviewerIdentity
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
     buildReviewerLaunchBindingSha256,
     stringSha256
 } from './review-launch-input-attestation';
@@ -23,7 +26,10 @@ import {
     readJsonFile,
     type ReviewerLaunchArtifactValidationResult
 } from './review-launch-artifact-fields';
-import { findMatchingReviewerLaunchPreparedEvent } from './review-launch-artifact-fields';
+import {
+    findMatchingReviewerDelegationStartedEvent,
+    findMatchingReviewerLaunchPreparedEvent
+} from './review-launch-artifact-fields';
 
 export function isCurrentCompletedReviewerLaunchArtifact(options: {
     repoRoot: string;
@@ -180,11 +186,22 @@ export function validateReviewerLaunchArtifact(options: {
         'review_tree_state_sha256',
         'reviewTreeStateSha256'
     ).toLowerCase();
+    const plannedReviewerIdentity = getStringField(
+        artifact,
+        'planned_reviewer_identity',
+        'plannedReviewerIdentity'
+    );
+    const launchBindingReviewerIdentity = resolveLaunchBindingReviewerIdentity({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        artifactReviewerIdentity: reviewerIdentity,
+        plannedReviewerIdentity
+    });
     const expectedLaunchBindingSha256 = buildReviewerLaunchBindingSha256({
         taskId: options.taskId,
         reviewType: options.reviewType,
         reviewerExecutionMode: options.reviewerExecutionMode,
-        reviewerIdentity: options.reviewerIdentity,
+        reviewerIdentity: launchBindingReviewerIdentity,
         reviewContextSha256: options.reviewContextSha256,
         routingEventSha256: options.routingEventSha256,
         reviewerPromptSha256: options.reviewerPromptSha256 || reviewerPromptSha256 || null
@@ -374,7 +391,7 @@ export function validateReviewerLaunchArtifact(options: {
             taskId: options.taskId,
             reviewType: options.reviewType,
             reviewerExecutionMode: options.reviewerExecutionMode,
-            reviewerIdentity: options.reviewerIdentity,
+            reviewerIdentity: launchBindingReviewerIdentity,
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
             launchBindingSha256: expectedLaunchBindingSha256,
@@ -398,7 +415,9 @@ export function validateReviewerLaunchArtifact(options: {
     if (!providerInvocationId) {
         violations.push('provider_invocation_id or controller_invocation_id is required');
     }
-    if (delegationStartedAtUtc && !isValidUtcIso8601Timestamp(delegationStartedAtUtc)) {
+    if (!delegationStartedAtUtc) {
+        violations.push('delegation_started_at_utc is required');
+    } else if (!isValidUtcIso8601Timestamp(delegationStartedAtUtc)) {
         violations.push('delegation_started_at_utc must be a valid UTC ISO-8601 timestamp');
     }
     if (!launchedAtUtc) {
@@ -407,6 +426,28 @@ export function validateReviewerLaunchArtifact(options: {
         violations.push('launched_at_utc must be a valid UTC ISO-8601 timestamp');
     } else if (delegationStartedAtUtc && launchedAtUtc !== delegationStartedAtUtc) {
         violations.push('launched_at_utc must match delegation_started_at_utc for compatibility');
+    }
+    if (
+        delegationStartedAtUtc
+        && isValidUtcIso8601Timestamp(delegationStartedAtUtc)
+        && providerInvocationId
+        && /^[0-9a-f]{64}$/.test(preparedLaunchEventSha256)
+        && /^[0-9a-f]{64}$/.test(launchBindingSha256)
+        && !findMatchingReviewerDelegationStartedEvent(options.timelineEvents, {
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerExecutionMode: options.reviewerExecutionMode,
+            reviewerIdentity: launchBindingReviewerIdentity,
+            reviewContextSha256: options.reviewContextSha256,
+            routingEventSha256: options.routingEventSha256,
+            launchBindingSha256: expectedLaunchBindingSha256,
+            preparedLaunchEventSha256,
+            providerInvocationId,
+            delegationStartedAtUtc,
+            minSequenceExclusive: options.routingEventSequence
+        })
+    ) {
+        violations.push('delegation_started_at_utc must reference current REVIEWER_DELEGATION_STARTED telemetry');
     }
     if (launchPreparedAtUtc && !isValidUtcIso8601Timestamp(launchPreparedAtUtc)) {
         violations.push('launch_prepared_at_utc must be a valid UTC ISO-8601 timestamp');

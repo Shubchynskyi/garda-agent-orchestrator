@@ -12,6 +12,11 @@ import {
     assertValidTaskId
 } from '../../gate-runtime/task-events';
 import {
+    DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER,
+    isPlannedReviewerIdentity,
+    isResolvedReviewerIdentity
+} from '../../gate-runtime/review/reviewer-identity-contract';
+import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION,
     REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
@@ -2727,19 +2732,27 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             contextReviewerIdentity.startsWith('agent:')
             && timelineHasDelegatedReviewRoutingAfterCompile(eventsRoot, taskId, reviewType, contextReviewerIdentity)
         );
-        const reviewerIdentity = contextReviewerIdentity || '<agent:reviewer-session-id-from-review-context>';
-        const routingReviewerIdentity = contextReviewerIdentity || '<agent:reviewer-session-id-from-delegated-agent>';
-        const launchArtifactPath = buildDefaultReviewScratchCommandPath(
-            repoRoot,
-            taskId,
-            reviewType,
-            'reviewer-launch.json'
-        );
         const launchArtifactEvidence = getCurrentReviewerLaunchArtifactEvidenceForInvocation(
             repoRoot,
             eventsRoot,
             taskId,
             state
+        );
+        const resolvedLaunchReviewerIdentity = String(launchArtifactEvidence.reviewerIdentity || '').trim();
+        const delegatedReviewerIdentity = isResolvedReviewerIdentity(resolvedLaunchReviewerIdentity)
+            ? resolvedLaunchReviewerIdentity
+            : DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER;
+        const reviewerIdentity = isResolvedReviewerIdentity(contextReviewerIdentity)
+            ? contextReviewerIdentity
+            : delegatedReviewerIdentity;
+        const routingReviewerIdentity = isResolvedReviewerIdentity(contextReviewerIdentity)
+            ? contextReviewerIdentity
+            : null;
+        const launchArtifactPath = buildDefaultReviewScratchCommandPath(
+            repoRoot,
+            taskId,
+            reviewType,
+            'reviewer-launch.json'
         );
         const oneShotLaunchHint = launchArtifactEvidence.state === 'prepared'
             && launchArtifactEvidence.launchInputArtifactPath
@@ -2751,17 +2764,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 `or CopyPasteReviewerLaunchPrompt from prepare-reviewer-launch, then run record-reviewer-delegation-started immediately after provider launch.`
             )
             : null;
-        const providerFallbackHint = launchArtifactEvidence.state === 'prepared'
-            && launchArtifactEvidence.launchInputArtifactPath
-            && launchArtifactEvidence.launchInputArtifactSha256
-            ? (
-                `ReviewerStandbyResumeHint: if reviewer '${reviewerIdentity}' already reported standby or STANDBY_READY completion before launch input delivery, ` +
-                `resume only when the provider truly supports same-session resume and send exactly ` +
-                `"ReviewerLaunchInputArtifactPath: ${normalizePath(launchArtifactEvidence.launchInputArtifactPath)}" ` +
-                `before running record-reviewer-delegation-started; launch_input_sha256=${launchArtifactEvidence.launchInputArtifactSha256}; ` +
-                `this handshake is not review evidence.`
-            )
-            : null;
+        const reviewerIdentityIsPlanned = isPlannedReviewerIdentity(contextReviewerIdentity);
         const reviewRoutingChain = buildReviewGateChainStatusSummary({
             repoRoot,
             eventsRoot,
@@ -2836,6 +2839,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             stateViolationsText: stateViolations,
             reviewerIdentity: state.reviewerIdentity || '',
             contextReviewerIdentity,
+            reviewerIdentityIsPlanned,
             launchArtifactState: launchArtifactEvidence.state,
             providerLaunchTargetSummary,
             reviewerReadinessChain,
@@ -2848,7 +2852,6 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             hiddenTimingTrustRemediation: getHiddenReviewTimingTrustRemediation(eventsRoot, taskId, state),
             reusedExistingReview: state.reusedExistingReview,
             oneShotLaunchHint,
-            providerFallbackHint,
             instructions: {
                 opaqueHandoff: REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
                 freshContextLaunch: REVIEWER_FRESH_CONTEXT_LAUNCH_INSTRUCTION,
@@ -2863,7 +2866,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                 ),
                 prepareLaunch: buildCommand(
                     'Prepare delegated reviewer launch metadata',
-                    buildPrepareReviewerLaunchCommand(repoRoot, cliPrefix, taskId, reviewType, reviewerIdentity, launchArtifactPath, taskModePath)
+                    buildPrepareReviewerLaunchCommand(repoRoot, cliPrefix, taskId, reviewType, routingReviewerIdentity, launchArtifactPath, taskModePath)
                 ),
                 recordDelegationStarted: buildCommand(
                     'Record delegated reviewer start',
@@ -2871,7 +2874,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         cliPrefix,
                         taskId,
                         reviewType,
-                        reviewerIdentity,
+                        reviewerIdentity: delegatedReviewerIdentity,
                         launchArtifactPath,
                         launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
                         launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256
@@ -2883,7 +2886,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         cliPrefix,
                         taskId,
                         reviewType,
-                        reviewerIdentity,
+                        reviewerIdentity: delegatedReviewerIdentity,
                         launchArtifactPath,
                         launchInputArtifactPath: launchArtifactEvidence.launchInputArtifactPath,
                         launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256,

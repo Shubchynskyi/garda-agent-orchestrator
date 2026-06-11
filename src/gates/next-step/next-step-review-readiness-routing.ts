@@ -1,7 +1,9 @@
 import {
-    REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION,
-    REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION,
-    REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE
+    isPlannedReviewerIdentity,
+    isResolvedReviewerIdentity
+} from '../../gate-runtime/review/reviewer-identity-contract';
+import {
+    REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION
 } from '../../gate-runtime/reviewer-session-contract';
 
 export type DelegatedReviewLaunchArtifactState = 'missing_or_invalid' | 'prepared' | 'delegation_started' | 'launched';
@@ -32,6 +34,7 @@ export interface DelegatedReviewReadinessRouteOptions {
     stateViolationsText: string;
     reviewerIdentity: string;
     contextReviewerIdentity: string;
+    reviewerIdentityIsPlanned: boolean;
     launchArtifactState: DelegatedReviewLaunchArtifactState;
     providerLaunchTargetSummary: string;
     reviewerReadinessChain: string;
@@ -44,7 +47,6 @@ export interface DelegatedReviewReadinessRouteOptions {
     hiddenTimingTrustRemediation: string | null;
     reusedExistingReview: boolean;
     oneShotLaunchHint: string | null;
-    providerFallbackHint: string | null;
     instructions: {
         opaqueHandoff: string;
         freshContextLaunch: string;
@@ -61,9 +63,6 @@ export interface DelegatedReviewReadinessRouteOptions {
         recordResult: DelegatedReviewReadinessCommand;
     };
 }
-
-const REVIEWER_PROVIDER_FALLBACK_HANDOFF_GUIDANCE =
-    `${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION} ${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE}`;
 
 export function resolveDelegatedReviewReadinessRoute(
     options: DelegatedReviewReadinessRouteOptions
@@ -93,9 +92,19 @@ export function resolveDelegatedReviewReadinessRoute(
         !options.currentReviewReuseRecorded
         && !options.currentReviewContextInvocationAttested
         && (
-            !options.artifactExists
+            options.launchArtifactState === 'launched'
+            || (options.launchArtifactState === 'missing_or_invalid' && options.reviewerIdentityIsPlanned)
+            || !options.artifactExists
             || !options.receiptExists
-            || options.reviewerIdentity !== options.contextReviewerIdentity
+            || (
+                options.reviewerIdentity
+                && options.contextReviewerIdentity
+                && options.reviewerIdentity !== options.contextReviewerIdentity
+                && !(
+                    isPlannedReviewerIdentity(options.contextReviewerIdentity)
+                    && isResolvedReviewerIdentity(options.reviewerIdentity)
+                )
+            )
             || options.stateReady
             || options.reviewFailed
         )
@@ -109,7 +118,7 @@ export function resolveDelegatedReviewReadinessRoute(
                     `Required review '${options.reviewType}' needs task-owned reviewer launch metadata bound to the current routing event and review context before launch. ` +
                     `This prepares hashes and prompt paths only; it is not completed invocation evidence. ` +
                     `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
-                    `${REVIEWER_PROVIDER_FALLBACK_HANDOFF_GUIDANCE} ` +
+                    `${options.reviewerIdentityIsPlanned ? 'Routing/prepare use a gate-owned planned reviewer identity until the provider launch returns the resolved reviewer id. ' : ''}` +
                     `${options.providerLaunchTargetSummary} ${options.reviewerReadinessChain} ${options.launchPreparationChain}`,
                 commands: [options.commands.prepareLaunch]
             };
@@ -126,8 +135,6 @@ export function resolveDelegatedReviewReadinessRoute(
                     `Provider-owned placeholders in the command are only --provider-invocation-id and --attestation-source; replace them with the delegated reviewer launch result after provider launch. Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed. ` +
                     `${options.oneShotLaunchHint ? `${options.oneShotLaunchHint} ` : ''}` +
                     `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
-                    `${options.providerFallbackHint ? `${options.providerFallbackHint} ` : ''}` +
-                    `${REVIEWER_PROVIDER_FALLBACK_HANDOFF_GUIDANCE} ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
                     `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.recordDelegationStarted]

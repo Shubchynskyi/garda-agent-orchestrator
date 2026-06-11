@@ -157,13 +157,12 @@ function timelineHasHistoricalDelegatedReviewInvocationAttestation(
     ) {
         return false;
     }
-    const expectedReviewContextSha256 = state.receiptReviewContextSha256;
+    const expectedReviewContextSha256 = String(state.reviewerProvenance.review_context_sha256 || '').trim().toLowerCase();
     const expectedReviewTreeStateSha256 = state.contextReviewTreeStateSha256;
     if (
         !expectedReviewContextSha256
         || !expectedReviewTreeStateSha256
         || state.receiptReviewTreeStateSha256 !== expectedReviewTreeStateSha256
-        || state.reviewerProvenance.review_context_sha256 !== expectedReviewContextSha256
         || state.reviewerProvenance.review_tree_state_sha256 !== expectedReviewTreeStateSha256
     ) {
         return false;

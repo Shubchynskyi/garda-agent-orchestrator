@@ -22,6 +22,9 @@ import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
 } from '../../../../gate-runtime/reviewer-session-contract';
 import {
+    isPlannedReviewerIdentity
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
     writeReviewArtifactsWithRollback
 } from '../../../../gate-runtime/review-artifacts';
 import {
@@ -321,6 +324,8 @@ async function recordReviewReceiptFromArtifacts(options: {
     reviewerIdentity: string;
     reviewerFallbackReason: string | null;
     requireStrictBindingMetadata?: boolean;
+    invocationReviewContextSha256?: string | null;
+    routingReviewerIdentity?: string | null;
 }, dependencies: ReviewResultHandlersDependencies): Promise<string> {
     if (
         options.reviewArtifactContent == null
@@ -388,20 +393,28 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerFallbackReason: options.reviewerFallbackReason
     });
 
+    const currentReviewerSessionId = currentRouting?.reviewer_session_id != null
+        ? String(currentRouting.reviewer_session_id).trim()
+        : '';
+    const explicitRoutingReviewerIdentity = String(options.routingReviewerIdentity || '').trim();
+    const routingReviewerIdentity = explicitRoutingReviewerIdentity
+        || (isPlannedReviewerIdentity(currentReviewerSessionId)
+            ? currentReviewerSessionId
+            : options.reviewerIdentity);
     const timelinePath = gateHelpers.joinOrchestratorPath(options.repoRoot, path.join('runtime', 'task-events', `${options.taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
     const routingEvent = dependencies.findMatchingRoutingEvent(
         timelineEvents,
         options.reviewType,
         options.reviewerExecutionMode,
-        options.reviewerIdentity,
+        routingReviewerIdentity,
         options.reviewerFallbackReason
     );
     if (!routingEvent) {
         throw new Error(
             `Review receipts require pre-recorded REVIEWER_DELEGATION_ROUTED telemetry for '${options.reviewType}' ` +
             'in the current cycle ' +
-            `with reviewer '${options.reviewerIdentity}' and execution mode '${options.reviewerExecutionMode}'.`
+            `with reviewer '${routingReviewerIdentity}' and execution mode '${options.reviewerExecutionMode}'.`
         );
     }
     const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
@@ -416,12 +429,14 @@ async function recordReviewReceiptFromArtifacts(options: {
     if (!contextSha256) {
         throw new Error(`Review receipts require a hashable review-context artifact: ${normalizePath(options.contextPath)}.`);
     }
+    const invocationReviewContextSha256 = String(options.invocationReviewContextSha256 || '').trim().toLowerCase()
+        || contextSha256;
     const invocationEvent = dependencies.findMatchingReviewerInvocationAttestationEvent(timelineEvents, {
         taskId: options.taskId,
         reviewType: options.reviewType,
         reviewerExecutionMode: options.reviewerExecutionMode,
         reviewerIdentity: options.reviewerIdentity,
-        reviewContextSha256: contextSha256,
+        reviewContextSha256: invocationReviewContextSha256,
         reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
         routingEventSha256: routingEventProvenance.event_sha256
     });
@@ -592,7 +607,7 @@ function getDelegationStartedAtUtc(value: unknown): string | null {
     const record = value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
         : null;
-    const text = String(record?.delegation_started_at_utc ?? record?.launched_at_utc ?? '').trim();
+    const text = String(record?.delegation_started_at_utc ?? '').trim();
     return text || null;
 }
 
@@ -812,6 +827,13 @@ async function handleRecordReviewResultWithDependencies(
     const acceptedRawReviewContent = reviewOutput.reviewContent;
     const acceptedReviewArtifactContent = reviewContent.endsWith('\n') ? reviewContent : `${reviewContent}\n`;
     const rawReviewOutputSha256 = sha256ReviewArtifactContent(acceptedRawReviewContent);
+    const invocationReviewContextSha256 = fileSha256(contextPath) || '';
+    const preApplyReviewerSessionId = currentRouting?.reviewer_session_id != null
+        ? String(currentRouting.reviewer_session_id).trim()
+        : '';
+    const routingReviewerIdentityForLookup = isPlannedReviewerIdentity(preApplyReviewerSessionId)
+        ? preApplyReviewerSessionId
+        : reviewerIdentity;
     const previousRoutingUpdate = {
         actualExecutionMode: currentRouting?.actual_execution_mode != null
             ? String(currentRouting.actual_execution_mode).trim() || null
@@ -849,7 +871,9 @@ async function handleRecordReviewResultWithDependencies(
             reviewerExecutionMode,
             reviewerIdentity,
             reviewerFallbackReason,
-            requireStrictBindingMetadata: !!options.reviewContextPath
+            requireStrictBindingMetadata: !!options.reviewContextPath,
+            invocationReviewContextSha256,
+            routingReviewerIdentity: routingReviewerIdentityForLookup
         }, dependencies);
         cleanupReviewTempSourceArtifact(repoRoot, taskId, reviewOutput.reviewOutputSourcePath);
 

@@ -10,6 +10,11 @@ import {
     stringSha256
 } from './review-launch-input-attestation';
 import {
+    isPlannedReviewerIdentity,
+    isResolvedReviewerIdentity,
+    resolveLaunchBindingReviewerIdentity
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
     PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE,
     PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE,
     getReviewerLaunchArtifactMismatchReasons,
@@ -131,15 +136,34 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     copyPasteReviewerLaunchPromptSha256?: string | null;
     reviewTreeStateSha256?: string | null;
     allowedAttestationStates?: readonly string[];
+    resolvedReviewerIdentity?: string | null;
 }): void {
     const artifact = readJsonFile(options.artifactPath, 'Prepared reviewer launch artifact');
+    const artifactReviewerIdentity = getStringField(
+        artifact,
+        'reviewer_identity',
+        'reviewerIdentity',
+        'reviewer_session_id',
+        'reviewerSessionId'
+    );
+    const plannedReviewerIdentity = getStringField(
+        artifact,
+        'planned_reviewer_identity',
+        'plannedReviewerIdentity'
+    ) || artifactReviewerIdentity;
     const launchBindingSha256 = getStringField(artifact, 'launch_binding_sha256', 'launchBindingSha256').toLowerCase();
+    const launchBindingReviewerIdentity = resolveLaunchBindingReviewerIdentity({
+        taskId: options.taskId,
+        reviewType: options.reviewType,
+        artifactReviewerIdentity,
+        plannedReviewerIdentity
+    });
     const expectedLaunchBindingSha256 = options.reviewerPromptSha256
         ? buildReviewerLaunchBindingSha256({
             taskId: options.taskId,
             reviewType: options.reviewType,
             reviewerExecutionMode: options.reviewerExecutionMode,
-            reviewerIdentity: options.reviewerIdentity,
+            reviewerIdentity: launchBindingReviewerIdentity,
             reviewContextSha256: options.reviewContextSha256,
             routingEventSha256: options.routingEventSha256,
             reviewerPromptSha256: options.reviewerPromptSha256
@@ -166,7 +190,18 @@ export function assertPreparedReviewerLaunchArtifact(options: {
     if (getStringField(artifact, 'reviewer_execution_mode', 'reviewerExecutionMode') !== options.reviewerExecutionMode) {
         violations.push(`reviewer_execution_mode must be '${options.reviewerExecutionMode}'`);
     }
-    if (getStringField(artifact, 'reviewer_identity', 'reviewerIdentity', 'reviewer_session_id', 'reviewerSessionId') !== options.reviewerIdentity) {
+    const resolvedReviewerIdentity = String(options.resolvedReviewerIdentity || '').trim();
+    if (resolvedReviewerIdentity) {
+        if (!isResolvedReviewerIdentity(resolvedReviewerIdentity)) {
+            violations.push('resolved reviewer identity must be an agent-scoped identity from the provider launch result');
+        } else if (!isPlannedReviewerIdentity(plannedReviewerIdentity)) {
+            violations.push('planned reviewer identity must be present before resolving delegated reviewer identity');
+        } else if (artifactReviewerIdentity !== plannedReviewerIdentity && artifactReviewerIdentity !== resolvedReviewerIdentity) {
+            violations.push('reviewer_identity must match the planned or resolved delegated reviewer identity');
+        } else if (resolvedReviewerIdentity === plannedReviewerIdentity) {
+            violations.push('resolved reviewer identity must not reuse the planned pending identity');
+        }
+    } else if (artifactReviewerIdentity !== options.reviewerIdentity) {
         violations.push(`reviewer_identity must be '${options.reviewerIdentity}'`);
     }
     if (getStringField(artifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() !== options.reviewContextSha256) {

@@ -1117,6 +1117,7 @@ export function seedReusableReviewEvidence(
         legacyReviewContextSourceOfTruth?: string;
         taskModePath?: string | null;
         omitInvocationTreeState?: boolean;
+        receiptReviewContextSha256Override?: string | null;
     } = {}
 ): string {
     const crypto = require('node:crypto');
@@ -1247,6 +1248,7 @@ export function seedReusableReviewEvidence(
         invocationEvent?.integrity,
         invocationDetails
     );
+    const receiptReviewContextSha256 = String(options.receiptReviewContextSha256Override || '').trim().toLowerCase() || reviewContextHash;
     const receipt = buildReviewReceipt({
         taskId,
         reviewType: reviewKey,
@@ -1256,7 +1258,7 @@ export function seedReusableReviewEvidence(
         codeScopeSha256: reviewKey !== 'test'
             ? computeCodeReviewScopeFingerprint(preflight, repoRoot).code_scope_sha256
             : null,
-        reviewContextSha256: reviewContextHash,
+        reviewContextSha256: receiptReviewContextSha256,
         reviewTreeStateSha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(reviewContext),
         reviewArtifactSha256: artifactHash,

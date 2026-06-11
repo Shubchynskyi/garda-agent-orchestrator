@@ -92,6 +92,14 @@ describe('cli/commands/gates review launch invocation', () => {
             process.chdir(previousPrepareCwd);
             process.exitCode = previousPrepareExitCode;
         }
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: 'agent:test-reviewer',
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-123',
+            attestationSource: 'test_provider_controller'
+        });
         const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
         const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
@@ -107,7 +115,8 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_input_artifact_sha256: preparedLaunchArtifactSha256,
             prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
-            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
+            launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
             fork_context: false
         }, null, 2) + '\n', 'utf8');
 
@@ -178,6 +187,56 @@ describe('cli/commands/gates review launch invocation', () => {
         assert.notEqual(invocation.exitCode, 0);
         assert.ok(
             invocation.errors.some((line) => line.includes('record-review-invocation cannot continue because reviewer prompt artifact is stale')),
+            invocation.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'), false);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects launched metadata without delegation-started evidence', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-776-F6-invocation-no-delegation-start';
+        const fixture = await seedPromptBoundReviewFixture({ repoRoot, taskId });
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath: fixture.launchArtifactPath
+        });
+        const preparedArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8')) as Record<string, unknown>;
+        const preparedLaunchArtifactSha256 = fileSha256ForTest(fixture.launchArtifactPath);
+        fs.writeFileSync(fixture.launchArtifactPath, JSON.stringify({
+            ...preparedArtifact,
+            evidence_type: 'delegated_reviewer_launch',
+            attestation_state: 'launched',
+            attestation_source: 'test_provider_controller',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-no-delegation-start',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_artifact_path: fixture.launchArtifactPath.replace(/\\/g, '/'),
+            launch_input_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedArtifact.copy_paste_reviewer_launch_prompt_sha256,
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            fork_context: false
+        }, null, 2) + '\n', 'utf8');
+
+        const invocation = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(invocation.exitCode, 0);
+        assert.ok(
+            invocation.errors.some((line) => line.includes('delegation_started_at_utc is required')),
             invocation.errors.join('\n')
         );
         assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'), false);
@@ -373,6 +432,14 @@ describe('cli/commands/gates review launch invocation', () => {
             process.exitCode = previousPrepareExitCode;
         }
 
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-123',
+            attestationSource: 'test_provider_controller'
+        });
         const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
         const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
         fs.writeFileSync(launchArtifactPath, JSON.stringify({
@@ -388,7 +455,8 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_input_artifact_sha256: preparedLaunchArtifactSha256,
             prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
-            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
+            launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
             fork_context: false
         }, null, 2) + '\n', 'utf8');
 

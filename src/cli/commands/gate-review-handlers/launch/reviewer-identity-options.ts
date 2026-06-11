@@ -2,6 +2,11 @@ import {
     normalizeCompatibilityReviewerExecutionMode,
 } from '../../../../gate-runtime/review-context';
 import {
+    buildPlannedReviewerIdentity,
+    isPlannedReviewerIdentity,
+    isResolvedReviewerIdentity
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
     type ParsedOptionsRecord
 } from '../../shared-command-utils';
 
@@ -11,7 +16,30 @@ export interface ParsedReviewerIdentity {
     reviewerFallbackReason: string | null;
 }
 
-export function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequiredMessage: string): ParsedReviewerIdentity {
+export interface ParseReviewerIdentityOptions {
+    allowPlannedIdentity?: boolean;
+    requireResolvedIdentity?: boolean;
+}
+
+export function resolveReviewerIdentityOption(
+    options: ParsedOptionsRecord,
+    taskId: string,
+    reviewType: string
+): string {
+    const explicitIdentity = options.reviewerIdentity
+        ? String(options.reviewerIdentity).trim()
+        : '';
+    if (explicitIdentity) {
+        return explicitIdentity;
+    }
+    return buildPlannedReviewerIdentity(taskId, reviewType);
+}
+
+export function parseReviewerIdentity(
+    options: ParsedOptionsRecord,
+    modeRequiredMessage: string,
+    identityOptions: ParseReviewerIdentityOptions = {}
+): ParsedReviewerIdentity {
     const rawReviewerExecutionMode = options.reviewerExecutionMode
         ? String(options.reviewerExecutionMode).trim()
         : null;
@@ -44,7 +72,20 @@ export function parseReviewerIdentity(options: ParsedOptionsRecord, modeRequired
     if (reviewerIdentity.startsWith('self:')) {
         throw new Error('Delegated review evidence cannot use a self-scoped reviewer identity.');
     }
-    if (!reviewerIdentity.startsWith('agent:')) {
+    if (isPlannedReviewerIdentity(reviewerIdentity)) {
+        if (identityOptions.requireResolvedIdentity) {
+            throw new Error(
+                'Delegated review evidence requires a resolved agent-scoped reviewer identity from the provider launch result; ' +
+                'planned pending identities are not valid here.'
+            );
+        }
+        if (!identityOptions.allowPlannedIdentity) {
+            throw new Error(
+                'Planned reviewer identity is not accepted for this gate. ' +
+                'Omit --reviewer-identity to let the gate assign a pending identity, or pass a resolved agent: identity from the provider.'
+            );
+        }
+    } else if (!isResolvedReviewerIdentity(reviewerIdentity)) {
         throw new Error("Delegated review evidence requires an agent-scoped reviewer identity (prefix 'agent:').");
     }
     if (reviewerFallbackReason) {

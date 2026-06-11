@@ -77,14 +77,17 @@ export function buildReviewRoutingCommand(
     cliPrefix: string,
     taskId: string,
     reviewType: string,
-    reviewerIdentity: string,
+    reviewerIdentity: string | null | undefined,
     taskModePath: string | null
 ): string {
-    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-routing', [
+    const parts = [
         `--review-type "${reviewType}"`,
-        '--reviewer-execution-mode "delegated_subagent"',
-        `--reviewer-identity "${reviewerIdentity}"`
-    ], taskModePath);
+        '--reviewer-execution-mode "delegated_subagent"'
+    ];
+    if (String(reviewerIdentity || '').trim()) {
+        parts.push(`--reviewer-identity "${String(reviewerIdentity).trim()}"`);
+    }
+    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'record-review-routing', parts, taskModePath);
 }
 
 export function buildPrepareReviewerLaunchCommand(
@@ -92,16 +95,19 @@ export function buildPrepareReviewerLaunchCommand(
     cliPrefix: string,
     taskId: string,
     reviewType: string,
-    reviewerIdentity: string,
+    reviewerIdentity: string | null | undefined,
     launchArtifactPath: string,
     taskModePath: string | null
 ): string {
-    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'prepare-reviewer-launch', [
+    const parts = [
         `--review-type "${reviewType}"`,
         '--reviewer-execution-mode "delegated_subagent"',
-        `--reviewer-identity "${reviewerIdentity}"`,
         `--reviewer-launch-artifact-path "${launchArtifactPath}"`
-    ], taskModePath);
+    ];
+    if (String(reviewerIdentity || '').trim()) {
+        parts.push(`--reviewer-identity "${String(reviewerIdentity).trim()}"`);
+    }
+    return buildReviewPhaseCommand(repoRoot, cliPrefix, taskId, 'prepare-reviewer-launch', parts, taskModePath);
 }
 
 export function buildRecordReviewerDelegationStartedCommand(params: {

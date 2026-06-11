@@ -139,6 +139,7 @@ function validateStrictReusedReviewInput(input: StrictReusedReviewEvidenceValida
     if (!provenance) {
         return 'strict reused review evidence is missing preserved reviewer_provenance';
     }
+    const provenanceReviewContextSha256 = normalizeLowerString(provenance.review_context_sha256);
     if (
         normalizeLowerString(provenance.attestation_type) !== 'reviewer_invocation_attestation'
         || normalizeEventType(provenance.controller_event_type) !== 'REVIEWER_INVOCATION_ATTESTED'
@@ -146,7 +147,7 @@ function validateStrictReusedReviewInput(input: StrictReusedReviewEvidenceValida
         || normalizeLowerString(provenance.review_type) !== normalizeLowerString(input.reviewType)
         || normalizeLowerString(provenance.reviewer_execution_mode) !== 'delegated_subagent'
         || String(provenance.reviewer_identity || '').trim() !== reviewerIdentity
-        || normalizeLowerString(provenance.review_context_sha256) !== normalizeLowerString(input.reusedFromReviewContextSha256)
+        || !isSha256(provenanceReviewContextSha256)
         || normalizeLowerString(provenance.review_tree_state_sha256) !== normalizeLowerString(input.reusedFromReviewTreeStateSha256)
         || !isSha256(provenance.routing_event_sha256)
         || !isSha256(provenance.event_sha256)
@@ -409,6 +410,7 @@ function findStrictHistoricalReviewerInvocationEvent(input: StrictReusedReviewEv
     const expectedTaskSequence = normalizeEventSequence(provenance.task_sequence);
     const expectedEventSha256 = normalizeLowerString(provenance.event_sha256);
     const expectedPrevEventSha256 = normalizeLowerString(provenance.prev_event_sha256) || null;
+    const expectedInvocationContextSha256 = normalizeLowerString(provenance.review_context_sha256);
     for (let index = input.events.length - 1; index >= 0; index -= 1) {
         const event = input.events[index];
         if (normalizeEventType(event.event_type) !== 'REVIEWER_INVOCATION_ATTESTED') {
@@ -453,7 +455,7 @@ function findStrictHistoricalReviewerInvocationEvent(input: StrictReusedReviewEv
             || normalizeLowerString(details.reviewer_execution_mode ?? details.reviewerExecutionMode) !== 'delegated_subagent'
             || detailsReviewerIdentity !== String(input.reviewerIdentity || '').trim()
             || normalizeLowerString(details.review_context_sha256 ?? details.reviewContextSha256)
-                !== normalizeLowerString(input.reusedFromReviewContextSha256)
+                !== expectedInvocationContextSha256
             || normalizeLowerString(details.review_tree_state_sha256 ?? details.reviewTreeStateSha256)
                 !== normalizeLowerString(input.reusedFromReviewTreeStateSha256)
             || normalizeLowerString(details.routing_event_sha256 ?? details.routingEventSha256)

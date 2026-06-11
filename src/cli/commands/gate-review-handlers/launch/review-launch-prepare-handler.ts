@@ -18,11 +18,10 @@ import {
 import {
     REVIEW_CONTEXT_OPAQUE_HANDOFF_INSTRUCTION,
     REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION,
-    REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION,
-    REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION,
-    REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE
+    REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION
 } from '../../../../gate-runtime/reviewer-session-contract';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
+import { resolveReviewerIdentityOption } from './reviewer-identity-options';
 import {
     type ParsedOptionsRecord,
     removeArtifactIfExists
@@ -30,17 +29,9 @@ import {
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 type SupersededReviewerLaunchArtifactSnapshot = import('../index').SupersededReviewerLaunchArtifactSnapshot;
 
-function printReviewerLaunchHandoffLines(
-    launchInputArtifactDisplayPath: string,
-    launchInputArtifactSha256: string
-): void {
+function printReviewerLaunchHandoffLines(): void {
     console.log('OneShotLaunchState: default_handoff_ready_not_review_evidence');
     console.log(`OneShotLaunchInstruction: ${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION}`);
-    console.log('StandbyResumeState: optional_provider_fallback_not_review_evidence');
-    console.log(`StandbyResumeInstruction: ${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION}`);
-    console.log(`StandbyResumeInput: ReviewerLaunchInputArtifactPath: ${launchInputArtifactDisplayPath}`);
-    console.log(`StandbyResumeInputSha256: ${launchInputArtifactSha256}`);
-    console.log(`ProviderFallbackNote: ${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE}`);
 }
 
 function buildReviewerLaunchNextAction(): string {
@@ -48,9 +39,7 @@ function buildReviewerLaunchNextAction(): string {
         `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
         'Do not reconstruct reviewer prompts from memory. ' +
         `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
-        `${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION} ` +
-        `${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE} ` +
-        'Immediately run record-reviewer-delegation-started with launch_input evidence, then run complete-reviewer-launch after reviewer completion.'
+        'Immediately run record-reviewer-delegation-started with the resolved provider reviewer identity and launch_input evidence, then run complete-reviewer-launch after reviewer completion.'
     );
 }
 
@@ -155,9 +144,14 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     if (!fs.existsSync(contextPath) || !fs.statSync(contextPath).isFile()) {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
     }
-    const { reviewerExecutionMode, reviewerIdentity, reviewerFallbackReason } = parseReviewerIdentity(
-        options,
-        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
+    const reviewerIdentity = resolveReviewerIdentityOption(options, taskId, reviewType);
+    const { reviewerExecutionMode, reviewerFallbackReason } = parseReviewerIdentity(
+        {
+            ...options,
+            reviewerIdentity
+        },
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'.",
+        { allowPlannedIdentity: true }
     );
     const parsedReviewContext = JSON.parse(fs.readFileSync(contextPath, 'utf8')) as Record<string, unknown>;
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
@@ -371,10 +365,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log(`ReviewerLaunchArtifactSha256: ${existingLaunchArtifactSha256}`);
             console.log(`ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
             console.log(`ReviewerLaunchInputArtifactSha256: ${existingLaunchInputArtifactSha256}`);
-            printReviewerLaunchHandoffLines(
-                toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath),
-                existingLaunchInputArtifactSha256
-            );
+            printReviewerLaunchHandoffLines();
             console.log(`CopyPasteReviewerLaunchPromptSha256: ${stringSha256(copyPasteReviewerLaunchPrompt)}`);
             console.log('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags.');
             console.log('AttestationState: prepared');
@@ -471,6 +462,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         review_type: reviewType,
         reviewer_execution_mode: reviewerExecutionMode,
         reviewer_identity: reviewerIdentity,
+        planned_reviewer_identity: reviewerIdentity,
         review_context_path: normalizePath(contextPath),
         review_context_sha256: contextSha256,
         routing_event_sha256: routingEventProvenance.event_sha256,
@@ -533,7 +525,6 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             `Launch a fresh delegated reviewer once with ${handoffArtifactNames} as opaque handoff artifacts using the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath. ` +
             `${REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION} ` +
             `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
-            `${REVIEWER_STANDBY_HANDOFF_FALLBACK_INSTRUCTION} ${REVIEWER_STANDBY_NOT_REVIEW_EVIDENCE_NOTE} ` +
             'Do not open or summarize the generated review context in the main agent. Then update only the ' +
             'after_launch_required_updates fields while preserving the prepared hashes. ' +
             'Run record-reviewer-delegation-started immediately after provider launch, then complete-reviewer-launch after the reviewer returns.'
@@ -660,10 +651,7 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`ReviewerLaunchArtifactSha256: ${launchArtifactSha256}`);
     console.log(`ReviewerLaunchInputArtifactPath: ${toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath)}`);
     console.log(`ReviewerLaunchInputArtifactSha256: ${launchInputArtifactSha256}`);
-    printReviewerLaunchHandoffLines(
-        toReviewerHandoffAbsolutePath(repoRoot, launchInputArtifactPath),
-        launchInputArtifactSha256
-    );
+    printReviewerLaunchHandoffLines();
     console.log(`CopyPasteReviewerLaunchPromptSha256: ${copyPasteReviewerLaunchPromptSha256}`);
     console.log('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags.');
     console.log('AttestationState: prepared');

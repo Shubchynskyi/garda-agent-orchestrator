@@ -5,6 +5,7 @@ import {
     normalizeReviewProvenanceUtcTimestamp,
     normalizeReviewReceiptReviewerProvenance
 } from '../../gate-runtime/review-context';
+import { buildPlannedReviewerIdentity } from '../../gate-runtime/review/reviewer-identity-contract';
 import { type ReviewDependencyTimelineEvent } from '../review/review-dependencies';
 import { normalizeSha256String } from './required-reviews-check-evidence';
 
@@ -165,6 +166,43 @@ export function findMatchingRoutingEvent(
     return null;
 }
 
+export function findMatchingRoutingEventWithDeferredIdentityFallback(
+    timelineEvents: readonly ReviewDependencyTimelineEvent[],
+    reviewType: string,
+    reviewerExecutionMode: string,
+    reviewerIdentity: string,
+    reviewerFallbackReason: string | null,
+    reviewerProvenance?: ReturnType<typeof normalizeReviewReceiptReviewerProvenance>,
+    allowHistoricalEvidence = false,
+    taskId?: string | null
+): ReviewDependencyTimelineEvent | null {
+    const directMatch = findMatchingRoutingEvent(
+        timelineEvents,
+        reviewType,
+        reviewerExecutionMode,
+        reviewerIdentity,
+        reviewerFallbackReason,
+        reviewerProvenance,
+        allowHistoricalEvidence
+    );
+    if (directMatch || !taskId) {
+        return directMatch;
+    }
+    const plannedReviewerIdentity = buildPlannedReviewerIdentity(taskId, reviewType);
+    if (plannedReviewerIdentity === reviewerIdentity) {
+        return null;
+    }
+    return findMatchingRoutingEvent(
+        timelineEvents,
+        reviewType,
+        reviewerExecutionMode,
+        plannedReviewerIdentity,
+        reviewerFallbackReason,
+        reviewerProvenance,
+        allowHistoricalEvidence
+    );
+}
+
 export function findLatestRoutingEventForReviewType(
     timelineEvents: readonly ReviewDependencyTimelineEvent[],
     reviewType: string
@@ -222,7 +260,7 @@ export function findMatchingInvocationAttestationEvent(
     }
     const normalizedReviewType = String(options.reviewType || '').trim().toLowerCase();
     const normalizedTaskId = String(options.taskId || '').trim();
-    const normalizedReviewContextSha256 = String(options.reviewContextSha256 || '').trim().toLowerCase();
+    const provenanceReviewContextSha256 = String(options.reviewerProvenance.review_context_sha256 || '').trim().toLowerCase();
     const normalizedReviewTreeStateSha256 = normalizeSha256String(options.reviewTreeStateSha256);
     const normalizedRoutingEventSha256 = String(options.routingEventSha256 || '').trim().toLowerCase();
     if (
@@ -230,7 +268,7 @@ export function findMatchingInvocationAttestationEvent(
         || options.reviewerProvenance.review_type !== normalizedReviewType
         || options.reviewerProvenance.reviewer_execution_mode !== options.reviewerExecutionMode
         || options.reviewerProvenance.reviewer_identity !== options.reviewerIdentity
-        || options.reviewerProvenance.review_context_sha256 !== normalizedReviewContextSha256
+        || !provenanceReviewContextSha256
         || (normalizedReviewTreeStateSha256
             && options.reviewerProvenance.review_tree_state_sha256 !== normalizedReviewTreeStateSha256)
         || options.reviewerProvenance.routing_event_sha256 !== normalizedRoutingEventSha256
@@ -257,7 +295,7 @@ export function findMatchingInvocationAttestationEvent(
             && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === normalizedReviewType
             && normalizeCompatibilityReviewerExecutionMode(details?.reviewer_execution_mode ?? details?.reviewerExecutionMode) === options.reviewerExecutionMode
             && String((details?.reviewer_session_id ?? details?.reviewerSessionId ?? details?.reviewer_identity ?? details?.reviewerIdentity) || '').trim() === options.reviewerIdentity
-            && detailsReviewContextSha256 === normalizedReviewContextSha256
+            && detailsReviewContextSha256 === provenanceReviewContextSha256
             && (!normalizedReviewTreeStateSha256 || detailsReviewTreeStateSha256 === normalizedReviewTreeStateSha256)
             && detailsRoutingEventSha256 === normalizedRoutingEventSha256
             && entry.integrity

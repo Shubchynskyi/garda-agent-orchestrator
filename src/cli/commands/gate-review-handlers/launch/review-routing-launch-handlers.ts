@@ -9,7 +9,6 @@ import {
     emitReviewerDelegationRoutedEventAsync,
     fileSha256,
     gateHelpers,
-    normalizeCompatibilityReviewerExecutionMode,
     normalizePath,
     resolveCanonicalReviewContextPath,
     restoreReviewerRoutingMetadata,
@@ -23,6 +22,10 @@ import { readDependencyTimelineEvents } from '../result/review-dependency-timeli
 import { createPrepareReviewerLaunchHandler } from './review-launch-prepare-handler';
 import { createCompleteReviewerLaunchHandler } from './review-launch-complete-handler';
 import { createReviewerDelegationStartedHandler } from './review-launch-delegation-started-handler';
+import {
+    parseReviewerIdentity,
+    resolveReviewerIdentityOption
+} from './reviewer-identity-options';
 
 export interface ReviewRoutingLaunchHandlerDependencies {
     assertExplicitReviewContextRuntimeIdentity: typeof import('../index').assertExplicitReviewContextRuntimeIdentity;
@@ -106,40 +109,15 @@ async function handleRecordReviewRouting(gateArgv: string[]): Promise<void> {
         throw new Error(`Review context artifact not found: ${normalizePath(contextPath)}.`);
     }
 
-    const rawReviewerExecutionMode = options.reviewerExecutionMode
-        ? String(options.reviewerExecutionMode).trim()
-        : null;
-    const reviewerExecutionMode = normalizeCompatibilityReviewerExecutionMode(rawReviewerExecutionMode);
-    const reviewerIdentity = options.reviewerIdentity
-        ? String(options.reviewerIdentity).trim()
-        : null;
-    const reviewerFallbackReason = options.reviewerFallbackReason
-        ? String(options.reviewerFallbackReason).trim()
-        : null;
-    if (!reviewerExecutionMode) {
-        throw new Error("ReviewerExecutionMode is required. Expected 'delegated_subagent'.");
-    }
-    if (!reviewerIdentity) {
-        throw new Error('ReviewerIdentity is required.');
-    }
-    if (reviewerExecutionMode !== 'delegated_subagent') {
-        throw new Error(
-            `ReviewerExecutionMode '${reviewerExecutionMode}' is no longer supported. ` +
-            "Mandatory reviews must use 'delegated_subagent'."
-        );
-    }
-    if (reviewerIdentity.startsWith('self:')) {
-        throw new Error('Delegated review routing cannot use a self-scoped reviewer identity.');
-    }
-    if (!reviewerIdentity.startsWith('agent:')) {
-        throw new Error("Delegated review routing requires an agent-scoped reviewer identity (prefix 'agent:').");
-    }
-    if (reviewerFallbackReason) {
-        throw new Error(
-            'ReviewerFallbackReason is not supported for delegated_subagent review routing. ' +
-            'Remove --reviewer-fallback-reason and rerun the delegated reviewer flow.'
-        );
-    }
+    const reviewerIdentity = resolveReviewerIdentityOption(options, taskId, reviewType);
+    const { reviewerExecutionMode, reviewerFallbackReason } = parseReviewerIdentity(
+        {
+            ...options,
+            reviewerIdentity
+        },
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'.",
+        { allowPlannedIdentity: true }
+    );
     const preflightPath = resolveCanonicalPreflightArtifactPath(repoRoot, taskId);
     const preflightPayload = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
     const preflightSha256 = fileSha256(preflightPath);

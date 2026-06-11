@@ -14,6 +14,9 @@ import {
     taskEventAppendHasBlockingFailure,
     writeReviewArtifactJson
 } from './review-launch-entrypoints';
+import {
+    isPlannedReviewerIdentity
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import {
     type ParsedOptionsRecord
@@ -22,6 +25,7 @@ import { readDependencyTimelineEvents } from '../result/review-dependency-timeli
 
 export interface ReviewerDelegationStartedHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
+    buildRecordReviewInvocationCommand: typeof import('../index').buildRecordReviewInvocationCommand;
     findMatchingRoutingEvent: typeof import('../index').findMatchingRoutingEvent;
     getReviewTreeStateSha256: typeof import('../index').getReviewTreeStateSha256;
     getStringField: typeof import('../index').getStringField;
@@ -39,6 +43,7 @@ export interface ReviewerDelegationStartedHandlerDependencies {
 export function createReviewerDelegationStartedHandler(deps: ReviewerDelegationStartedHandlerDependencies) {
     const {
         assertPreparedReviewerLaunchArtifact,
+        buildRecordReviewInvocationCommand,
         findMatchingRoutingEvent,
         getReviewTreeStateSha256,
         getStringField,
@@ -97,7 +102,8 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     }
     const { reviewerExecutionMode, reviewerIdentity } = parseReviewerIdentity(
         options,
-        "ReviewerExecutionMode is required. Expected 'delegated_subagent'."
+        "ReviewerExecutionMode is required. Expected 'delegated_subagent'.",
+        { requireResolvedIdentity: true }
     );
 
     const providerInvocationId = String(options.providerInvocationId || '').trim();
@@ -169,13 +175,49 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         gateName: 'record-reviewer-delegation-started'
     });
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
+    const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const plannedReviewerIdentity = getStringField(
+        preparedArtifact,
+        'planned_reviewer_identity',
+        'plannedReviewerIdentity'
+    ) || getStringField(
+        preparedArtifact,
+        'reviewer_identity',
+        'reviewerIdentity',
+        'reviewer_session_id',
+        'reviewerSessionId'
+    );
+    if (!plannedReviewerIdentity) {
+        throw new Error('Reviewer launch artifact is missing planned reviewer identity metadata.');
+    }
+    if (!isPlannedReviewerIdentity(plannedReviewerIdentity) && plannedReviewerIdentity !== reviewerIdentity) {
+        throw new Error(
+            `Reviewer delegation start requires the prepared launch artifact reviewer identity to match '${reviewerIdentity}'.`
+        );
+    }
+    if (isPlannedReviewerIdentity(plannedReviewerIdentity) && reviewerIdentity === plannedReviewerIdentity) {
+        throw new Error(
+            'Reviewer delegation start requires a resolved agent-scoped reviewer identity from the provider launch result; ' +
+            'planned pending identities are not valid here.'
+        );
+    }
+
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
-    const routingEvent = findMatchingRoutingEvent(timelineEvents, reviewType, reviewerExecutionMode, reviewerIdentity, null);
+    const routingReviewerIdentity = isPlannedReviewerIdentity(plannedReviewerIdentity)
+        ? plannedReviewerIdentity
+        : reviewerIdentity;
+    const routingEvent = findMatchingRoutingEvent(
+        timelineEvents,
+        reviewType,
+        reviewerExecutionMode,
+        routingReviewerIdentity,
+        null
+    );
     if (!routingEvent) {
         throw new Error(
             `Reviewer delegation start requires current-cycle REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}' ` +
-            `and reviewer '${reviewerIdentity}'.`
+            `and reviewer '${routingReviewerIdentity}'.`
         );
     }
     const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
@@ -189,7 +231,10 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         taskId,
         reviewType,
         reviewerExecutionMode,
-        reviewerIdentity,
+        reviewerIdentity: routingReviewerIdentity,
+        ...(reviewerIdentity !== routingReviewerIdentity
+            ? { resolvedReviewerIdentity: reviewerIdentity }
+            : {}),
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256: promptBinding.reviewerPromptSha256,
@@ -198,10 +243,9 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         outputTemplateSha256: handoffBindings.outputTemplateSha256,
         evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
         reviewerLaunchInputArtifactPath: launchInputArtifactPath,
-        reviewTreeStateSha256
+        reviewTreeStateSha256,
+        allowedAttestationStates: ['prepared']
     });
-
-    const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
     const preparedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const launchInputAttestation = resolveReviewerLaunchInputAttestation({
         repoRoot,
@@ -213,8 +257,11 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         rawArtifactPath: options.launchInputArtifactPath
     });
     const delegationStartedAtUtc = new Date().toISOString();
+    const isPlannedIdentityRebind = isPlannedReviewerIdentity(plannedReviewerIdentity)
+        && reviewerIdentity !== plannedReviewerIdentity;
     const startedArtifact: Record<string, unknown> = {
         ...preparedArtifact,
+        reviewer_identity: reviewerIdentity,
         attestation_state: 'delegation_started',
         attestation_source: attestationSource,
         launch_input_mode: launchInputAttestation.mode,
@@ -225,6 +272,10 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
         delegation_started_at_utc: delegationStartedAtUtc,
         launched_at_utc: delegationStartedAtUtc
     };
+    if (isPlannedIdentityRebind) {
+        startedArtifact.planned_reviewer_identity = plannedReviewerIdentity;
+        startedArtifact.reviewer_identity_resolved_at_utc = delegationStartedAtUtc;
+    }
     if (launchInputAttestation.artifactPath) {
         startedArtifact.launch_input_artifact_path = normalizePath(launchInputAttestation.artifactPath);
     }
@@ -246,6 +297,15 @@ return async function handleRecordReviewerDelegationStarted(gateArgv: string[]):
     if (options.forkContext !== undefined) {
         startedArtifact.fork_context = options.forkContext;
     }
+    startedArtifact.record_invocation_command = buildRecordReviewInvocationCommand({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewerExecutionMode: 'delegated_subagent',
+        reviewerIdentity,
+        reviewContextPath: contextPath,
+        reviewerLaunchArtifactPath: launchArtifactPath
+    });
     writeReviewArtifactJson(launchArtifactPath, startedArtifact);
     const startedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const invocationId = providerInvocationId || controllerInvocationId;

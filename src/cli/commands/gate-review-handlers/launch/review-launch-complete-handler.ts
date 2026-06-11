@@ -18,6 +18,7 @@ import {
 } from '../../shared-command-utils';
 import { readDependencyTimelineEvents } from '../result/review-dependency-timeline';
 import { buildRecordReviewResultCommand } from './reviewer-handoff-support';
+import { isPlannedReviewerIdentity } from '../../../../gate-runtime/review/reviewer-identity-contract';
 
 export interface CompleteReviewerLaunchHandlerDependencies {
     assertPreparedReviewerLaunchArtifact: typeof import('../index').assertPreparedReviewerLaunchArtifact;
@@ -172,13 +173,37 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         gateName: 'complete-reviewer-launch'
     });
     const reviewTreeStateSha256 = getReviewTreeStateSha256(parsedReviewContext);
+    const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+    const plannedReviewerIdentity = getStringField(
+        preparedArtifact,
+        'planned_reviewer_identity',
+        'plannedReviewerIdentity'
+    ) || getStringField(
+        preparedArtifact,
+        'reviewer_identity',
+        'reviewerIdentity',
+        'reviewer_session_id',
+        'reviewerSessionId'
+    );
+    if (!plannedReviewerIdentity) {
+        throw new Error('Reviewer launch artifact is missing planned reviewer identity metadata.');
+    }
+    const routingReviewerIdentity = isPlannedReviewerIdentity(plannedReviewerIdentity)
+        ? plannedReviewerIdentity
+        : reviewerIdentity;
     const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const timelineEvents = readDependencyTimelineEvents(timelinePath);
-    const routingEvent = findMatchingRoutingEvent(timelineEvents, reviewType, reviewerExecutionMode, reviewerIdentity, null);
+    const routingEvent = findMatchingRoutingEvent(
+        timelineEvents,
+        reviewType,
+        reviewerExecutionMode,
+        routingReviewerIdentity,
+        null
+    );
     if (!routingEvent) {
         throw new Error(
             `Reviewer launch completion requires current-cycle REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}' ` +
-            `and reviewer '${reviewerIdentity}'.`
+            `and reviewer '${routingReviewerIdentity}'.`
         );
     }
     const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
@@ -192,7 +217,10 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         taskId,
         reviewType,
         reviewerExecutionMode,
-        reviewerIdentity,
+        reviewerIdentity: routingReviewerIdentity,
+        ...(reviewerIdentity !== routingReviewerIdentity
+            ? { resolvedReviewerIdentity: reviewerIdentity }
+            : {}),
         reviewContextSha256: contextSha256,
         routingEventSha256: routingEventProvenance.event_sha256,
         reviewerPromptSha256: promptBinding.reviewerPromptSha256,
@@ -204,8 +232,6 @@ return async function handleCompleteReviewerLaunch(gateArgv: string[]): Promise<
         reviewTreeStateSha256,
         allowedAttestationStates: ['delegation_started']
     });
-
-    const preparedArtifact = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
     const preparedLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const artifactProviderInvocationId = getStringField(preparedArtifact, 'provider_invocation_id', 'providerInvocationId');
     const artifactControllerInvocationId = getStringField(preparedArtifact, 'controller_invocation_id', 'controllerInvocationId');

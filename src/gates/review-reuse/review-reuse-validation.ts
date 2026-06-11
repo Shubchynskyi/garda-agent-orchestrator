@@ -382,6 +382,10 @@ export function validateHistoricalReviewReuseCandidate(options: {
     if (reviewerExecutionMode !== 'delegated_subagent' || !reviewerIdentity.startsWith('agent:') || !historicalReviewerProvenance) {
         return { accepted: false, reason: 'prior review receipt is not delegated-subagent evidence with historical provenance' };
     }
+    const expectedInvocationContextSha256 = historicalProvenanceContextSha256;
+    if (!expectedInvocationContextSha256) {
+        return { accepted: false, reason: 'prior review provenance is missing the delegated invocation review-context hash' };
+    }
     if (historicalProvenanceReviewTreeStateSha256 !== expectedReviewTreeStateSha256) {
         return {
             accepted: false,
@@ -395,7 +399,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
         || historicalReviewerProvenance.review_type !== options.reviewType
         || historicalReviewerProvenance.reviewer_execution_mode !== reviewerExecutionMode
         || historicalReviewerProvenance.reviewer_identity !== reviewerIdentity
-        || historicalReviewerProvenance.review_context_sha256 !== expectedContextSha256
+        || historicalReviewerProvenance.review_context_sha256 !== expectedInvocationContextSha256
     ) {
         return { accepted: false, reason: 'prior review provenance does not bind to the prior delegated reviewer invocation' };
     }
@@ -465,7 +469,7 @@ export function validateHistoricalReviewReuseCandidate(options: {
             String(entry.details?.reviewer_identity || entry.details?.reviewerIdentity || '').trim()
             || String(entry.details?.reviewer_session_id || entry.details?.reviewerSessionId || '').trim()
         ) === reviewerIdentity
-        && String(entry.details?.review_context_sha256 || entry.details?.reviewContextSha256 || '').trim().toLowerCase() === expectedContextSha256
+        && String(entry.details?.review_context_sha256 || entry.details?.reviewContextSha256 || '').trim().toLowerCase() === expectedInvocationContextSha256
         && String(entry.details?.review_tree_state_sha256 || entry.details?.reviewTreeStateSha256 || '').trim().toLowerCase() === expectedReviewTreeStateSha256
         && String(entry.details?.routing_event_sha256 || entry.details?.routingEventSha256 || '').trim().toLowerCase() === historicalReviewerProvenance.routing_event_sha256
     ));

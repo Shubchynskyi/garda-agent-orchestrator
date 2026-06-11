@@ -23,11 +23,12 @@ import { validateStrictReusedReviewEvidence } from '../review-reuse/review-reuse
 import { getMandatoryDelegatedReviewTrustViolation } from '../review/review-trust-policy';
 import { evaluateHiddenReviewTimingTrust } from '../review/review-timing-trust';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from '../review/reviewer-routing';
+import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
     findLatestRoutingEventForReviewType,
     findLatestTimelineSequence,
     findMatchingInvocationAttestationEvent,
-    findMatchingRoutingEvent
+    findMatchingRoutingEventWithDeferredIdentityFallback
 } from './required-reviews-check-dependencies';
 import {
     normalizeSha256String,
@@ -505,14 +506,15 @@ export function validateReviewArtifactGateEligibility(options: {
                         }
                     }
                 } else {
-                    const routingEvent = findMatchingRoutingEvent(
+                    const routingEvent = findMatchingRoutingEventWithDeferredIdentityFallback(
                         options.timelineEvents,
                         reviewKey,
                         reviewerExecutionMode,
                         reviewerIdentity,
                         reviewerFallbackReason,
                         reviewerProvenance,
-                        laneDomainPreflightBindingAllowed
+                        laneDomainPreflightBindingAllowed,
+                        resolvedTaskId
                     );
                     const latestRoutingEvent = findLatestRoutingEventForReviewType(options.timelineEvents, reviewKey);
                     if (!routingEvent) {
@@ -601,7 +603,12 @@ export function validateReviewArtifactGateEligibility(options: {
                         if (
                             latestRoutingSessionId
                             && contextReviewerSessionId
-                            && latestRoutingSessionId !== contextReviewerSessionId
+                            && !reviewerIdentityMatchesDelegatedLaunchCycle({
+                                observedIdentity: latestRoutingSessionId,
+                                expectedIdentity: contextReviewerSessionId,
+                                taskId: resolvedTaskId || '',
+                                reviewType: reviewKey
+                            })
                         ) {
                             errors.push(
                                 `Review '${reviewKey}' has inconsistent reviewer identity between REVIEWER_DELEGATION_ROUTED telemetry ` +

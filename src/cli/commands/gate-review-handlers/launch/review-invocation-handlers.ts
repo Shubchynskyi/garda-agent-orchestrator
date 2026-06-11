@@ -27,6 +27,15 @@ import {
 import {
     validateReviewerLaunchArtifact
 } from './review-launch-artifact-validation';
+import {
+    isPlannedReviewerIdentity,
+    isResolvedReviewerIdentity
+} from '../../../../gate-runtime/review/reviewer-identity-contract';
+import {
+    getStringField,
+    readJsonFile
+} from './review-launch-artifact-fields';
+import { resolveReviewerLaunchArtifactPathForWrite } from './review-artifact-path-support';
 
 export interface ReviewInvocationHandlerDependencies {
     assertExplicitReviewContextRuntimeIdentity: typeof import('../index').assertExplicitReviewContextRuntimeIdentity;
@@ -139,11 +148,39 @@ export function createReviewInvocationHandlers(deps: ReviewInvocationHandlerDepe
             reviewerFallbackReason
         });
 
+        const launchArtifactPath = resolveReviewerLaunchArtifactPathForWrite({
+            repoRoot,
+            taskId,
+            reviewType,
+            artifactPathValue: options.reviewerLaunchArtifactPath
+        });
+        const launchArtifactForRouting = readJsonFile(launchArtifactPath, 'Reviewer launch artifact');
+        const plannedReviewerIdentity = getStringField(
+            launchArtifactForRouting,
+            'planned_reviewer_identity',
+            'plannedReviewerIdentity'
+        ) || getStringField(
+            launchArtifactForRouting,
+            'reviewer_identity',
+            'reviewerIdentity',
+            'reviewer_session_id',
+            'reviewerSessionId'
+        );
+        const routingReviewerIdentity = isPlannedReviewerIdentity(plannedReviewerIdentity)
+            ? plannedReviewerIdentity
+            : reviewerIdentity;
+
         const currentExecutionMode = normalizeCompatibilityReviewerExecutionMode(currentRouting?.actual_execution_mode);
         const currentReviewerSessionId = currentRouting?.reviewer_session_id != null
             ? String(currentRouting.reviewer_session_id).trim()
             : '';
-        if (currentExecutionMode !== reviewerExecutionMode || currentReviewerSessionId !== reviewerIdentity) {
+        const contextReviewerSessionMatches = currentReviewerSessionId === reviewerIdentity
+            || (
+                isPlannedReviewerIdentity(currentReviewerSessionId)
+                && currentReviewerSessionId === routingReviewerIdentity
+                && isResolvedReviewerIdentity(reviewerIdentity)
+            );
+        if (currentExecutionMode !== reviewerExecutionMode || !contextReviewerSessionMatches) {
             throw new Error(
                 `Reviewer invocation attestation requires review-context routing metadata for '${reviewType}' ` +
                 `to match reviewer '${reviewerIdentity}' and execution mode '${reviewerExecutionMode}'.`
@@ -156,13 +193,13 @@ export function createReviewInvocationHandlers(deps: ReviewInvocationHandlerDepe
             timelineEvents,
             reviewType,
             reviewerExecutionMode,
-            reviewerIdentity,
+            routingReviewerIdentity,
             reviewerFallbackReason
         );
         if (!routingEvent) {
             throw new Error(
                 `Reviewer invocation attestation requires current-cycle REVIEWER_DELEGATION_ROUTED telemetry for '${reviewType}' ` +
-                `and reviewer '${reviewerIdentity}'.`
+                `and reviewer '${routingReviewerIdentity}'.`
             );
         }
         const routingEventProvenance = buildReviewReceiptReviewerProvenance(routingEvent.event_type, routingEvent.integrity);
