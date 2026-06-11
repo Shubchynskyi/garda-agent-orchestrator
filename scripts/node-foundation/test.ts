@@ -7,7 +7,6 @@ import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } fr
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
 const NODE_FOUNDATION_TEST_SHARD_LOG_DIR_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_LOG_DIR';
 const NODE_FOUNDATION_TEST_DURATION_FILE_ENV = 'GARDA_NODE_FOUNDATION_TEST_DURATION_FILE';
-const NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV = 'GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME';
 const NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT = 24_000;
 const NODE_FOUNDATION_TEST_SLOWEST_REPORT_COUNT = 10;
 const GARDA_SHARDS_OPTION = '--garda-shards';
@@ -687,24 +686,11 @@ async function runShardedNodeTestProcesses(
     return results.find((result) => result.exitCode !== 0)?.exitCode || 0;
 }
 
-function ensureReusablePublishRuntime(repoRoot: string): void {
-    const manifestPath = path.join(repoRoot, 'dist', 'publish-runtime-manifest.json');
-    if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
-        throw new Error(
-            `${NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV}=1 requires prebuilt publish runtime artifact: ${manifestPath}`
-        );
-    }
-}
-
 export async function runNodeFoundationTests(): Promise<number> {
     const repoRoot: string = getRepoRoot();
     // Some lifecycle/update tests seed sync-surface fixtures from the current
     // publish-runtime bundle, so refresh dist before compiling .node-build.
-    if (process.env[NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME_ENV] === '1') {
-        ensureReusablePublishRuntime(repoRoot);
-    } else {
-        buildPublishRuntime();
-    }
+    buildPublishRuntime();
     const buildResult: BuildResult = buildNodeFoundation();
     const compiledTestFiles: string[] = collectCompiledNodeFoundationTestFiles(buildResult);
     const forwardedArgs = process.argv.slice(2);

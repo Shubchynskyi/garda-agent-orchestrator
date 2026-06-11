@@ -5,7 +5,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { getRepoRoot } from '../../../scripts/node-foundation/build';
+import {
+    buildNodeFoundationInputFingerprint,
+    buildPublishRuntimeInputFingerprint,
+    checkReusableBuildRoot,
+    getRepoRoot,
+    printReuseDiagnostic,
+    type BuildInputFingerprint
+} from '../../../scripts/node-foundation/build';
 const {
     acquireBuildRootLock,
     getBuildRootLockPath,
@@ -24,6 +31,15 @@ const {
     ) => void;
     getBuildRootLockPath: (buildRoot: string) => string;
     releaseBuildRootLock: (lockPath: string) => void;
+};
+const buildScriptsWrapper = require('../../../scripts/node-foundation/build-scripts.cjs') as {
+    buildScriptsInputFingerprint: (repoRoot: string) => { sha256: string };
+    getScriptsBuildReuseStatus: (
+        repoRoot: string,
+        buildRoot: string,
+        compiledEntryPath: string,
+        fingerprint: { sha256: string }
+    ) => { accepted: boolean; reason: string };
 };
 
 function writeTextFile(filePath: string, content: string): void {
@@ -480,6 +496,303 @@ test('build-scripts wrapper serializes concurrent workers and leaves a usable sc
         assert.ok(!fs.existsSync(path.join(fixtureRoot, '.scripts-build.lock')), 'wrapper lock directory must be removed after build');
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('build input fingerprint changes when source or config inputs change', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-build-fingerprint-'));
+    const repoRoot = path.join(tempRoot, 'repo');
+
+    try {
+        writeTextFile(path.join(repoRoot, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            version: '1.0.0',
+            engines: { node: '^22.13.0 || >=24.0.0' }
+        }));
+        writeTextFile(path.join(repoRoot, 'package-lock.json'), '{}\n');
+        writeTextFile(path.join(repoRoot, 'tsconfig.json'), '{}\n');
+        writeTextFile(path.join(repoRoot, 'tsconfig.tests.json'), '{}\n');
+        writeTextFile(path.join(repoRoot, 'src', 'index.ts'), 'export const value = 1;\n');
+        writeTextFile(path.join(repoRoot, 'tests', 'node', 'sample.test.ts'), 'void 0;\n');
+        writeTextFile(path.join(repoRoot, 'scripts', 'node-foundation', 'build.ts'), 'void 0;\n');
+        writeTextFile(path.join(repoRoot, 'scripts', 'node-foundation', 'build-root-lock.cjs'), 'module.exports = {};\n');
+
+        const before = buildNodeFoundationInputFingerprint(repoRoot);
+        writeTextFile(path.join(repoRoot, 'src', 'index.ts'), 'export const value = 2;\n');
+        const afterSourceChange = buildNodeFoundationInputFingerprint(repoRoot);
+        writeTextFile(path.join(repoRoot, 'tsconfig.tests.json'), '{"compilerOptions":{"strict":true}}\n');
+        const afterConfigChange = buildNodeFoundationInputFingerprint(repoRoot);
+
+        assert.notEqual(afterSourceChange.sha256, before.sha256);
+        assert.notEqual(afterConfigChange.sha256, afterSourceChange.sha256);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('publish-runtime fingerprint changes when build-prep scripts change', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-publish-fingerprint-'));
+    const repoRoot = path.join(tempRoot, 'repo');
+
+    try {
+        writeTextFile(path.join(repoRoot, 'package.json'), JSON.stringify({
+            name: 'fixture',
+            version: '1.0.0',
+            engines: { node: '^22.13.0 || >=24.0.0' }
+        }));
+        writeTextFile(path.join(repoRoot, 'package-lock.json'), '{}\n');
+        writeTextFile(path.join(repoRoot, 'VERSION'), '1.0.0\n');
+        writeTextFile(path.join(repoRoot, 'tsconfig.json'), '{}\n');
+        writeTextFile(path.join(repoRoot, 'tsconfig.build.json'), '{}\n');
+        writeTextFile(path.join(repoRoot, 'src', 'index.ts'), 'export const value = 1;\n');
+        writeTextFile(path.join(repoRoot, 'scripts', 'node-foundation', 'build.ts'), 'export const build = 1;\n');
+        writeTextFile(path.join(repoRoot, 'scripts', 'node-foundation', 'build-root-lock.cjs'), 'module.exports = {};\n');
+
+        const before = buildPublishRuntimeInputFingerprint(repoRoot);
+        writeTextFile(path.join(repoRoot, 'scripts', 'node-foundation', 'build.ts'), 'export const build = 2;\n');
+        const after = buildPublishRuntimeInputFingerprint(repoRoot);
+
+        assert.notEqual(after.sha256, before.sha256);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('build-scripts wrapper reuses current compiled wrapper build by fingerprint', async () => {
+    const repoRoot = getRepoRoot();
+    const tempRoot = createBuildScriptsFixture(repoRoot);
+    const fixtureRoot = path.join(tempRoot, 'repo');
+    const wrapperPath = path.join(fixtureRoot, 'scripts', 'node-foundation', 'build-scripts.cjs');
+    const compiledBuildPath = path.join(fixtureRoot, '.scripts-build', 'scripts', 'node-foundation', 'build.js');
+    const fingerprintPath = path.join(fixtureRoot, '.scripts-build', 'scripts-build-fingerprint.json');
+
+    try {
+        await runWorker(process.execPath, [wrapperPath], { cwd: fixtureRoot, env: process.env });
+        const firstStat = fs.statSync(compiledBuildPath);
+        const firstFingerprint = JSON.parse(fs.readFileSync(fingerprintPath, 'utf8')) as { sha256?: string };
+
+        await runWorker(process.execPath, [wrapperPath], { cwd: fixtureRoot, env: process.env });
+        const secondStat = fs.statSync(compiledBuildPath);
+        const secondFingerprint = JSON.parse(fs.readFileSync(fingerprintPath, 'utf8')) as { sha256?: string };
+
+        assert.equal(secondFingerprint.sha256, firstFingerprint.sha256);
+        assert.equal(secondStat.mtimeMs, firstStat.mtimeMs);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('build-scripts prebuilt test entry still requires a current fingerprint', () => {
+    const repoRoot = getRepoRoot();
+    const tempRoot = createBuildScriptsFixture(repoRoot);
+    const fixtureRoot = path.join(tempRoot, 'repo');
+    const buildRoot = path.join(fixtureRoot, '.scripts-build');
+    const compiledEntryPath = path.join(buildRoot, 'scripts', 'node-foundation', 'test.js');
+    const originalPrebuiltEnv = process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT;
+
+    try {
+        process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT = '1';
+        writeTextFile(compiledEntryPath, 'void 0;\n');
+        writeTextFile(path.join(buildRoot, 'src', 'bin', 'garda.js'), 'void 0;\n');
+        writeTextFile(path.join(buildRoot, 'scripts', 'node-foundation', 'build-root-lock.cjs'), 'module.exports = {};\n');
+
+        const fingerprint = buildScriptsWrapper.buildScriptsInputFingerprint(fixtureRoot);
+        const reuseStatus = buildScriptsWrapper.getScriptsBuildReuseStatus(
+            fixtureRoot,
+            buildRoot,
+            compiledEntryPath,
+            fingerprint
+        );
+
+        assert.equal(reuseStatus.accepted, false);
+        assert.equal(reuseStatus.reason, 'input_fingerprint_mismatch');
+    } finally {
+        if (originalPrebuiltEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_PREBUILT = originalPrebuiltEnv;
+        }
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('node-foundation manifest includes copied UI language packs for reuse validation', () => {
+    const repoRoot = getRepoRoot();
+    const manifestPath = path.join(repoRoot, '.node-build', 'node-foundation-manifest.json');
+
+    assert.ok(fs.existsSync(manifestPath), 'node-foundation manifest must exist for this compiled test run');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { files?: string[] };
+    const files = Array.isArray(manifest.files) ? manifest.files : [];
+
+    assert.ok(
+        files.some((filePath) => /^src\/reports\/ui\/lang-packs\/garda-ui-.+\.json$/u.test(filePath)),
+        'node-foundation manifest must track copied UI language pack JSON files'
+    );
+});
+
+function createReusableBuildFixture(kind: BuildInputFingerprint['kind']): {
+    buildRoot: string;
+    cleanup: () => void;
+    fingerprint: BuildInputFingerprint;
+    manifestPath: string;
+    repoRoot: string;
+} {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), `gao-reusable-${kind}-`));
+    const repoRoot = path.join(tempRoot, 'repo');
+    const buildRoot = path.join(repoRoot, kind === 'node-foundation' ? '.node-build' : 'dist');
+    const compiledCliPath = path.join(buildRoot, 'src', 'bin', 'garda.js');
+    const compiledTestPath = path.join(buildRoot, 'tests', 'node', 'sample.test.js');
+    const runtimeJsonPath = path.join(buildRoot, 'src', 'reports', 'ui', 'lang-packs', 'garda-ui-en.json');
+    const supportPath = path.join(buildRoot, 'scripts', 'node-foundation', 'build-root-lock.cjs');
+    const buildScriptsSupportPath = path.join(buildRoot, 'scripts', 'node-foundation', 'build-scripts.cjs');
+
+    writeTextFile(path.join(repoRoot, 'package.json'), JSON.stringify({
+        name: 'fixture',
+        version: '1.0.0',
+        engines: { node: '^22.13.0 || >=24.0.0' }
+    }));
+    writeTextFile(path.join(repoRoot, 'package-lock.json'), '{}\n');
+    writeTextFile(path.join(repoRoot, 'VERSION'), '1.0.0\n');
+    writeTextFile(path.join(repoRoot, 'tsconfig.json'), '{}\n');
+    writeTextFile(path.join(repoRoot, 'tsconfig.tests.json'), '{}\n');
+    writeTextFile(path.join(repoRoot, 'tsconfig.build.json'), '{}\n');
+    writeTextFile(path.join(repoRoot, 'src', 'index.ts'), 'export const value = 1;\n');
+    writeTextFile(path.join(repoRoot, 'tests', 'node', 'sample.test.ts'), 'void 0;\n');
+    writeTextFile(path.join(repoRoot, 'scripts', 'node-foundation', 'build.ts'), 'void 0;\n');
+    writeTextFile(path.join(repoRoot, 'scripts', 'node-foundation', 'build-root-lock.cjs'), 'module.exports = {};\n');
+
+    writeTextFile(compiledCliPath, 'void 0;\n');
+    if (kind === 'node-foundation') {
+        writeTextFile(compiledTestPath, 'void 0;\n');
+    }
+    writeTextFile(runtimeJsonPath, '{}\n');
+    writeTextFile(supportPath, 'module.exports = {};\n');
+    writeTextFile(buildScriptsSupportPath, 'module.exports = {};\n');
+
+    const fingerprint = kind === 'node-foundation'
+        ? buildNodeFoundationInputFingerprint(repoRoot)
+        : buildPublishRuntimeInputFingerprint(repoRoot);
+    const manifestPath = path.join(buildRoot, kind === 'node-foundation'
+        ? 'node-foundation-manifest.json'
+        : 'publish-runtime-manifest.json');
+    writeTextFile(manifestPath, JSON.stringify({
+        nodeEngineRange: '^22.13.0 || >=24.0.0',
+        sourceRoots: kind === 'node-foundation' ? ['src', 'tests/node', 'scripts/node-foundation'] : ['src'],
+        files: [
+            'src/bin/garda.js',
+            'src/reports/ui/lang-packs/garda-ui-en.json',
+            ...(kind === 'node-foundation' ? ['tests/node/sample.test.js'] : [])
+        ],
+        inputFingerprint: fingerprint
+    }, null, 2) + '\n');
+
+    return {
+        buildRoot,
+        cleanup() {
+            fs.rmSync(tempRoot, { recursive: true, force: true });
+        },
+        fingerprint,
+        manifestPath,
+        repoRoot
+    };
+}
+
+test('node-foundation reuse rejects missing copied assets and force rebuild requests', () => {
+    const fixture = createReusableBuildFixture('node-foundation');
+    const originalForceRebuild = process.env.GARDA_NODE_FOUNDATION_FORCE_REBUILD;
+
+    try {
+        let reuseStatus = checkReusableBuildRoot(
+            fixture.buildRoot,
+            fixture.manifestPath,
+            fixture.fingerprint,
+            'GARDA_NODE_FOUNDATION_FORCE_REBUILD',
+            true
+        );
+        assert.equal(reuseStatus.accepted, true);
+
+        fs.rmSync(path.join(fixture.buildRoot, 'src', 'reports', 'ui', 'lang-packs', 'garda-ui-en.json'));
+        reuseStatus = checkReusableBuildRoot(
+            fixture.buildRoot,
+            fixture.manifestPath,
+            fixture.fingerprint,
+            'GARDA_NODE_FOUNDATION_FORCE_REBUILD',
+            true
+        );
+        assert.equal(reuseStatus.accepted, false);
+        assert.equal(reuseStatus.reason, 'compiled_files_missing');
+
+        writeTextFile(path.join(fixture.buildRoot, 'src', 'reports', 'ui', 'lang-packs', 'garda-ui-en.json'), '{}\n');
+        process.env.GARDA_NODE_FOUNDATION_FORCE_REBUILD = '1';
+        reuseStatus = checkReusableBuildRoot(
+            fixture.buildRoot,
+            fixture.manifestPath,
+            fixture.fingerprint,
+            'GARDA_NODE_FOUNDATION_FORCE_REBUILD',
+            true
+        );
+        assert.equal(reuseStatus.accepted, false);
+        assert.equal(reuseStatus.reason, 'GARDA_NODE_FOUNDATION_FORCE_REBUILD=1');
+    } finally {
+        if (originalForceRebuild === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_FORCE_REBUILD;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_FORCE_REBUILD = originalForceRebuild;
+        }
+        fixture.cleanup();
+    }
+});
+
+test('node-foundation reuse rejects incomplete manifests that omit discovered tests', () => {
+    const fixture = createReusableBuildFixture('node-foundation');
+
+    try {
+        const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, 'utf8')) as { files: string[] };
+        manifest.files = manifest.files.filter((filePath) => filePath !== 'tests/node/sample.test.js');
+        writeTextFile(fixture.manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+
+        const reuseStatus = checkReusableBuildRoot(
+            fixture.buildRoot,
+            fixture.manifestPath,
+            fixture.fingerprint,
+            'GARDA_NODE_FOUNDATION_FORCE_REBUILD',
+            true
+        );
+
+        assert.equal(reuseStatus.accepted, false);
+        assert.equal(reuseStatus.reason, 'manifest_incomplete');
+    } finally {
+        fixture.cleanup();
+    }
+});
+
+test('publish-runtime reuse rejects missing copied assets and prints rejected diagnostics', () => {
+    const fixture = createReusableBuildFixture('publish-runtime');
+    const originalWrite = process.stdout.write;
+    let output = '';
+
+    try {
+        fs.rmSync(path.join(fixture.buildRoot, 'src', 'reports', 'ui', 'lang-packs', 'garda-ui-en.json'));
+        const reuseStatus = checkReusableBuildRoot(
+            fixture.buildRoot,
+            fixture.manifestPath,
+            fixture.fingerprint,
+            'GARDA_PUBLISH_RUNTIME_FORCE_REBUILD',
+            false
+        );
+        assert.equal(reuseStatus.accepted, false);
+        assert.equal(reuseStatus.reason, 'compiled_files_missing');
+
+        process.stdout.write = ((chunk: string | Uint8Array) => {
+            output += String(chunk);
+            return true;
+        }) as typeof process.stdout.write;
+        printReuseDiagnostic('PUBLISH_RUNTIME_BUILD', reuseStatus, fixture.fingerprint);
+
+        assert.match(output, /PUBLISH_RUNTIME_BUILD_REUSE rejected reason=compiled_files_missing fingerprint=[a-f0-9]{16}/);
+    } finally {
+        process.stdout.write = originalWrite;
+        fixture.cleanup();
     }
 });
 

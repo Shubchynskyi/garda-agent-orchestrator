@@ -1,4 +1,5 @@
 import * as childProcess from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -11,6 +12,9 @@ const REPO_CLI_SYNC_MAX_RETRIES = 8;
 const PRIMARY_COMPILED_CLI_RELATIVE_PATH = path.join('src', 'bin', 'garda.js');
 const PRIMARY_REPO_CLI_RELATIVE_PATH = path.join('bin', 'garda.js');
 const REPO_CLI_SYNC_LOCK_NAME = '.garda-cli-sync.lock';
+const BUILD_FINGERPRINT_SCHEMA_VERSION = 1 as const;
+const NODE_FOUNDATION_FORCE_REBUILD_ENV = 'GARDA_NODE_FOUNDATION_FORCE_REBUILD';
+const PUBLISH_RUNTIME_FORCE_REBUILD_ENV = 'GARDA_PUBLISH_RUNTIME_FORCE_REBUILD';
 const {
     resetBuildRoot,
     withBuildRootLock
@@ -29,6 +33,36 @@ export interface BuildResult {
     repoRoot: string;
 }
 
+export interface BuildInputFingerprint {
+    schemaVersion: 1;
+    kind: 'node-foundation' | 'publish-runtime';
+    nodeVersion: string;
+    platform: NodeJS.Platform;
+    arch: string;
+    nodeEngineRange: string;
+    typescriptVersion: string;
+    fileCount: number;
+    files: Array<{
+        path: string;
+        size: number;
+        sha256: string;
+    }>;
+    sha256: string;
+}
+
+interface BuildManifest {
+    nodeEngineRange?: string;
+    sourceRoots?: string[];
+    files?: string[];
+    inputFingerprint?: BuildInputFingerprint;
+}
+
+export interface ReusableBuildCheck {
+    accepted: boolean;
+    reason: string;
+    manifest?: BuildManifest;
+}
+
 export interface RepoCliSyncFsLike {
     chmodSync: typeof fs.chmodSync;
     existsSync: typeof fs.existsSync;
@@ -40,8 +74,9 @@ export interface RepoCliSyncFsLike {
 }
 
 const DEFAULT_REPO_CLI_SYNC_FS: RepoCliSyncFsLike = fs;
-const SCRIPT_RUNTIME_SUPPORT_FILES = Object.freeze(['build-root-lock.cjs']);
+const SCRIPT_RUNTIME_SUPPORT_FILES = Object.freeze(['build-root-lock.cjs', 'build-scripts.cjs']);
 const SOURCE_MAPPING_URL_COMMENT_RE = /(\r?\n)\/\/# sourceMappingURL=[^\r\n]+\.map\s*$/u;
+const INPUT_FILE_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.ts']);
 
 export function getRepoRoot(): string {
     let current = __dirname;
@@ -54,9 +89,9 @@ export function getRepoRoot(): string {
     throw new Error('Cannot resolve repo root from ' + __dirname);
 }
 
-function getNodeEngineRange(): string {
+function getNodeEngineRange(repoRoot: string = getRepoRoot()): string {
     const pkg: { engines?: { node?: string } } =
-        JSON.parse(fs.readFileSync(path.join(getRepoRoot(), 'package.json'), 'utf8'));
+        JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
     return (pkg.engines && pkg.engines.node) || '^22.13.0 || >=24.0.0';
 }
 
@@ -81,6 +116,220 @@ function collectFiles(rootPath: string, extension: string = '.js'): string[] {
     }
 
     return files.sort();
+}
+
+function collectFilesByExtensions(rootPath: string, extensions: readonly string[]): string[] {
+    return extensions.flatMap((extension) => collectFiles(rootPath, extension)).sort();
+}
+
+function toRepoRelativePath(repoRoot: string, filePath: string): string {
+    return path.relative(repoRoot, filePath).split(path.sep).join('/');
+}
+
+function hashText(value: string): string {
+    return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function hashFile(filePath: string): string {
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function readJsonFileIfExists<T>(filePath: string): T | null {
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
+    } catch {
+        return null;
+    }
+}
+
+function readTypescriptVersion(repoRoot: string): string {
+    const pkg = readJsonFileIfExists<{ version?: unknown }>(path.join(repoRoot, 'node_modules', 'typescript', 'package.json'));
+    return typeof pkg?.version === 'string' ? pkg.version : 'unknown';
+}
+
+function shouldFingerprintFile(filePath: string): boolean {
+    return INPUT_FILE_EXTENSIONS.has(path.extname(filePath));
+}
+
+function collectInputFiles(repoRoot: string, inputPaths: string[]): string[] {
+    const files: string[] = [];
+    const visit = (absolutePath: string): void => {
+        if (!fs.existsSync(absolutePath)) {
+            return;
+        }
+        const stat = fs.statSync(absolutePath);
+        if (stat.isDirectory()) {
+            for (const entry of fs.readdirSync(absolutePath, { withFileTypes: true })) {
+                if (entry.name === 'node_modules' || entry.name === '.git') {
+                    continue;
+                }
+                visit(path.join(absolutePath, entry.name));
+            }
+            return;
+        }
+        if (stat.isFile() && shouldFingerprintFile(absolutePath)) {
+            files.push(absolutePath);
+        }
+    };
+
+    for (const inputPath of inputPaths) {
+        visit(path.join(repoRoot, ...inputPath.split('/')));
+    }
+    return Array.from(new Set(files.map((filePath) => path.resolve(filePath)))).sort((a, b) =>
+        toRepoRelativePath(repoRoot, a).localeCompare(toRepoRelativePath(repoRoot, b))
+    );
+}
+
+function buildInputFingerprint(
+    repoRoot: string,
+    kind: BuildInputFingerprint['kind'],
+    inputPaths: string[]
+): BuildInputFingerprint {
+    const files = collectInputFiles(repoRoot, inputPaths).map((filePath) => {
+        const stat = fs.statSync(filePath);
+        return {
+            path: toRepoRelativePath(repoRoot, filePath),
+            size: stat.size,
+            sha256: hashFile(filePath)
+        };
+    });
+    const payload = {
+        schemaVersion: BUILD_FINGERPRINT_SCHEMA_VERSION,
+        kind,
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        nodeEngineRange: getNodeEngineRange(repoRoot),
+        typescriptVersion: readTypescriptVersion(repoRoot),
+        fileCount: files.length,
+        files
+    };
+    return {
+        ...payload,
+        sha256: hashText(JSON.stringify(payload))
+    };
+}
+
+export function buildNodeFoundationInputFingerprint(repoRoot: string = getRepoRoot()): BuildInputFingerprint {
+    return buildInputFingerprint(repoRoot, 'node-foundation', [
+        'package.json',
+        'package-lock.json',
+        'tsconfig.json',
+        'tsconfig.tests.json',
+        'src',
+        'tests/node',
+        'scripts/node-foundation'
+    ]);
+}
+
+export function buildPublishRuntimeInputFingerprint(repoRoot: string = getRepoRoot()): BuildInputFingerprint {
+    return buildInputFingerprint(repoRoot, 'publish-runtime', [
+        'package.json',
+        'package-lock.json',
+        'tsconfig.json',
+        'tsconfig.build.json',
+        'VERSION',
+        'src',
+        'scripts/node-foundation'
+    ]);
+}
+
+function readBuildManifest(manifestPath: string): BuildManifest | null {
+    return readJsonFileIfExists<BuildManifest>(manifestPath);
+}
+
+function manifestFilesExist(buildRoot: string, manifest: BuildManifest): boolean {
+    if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
+        return false;
+    }
+    return manifest.files.every((relativePath) =>
+        typeof relativePath === 'string'
+            && fs.existsSync(path.join(buildRoot, ...relativePath.split('/')))
+            && fs.statSync(path.join(buildRoot, ...relativePath.split('/'))).isFile()
+    );
+}
+
+function getExpectedBuildSourceRoots(requiresScriptSupport: boolean): string[] {
+    return requiresScriptSupport ? ['src', 'tests/node', 'scripts/node-foundation'] : ['src'];
+}
+
+function manifestCoversDiscoveredBuildFiles(
+    buildRoot: string,
+    manifest: BuildManifest,
+    requiresScriptSupport: boolean
+): boolean {
+    if (!Array.isArray(manifest.files)) {
+        return false;
+    }
+    const manifestFiles = new Set(manifest.files.filter((filePath): filePath is string => typeof filePath === 'string'));
+    const discoveredFiles: string[] = [];
+    for (const sourceRoot of getExpectedBuildSourceRoots(requiresScriptSupport)) {
+        const absoluteRoot = path.join(buildRoot, ...sourceRoot.split('/'));
+        if (!fs.existsSync(absoluteRoot)) {
+            continue;
+        }
+        for (const absolutePath of collectFilesByExtensions(absoluteRoot, ['.js', '.json'])) {
+            discoveredFiles.push(path.relative(buildRoot, absolutePath).split(path.sep).join('/'));
+        }
+    }
+    if (discoveredFiles.length === 0) {
+        return false;
+    }
+    return discoveredFiles.every((relativePath) => manifestFiles.has(relativePath));
+}
+
+function supportFilesExist(buildRoot: string): boolean {
+    return SCRIPT_RUNTIME_SUPPORT_FILES.every((fileName) => {
+        const supportPath = path.join(buildRoot, 'scripts', 'node-foundation', fileName);
+        return fs.existsSync(supportPath) && fs.statSync(supportPath).isFile();
+    });
+}
+
+export function checkReusableBuildRoot(
+    buildRoot: string,
+    manifestPath: string,
+    expectedFingerprint: BuildInputFingerprint,
+    forceRebuildEnvName: string,
+    requiresScriptSupport: boolean
+): ReusableBuildCheck {
+    if (process.env[forceRebuildEnvName] === '1') {
+        return { accepted: false, reason: `${forceRebuildEnvName}=1` };
+    }
+    const manifest = readBuildManifest(manifestPath);
+    if (!manifest) {
+        return { accepted: false, reason: 'manifest_missing_or_unreadable' };
+    }
+    if (manifest.inputFingerprint?.sha256 !== expectedFingerprint.sha256) {
+        return { accepted: false, reason: 'input_fingerprint_mismatch', manifest };
+    }
+    if (!manifestFilesExist(buildRoot, manifest)) {
+        return { accepted: false, reason: 'compiled_files_missing', manifest };
+    }
+    if (!manifestCoversDiscoveredBuildFiles(buildRoot, manifest, requiresScriptSupport)) {
+        return { accepted: false, reason: 'manifest_incomplete', manifest };
+    }
+    if (requiresScriptSupport && !supportFilesExist(buildRoot)) {
+        return { accepted: false, reason: 'script_support_missing', manifest };
+    }
+    const compiledCliPath = path.join(buildRoot, PRIMARY_COMPILED_CLI_RELATIVE_PATH);
+    if (!fs.existsSync(compiledCliPath) || !fs.statSync(compiledCliPath).isFile()) {
+        return { accepted: false, reason: 'compiled_cli_missing', manifest };
+    }
+    return { accepted: true, reason: 'input_fingerprint_match', manifest };
+}
+
+export function printReuseDiagnostic(label: string, check: ReusableBuildCheck, fingerprint: BuildInputFingerprint): void {
+    const status = check.accepted ? 'accepted' : 'rejected';
+    console.log(`${label}_REUSE ${status} reason=${check.reason} fingerprint=${fingerprint.sha256.slice(0, 16)}`);
+}
+
+function copiedFilesFromManifest(manifest: BuildManifest | undefined): string[] {
+    return Array.isArray(manifest?.files)
+        ? manifest.files.filter((filePath): filePath is string => typeof filePath === 'string').slice()
+        : [];
 }
 
 function runTsc(args: string[], repoRoot: string): void {
@@ -334,6 +583,27 @@ export function buildNodeFoundation(): BuildResult {
     const repoRoot = getRepoRoot();
     const buildRoot = path.join(repoRoot, '.node-build');
     return withBuildRootLock(buildRoot, () => {
+        const inputFingerprint = buildNodeFoundationInputFingerprint(repoRoot);
+        const manifestPath = path.join(buildRoot, 'node-foundation-manifest.json');
+        const reusable = checkReusableBuildRoot(
+            buildRoot,
+            manifestPath,
+            inputFingerprint,
+            NODE_FOUNDATION_FORCE_REBUILD_ENV,
+            true
+        );
+        printReuseDiagnostic('NODE_FOUNDATION_BUILD', reusable, inputFingerprint);
+        if (reusable.accepted) {
+            const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
+            return {
+                buildRoot,
+                copiedFiles: copiedFilesFromManifest(reusable.manifest),
+                generatedCliPath,
+                manifestPath,
+                repoRoot
+            };
+        }
+
         resetBuildRoot(buildRoot);
 
         // Compile the maintained runtime/test/build graph into .node-build.
@@ -347,19 +617,19 @@ export function buildNodeFoundation(): BuildResult {
         for (const subdir of ['src', 'tests/node', 'scripts/node-foundation']) {
             const compiledRoot = path.join(buildRoot, ...subdir.split('/'));
             if (fs.existsSync(compiledRoot)) {
-                for (const absPath of collectFiles(compiledRoot, '.js')) {
+                for (const absPath of collectFilesByExtensions(compiledRoot, ['.js', '.json'])) {
                     allFiles.push(path.relative(buildRoot, absPath).split(path.sep).join('/'));
                 }
             }
         }
 
-        const manifestPath = path.join(buildRoot, 'node-foundation-manifest.json');
         fs.writeFileSync(
             manifestPath,
             JSON.stringify({
-                nodeEngineRange: getNodeEngineRange(),
+                nodeEngineRange: getNodeEngineRange(repoRoot),
                 sourceRoots: ['src', 'tests/node', 'scripts/node-foundation'],
-                files: allFiles
+                files: allFiles,
+                inputFingerprint
             }, null, 2) + '\n',
             'utf8'
         );
@@ -372,6 +642,27 @@ export function buildPublishRuntime(): BuildResult {
     const repoRoot = getRepoRoot();
     const buildRoot = path.join(repoRoot, 'dist');
     return withBuildRootLock(buildRoot, () => {
+        const inputFingerprint = buildPublishRuntimeInputFingerprint(repoRoot);
+        const manifestPath = path.join(buildRoot, 'publish-runtime-manifest.json');
+        const reusable = checkReusableBuildRoot(
+            buildRoot,
+            manifestPath,
+            inputFingerprint,
+            PUBLISH_RUNTIME_FORCE_REBUILD_ENV,
+            false
+        );
+        printReuseDiagnostic('PUBLISH_RUNTIME_BUILD', reusable, inputFingerprint);
+        if (reusable.accepted) {
+            const generatedCliPath = syncRepoCliEntrypoint(buildRoot, repoRoot);
+            return {
+                buildRoot,
+                copiedFiles: copiedFilesFromManifest(reusable.manifest),
+                generatedCliPath,
+                manifestPath,
+                repoRoot
+            };
+        }
+
         resetBuildRoot(buildRoot);
 
         runTsc(['-p', 'tsconfig.build.json'], repoRoot);
@@ -380,18 +671,18 @@ export function buildPublishRuntime(): BuildResult {
 
         const srcBuildRoot = path.join(buildRoot, 'src');
         const copiedFiles: string[] = fs.existsSync(srcBuildRoot)
-            ? collectFiles(srcBuildRoot, '.js').map((f: string) =>
+            ? collectFilesByExtensions(srcBuildRoot, ['.js', '.json']).map((f: string) =>
                 path.relative(buildRoot, f).split(path.sep).join('/')
             )
             : [];
 
-        const manifestPath = path.join(buildRoot, 'publish-runtime-manifest.json');
         fs.writeFileSync(
             manifestPath,
             JSON.stringify({
-                nodeEngineRange: getNodeEngineRange(),
+                nodeEngineRange: getNodeEngineRange(repoRoot),
                 sourceRoots: ['src'],
-                files: copiedFiles
+                files: copiedFiles,
+                inputFingerprint
             }, null, 2) + '\n',
             'utf8'
         );
