@@ -63,5 +63,7 @@ export interface StatusSnapshot {
     };
     activeProfile: string | null;
     mandatoryFullSuiteEnabled: boolean | null;
+    mandatoryFullSuiteCommand: string | null;
+    mandatoryFullSuitePerformance: string | null;
     latestUpdateNotice: string | null;
 }

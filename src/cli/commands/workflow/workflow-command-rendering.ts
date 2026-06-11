@@ -36,6 +36,7 @@ import {
     supportsColor,
     yellow
 } from '../cli-helpers';
+import { buildFullSuitePerformanceGuidance, formatFullSuitePerformanceGuidance } from '../../../gates/full-suite/full-suite-validation';
 import {
     cloneOrchestratorWorkPolicyConfig,
     cloneAutoBackupConfig,
@@ -52,7 +53,8 @@ import type {
 } from './workflow-command-types';
 
 export function buildMandatoryFullSuiteLine(config: { full_suite_validation: WorkflowConfigData['full_suite_validation'] }): string {
-    return `Mandatory full-suite: ${config.full_suite_validation.enabled ? 'true' : 'false'} placement=${config.full_suite_validation.placement}`;
+    const guidance = buildFullSuitePerformanceGuidance(config.full_suite_validation.command);
+    return `Mandatory full-suite: ${config.full_suite_validation.enabled ? 'true' : 'false'} placement=${config.full_suite_validation.placement} mode=${guidance.mode}`;
 }
 
 export function isConfiguredCompileGateCommand(command: unknown): command is string {
@@ -240,6 +242,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Full suite validation');
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
+    lines.push(`FullSuitePerformance: ${formatFullSuitePerformanceGuidance(fullSuiteValidation.command)}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
     lines.push(`FullSuiteGreenSummaryMaxLines: ${fullSuiteValidation.green_summary_max_lines}`);
     lines.push(`FullSuiteRedFailureChunkLines: ${fullSuiteValidation.red_failure_chunk_lines}`);

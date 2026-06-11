@@ -92,6 +92,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Mandatory full-suite: false'));
         assert.ok(output.includes('Review execution policy: code_first_optional'));
         assert.ok(output.includes('FullSuiteCommand: npm test'));
+        assert.ok(output.includes('FullSuitePerformance: mode=standard; optimized=false; boundary=mandatory_full_suite_not_smoke_or_fast'));
         assert.ok(output.includes('FullSuitePlacement: before_test_review'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
@@ -714,7 +715,7 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.project_memory_maintenance.enabled, true);
         assert.equal(parsed.project_memory_maintenance.mode, 'update');
         assert.equal(parsed.task_reset.enabled, false);
-        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review');
+        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=false');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
@@ -745,7 +746,7 @@ test('workflow set --json returns valid JSON for machine-readable automation', (
         assert.equal(parsed.full_suite_validation.placement, 'before_test_review');
         assert.equal(parsed.review_execution_policy.mode, 'strict_sequential');
         assert.equal(parsed.task_reset.enabled, false);
-        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review');
+        assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: strict_sequential');
         assert.ok(parsed.changed_fields.includes('full_suite_validation.enabled'));
         assert.ok(parsed.changed_fields.includes('review_execution_policy.mode'));

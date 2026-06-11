@@ -359,6 +359,8 @@ test('getStatusSnapshot prefers confirmed agent-init language while still exposi
         assert.equal(snapshot.assistantLanguage, 'Russian');
         assert.equal(snapshot.assistantLanguageConfirmed, true);
         assert.equal(snapshot.mandatoryFullSuiteEnabled, true);
+        assert.equal(snapshot.mandatoryFullSuiteCommand, 'npm test');
+        assert.match(snapshot.mandatoryFullSuitePerformance || '', /mode=standard/);
         assert.equal(snapshot.latestUpdateNotice, '1.2.3');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -992,6 +994,31 @@ test('formatStatusSnapshot produces expected text markers', () => {
         assert.ok(output.includes('Workspace Stages'));
         assert.ok(output.includes('Installed'));
         assert.ok(output.includes('RecommendedNextCommand'));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('formatStatusSnapshot prints mandatory full-suite performance guidance when configured', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENTS.md');
+        const bundlePath = path.join(tmpDir, 'garda-agent-orchestrator');
+        writeStatusFixtureFile(
+            path.join(bundlePath, 'live', 'config', 'workflow-config.json'),
+            JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm run test:sharded'
+                }
+            }, null, 2)
+        );
+        const snapshot = getStatusSnapshot(tmpDir);
+        const output = formatStatusSnapshot(snapshot);
+
+        assert.ok(output.includes('MandatoryFullSuite: enabled'));
+        assert.ok(output.includes('MandatoryFullSuiteCommand: npm run test:sharded'));
+        assert.ok(output.includes('MandatoryFullSuitePerformance: mode=optimized_sharded; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run test:sharded"; fallback_command="npm test"'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -26,6 +26,7 @@ import {
 import { assessProtectedManifest } from './protected-manifest-assessment';
 import { readTaskQueueStatusMap } from './task-status-map';
 import { buildRecommendedNextCommand } from './status-recommendations';
+import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-suite-validation';
 import type {
     AgentInitializationPendingReason,
     AgentInitState,
@@ -49,22 +50,34 @@ function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
 
-function readMandatoryFullSuiteEnabled(bundlePath: string): boolean | null {
+function readMandatoryFullSuiteConfig(bundlePath: string): {
+    enabled: boolean | null;
+    command: string | null;
+    performance: string | null;
+} {
     const workflowConfigPath = path.join(bundlePath, 'live', 'config', 'workflow-config.json');
     if (!pathExists(workflowConfigPath)) {
-        return null;
+        return { enabled: null, command: null, performance: null };
     }
 
     try {
         const parsed = JSON.parse(readTextFile(workflowConfigPath)) as Record<string, unknown>;
         const rawSection = parsed.full_suite_validation;
         if (!rawSection || typeof rawSection !== 'object' || Array.isArray(rawSection)) {
-            return null;
+            return { enabled: null, command: null, performance: null };
         }
-        const enabled = (rawSection as Record<string, unknown>).enabled;
-        return typeof enabled === 'boolean' ? enabled : null;
+        const section = rawSection as Record<string, unknown>;
+        const enabled = section.enabled;
+        const command = typeof section.command === 'string' && section.command.trim()
+            ? section.command.trim()
+            : null;
+        return {
+            enabled: typeof enabled === 'boolean' ? enabled : null,
+            command,
+            performance: command ? formatFullSuitePerformanceGuidance(command) : null
+        };
     } catch {
-        return null;
+        return { enabled: null, command: null, performance: null };
     }
 }
 
@@ -494,7 +507,9 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     const timelineSummary = readTimelineSummary(bundlePath, bundlePresent, taskStatuses);
     const activeProfile = readActiveProfile(bundlePath, bundlePresent);
     const toxinMetricsSummary = readToxinMetricsSummary(resolvedTargetRoot, bundlePath, bundlePresent);
-    const mandatoryFullSuiteEnabled = bundlePresent ? readMandatoryFullSuiteEnabled(bundlePath) : null;
+    const mandatoryFullSuiteConfig = bundlePresent
+        ? readMandatoryFullSuiteConfig(bundlePath)
+        : { enabled: null, command: null, performance: null };
     const latestUpdateNotice = bundlePresent ? readLatestUpdateNotice(bundlePath) : null;
 
     let enforceNoAutoCommit: boolean | null = null;
@@ -542,7 +557,9 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
         protectedManifestEvidence,
         protectedManifestAssessment,
         toxinMetricsSummary,
-        mandatoryFullSuiteEnabled,
+        mandatoryFullSuiteEnabled: mandatoryFullSuiteConfig.enabled,
+        mandatoryFullSuiteCommand: mandatoryFullSuiteConfig.command,
+        mandatoryFullSuitePerformance: mandatoryFullSuiteConfig.performance,
         latestUpdateNotice
     };
 }

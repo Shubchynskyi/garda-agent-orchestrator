@@ -111,6 +111,8 @@ Local release proof remains stricter than the CI fast release matrix:
 Full-suite optimization compatibility guardrails:
 
 - Do not replace mandatory full-suite validation with focused shards, smoke tests, or `validate:release:fast`; optimized modes may only change how equivalent full-suite evidence is produced and aggregated.
+- The optimized local command is copy-paste safe as `npm run test:sharded`; it still runs the mandatory full-suite selection, emits shard logs, duration telemetry, and a fail-closed aggregate result. Use `npm test` as the standard fallback when validating without the optimized runner.
+- Workflow output and `next-step` label optimized commands as `optimized_sharded` or reuse-aware full-suite modes; those labels describe execution strategy only, not weaker validation.
 - Do not depend on ignored local runtime state, `.node-build/` leftovers, duration history, or machine-local cache state for CI/release correctness. Every official CI job starts from checkout, `npm ci`, and an explicit build/test command.
 - Keep optimized test execution cross-platform for Linux, Windows, and macOS. Shell snippets used in CI must stay portable or be explicitly scoped with a compatible shell.
 - Keep failure forensics useful: shard runners and full-suite validation must preserve enough logs, failing test identity, duration, command, and aggregate exit status for release triage.

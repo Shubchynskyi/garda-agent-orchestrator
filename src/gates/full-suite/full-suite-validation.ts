@@ -71,6 +71,14 @@ export interface FullSuiteTimeoutForecast {
     warning: string | null;
 }
 
+export interface FullSuitePerformanceGuidance {
+    mode: 'standard' | 'optimized_sharded' | 'optimized_reuse_aware' | 'optimized_sharded_reuse_aware';
+    optimized: boolean;
+    mandatory_boundary: string;
+    optimized_command: string | null;
+    fallback_command: string | null;
+}
+
 export const FULL_SUITE_DURATION_HISTORY_LIMIT = 5;
 export const FULL_SUITE_TIMEOUT_MARGIN_RATIO = 0.2;
 export const FULL_SUITE_TIMEOUT_MIN_MARGIN_SECONDS = 30;
@@ -326,6 +334,54 @@ export function formatFullSuiteTimeoutForecast(forecast: FullSuiteTimeoutForecas
         + `(no recent matching full-suite duration history; using configured timeout).${suffix}`;
 }
 
+function commandIncludesShardMode(command: string): boolean {
+    return /\btest:sharded\b/i.test(command) || /--garda-shards(?:\s+|=)\d+/i.test(command);
+}
+
+function commandIncludesReuseAwareMode(command: string): boolean {
+    return /\bbuild-prep\b/i.test(command)
+        || /\breuse\b/i.test(command)
+        || /\bNODE_FOUNDATION_BUILD_REUSE\b/i.test(command)
+        || /\bPUBLISH_RUNTIME_BUILD_REUSE\b/i.test(command)
+        || /\bSCRIPTS_BUILD_REUSE\b/i.test(command);
+}
+
+export function buildFullSuitePerformanceGuidance(command: string): FullSuitePerformanceGuidance {
+    const trimmedCommand = redactSecretText(String(command || '').trim());
+    const sharded = commandIncludesShardMode(trimmedCommand);
+    const reuseAware = commandIncludesReuseAwareMode(trimmedCommand);
+    const mode = sharded && reuseAware
+        ? 'optimized_sharded_reuse_aware'
+        : sharded
+            ? 'optimized_sharded'
+            : reuseAware
+                ? 'optimized_reuse_aware'
+                : 'standard';
+    return {
+        mode,
+        optimized: mode !== 'standard',
+        mandatory_boundary: 'mandatory full-suite evidence; not a smoke, fast, or release-smoke substitute',
+        optimized_command: mode !== 'standard' && trimmedCommand ? trimmedCommand : null,
+        fallback_command: trimmedCommand && trimmedCommand !== 'npm test' ? 'npm test' : null
+    };
+}
+
+export function formatFullSuitePerformanceGuidance(command: string): string {
+    const guidance = buildFullSuitePerformanceGuidance(command);
+    const parts = [
+        `mode=${guidance.mode}`,
+        `optimized=${String(guidance.optimized)}`,
+        'boundary=mandatory_full_suite_not_smoke_or_fast'
+    ];
+    if (guidance.optimized_command) {
+        parts.push(`optimized_command="${guidance.optimized_command}"`);
+    }
+    if (guidance.fallback_command) {
+        parts.push(`fallback_command="${guidance.fallback_command}"`);
+    }
+    return parts.join('; ');
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -389,6 +445,7 @@ export function compactGreenSummary(outputLines: string[], maxLines: number): st
         if (nodeTestFail) summaryLines.push(nodeTestFail);
         const nodeTestDuration = extractMetricLine(outputLines, /^#\s*duration_ms\s/i);
         if (nodeTestDuration) summaryLines.push(nodeTestDuration);
+        appendSlowestKnownTestLines(summaryLines, outputLines, maxLines);
         return summaryLines.slice(0, maxLines);
     }
 
@@ -403,12 +460,25 @@ export function compactGreenSummary(outputLines: string[], maxLines: number): st
     if (durationLine && durationLine !== totalTests) {
         summaryLines.push(durationLine);
     }
+    appendSlowestKnownTestLines(summaryLines, outputLines, maxLines);
 
     if (summaryLines.length === 0) {
         return outputLines.slice(-Math.min(maxLines, outputLines.length));
     }
 
     return summaryLines.slice(0, maxLines);
+}
+
+function appendSlowestKnownTestLines(summaryLines: string[], outputLines: string[], maxLines: number): void {
+    const availableSlots = Math.max(0, maxLines - summaryLines.length);
+    if (availableSlots === 0) {
+        return;
+    }
+    const slowestLines = outputLines
+        .map((line) => line.trim())
+        .filter((line) => /^NODE_FOUNDATION_TEST_SLOWEST\s+/i.test(line))
+        .slice(0, Math.min(availableSlots, 3));
+    summaryLines.push(...slowestLines);
 }
 
 function extractMetricLine(lines: string[], pattern: RegExp): string | null {
@@ -745,6 +815,7 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
     lines.push(`FULL_SUITE_VALIDATION_${result.status}`);
     lines.push(`Enabled: ${result.enabled}`);
     lines.push(`Command: ${redactSecretText(result.command)}`);
+    lines.push(`PerformanceMode: ${formatFullSuitePerformanceGuidance(result.command)}`);
     if (typeof result.required === 'boolean') {
         lines.push(`Required: ${result.required}`);
     }

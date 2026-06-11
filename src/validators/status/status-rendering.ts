@@ -204,6 +204,15 @@ export function formatStatusSnapshot(snapshot: StatusSnapshot, options?: { headi
     if (snapshot.activeProfile) {
         lines.push(`ActiveProfile: ${snapshot.activeProfile}`);
     }
+    if (snapshot.mandatoryFullSuiteEnabled !== null) {
+        lines.push(`MandatoryFullSuite: ${snapshot.mandatoryFullSuiteEnabled ? 'enabled' : 'disabled'}`);
+    }
+    if (snapshot.mandatoryFullSuiteCommand) {
+        lines.push(`MandatoryFullSuiteCommand: ${snapshot.mandatoryFullSuiteCommand}`);
+    }
+    if (snapshot.mandatoryFullSuitePerformance) {
+        lines.push(`MandatoryFullSuitePerformance: ${snapshot.mandatoryFullSuitePerformance}`);
+    }
 
     lines.push('');
     lines.push('Workspace Stages');

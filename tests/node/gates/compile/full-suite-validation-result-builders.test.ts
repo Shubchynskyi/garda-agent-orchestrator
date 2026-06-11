@@ -264,6 +264,84 @@ describe('gates/full-suite-validation', () => {
             assert.ok(text.includes('CycleBinding: task_id=T-123;'));
         });
 
+        it('formatFullSuiteValidationResult labels optimized sharded full-suite commands as mandatory evidence', () => {
+            const config = {
+                ...loadFullSuiteValidationConfig('/nonexistent'),
+                enabled: true,
+                command: 'npm run test:sharded'
+            };
+            const result = buildValidationResult(config, 0, false, ['# pass 1'], null, ['src/changed.ts'], {
+                task_id: 'T-123',
+                preflight_path: 'runtime/reviews/T-123-preflight.json',
+                preflight_sha256: 'abc123',
+                compile_gate_timestamp: null
+            });
+            const text = formatFullSuiteValidationResult(result);
+
+            assert.ok(text.includes('PerformanceMode: mode=optimized_sharded; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run test:sharded"; fallback_command="npm test"'));
+        });
+
+        it('formatFullSuiteValidationResult labels reuse-aware full-suite commands as mandatory evidence', () => {
+            const config = {
+                ...loadFullSuiteValidationConfig('/nonexistent'),
+                enabled: true,
+                command: 'npm run build-prep && npm test'
+            };
+            const result = buildValidationResult(config, 0, false, ['# pass 1'], null, ['src/changed.ts'], {
+                task_id: 'T-123',
+                preflight_path: 'runtime/reviews/T-123-preflight.json',
+                preflight_sha256: 'abc123',
+                compile_gate_timestamp: null
+            });
+            const text = formatFullSuiteValidationResult(result);
+
+            assert.ok(text.includes('PerformanceMode: mode=optimized_reuse_aware; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run build-prep && npm test"; fallback_command="npm test"'));
+        });
+
+        it('formatFullSuiteValidationResult labels sharded reuse-aware full-suite commands as mandatory evidence', () => {
+            const config = {
+                ...loadFullSuiteValidationConfig('/nonexistent'),
+                enabled: true,
+                command: 'npm run build-prep && npm run test:sharded'
+            };
+            const result = buildValidationResult(config, 0, false, ['# pass 1'], null, ['src/changed.ts'], {
+                task_id: 'T-123',
+                preflight_path: 'runtime/reviews/T-123-preflight.json',
+                preflight_sha256: 'abc123',
+                compile_gate_timestamp: null
+            });
+            const text = formatFullSuiteValidationResult(result);
+
+            assert.ok(text.includes('PerformanceMode: mode=optimized_sharded_reuse_aware; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run build-prep && npm run test:sharded"; fallback_command="npm test"'));
+        });
+
+        it('formatFullSuiteValidationResult surfaces slowest known tests from sharded runner output', () => {
+            const config = {
+                ...loadFullSuiteValidationConfig('/nonexistent'),
+                enabled: true,
+                command: 'npm run test:sharded',
+                green_summary_max_lines: 5
+            };
+            const result = buildValidationResult(config, 0, false, [
+                'NODE_FOUNDATION_TEST_SHARD_PLAN source=duration duration_known=2/2',
+                'NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-a.test.ts duration_ms=42000',
+                'NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-b.test.ts duration_ms=39000',
+                '# tests 20',
+                '# pass 20',
+                '# fail 0',
+                '# duration_ms 120000'
+            ], null, ['src/changed.ts'], {
+                task_id: 'T-123',
+                preflight_path: 'runtime/reviews/T-123-preflight.json',
+                preflight_sha256: 'abc123',
+                compile_gate_timestamp: null
+            });
+            const text = formatFullSuiteValidationResult(result);
+
+            assert.ok(text.includes('NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-a.test.ts duration_ms=42000'));
+            assert.ok(text.includes('NODE_FOUNDATION_TEST_SLOWEST tests/node/slow-b.test.ts duration_ms=39000'));
+        });
+
         it('formatFullSuiteValidationResult redacts secrets from configured command output', () => {
             const config = {
                 ...loadFullSuiteValidationConfig('/nonexistent'),

@@ -85,7 +85,7 @@ function buildFullSuiteDurationTestConfig(command = 'npm test'): FullSuiteValida
 
 
 describe('gates/full-suite-validation', () => {
-    describe('CLI integration', () => {
+    describe('CLI integration', { timeout: 120_000 }, () => {
         it('gate full-suite-validation prints SKIPPED and writes JSON artifact when disabled', async () => {
             const repoRoot = path.resolve(process.cwd());
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-skip-'));

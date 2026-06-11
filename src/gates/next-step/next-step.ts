@@ -38,6 +38,7 @@ import {
 } from '../task-audit/task-audit-summary-collectors';
 import {
     buildFullSuiteTimeoutForecast,
+    formatFullSuitePerformanceGuidance,
     formatFullSuiteTimeoutForecast,
     isFullSuiteNotRequiredForDocsOnlyScope,
     isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
@@ -327,6 +328,7 @@ export interface NextStepFullSuiteSummary {
     note: string;
     recommended_timeout_seconds?: number | null;
     timeout_forecast_note?: string | null;
+    performance_guidance_note?: string | null;
 }
 
 export interface NextStepReviewSummary {
@@ -1438,6 +1440,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         config_source: 'effective_workflow_config',
         recommended_timeout_seconds: fullSuiteTimeoutForecast?.recommended_timeout_seconds ?? null,
         timeout_forecast_note: fullSuiteTimeoutForecastLine,
+        performance_guidance_note: formatFullSuitePerformanceGuidance(fullSuiteConfig.command),
         note: fullSuiteConfig.enabled && fullSuiteNotRequiredForDocsOnly
             ? 'Full-suite validation is enabled, but this docs-only scope only requires a NOT_REQUIRED artifact.'
             : fullSuiteConfig.enabled && fullSuiteNotRequiredForZeroDiffNoReviewableScope
