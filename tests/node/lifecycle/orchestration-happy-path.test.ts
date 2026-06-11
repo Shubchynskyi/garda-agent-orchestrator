@@ -116,17 +116,6 @@ function materializeProjectMemory(bundleRoot: string): void {
     }
 }
 
-function backdateDelegationStartedAtUtc(launchArtifactPath: string, offsetMs = 12_000): void {
-    const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')) as Record<string, unknown>;
-    const targetStartedAtMs = Date.now() - offsetMs;
-    const targetStartedAtUtc = new Date(targetStartedAtMs).toISOString();
-    const targetPreparedAtUtc = new Date(targetStartedAtMs - 1_000).toISOString();
-    launchArtifact.launch_prepared_at_utc = targetPreparedAtUtc;
-    launchArtifact.delegation_started_at_utc = targetStartedAtUtc;
-    launchArtifact.launched_at_utc = targetStartedAtUtc;
-    fs.writeFileSync(launchArtifactPath, `${JSON.stringify(launchArtifact, null, 2)}\n`, 'utf8');
-}
-
 function syncReviewReceiptToCurrentCycle(
     repoRoot: string,
     taskId: string,
@@ -534,7 +523,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--fresh-context',
             '--fork-context', 'false'
         ]);
-        backdateDelegationStartedAtUtc(reviewerLaunchArtifactPath);
+        await new Promise((resolve) => setTimeout(resolve, 10_100));
 
         assertNextGate(workspaceRoot, 'complete-reviewer-launch');
         await runReviewGateCommand(workspaceRoot, [

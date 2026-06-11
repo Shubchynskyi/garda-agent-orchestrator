@@ -705,7 +705,8 @@ export function writeReviewEvidence(
         reviewer_session_id: `agent:${reviewType}-reviewer`
     });
     const launchPreparedAtUtc = '2026-04-28T00:00:00.000Z';
-    const launchedAtUtc = '2026-04-28T00:00:01.000Z';
+    const delegationStartedAtUtc = '2026-04-28T00:00:01.000Z';
+    const launchedAtUtc = delegationStartedAtUtc;
     const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
     const invocationAttestedAtUtc = '2026-04-28T00:00:13.000Z';
     const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
@@ -748,10 +749,22 @@ export function writeReviewEvidence(
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: `test-${reviewType}-invocation`,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: delegationStartedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             ...launchInputEvidenceFixture(taskId, reviewType),
             fork_context: false
+        });
+        appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: `agent:${reviewType}-reviewer`,
+            reviewer_identity: `agent:${reviewType}-reviewer`,
+            review_context_sha256: sha256Text(reviewContextText),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            provider_invocation_id: `test-${reviewType}-invocation`,
+            delegation_started_at_utc: delegationStartedAtUtc
         });
         reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
     }
@@ -781,6 +794,7 @@ export function writeReviewEvidence(
                 reviewer_launch_tool: 'test-subagent-spawn',
                 provider_invocation_id: `test-${reviewType}-invocation`,
                 launch_prepared_at_utc: launchPreparedAtUtc,
+                delegation_started_at_utc: delegationStartedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
                 launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
@@ -816,6 +830,7 @@ export function writeReviewEvidence(
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: delegationStartedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             invocation_attested_at_utc: invocationAttestedAtUtc

@@ -701,7 +701,8 @@ function writeReviewEvidence(
         reviewer_session_id: `agent:${reviewType}-reviewer`
     });
     const launchPreparedAtUtc = '2026-04-28T00:00:00.000Z';
-    const launchedAtUtc = '2026-04-28T00:00:01.000Z';
+    const delegationStartedAtUtc = '2026-04-28T00:00:01.000Z';
+    const launchedAtUtc = delegationStartedAtUtc;
     const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
     const invocationAttestedAtUtc = '2026-04-28T00:00:13.000Z';
     const reviewResultRecordedAtUtc = '2026-04-28T00:00:30.000Z';
@@ -744,10 +745,22 @@ function writeReviewEvidence(
             launch_tool: 'test-subagent-spawn',
             provider_invocation_id: `test-${reviewType}-invocation`,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: delegationStartedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             ...launchInputEvidenceFixture(taskId, reviewType),
             fork_context: false
+        });
+        appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: `agent:${reviewType}-reviewer`,
+            reviewer_identity: `agent:${reviewType}-reviewer`,
+            review_context_sha256: sha256Text(reviewContextText),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            provider_invocation_id: `test-${reviewType}-invocation`,
+            delegation_started_at_utc: delegationStartedAtUtc
         });
         reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
     }
@@ -777,6 +790,7 @@ function writeReviewEvidence(
                 reviewer_launch_tool: 'test-subagent-spawn',
                 provider_invocation_id: `test-${reviewType}-invocation`,
                 launch_prepared_at_utc: launchPreparedAtUtc,
+                delegation_started_at_utc: delegationStartedAtUtc,
                 launched_at_utc: launchedAtUtc,
                 launch_completed_at_utc: launchCompletedAtUtc,
                 launch_input_mode: launchInputEvidenceFixture(taskId, reviewType).launch_input_mode,
@@ -812,6 +826,7 @@ function writeReviewEvidence(
             review_tree_state_sha256: reviewTreeStateSha256,
             routing_event_sha256: routeIntegrity.event_sha256,
             launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: delegationStartedAtUtc,
             launched_at_utc: launchedAtUtc,
             launch_completed_at_utc: launchCompletedAtUtc,
             invocation_attested_at_utc: invocationAttestedAtUtc
@@ -1084,6 +1099,7 @@ function seedCompletedReviewerLaunchAndInvocation(
         launch_binding_sha256: launchBindingSha256
     });
     const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, reviewType, 'reviewer-launch.json');
+    const delegationStartedAtUtc = '2026-04-28T00:00:00.000Z';
     writeJson(launchArtifactPath, {
         schema_version: 1,
         evidence_type: 'delegated_reviewer_launch',
@@ -1098,9 +1114,21 @@ function seedCompletedReviewerLaunchAndInvocation(
         prepared_launch_event_sha256: preparedIntegrity.event_sha256,
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
-        launched_at_utc: '2026-04-28T00:00:00.000Z',
+        delegation_started_at_utc: delegationStartedAtUtc,
+        launched_at_utc: delegationStartedAtUtc,
         ...launchInputEvidenceFixture(taskId, reviewType),
         fork_context: false
+    });
+    appendEvent(repoRoot, taskId, 'REVIEWER_DELEGATION_STARTED', 'INFO', {
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: reviewerIdentity,
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: fileSha256(reviewContextPath),
+        routing_event_sha256: routeIntegrity.event_sha256,
+        provider_invocation_id: `test-${reviewType}-invocation`,
+        delegation_started_at_utc: delegationStartedAtUtc
     });
     if (options.includeInvocation === false) {
         return;
@@ -1120,7 +1148,8 @@ function seedCompletedReviewerLaunchAndInvocation(
         reviewer_launch_attestation_source: 'test-subagent-spawn',
         reviewer_launch_tool: 'test-subagent-spawn',
         provider_invocation_id: `test-${reviewType}-invocation`,
-        launched_at_utc: '2026-04-28T00:00:00.000Z',
+        delegation_started_at_utc: delegationStartedAtUtc,
+        launched_at_utc: delegationStartedAtUtc,
         launch_input_mode: launchArtifact.launch_input_mode,
         launch_input_sha256: launchArtifact.launch_input_sha256,
         copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256

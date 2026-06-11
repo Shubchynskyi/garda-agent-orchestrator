@@ -221,6 +221,7 @@ function overwriteLaunchedArtifact(
     const contextSha256 = fileSha256(contextPath);
     const copyPastePrompt = `Delegated ${REVIEW_TYPE} reviewer launch prompt for ${TASK_ID}.`;
     const copyPastePromptSha256 = sha256Text(copyPastePrompt);
+    const delegationStartedAtUtc = '2026-06-01T00:00:01.000Z';
     writeJson(launchArtifactPath, {
         schema_version: 1,
         evidence_type: 'delegated_reviewer_launch',
@@ -235,12 +236,24 @@ function overwriteLaunchedArtifact(
         prepared_launch_event_sha256: preparedLaunchEventSha256,
         launch_tool: 'test-subagent-spawn',
         provider_invocation_id: 'test-provider-invocation',
-        launched_at_utc: '2026-06-01T00:00:01.000Z',
+        delegation_started_at_utc: delegationStartedAtUtc,
+        launched_at_utc: delegationStartedAtUtc,
         copy_paste_reviewer_launch_prompt: copyPastePrompt,
         copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
         launch_input_mode: 'copy_paste_prompt',
         launch_input_sha256: copyPastePromptSha256,
         fork_context: false
+    });
+    appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_STARTED', {
+        task_id: TASK_ID,
+        review_type: REVIEW_TYPE,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: REVIEWER_IDENTITY,
+        reviewer_identity: REVIEWER_IDENTITY,
+        review_context_sha256: contextSha256,
+        routing_event_sha256: routingEventSha256,
+        provider_invocation_id: 'test-provider-invocation',
+        delegation_started_at_utc: delegationStartedAtUtc
     });
     return fileSha256(launchArtifactPath);
 }
