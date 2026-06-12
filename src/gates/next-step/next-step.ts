@@ -2858,9 +2858,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         const reviewerIdentity = isResolvedReviewerIdentity(contextReviewerIdentity)
             ? contextReviewerIdentity
             : delegatedReviewerIdentity;
-        const routingReviewerIdentity = isResolvedReviewerIdentity(contextReviewerIdentity)
-            ? contextReviewerIdentity
-            : null;
+        const routingReviewerIdentity = null;
         const launchArtifactPath = buildDefaultReviewScratchCommandPath(
             repoRoot,
             taskId,

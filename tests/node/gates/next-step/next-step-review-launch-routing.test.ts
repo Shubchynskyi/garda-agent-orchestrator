@@ -1508,7 +1508,7 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--review-type "test"'));
     });
 
-    it('uses the prepared review context identity when suggesting prepare-reviewer-launch', () => {
+    it('omits the prepared review context identity when suggesting prepare-reviewer-launch', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
         seedStartedTask(repoRoot, TASK_ID);
@@ -1538,7 +1538,7 @@ describe('gates/next-step', () => {
         assert.ok(result.reason.includes('launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath'));
         assertNoDefaultReviewerReservationGuidance(`${result.reason}\n${result.commands.map((entry) => entry.command).join('\n')}`);
         assert.equal(result.commands[0].label, 'Prepare delegated reviewer launch metadata');
-        assert.ok(result.commands[0].command.includes(`--reviewer-identity "${reviewerIdentity}"`));
+        assert.equal(result.commands[0].command.includes('--reviewer-identity'), false);
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
     });
 
@@ -2508,6 +2508,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'prepare-reviewer-launch', result.reason);
         assert.ok(result.commands[0].command.includes('gate prepare-reviewer-launch'));
+        assert.equal(result.commands[0].command.includes('--reviewer-identity'), false);
         assert.ok(!result.commands[0].command.includes('record-review-result'));
         assert.ok(result.reason.includes('launch artifact=missing or stale'));
         assert.ok(result.reason.includes('invocation=blocked until launch artifact'));
@@ -2557,7 +2558,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'record-review-routing');
         assert.ok(result.commands[0].command.includes('gate record-review-routing'));
-        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.equal(result.commands[0].command.includes('--reviewer-identity'), false);
     });
 
     it('omits planned reviewer identity from routing and prepare commands until provider launch resolves it', () => {

@@ -1522,7 +1522,7 @@ describe('gates/next-step startup routing', () => {
         assert.equal(result.next_gate, 'record-review-routing');
         assert.ok(result.commands[0].command.includes('gate record-review-routing'));
         assert.ok(!result.commands[0].command.includes('handshake-diagnostics'));
-        assert.ok(result.commands[0].command.includes('--reviewer-identity "agent:code-reviewer"'));
+        assert.equal(result.commands[0].command.includes('--reviewer-identity'), false);
     });
 
     it('routes late TASK_ENTRY after review phase through startup recovery before stale preflight refresh', () => {
