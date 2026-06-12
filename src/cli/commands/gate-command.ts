@@ -42,11 +42,12 @@ import {
     handleLogTaskEvent,
     handleTaskEventsSummary,
     handleTaskAuditSummary,
-    handleNextStep,
-    handleFullSuiteValidation,
-    handleCompletionGate,
-    handleHumanCommit,
-    handleTaskReset
+        handleNextStep,
+        handleFullSuiteValidation,
+        handleFullSuiteRunMarkerRecovery,
+        handleCompletionGate,
+        handleHumanCommit,
+        handleTaskReset
 } from './gate-task-handlers';
 import { handleValidateIsolation, handlePrepareIsolation } from './gate-isolation-handlers';
 
@@ -135,6 +136,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleDocImpactGate(gateArgv);
         case 'full-suite-validation':
             return handleFullSuiteValidation(gateArgv);
+        case 'full-suite-run-marker-recovery':
+            return handleFullSuiteRunMarkerRecovery(gateArgv);
         case 'record-review-result':
             return handleRecordReviewResult(gateArgv);
         case 'completion-gate':

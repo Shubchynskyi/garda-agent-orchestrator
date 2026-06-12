@@ -33,6 +33,7 @@ import {
 import type { ParsedOptionsRecord } from './shared-command-utils';
 import { reconcileSuccessfulCompletionFinalizationAsync } from './gate-flows/completion/completion-finalization';
 import { runFullSuiteValidationCommand } from './gate-flows/full-suite/full-suite-validation-flow';
+import { runFullSuiteRunMarkerRecoveryCommand } from './gate-flows/full-suite/full-suite-run-marker-recovery';
 import { runTaskEventsSummaryCommand, runTaskAuditSummaryCommand } from './gate-flows/task/task-summary-flow';
 import { runTaskResetCommand } from './gate-flows/task/task-reset-flow';
 import { buildTaskResetMissingTaskIdMessage } from './task-reset-alias';
@@ -457,6 +458,23 @@ export async function handleFullSuiteValidation(gateArgv: string[]): Promise<voi
     const { options } = parseOptions(gateArgv, defs);
     const result = await runFullSuiteValidationCommand(options);
     process.stdout.write(result.outputText);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleFullSuiteRunMarkerRecovery(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--clear-dead-marker': { key: 'clearDeadMarker', type: 'boolean' },
+        '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runFullSuiteRunMarkerRecoveryCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;
     }

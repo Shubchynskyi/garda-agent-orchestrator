@@ -184,6 +184,83 @@ describe('gates/next-step', () => {
 
     });
 
+    it('routes unresolved stale run markers to recovery before starting a fresh after-compile full-suite run', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm run test:sharded',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const markerPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-run-marker.json`);
+        fs.writeFileSync(markerPath, `${JSON.stringify({
+            schema_version: 1,
+            task_id: TASK_ID,
+            status: 'running',
+            started_at_utc: '2026-06-07T01:01:00.000Z',
+            updated_at_utc: '2026-06-07T01:01:00.000Z',
+            repo_root: repoRoot,
+            cwd: repoRoot,
+            command: 'npm run test:sharded',
+            timeout_ms: 600000,
+            gate_pid: 999999,
+            child_pid: null,
+            child_command: null,
+            child_args: [],
+            child_shell: null,
+            preflight_path: preflightPath,
+            preflight_sha256: '0'.repeat(64),
+            cycle_binding: {
+                task_id: TASK_ID,
+                preflight_path: preflightPath,
+                preflight_sha256: '0'.repeat(64),
+                compile_gate_timestamp: null,
+                scope_binding: null
+            }
+        }, null, 2)}\n`, 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+        assert.match(result.title, /Inspect unresolved full-suite run marker/);
+        assert.match(result.reason, /would overwrite the diagnostic marker/);
+        assert.ok(result.commands[0].command.includes('gate full-suite-run-marker-recovery'));
+        assert.ok(!result.commands[0].command.includes('gate full-suite-validation'));
+    });
+
 
 
     it('blocks reviewer launch after current after-compile full-suite failure', () => {

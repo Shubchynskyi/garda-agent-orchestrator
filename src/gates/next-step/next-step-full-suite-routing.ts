@@ -54,9 +54,12 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     commandText: string;
     timeoutForecastLine: string | null;
     command: string;
+    runMarkerRecoveryCommand: string;
+    runMarkerCleanupCommand: string;
     navigatorCommand: string;
     nextReviewType: string | null;
     interruptedRun?: InterruptedFullSuiteValidationRunRouteInput | null;
+    unresolvedRunMarkerPath?: string | null;
 }
 
 export function resolveNextStepFullSuiteValidationRoute(
@@ -241,6 +244,24 @@ function buildInterruptedRunRecoveryRoute(
 ): NextStepFullSuiteValidationRoute | null {
     const interruptedRun = options.interruptedRun;
     if (!interruptedRun) {
+        if (options.unresolvedRunMarkerPath) {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'full-suite-validation',
+                title: 'Inspect unresolved full-suite run marker state.',
+                reason:
+                    `A full-suite run marker exists at ${options.unresolvedRunMarkerPath}, but it is stale, invalid, malformed, or not bound to the current preflight/compile cycle. ` +
+                    `Do not start a fresh full-suite run until the marker is inspected because a new run would overwrite the diagnostic marker. ` +
+                    `Run the recovery command to preserve evidence and report the exact marker state before any cleanup. ${retryInstruction} ` +
+                    `Retry command after recovery: ${redactDiagnosticText(options.commandText)}. ${options.timeoutForecastLine || ''}`.trim(),
+                commands: [
+                    buildCommand(
+                        'Inspect unresolved full-suite run marker state',
+                        options.runMarkerRecoveryCommand
+                    )
+                ]
+            };
+        }
         return null;
     }
     if (interruptedRun.gateProcessAlive) {
@@ -271,11 +292,21 @@ function buildInterruptedRunRecoveryRoute(
         ? ` Child command: ${redactDiagnosticText(interruptedRun.childCommand)}.`
         : '';
     const descendantCandidates = interruptedRun.descendantProcessCandidates || [];
+    const hasLiveChildTree =
+        interruptedRun.childProcessAlive === true
+        || descendantCandidates.length > 0
+        || !!interruptedRun.processScanWarning;
     const descendantState = descendantCandidates.length > 0
         ? ` Live descendant candidates from the recorded child process: ${formatProcessCandidates(descendantCandidates)}.`
         : interruptedRun.processScanWarning
             ? ` No descendant process candidates were listed because process scanning failed: ${redactDiagnosticText(interruptedRun.processScanWarning)}.`
             : ' No live descendant process candidates were discovered from the recorded child pid; do not kill generic node.exe or IDE/Codex Node processes without separate task-owned command-line or working-directory evidence.';
+    const actionCommand = hasLiveChildTree
+        ? options.runMarkerRecoveryCommand
+        : options.runMarkerCleanupCommand;
+    const actionLabel = hasLiveChildTree
+        ? 'Inspect interrupted full-suite run marker'
+        : 'Clear dead full-suite run marker after preserving recovery evidence';
 
     return {
         status: 'BLOCKED',
@@ -288,8 +319,8 @@ function buildInterruptedRunRecoveryRoute(
             `Interrupted command: ${redactDiagnosticText(interruptedRun.command)}. Retry command: ${redactDiagnosticText(options.commandText)}. Timeout configured for the interrupted run: ${interruptedRun.timeoutMs} ms. ${options.timeoutForecastLine || ''}`.trim(),
         commands: [
             buildCommand(
-                'Recover and rerun full-suite validation',
-                options.command
+                actionLabel,
+                actionCommand
             )
         ]
     };

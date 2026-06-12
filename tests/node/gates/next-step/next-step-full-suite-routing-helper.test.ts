@@ -18,6 +18,8 @@ const BASE_OPTIONS = Object.freeze({
     commandText: 'npm test',
     timeoutForecastLine: 'Recommended full-suite command timeout: 240s.',
     command: 'node bin/garda.js gate full-suite-validation --task-id "T-123" --preflight-path "runtime/reviews/T-123-preflight.json" --repo-root "."',
+    runMarkerRecoveryCommand: 'node bin/garda.js gate full-suite-run-marker-recovery --task-id "T-123" --preflight-path "runtime/reviews/T-123-preflight.json" --repo-root "."',
+    runMarkerCleanupCommand: 'node bin/garda.js gate full-suite-run-marker-recovery --task-id "T-123" --preflight-path "runtime/reviews/T-123-preflight.json" --clear-dead-marker --operator-confirmed yes --repo-root "."',
     navigatorCommand: 'node bin/garda.js next-step "T-123" --repo-root "."',
     nextReviewType: 'test'
 });
@@ -66,6 +68,30 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
     });
 
+    it('prints a cleanup command only for dead interrupted markers without live descendants', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            interruptedRun: {
+                markerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json',
+                startedAtUtc: '2026-06-07T01:02:03.000Z',
+                command: 'npm test',
+                timeoutMs: 600000,
+                gatePid: 12345,
+                gateProcessAlive: false,
+                childPid: 12346,
+                childProcessAlive: false,
+                childCommand: 'npm',
+                descendantProcessCandidates: [],
+                processScanWarning: null
+            }
+        });
+
+        assert.equal(route?.commands[0]?.label, 'Clear dead full-suite run marker after preserving recovery evidence');
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerCleanupCommand);
+    });
+
     it('routes interrupted missing evidence to recovery instead of a fresh not-yet-run prompt', () => {
         const route = resolveNextStepFullSuiteValidationRoute({
             ...BASE_OPTIONS,
@@ -101,7 +127,22 @@ describe('next-step full-suite route helper', () => {
         assert.match(route?.reason || '', /Interrupted command: npm test/);
         assert.match(route?.reason || '', /Retry command: npm test/);
         assert.match(route?.reason || '', /terminate only task-owned processes/);
-        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerRecoveryCommand);
+    });
+
+    it('routes unresolved marker files to recovery instead of starting a fresh run', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            placement: 'after_compile_before_reviews',
+            nextReviewType: 'code',
+            unresolvedRunMarkerPath: 'garda-agent-orchestrator/runtime/reviews/T-123-full-suite-run-marker.json'
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-validation');
+        assert.equal(route?.title, 'Inspect unresolved full-suite run marker state.');
+        assert.match(route?.reason || '', /stale, invalid, malformed, or not bound/);
+        assert.match(route?.reason || '', /would overwrite the diagnostic marker/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerRecoveryCommand);
     });
 
     it('routes active interrupted markers to wait instead of starting a duplicate full-suite run', () => {
@@ -185,7 +226,7 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.nextGate, 'full-suite-validation');
         assert.match(route?.reason || '', /No live descendant process candidates/);
         assert.match(route?.reason || '', /do not kill generic node\.exe/);
-        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.runMarkerCleanupCommand);
     });
 
     it('routes non-timeout failures back to implementation via navigator', () => {

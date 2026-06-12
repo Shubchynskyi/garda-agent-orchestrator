@@ -54,6 +54,10 @@ export {
 } from './gate-flows/full-suite/full-suite-validation-flow';
 
 export {
+    runFullSuiteRunMarkerRecoveryCommand
+} from './gate-flows/full-suite/full-suite-run-marker-recovery';
+
+export {
     runBuildReviewContextCommand
 } from './gate-flows/review-context/review-context-flow';
 

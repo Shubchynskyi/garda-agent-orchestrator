@@ -50,6 +50,16 @@ export interface FullSuiteValidationProcessCandidate {
     commandLine: string;
 }
 
+export interface FullSuiteValidationProcessTableSnapshot {
+    entries: FullSuiteValidationProcessCandidate[];
+    warning: string | null;
+}
+
+export interface FullSuiteValidationRunMarkerInspectionOptions {
+    isProcessAlive?: (pid: number | null | undefined) => boolean;
+    processTableSnapshot?: FullSuiteValidationProcessTableSnapshot;
+}
+
 interface WriteRunMarkerOptions {
     repoRoot: string;
     taskId: string;
@@ -117,7 +127,8 @@ export function readInterruptedFullSuiteValidationRunMarker(
     taskId: string,
     preflightPath: string,
     preflightSha256?: string | null,
-    expectedCompileGateTimestamp?: string | null
+    expectedCompileGateTimestamp?: string | null,
+    inspectionOptions: FullSuiteValidationRunMarkerInspectionOptions = {}
 ): FullSuiteValidationInterruptedRunSummary | null {
     const markerPath = resolveFullSuiteValidationRunMarkerPath(repoRoot, taskId);
     if (!fs.existsSync(markerPath) || !fs.statSync(markerPath).isFile()) {
@@ -148,8 +159,9 @@ export function readInterruptedFullSuiteValidationRunMarker(
         return null;
     }
 
-    const gateProcessAlive = isProcessAlive(marker.gate_pid);
-    const processScan = findDescendantProcessCandidates(marker.child_pid);
+    const checkProcessAlive = inspectionOptions.isProcessAlive || isProcessAlive;
+    const gateProcessAlive = checkProcessAlive(marker.gate_pid);
+    const processScan = findDescendantProcessCandidates(marker.child_pid, inspectionOptions.processTableSnapshot);
     return {
         markerPath: normalizePath(markerPath),
         taskId,
@@ -160,7 +172,7 @@ export function readInterruptedFullSuiteValidationRunMarker(
         gatePid: marker.gate_pid,
         gateProcessAlive,
         childPid: marker.child_pid,
-        childProcessAlive: marker.child_pid == null ? null : isProcessAlive(marker.child_pid),
+        childProcessAlive: marker.child_pid == null ? null : checkProcessAlive(marker.child_pid),
         childCommand: marker.child_command,
         descendantProcessCandidates: processScan.candidates,
         processScanWarning: processScan.warning,
@@ -181,14 +193,17 @@ function isProcessAlive(pid: number | null | undefined): boolean {
     }
 }
 
-function findDescendantProcessCandidates(rootPid: number | null | undefined): {
+function findDescendantProcessCandidates(
+    rootPid: number | null | undefined,
+    processTableSnapshot?: FullSuiteValidationProcessTableSnapshot
+): {
     candidates: FullSuiteValidationProcessCandidate[];
     warning: string | null;
 } {
     if (!Number.isInteger(rootPid) || Number(rootPid) <= 0) {
         return { candidates: [], warning: null };
     }
-    const table = readProcessTable();
+    const table = processTableSnapshot || readProcessTable();
     if (table.warning) {
         return { candidates: [], warning: table.warning };
     }
@@ -250,11 +265,17 @@ function readWindowsProcessTable(): {
         timeout: 5000
     });
     const parsed = JSON.parse(output || '[]') as unknown;
-    const rows = Array.isArray(parsed) ? parsed : [parsed];
     return {
-        entries: rows.map(parseWindowsProcessRow).filter((entry): entry is FullSuiteValidationProcessCandidate => entry !== null),
+        entries: parseWindowsProcessRows(parsed),
         warning: null
     };
+}
+
+export function parseWindowsProcessRows(rowsValue: unknown): FullSuiteValidationProcessCandidate[] {
+    const rows = Array.isArray(rowsValue) ? rowsValue : [rowsValue];
+    return rows
+        .map(parseWindowsProcessRow)
+        .filter((entry): entry is FullSuiteValidationProcessCandidate => entry !== null);
 }
 
 function parseWindowsProcessRow(row: unknown): FullSuiteValidationProcessCandidate | null {

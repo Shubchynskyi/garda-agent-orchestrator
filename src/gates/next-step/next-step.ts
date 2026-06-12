@@ -46,7 +46,8 @@ import {
     resolveWorkflowConfigPath
 } from '../full-suite/full-suite-validation';
 import {
-    readInterruptedFullSuiteValidationRunMarker
+    readInterruptedFullSuiteValidationRunMarker,
+    resolveFullSuiteValidationRunMarkerPath
 } from '../full-suite/full-suite-validation-run-marker';
 import type {
     ReviewTrustSummary
@@ -1492,6 +1493,18 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             currentCompileGateTimestamp
         )
         : null;
+    const unresolvedFullSuiteRunMarkerPath = (() => {
+        if (
+            !fullSuiteConfig.enabled
+            || fullSuiteGatePassed
+            || fullSuiteNotRequiredForCurrentScope
+            || interruptedFullSuiteRun
+        ) {
+            return null;
+        }
+        const markerPath = resolveFullSuiteValidationRunMarkerPath(repoRoot, taskId);
+        return fs.existsSync(markerPath) ? normalizePath(markerPath) : null;
+    })();
     const reviewLaunchPlan = applyFullSuiteReadinessToReviewLaunchPlan(
         buildNextStepReviewLaunchPlan({
             requiredReviewTypes,
@@ -2402,6 +2415,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
     }
 
     const fullSuiteCommand = `${cliPrefix} gate full-suite-validation --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+    const fullSuiteRunMarkerRecoveryCommand =
+        `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
+    const fullSuiteRunMarkerCleanupCommand =
+        `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --clear-dead-marker --operator-confirmed yes --repo-root "."`;
     const fullSuiteValidationRoute = resolveNextStepFullSuiteValidationRoute({
         enabled: fullSuiteConfig.enabled,
         placement: fullSuiteConfig.placement,
@@ -2415,9 +2432,12 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         commandText: fullSuiteConfig.command,
         timeoutForecastLine: fullSuiteTimeoutForecastLine,
         command: fullSuiteCommand,
+        runMarkerRecoveryCommand: fullSuiteRunMarkerRecoveryCommand,
+        runMarkerCleanupCommand: fullSuiteRunMarkerCleanupCommand,
         navigatorCommand,
         nextReviewType: reviewLaunchPlan.next_review_type,
-        interruptedRun: interruptedFullSuiteRun
+        interruptedRun: interruptedFullSuiteRun,
+        unresolvedRunMarkerPath: unresolvedFullSuiteRunMarkerPath
     });
     if (fullSuiteValidationRoute) {
         return buildResult({

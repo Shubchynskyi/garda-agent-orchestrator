@@ -31,6 +31,7 @@ const BOOLEAN_GATE_OPTIONS = new Set([
     '--as-json',
     '--behavior-changed',
     '--changelog-updated',
+    '--clear-dead-marker',
     '--compact',
     '--confirm',
     '--confirm-updated',
@@ -379,6 +380,16 @@ function buildLifecycleGateHelpEntries(
             ...createSingleUsageEntry(
                 'Run repository-wide test suite as part of mandatory closeout (when enabled). Configuration: edit garda-agent-orchestrator/live/config/workflow-config.json to set full_suite_validation.enabled=true. Integrated into completion-gate when enabled.',
                 `${cliPrefix} gate full-suite-validation --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                true
+            )
+        },
+        'full-suite-run-marker-recovery': {
+            ...createGateHelpEntry(
+                'Inspect an interrupted full-suite run marker and clear only dead current-cycle markers after explicit confirmation.',
+                [
+                    `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --repo-root "."`,
+                    `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --clear-dead-marker --operator-confirmed yes --repo-root "."`
+                ],
                 true
             )
         },

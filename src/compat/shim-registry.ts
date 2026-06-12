@@ -11,6 +11,7 @@ const SHIMMED_GATE_NAME_VALUES = [
     'record-strict-decomposition-decision',
     'compile-gate',
     'full-suite-validation',
+    'full-suite-run-marker-recovery',
     'completion-gate',
     'classify-change',
     'build-scoped-diff',
