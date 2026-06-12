@@ -385,7 +385,7 @@ ${MANAGED_END}`;
     it('includes reviewer fresh-context and cleanup rules in canonical entrypoints', () => {
         const templateClaudeContent = `${MANAGED_START}
 # CLAUDE.md
-- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
+- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not create, reserve, hold, or complete a reviewer before launch input exists, and do not reuse an existing reviewer session.
 - After the review receipt is persisted by \`record-review-result\` or \`record-review-receipt\`, close or release the reviewer sub-agent session.
 ${MANAGED_END}`;
         const result = buildCanonicalManagedBlock('AGENTS.md', templateClaudeContent);
@@ -397,7 +397,7 @@ ${MANAGED_END}`;
     it('adds Antigravity independent-review unavailable hard stop to canonical Antigravity entrypoint', () => {
         const templateContent = `${MANAGED_START}
 # canonical-rule-index.md
-- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
+- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not create, reserve, hold, or complete a reviewer before launch input exists, and do not reuse an existing reviewer session.
 ${MANAGED_END}`;
         const result = buildCanonicalManagedBlock('.antigravity/rules.md', templateContent);
         assert.ok(result.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));
@@ -408,7 +408,7 @@ ${MANAGED_END}`;
     it('does not add Antigravity-specific hard stop to other canonical entrypoints', () => {
         const templateContent = `${MANAGED_START}
 # canonical-rule-index.md
-- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
+- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not create, reserve, hold, or complete a reviewer before launch input exists, and do not reuse an existing reviewer session.
 ${MANAGED_END}`;
         const result = buildCanonicalManagedBlock('AGENTS.md', templateContent);
         assert.ok(!result.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION));

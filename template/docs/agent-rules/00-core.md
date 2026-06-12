@@ -30,6 +30,7 @@ Default response brevity: {{ASSISTANT_RESPONSE_BREVITY}}.
 3. User preferences or environment-specific instructions (e.g., "do not run rebuild", "skip tests") never waive mandatory gate validation. If a gate requires a build, test, type-check, or full-suite command to satisfy its contract, run the gate and let the gate manage that command. The `40-commands.md` restraint applies only to standalone ad-hoc commands outside the lifecycle; it does not apply to `compile-gate`, `full-suite-validation`, or any other required lifecycle gate.
 4. Broken gate infrastructure is not permission to bypass the orchestrator or edit code directly without following the lifecycle.
 5. When blocked by infrastructure failure, report the exact command, `cwd`, chosen CLI path, and the complete `stderr` output to the user.
+6. Mandatory reviewer launch evidence is one-shot: no agent may create, reserve, hold, or complete a reviewer before `prepare-reviewer-launch` prints the exact `CopyPasteReviewerLaunchPrompt` or `ReviewerLaunchInputArtifactPath`; planned `agent:pending:<task-id>-<review-type>` identities are placeholders until `record-reviewer-delegation-started` records the resolved provider `agent:*` identity.
 
 ## Code Quality
 

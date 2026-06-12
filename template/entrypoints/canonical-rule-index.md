@@ -24,7 +24,7 @@ Non-selected entrypoint files must only redirect to the selected source-of-truth
 - At fresh main-agent task start, show one English start marker from the repo-owned list once in the first relevant reply; this UX marker is not gate evidence.
 - Do not use start-marker presence or exact text as hard evidence for task-mode, compile, review, completion, or task-audit gates.
 - Reviewer agents, sub-agents, sidecars, and resumed cycles that already passed the start-banner step must not repeat it.
-- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.
+- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not create, reserve, hold, or complete a reviewer before launch input exists, and do not reuse an existing reviewer session.
 - After the review receipt is persisted, close or release the reviewer sub-agent session.
 - Active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; do not present `depth=<1|2|3>` as normal user task-start guidance.
 - If the workspace already contains modified files before task-mode entry and the run is not isolated through staged or explicit scope, stop and treat the start as invalid.

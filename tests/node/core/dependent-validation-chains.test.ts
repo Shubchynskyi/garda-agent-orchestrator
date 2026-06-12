@@ -254,6 +254,24 @@ test('buildGateChainRemediationCommand renders task and review placeholders', ()
     );
 });
 
+test('review pre-launch remediation commands do not request invented reviewer identities', () => {
+    const routingToLaunchEdge = getGateChainEdgeById('review-routing-to-launch-prepared');
+    const launchPreparedEdge = getGateChainEdgeById('review-launch-prepared-to-delegation-started');
+
+    assert.ok(routingToLaunchEdge);
+    assert.ok(launchPreparedEdge);
+    for (const edge of [routingToLaunchEdge, launchPreparedEdge]) {
+        const command = buildGateChainRemediationCommand(edge, {
+            taskId: 'T-334',
+            reviewType: 'security',
+            reviewContextPath: 'garda-agent-orchestrator/runtime/reviews/T-334-security-review-context.json'
+        });
+
+        assert.equal(command.includes('--reviewer-identity'), false);
+        assert.equal(command.includes('<agent>'), false);
+    }
+});
+
 test('buildGateChainLaunchDecision formats block decisions from the manifest', () => {
     const decision = buildGateChainLaunchDecision({
         edgeId: 'preflight-to-post-preflight-rules',

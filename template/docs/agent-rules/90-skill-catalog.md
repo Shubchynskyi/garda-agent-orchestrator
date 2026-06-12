@@ -105,6 +105,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
     - `dependency-review` for `required_reviews.dependency=true`
 - `build-review-context` is the canonical proof that the selected review skill and its rule context were loaded; completion for code-changing tasks expects `REVIEW_PHASE_STARTED`, `SKILL_SELECTED`, and `SKILL_REFERENCE_LOADED` in the task timeline.
 - `build-review-context` emits `reviewer_routing` metadata in the review-context artifact; reviewers must be launched as fresh-context sub-agents on every provider, and the orchestrator must populate `reviewer_routing.actual_execution_mode` and `reviewer_routing.reviewer_session_id` after reviewer launch.
+- `record-review-routing` and `prepare-reviewer-launch` may use planned `agent:pending:<task-id>-<review-type>` identities only. The real provider `agent:*` reviewer identity is recorded at `record-reviewer-delegation-started`; no bridge may ask an agent to create, reserve, hold, or pre-complete a reviewer before the exact launch input exists.
 - Reusing a prior review artifact or receipt is valid only through explicit current-cycle reuse evidence. Reusing the same reviewer session for a new mandatory review is not valid fresh-context launch evidence.
 - After the review receipt is persisted by `record-review-result` or `record-review-receipt`, close or release the reviewer sub-agent session.
 - `build-review-context` must fail closed when the pinned runtime identity is unresolved or does not attest launchable reviewer subagents for the current runtime session.

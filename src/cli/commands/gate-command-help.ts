@@ -328,7 +328,7 @@ function buildReviewGateHelpEntries(
         },
         'prepare-reviewer-launch': {
             ...createSingleUsageEntry(
-                'Prepare task-owned delegated reviewer launch metadata from the current routing event and review context; this is not completed invocation evidence. Omit --reviewer-identity to let the gate assign a planned pending identity before provider launch. After preparation, launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath, then record reviewer delegation start with the resolved provider reviewer identity before the reviewer returns.',
+                'Prepare task-owned delegated reviewer launch metadata from the current routing event and review context; this is not completed invocation evidence. Omit --reviewer-identity to let the gate assign a planned pending identity before provider launch. After preparation, launch one clean-context delegated reviewer with the exact CopyPasteReviewerLaunchPrompt or ReviewerLaunchInputArtifactPath, then record reviewer delegation start with the resolved provider reviewer identity before the reviewer returns; do not create, reserve, hold, or complete a reviewer before launch input exists.',
                 `${cliPrefix} gate prepare-reviewer-launch --task-id "${TASK_ID_PLACEHOLDER}" --review-type "<review-type>" --review-context-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-<review-type>-review-context.json`)}" --reviewer-execution-mode "delegated_subagent" --reviewer-launch-artifact-path "${buildBundleRelativePath(bundleName, `runtime/tmp/reviews/${TASK_ID_PLACEHOLDER}/<review-type>/reviewer-launch.json`)}" --repo-root "."`,
                 true
             )

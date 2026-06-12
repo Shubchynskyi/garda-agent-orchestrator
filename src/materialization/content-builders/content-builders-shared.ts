@@ -54,7 +54,7 @@ export function addAntigravityCanonicalStopInstruction(content: string, canonica
     if (!isAntigravityEntrypointPath(canonicalFile) || content.includes(ANTIGRAVITY_INDEPENDENT_REVIEW_UNAVAILABLE_STOP_INSTRUCTION)) {
         return content;
     }
-    const reviewerLaunchRule = '- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not reuse an existing reviewer session.';
+    const reviewerLaunchRule = '- Mandatory required reviewer launches must spawn a new clean-context delegated reviewer for the current review context; do not create, reserve, hold, or complete a reviewer before launch input exists, and do not reuse an existing reviewer session.';
     if (content.includes(reviewerLaunchRule)) {
         return content.replace(
             reviewerLaunchRule,

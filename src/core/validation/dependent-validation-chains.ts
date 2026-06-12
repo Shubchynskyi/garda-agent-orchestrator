@@ -202,7 +202,7 @@ export const GATE_CHAIN_MANIFEST: readonly GateChainEdge[] = defineGateChainMani
         artifact: 'review_context',
         artifact_suffix: '-{reviewType}-review-context.json',
         missing_remediation_command:
-            '{cli} gate record-review-routing --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --repo-root "{repoRoot}"'
+            '{cli} gate record-review-routing --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --repo-root "{repoRoot}"'
     },
     {
         id: 'review-launch-prepared-to-delegation-started',
@@ -216,7 +216,7 @@ export const GATE_CHAIN_MANIFEST: readonly GateChainEdge[] = defineGateChainMani
         artifact: 'review_launch',
         artifact_suffix: '-{reviewType}-reviewer-launch.json',
         missing_remediation_command:
-            '{cli} gate prepare-reviewer-launch --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-identity "<agent>" --reviewer-launch-artifact-path "<reviewer-launch.json>" --repo-root "{repoRoot}"'
+            '{cli} gate prepare-reviewer-launch --task-id "{taskId}" --review-type "{reviewType}" --review-context-path "{reviewContextPath}" --reviewer-execution-mode "delegated_subagent" --reviewer-launch-artifact-path "<reviewer-launch.json>" --repo-root "{repoRoot}"'
     },
     {
         id: 'review-delegation-started-to-launch-completed',

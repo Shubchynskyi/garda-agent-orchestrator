@@ -135,6 +135,7 @@ ${buildTaskStartSnippetSection(runtimeProviderLabel, bridgePath)}
 ## Reviewer Launch Mapping (Mandatory Delegation)
 - Every provider must spawn each required reviewer as a fresh-context sub-agent; same-agent self-review is invalid for mandatory reviews.
 ${getDelegationRequiredProviderLaunchLines().join('\n')}
+- Routing and prepare may use only the planned \`agent:pending:<task-id>-<review-type>\` identity; record the resolved provider \`agent:*\` identity only with \`record-reviewer-delegation-started\` after the real reviewer launch.
 - Providers or bridges without delegated reviewer support are not eligible to satisfy the mandatory review workflow until delegated launch support exists.
 - ${REVIEWER_SESSION_REUSE_BOUNDARY_INSTRUCTION}
 - ${REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION}
