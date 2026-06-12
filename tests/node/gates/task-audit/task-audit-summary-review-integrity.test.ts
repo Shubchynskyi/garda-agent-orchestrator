@@ -216,6 +216,88 @@ describe('gates/task-audit-summary', () => {
                     assert.deepEqual(attestation.observed_issues, []);
                 });
 
+                it('keeps final closeout ready when planned review routing is rebound to the resolved reviewer identity', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    writePreflight(reviewsDir, TASK_ID, { mode: 'FULL_PATH', changed_files: ['src/gates/task-audit-summary.ts'], metrics: { changed_lines_total: 18 }, required_reviews: { code: true } });
+                    const preflightSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-preflight.json`));
+                    const plannedReviewerIdentity = `agent:pending:${TASK_ID}-code`;
+                    const resolvedReviewerIdentity = 'agent:resolved-code-reviewer';
+                    const fixture = writeCurrentIndependentReviewFixture({
+                        reviewsDir,
+                        taskId: TASK_ID,
+                        preflightSha256,
+                        reviewerIdentity: resolvedReviewerIdentity,
+                        routing: makeDelegatedRouting(plannedReviewerIdentity),
+                        provenance: null
+                    });
+                    writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                        'TASK_MODE_ENTERED',
+                        'RULE_PACK_LOADED',
+                        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+                        'SHELL_SMOKE_PREFLIGHT_RECORDED',
+                        'PREFLIGHT_CLASSIFIED',
+                        'COMPILE_GATE_PASSED',
+                        'REVIEW_PHASE_STARTED'
+                    ].map((event_type) => ({ event_type })));
+                    const routingEvent = appendIntegrityEvent(eventsDir, TASK_ID, {
+                        event_type: 'REVIEWER_DELEGATION_ROUTED',
+                        details: {
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_session_id: plannedReviewerIdentity,
+                            reviewer_identity: plannedReviewerIdentity
+                        }
+                    });
+                    const routingIntegrity = routingEvent.integrity as Record<string, unknown>;
+                    const invocationEvent = appendIntegrityEvent(eventsDir, TASK_ID, {
+                        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        details: {
+                            task_id: TASK_ID,
+                            review_type: 'code',
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: resolvedReviewerIdentity,
+                            reviewer_session_id: resolvedReviewerIdentity,
+                            review_context_sha256: fixture.reviewContextSha256,
+                            routing_event_sha256: routingIntegrity.event_sha256
+                        }
+                    });
+                    const receiptPath = path.join(reviewsDir, `${TASK_ID}-code-receipt.json`);
+                    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
+                    const invocationIntegrity = invocationEvent.integrity as Record<string, unknown>;
+                    receipt.reviewer_provenance = {
+                        schema_version: 1,
+                        attestation_type: 'reviewer_invocation_attestation',
+                        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        task_sequence: invocationIntegrity.task_sequence,
+                        prev_event_sha256: invocationIntegrity.prev_event_sha256,
+                        event_sha256: invocationIntegrity.event_sha256,
+                        task_id: TASK_ID,
+                        review_type: 'code',
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: resolvedReviewerIdentity,
+                        review_context_sha256: fixture.reviewContextSha256,
+                        routing_event_sha256: routingIntegrity.event_sha256
+                    };
+                    writeArtifact(reviewsDir, TASK_ID, '-code-receipt.json', receipt);
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_RECORDED', details: buildReviewRecordedTelemetryDetails(reviewsDir, TASK_ID, 'code') });
+                    ['REVIEW_GATE_PASSED', 'DOC_IMPACT_ASSESSED', 'COMPLETION_GATE_PASSED'].forEach((event_type) => appendIntegrityEvent(eventsDir, TASK_ID, { event_type }));
+
+                    const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+
+                    const blockerDetails = [
+                        result.final_report_contract.blocker,
+                        JSON.stringify(result.blockers),
+                        JSON.stringify(result.final_closeout.review_integrity_attestation?.observed_issues || [])
+                    ].filter(Boolean).join(' | ');
+                    assert.equal(result.final_closeout.status, 'READY', blockerDetails);
+                    assert.equal(result.final_report_contract.status, 'READY', blockerDetails);
+                    const attestation = assertReviewIntegrity(result, 'INDEPENDENT_REVIEW_ATTESTED', {
+                        completionReviewAttested: true,
+                        enforcementMode: 'BLOCKING'
+                    });
+                    assert.deepEqual(attestation.observed_issues, []);
+                });
+
                 it('keeps mandatory review attested when closeout-only docs are added after review', () => {
                     writeWorkflowConfig(tmpDir, false);
                     const implementationFile = 'src/gates/task-audit-summary.ts';
@@ -342,6 +424,18 @@ describe('gates/task-audit-summary', () => {
                         name: 'missing-invocation',
                         writeFixture: (sha: string) => writeCurrentIndependentReviewFixture({ reviewsDir, taskId: TASK_ID, preflightSha256: sha }),
                         issue: 'missing matching REVIEWER_INVOCATION_ATTESTED telemetry'
+                    },
+                    {
+                        name: 'unbound-planned-resolved-identity',
+                        writeFixture: (sha: string) => writeCurrentIndependentReviewFixture({
+                            reviewsDir,
+                            taskId: TASK_ID,
+                            preflightSha256: sha,
+                            reviewerIdentity: 'agent:resolved-code-reviewer',
+                            routing: makeDelegatedRouting(`agent:pending:${TASK_ID}-code`),
+                            provenance: null
+                        }),
+                        issue: 'review context reviewer identity does not match receipt'
                     },
                     {
                         name: 'missing-receipt',

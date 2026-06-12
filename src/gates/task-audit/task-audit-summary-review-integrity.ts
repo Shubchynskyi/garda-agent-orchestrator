@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { fileSha256 } from '../shared/helpers';
 import { normalizeReviewReceiptReviewerProvenance } from '../../gate-runtime/review-context';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
+import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
 import {
     validateHistoricalReviewRecordedTelemetryEventMatch,
     validateStrictReusedReviewEvidence,
@@ -470,7 +471,25 @@ function collectReviewIntegrityIssues(options: {
             if (!reusedExistingReview && receiptExecutionMode && contextExecutionMode && receiptExecutionMode !== contextExecutionMode) {
                 issues.push(`${reviewType}: review context execution mode does not match receipt`);
             }
-            if (!reusedExistingReview && contextReviewerSessionId && receiptReviewerIdentity && contextReviewerSessionId !== receiptReviewerIdentity) {
+            const launchBoundReviewerIdentity = provenance?.attestation_type === 'reviewer_invocation_attestation'
+                ? provenance.reviewer_identity
+                : '';
+            const contextReviewerIdentityMatchesReceipt = contextReviewerSessionId === receiptReviewerIdentity || (
+                !!launchBoundReviewerIdentity
+                && reviewerIdentityMatchesDelegatedLaunchCycle({
+                    observedIdentity: contextReviewerSessionId,
+                    expectedIdentity: receiptReviewerIdentity,
+                    taskId: options.taskId,
+                    reviewType,
+                    artifactResolvedReviewerIdentity: launchBoundReviewerIdentity
+                })
+            );
+            if (
+                !reusedExistingReview
+                && contextReviewerSessionId
+                && receiptReviewerIdentity
+                && !contextReviewerIdentityMatchesReceipt
+            ) {
                 issues.push(`${reviewType}: review context reviewer identity does not match receipt`);
             }
             if (contextExecutionMode === 'delegated_subagent' && contextReviewerSessionId.startsWith('self:')) {
