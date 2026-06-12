@@ -243,7 +243,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('restarts a coherent cycle from a legacy task-mode artifact without forcing a new start banner', async () => {
+    it('restarts a coherent cycle from a false-DONE legacy task-mode artifact without forcing a new start banner', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-restart-coherent-cycle-legacy-task-mode';
         fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'TASK.md\ngarda-agent-orchestrator/runtime/\n', 'utf8');
@@ -254,7 +254,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.writeFileSync(path.join(repoRoot, '.agents', 'workflows', 'start-task.md'), '# start-task\n', 'utf8');
         fs.writeFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
         initializeGitRepo(repoRoot);
-        seedTaskQueue(repoRoot, taskId);
+        seedTaskQueue(repoRoot, taskId, 'DONE');
         seedInitAnswers(repoRoot);
 
         fs.mkdirSync(getReviewsRoot(repoRoot), { recursive: true });
@@ -320,10 +320,14 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
 
         const events = readTaskTimelineEvents(repoRoot, taskId);
         const taskModeEnteredEvents = events.filter((event) => event.event_type === 'TASK_MODE_ENTERED');
-        assert.equal(taskModeEnteredEvents.length, 1);
+        assert.equal(taskModeEnteredEvents.length, 2);
+        const latestTaskModeEvent = taskModeEnteredEvents[taskModeEnteredEvents.length - 1];
+        assert.equal(String((latestTaskModeEvent.details as Record<string, unknown> | undefined)?.start_banner || ''), '');
 
         const refreshedTaskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
-        assert.equal(Object.prototype.hasOwnProperty.call(refreshedTaskModeArtifact, 'start_banner'), false);
+        assert.equal(String(refreshedTaskModeArtifact.start_banner || ''), '');
+        const taskQueueText = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        assert.match(taskQueueText, new RegExp(`\\| ${escapeRegExp(taskId)} \\| [^|]*IN_PROGRESS`));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -454,7 +458,7 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
             event.event_type === 'REVIEW_PHASE_STARTED'
             && String((event.details as Record<string, unknown> | undefined)?.review_type || '').toLowerCase() === 'code'
         ));
-        assert.equal(taskModeEnteredEvents.length, 1);
+        assert.equal(taskModeEnteredEvents.length, 2);
         assert.equal(taskEntryRulePackIndexes.length, 2);
         assert.equal(handshakeIndexes.length, 2);
         assert.equal(shellSmokeIndexes.length, 2);

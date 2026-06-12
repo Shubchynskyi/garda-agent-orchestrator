@@ -45,7 +45,11 @@ import {
     makeTempDir,
     type TaskAuditSummaryResult
 } from './task-audit-summary-fixtures';
-import { computeReviewRelevantScopeFingerprint } from '../../../../src/gates/review-reuse';
+import {
+    computeReviewContextReuseHash,
+    computeReviewRelevantScopeFingerprint,
+    computeReviewReuseCodeScopeFingerprint
+} from '../../../../src/gates/review-reuse';
 
 
 describe('gates/task-audit-summary', () => {
@@ -436,6 +440,208 @@ describe('gates/task-audit-summary', () => {
                     const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
 
                     assertReviewIntegrityBlocksFinalCloseout(result, 'strict reused review evidence is invalid');
+                });
+
+                it('allows valid reused review evidence with historical provenance context at final closeout', () => {
+                    writeWorkflowConfig(tmpDir, false);
+                    const implementationFile = 'src/reused-positive.ts';
+                    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+                    fs.writeFileSync(path.join(tmpDir, implementationFile), 'export const reusedPositive = true;\n', 'utf8');
+                    writePreflight(reviewsDir, TASK_ID, {
+                        mode: 'FULL_PATH',
+                        changed_files: [implementationFile],
+                        metrics: { changed_lines_total: 8 },
+                        required_reviews: { code: true }
+                    });
+                    const preflightPath = path.join(reviewsDir, `${TASK_ID}-preflight.json`);
+                    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+                    const preflightSha256 = computeFileSha256(preflightPath);
+                    const reviewScopeSha256 = computeReviewRelevantScopeFingerprint(preflight, tmpDir).review_scope_sha256;
+                    const codeScopeSha256 = computeReviewReuseCodeScopeFingerprint('code', preflight, tmpDir).code_scope_sha256;
+                    const reviewType = 'code';
+                    const reviewerIdentity = 'agent:historical-code-reviewer';
+                    const reviewContent = [
+                        '# Code Review',
+                        'Historical reused code review remains applicable.',
+                        '## Findings by Severity',
+                        'none',
+                        '## Residual Risks',
+                        'none',
+                        '## Verdict',
+                        'REVIEW PASSED',
+                        ''
+                    ].join('\n');
+                    const artifactPath = path.join(reviewsDir, `${TASK_ID}-${reviewType}.md`);
+                    fs.writeFileSync(artifactPath, reviewContent, 'utf8');
+                    const artifactSha256 = computeFileSha256(artifactPath);
+                    const artifactSnapshotPath = path.join(reviewsDir, `${TASK_ID}-${reviewType}-artifact-${artifactSha256}.md`);
+                    fs.copyFileSync(artifactPath, artifactSnapshotPath);
+                    const sourceTreeStateSha256 = '3'.repeat(64);
+                    const currentTreeStateSha256 = 'c'.repeat(64);
+                    const sourceContext = {
+                        schema_version: 1,
+                        review_type: reviewType,
+                        depth: 2,
+                        token_economy_active: true,
+                        required_review: true,
+                        reviewer_routing: makeDelegatedRouting(reviewerIdentity),
+                        tree_state: { tree_state_sha256: sourceTreeStateSha256 }
+                    };
+                    const currentContext = {
+                        ...sourceContext,
+                        tree_state: { tree_state_sha256: currentTreeStateSha256 },
+                        current_reuse_materialization: true
+                    };
+                    const sourceContextSha256 = createHash('sha256').update(JSON.stringify(sourceContext), 'utf8').digest('hex');
+                    writeArtifact(reviewsDir, TASK_ID, `-${reviewType}-review-context.json`, currentContext);
+                    const currentContextSha256 = computeFileSha256(path.join(reviewsDir, `${TASK_ID}-${reviewType}-review-context.json`));
+                    const reviewContextReuseSha256 = computeReviewContextReuseHash(currentContext);
+                    assert.ok(reviewContextReuseSha256);
+                    const routingEventSha256 = '6'.repeat(64);
+                    const [taskModeEvent, rulePackEvent] = writeIntegrityEventSequence(eventsDir, TASK_ID, [
+                        { event_type: 'TASK_MODE_ENTERED' },
+                        { event_type: 'RULE_PACK_LOADED' },
+                        { event_type: 'HANDSHAKE_DIAGNOSTICS_RECORDED' },
+                        { event_type: 'SHELL_SMOKE_PREFLIGHT_RECORDED' },
+                        { event_type: 'PREFLIGHT_CLASSIFIED' }
+                    ]);
+                    void taskModeEvent;
+                    const invocationEvent = appendIntegrityEvent(eventsDir, TASK_ID, {
+                        event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        details: {
+                            task_id: TASK_ID,
+                            review_type: reviewType,
+                            reviewer_execution_mode: 'delegated_subagent',
+                            reviewer_identity: reviewerIdentity,
+                            review_context_sha256: sourceContextSha256,
+                            review_tree_state_sha256: sourceTreeStateSha256,
+                            routing_event_sha256: routingEventSha256
+                        }
+                    });
+                    const invocationIntegrity = invocationEvent.integrity as Record<string, unknown>;
+                    const provenance = {
+                        schema_version: 1,
+                        attestation_type: 'reviewer_invocation_attestation',
+                        controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                        task_sequence: invocationIntegrity.task_sequence,
+                        prev_event_sha256: invocationIntegrity.prev_event_sha256,
+                        event_sha256: invocationIntegrity.event_sha256,
+                        task_id: TASK_ID,
+                        review_type: reviewType,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: reviewerIdentity,
+                        review_context_sha256: sourceContextSha256,
+                        review_tree_state_sha256: sourceTreeStateSha256,
+                        routing_event_sha256: routingEventSha256
+                    };
+                    const baseReceipt = {
+                        schema_version: 2,
+                        task_id: TASK_ID,
+                        review_type: reviewType,
+                        preflight_sha256: preflightSha256,
+                        review_artifact_sha256: artifactSha256,
+                        reviewer_execution_mode: 'delegated_subagent',
+                        reviewer_identity: reviewerIdentity,
+                        reviewer_fallback_reason: null,
+                        reviewer_provenance: provenance,
+                        trust_level: 'INDEPENDENT_AUDITED'
+                    };
+                    const sourceReceipt = {
+                        ...baseReceipt,
+                        review_context_sha256: sourceContextSha256,
+                        review_context_reuse_sha256: reviewContextReuseSha256,
+                        review_tree_state_sha256: sourceTreeStateSha256,
+                        review_scope_sha256: reviewScopeSha256,
+                        code_scope_sha256: codeScopeSha256,
+                        reused_existing_review: false
+                    };
+                    const receiptPath = path.join(reviewsDir, `${TASK_ID}-${reviewType}-receipt.json`);
+                    fs.writeFileSync(receiptPath, JSON.stringify(sourceReceipt), 'utf8');
+                    const sourceReceiptSha256 = computeFileSha256(receiptPath);
+                    const sourceReceiptSnapshotPath = path.join(reviewsDir, `${TASK_ID}-${reviewType}-receipt-${sourceReceiptSha256}.json`);
+                    fs.copyFileSync(receiptPath, sourceReceiptSnapshotPath);
+                    appendIntegrityEvent(eventsDir, TASK_ID, {
+                        event_type: 'REVIEW_RECORDED',
+                        details: {
+                            ...sourceReceipt,
+                            receipt_path: receiptPath,
+                            receipt_sha256: sourceReceiptSha256,
+                            receipt_snapshot_path: sourceReceiptSnapshotPath,
+                            receipt_snapshot_sha256: sourceReceiptSha256,
+                            review_artifact_path: artifactPath,
+                            review_artifact_sha256: artifactSha256,
+                            review_artifact_snapshot_path: artifactSnapshotPath,
+                            review_artifact_snapshot_sha256: artifactSha256
+                        }
+                    });
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'COMPILE_GATE_PASSED' });
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_PHASE_STARTED' });
+                    const reusedReceipt = {
+                        ...baseReceipt,
+                        review_context_sha256: currentContextSha256,
+                        review_context_reuse_sha256: reviewContextReuseSha256,
+                        review_tree_state_sha256: currentTreeStateSha256,
+                        review_scope_sha256: reviewScopeSha256,
+                        code_scope_sha256: codeScopeSha256,
+                        reused_existing_review: true,
+                        reused_from_receipt_path: receiptPath,
+                        reused_from_receipt_sha256: sourceReceiptSha256,
+                        reused_from_review_context_sha256: sourceContextSha256,
+                        reused_from_review_context_reuse_sha256: reviewContextReuseSha256,
+                        reused_from_review_tree_state_sha256: sourceTreeStateSha256,
+                        reused_from_review_scope_sha256: reviewScopeSha256,
+                        reused_from_code_scope_sha256: codeScopeSha256
+                    };
+                    fs.writeFileSync(receiptPath, JSON.stringify(reusedReceipt), 'utf8');
+                    const reusedReceiptSha256 = computeFileSha256(receiptPath);
+                    const reusedReceiptSnapshotPath = path.join(reviewsDir, `${TASK_ID}-${reviewType}-receipt-${reusedReceiptSha256}.json`);
+                    fs.copyFileSync(receiptPath, reusedReceiptSnapshotPath);
+                    appendIntegrityEvent(eventsDir, TASK_ID, {
+                        event_type: 'REVIEW_RECORDED',
+                        details: {
+                            ...reusedReceipt,
+                            receipt_path: receiptPath,
+                            receipt_sha256: reusedReceiptSha256,
+                            receipt_snapshot_path: reusedReceiptSnapshotPath,
+                            receipt_snapshot_sha256: reusedReceiptSha256,
+                            review_artifact_path: artifactPath,
+                            review_artifact_sha256: artifactSha256,
+                            review_artifact_snapshot_path: artifactSnapshotPath,
+                            review_artifact_snapshot_sha256: artifactSha256
+                        }
+                    });
+                    writeArtifact(reviewsDir, TASK_ID, '-review-gate.json', {
+                        task_id: TASK_ID,
+                        status: 'PASSED',
+                        outcome: 'PASS',
+                        preflight_hash_sha256: preflightSha256,
+                        required_reviews: { code: true },
+                        verdicts: { code: 'REVIEW PASSED' },
+                        review_checks: {
+                            code: {
+                                ...makeIndependentReviewGateCheck('REVIEW PASSED', reviewerIdentity),
+                                reused_existing_review: true
+                            }
+                        }
+                    });
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'REVIEW_GATE_PASSED' });
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'DOC_IMPACT_ASSESSED' });
+                    appendIntegrityEvent(eventsDir, TASK_ID, { event_type: 'COMPLETION_GATE_PASSED' });
+                    assert.ok(rulePackEvent);
+
+                    const result = buildCurrentTaskAuditSummary(TASK_ID, tmpDir, eventsDir, reviewsDir);
+
+                    const blockerDetails = [
+                        result.final_report_contract.blocker,
+                        JSON.stringify(result.blockers),
+                        JSON.stringify(result.final_closeout.review_integrity_attestation?.observed_issues || [])
+                    ].filter(Boolean).join(' | ');
+                    assert.equal(result.final_closeout.status, 'READY', blockerDetails);
+                    assertReviewIntegrity(result, 'INDEPENDENT_REVIEW_ATTESTED', {
+                        completionReviewAttested: true,
+                        completionAllowed: true,
+                        enforcementMode: 'BLOCKING'
+                    });
                 });
 
                 it('blocks stale telemetry closeout through review integrity enforcement', () => {

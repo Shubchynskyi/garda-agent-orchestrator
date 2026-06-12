@@ -299,7 +299,11 @@ function collectReviewIntegrityIssues(options: {
             }
             if (!provenanceReviewContextHash) {
                 issues.push(`${reviewType}: reviewer provenance omits review context hash`);
-            } else if (expectedProvenanceReviewContextHash && provenanceReviewContextHash !== expectedProvenanceReviewContextHash) {
+            } else if (
+                !reusedExistingReview
+                && expectedProvenanceReviewContextHash
+                && provenanceReviewContextHash !== expectedProvenanceReviewContextHash
+            ) {
                 const receiptReviewTreeStateHash = normalizeSha256Text(receipt.review_tree_state_sha256);
                 const provenanceReviewTreeStateHash = normalizeSha256Text(provenance.review_tree_state_sha256);
                 const invocationTimeContextBinding = receiptReviewTreeStateHash
