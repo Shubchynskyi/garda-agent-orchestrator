@@ -390,7 +390,9 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         idleShutdownEnabled: runtimeOptions?.idleShutdownEnabled !== false,
         idleMinutes: runtimeOptions?.idleMinutes ?? DEFAULT_UI_IDLE_MINUTES,
         idleWarningSeconds: runtimeOptions?.idleWarningSeconds ?? DEFAULT_UI_IDLE_WARNING_SECONDS,
-        closeServer: () => server.close()
+        closeServer: () => {
+            void closeServer(server);
+        }
     });
     server = http.createServer((request, response) => {
         if (!request.url) {
@@ -533,13 +535,34 @@ function listenOnPort(server: http.Server, host: string, port: number): Promise<
 
 function closeServer(server: http.Server): Promise<void> {
     return new Promise((resolve, reject) => {
+        let forceCloseHandle: NodeJS.Immediate | null = null;
+        const clearForceClose = (): void => {
+            if (forceCloseHandle) {
+                clearImmediate(forceCloseHandle);
+                forceCloseHandle = null;
+            }
+        };
+        const forceCloseConnections = (): void => {
+            if (typeof server.closeAllConnections === 'function') {
+                server.closeAllConnections();
+            }
+        };
         server.close((error) => {
+            clearForceClose();
             if (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ERR_SERVER_NOT_RUNNING') {
+                    resolve();
+                    return;
+                }
                 reject(error);
                 return;
             }
             resolve();
         });
+        if (typeof server.closeIdleConnections === 'function') {
+            server.closeIdleConnections();
+        }
+        forceCloseHandle = setImmediate(forceCloseConnections);
     });
 }
 

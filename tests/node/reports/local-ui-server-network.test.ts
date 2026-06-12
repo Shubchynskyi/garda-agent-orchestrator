@@ -369,6 +369,32 @@ function closeNetServer(server: net.Server): Promise<void> {
     });
 }
 
+function openHttpGetResponse(url: string): Promise<http.IncomingMessage> {
+    return new Promise((resolve, reject) => {
+        const request = http.get(url, (response) => {
+            resolve(response);
+        });
+        request.once('error', reject);
+    });
+}
+
+async function expectSettlesWithin<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+            reject(new Error(`${label} did not settle within ${timeoutMs}ms`));
+        }, timeoutMs);
+        timeoutHandle.unref();
+    });
+    try {
+        return await Promise.race([promise, timeout]);
+    } finally {
+        if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+        }
+    }
+}
+
 test('local UI server skips busy ports in the default local range', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
@@ -403,8 +429,30 @@ test('local UI server skips browser-unsafe ports in configured local ranges', as
         assert.equal(server.port, 6001);
         const response = await fetch(server.url);
         assert.equal(response.status, 200);
+        await response.text();
     } finally {
         await server.close();
+    }
+});
+
+test('local UI server close drains unconsumed fetch response sockets', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0
+    });
+    const response = await openHttpGetResponse(server.url);
+    try {
+        assert.equal(response.statusCode, 200);
+        await expectSettlesWithin(
+            server.close(),
+            1000,
+            'local UI server close with an unconsumed HTTP response'
+        );
+    } finally {
+        response.destroy();
+        fs.rmSync(repoRoot, { recursive: true, force: true });
     }
 });
 
@@ -437,6 +485,7 @@ test('local UI server falls back to a safe range when port 0 repeatedly binds un
             assert.equal(server.port, nextPort);
             const response = await fetch(server.url);
             assert.equal(response.status, 200);
+            await response.text();
         } finally {
             await server.close();
         }
