@@ -242,6 +242,11 @@ describe('gates/next-step', () => {
 
         assert.ok(result.final_report?.final_user_report_path.endsWith(`${TASK_ID}-final-user-report.md`));
 
+        const finalUserReportPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-final-user-report.md`);
+        const finalUserReportBody = fs.readFileSync(finalUserReportPath, 'utf8');
+        assert.equal(result.final_report?.final_user_report_body, finalUserReportBody);
+        assert.equal(result.final_report?.final_user_report_sha256, sha256Text(finalUserReportBody));
+
         assert.ok((result.final_report?.commit_command_suggestion || '').startsWith('git commit -m "'));
 
         assert.match(result.reason, /canonical final closeout is materialized/i);
@@ -250,7 +255,13 @@ describe('gates/next-step', () => {
 
         assert.ok(text.includes('FinalUserReportPath:'));
 
-        assert.ok(text.includes('FinalUserReportInstruction: write a short summary of what you did, then print FinalUserReportPath verbatim without interpreting, summarizing, or rewriting it; after that, present any commit command and commit permission question listed in FinalReportOrder.'));
+        assert.ok(text.includes(`CopyPasteFinalUserReportSha256: ${sha256Text(finalUserReportBody)}`));
+
+        assert.ok(text.includes(`CopyPasteFinalUserReport:\n${finalUserReportBody}EndCopyPasteFinalUserReport`));
+
+        assert.equal(text.includes('```'), false);
+
+        assert.ok(text.includes('FinalUserReportInstruction: write a short summary of what you did, then paste CopyPasteFinalUserReport exactly as printed, without code fences, wrappers, paraphrase, interpretation, summarization, or reformatting; after that, present only the commit command and commit permission question listed in FinalReportOrder.'));
 
         assert.ok(text.includes('FinalReportOrder:'));
 

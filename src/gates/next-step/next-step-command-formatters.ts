@@ -283,7 +283,9 @@ export function formatNextStepText(result: NextStepResult): string {
     }
     if (result.final_report) {
         lines.push(`FinalUserReportPath: ${result.final_report.final_user_report_path}`);
-        lines.push('FinalUserReportInstruction: write a short summary of what you did, then print FinalUserReportPath verbatim without interpreting, summarizing, or rewriting it; after that, present any commit command and commit permission question listed in FinalReportOrder.');
+        lines.push(`CopyPasteFinalUserReportSha256: ${result.final_report.final_user_report_sha256}`);
+        lines.push(`CopyPasteFinalUserReport:\n${result.final_report.final_user_report_body}EndCopyPasteFinalUserReport`);
+        lines.push('FinalUserReportInstruction: write a short summary of what you did, then paste CopyPasteFinalUserReport exactly as printed, without code fences, wrappers, paraphrase, interpretation, summarization, or reformatting; after that, present only the commit command and commit permission question listed in FinalReportOrder.');
         lines.push(`CloseoutArtifact: ${result.final_report.closeout_json_path}`);
         lines.push(`CloseoutMarkdown: ${result.final_report.closeout_markdown_path}`);
         lines.push('FinalReportOrder:');

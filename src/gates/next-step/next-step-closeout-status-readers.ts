@@ -1,4 +1,5 @@
 import * as fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 
 import {
@@ -32,6 +33,8 @@ export interface NextStepFinalReportSummary {
     closeout_json_path: string;
     closeout_markdown_path: string;
     final_user_report_path: string;
+    final_user_report_body: string;
+    final_user_report_sha256: string;
     required_order: string[];
     commit_command_suggestion: string;
     commit_question: string;
@@ -48,6 +51,10 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function fileExists(filePath: string): boolean {
     return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
+
+function sha256Text(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 function getPreflightChangedFiles(preflight: Record<string, unknown> | null): string[] {
@@ -154,7 +161,8 @@ export function readReadyFinalReportSummary(
         return null;
     }
     const expectedFinalUserReport = `${formatFinalUserReport(expectedCloseout)}\n`;
-    if (fs.readFileSync(finalUserReportPath, 'utf8') !== expectedFinalUserReport) {
+    const actualFinalUserReport = fs.readFileSync(finalUserReportPath, 'utf8');
+    if (actualFinalUserReport !== expectedFinalUserReport) {
         return null;
     }
 
@@ -162,6 +170,8 @@ export function readReadyFinalReportSummary(
         closeout_json_path: toRepoDisplayPath(repoRoot, closeoutJsonPath),
         closeout_markdown_path: toRepoDisplayPath(repoRoot, closeoutMarkdownPath),
         final_user_report_path: toRepoDisplayPath(repoRoot, finalUserReportPath),
+        final_user_report_body: actualFinalUserReport,
+        final_user_report_sha256: sha256Text(actualFinalUserReport),
         required_order: buildFinalReportOrder(summary),
         commit_command_suggestion: summary.final_report_contract.commit_command_suggestion,
         commit_question: summary.final_report_contract.commit_question
