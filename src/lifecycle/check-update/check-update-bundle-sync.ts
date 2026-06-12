@@ -6,6 +6,7 @@ import {
     compareVersionStrings,
     copyDirectoryContentMerge,
     copyPathRecursive,
+    getUpdateSentinelPath,
     removePathRecursive,
     removeUpdateSentinel,
     readdirRecursiveFiles,
@@ -28,6 +29,7 @@ import { getErrorMessage, toObjectRecord } from './check-update-utils';
 
 const DEFERRED_VERSION_ITEM = 'VERSION';
 const DEFERRED_LIVE_VERSION_PAYLOAD_ITEM = 'live/version.json';
+const SYNC_ROLLBACK_EVIDENCE_FILE_NAME = 'sync-rollback-result.json';
 
 type UpdateSentinelPhase = 'syncing' | 'lifecycle' | 'version_deferred' | 'complete';
 
@@ -130,6 +132,42 @@ function areDirectoriesEquivalent(
     return options.allowExtraDestinationFiles || sourceFiles.length === destinationFiles.length;
 }
 
+function isDirectoryEquivalentAllowingOnlyExtraFiles(
+    sourceDirectory: string,
+    destinationDirectory: string,
+    allowedExtraDestinationFiles: readonly string[]
+): boolean {
+    if (!fs.existsSync(destinationDirectory) || !fs.lstatSync(destinationDirectory).isDirectory()) {
+        return false;
+    }
+
+    const sourceFiles = listRelativeFiles(sourceDirectory);
+    const destinationFiles = listRelativeFiles(destinationDirectory);
+    const sourceFileSet = new Set(sourceFiles);
+    const allowedExtraSet = new Set(allowedExtraDestinationFiles.map((filePath) => filePath.replace(/\\/g, '/')));
+
+    for (const relativeFile of sourceFiles) {
+        if (!destinationFiles.includes(relativeFile)) {
+            return false;
+        }
+
+        if (!areFilesEquivalent(
+            path.join(sourceDirectory, relativeFile),
+            path.join(destinationDirectory, relativeFile)
+        )) {
+            return false;
+        }
+    }
+
+    for (const relativeFile of destinationFiles) {
+        if (!sourceFileSet.has(relativeFile) && !allowedExtraSet.has(relativeFile)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 function doesSyncItemMatchSource(sourceRoot: string, deployedBundleRoot: string, item: string): boolean {
     const sourceItemPath = path.join(sourceRoot, item);
     if (!fs.existsSync(sourceItemPath)) {
@@ -154,6 +192,91 @@ function doesSyncItemMatchSource(sourceRoot: string, deployedBundleRoot: string,
     }
 
     return areFilesEquivalent(sourceItemPath, deployedItemPath);
+}
+
+function isPathInsideDirectory(directoryPath: string, candidatePath: string): boolean {
+    const relative = path.relative(path.resolve(directoryPath), path.resolve(candidatePath));
+    return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+export function verifySyncedItemsRestoredFromBackup(
+    deployedBundleRoot: string,
+    syncBackupRoot: string,
+    preexistingMap: Record<string, boolean>,
+    runningScriptPath: string | null
+): void {
+    for (const item of Object.keys(preexistingMap)) {
+        const destinationPath = path.join(deployedBundleRoot, item);
+        const existedBeforeSync = Boolean(preexistingMap[item]);
+
+        if (!existedBeforeSync) {
+            if (fs.existsSync(destinationPath)) {
+                throw new Error(`Synced item '${item}' still exists after rollback`);
+            }
+            continue;
+        }
+
+        const backupPath = path.join(syncBackupRoot, item);
+        if (!fs.existsSync(backupPath)) {
+            throw new Error(`Missing backup entry for '${item}': ${backupPath}`);
+        }
+        if (!fs.existsSync(destinationPath)) {
+            throw new Error(`Synced item '${item}' was not restored`);
+        }
+
+        const backupStats = fs.lstatSync(backupPath);
+        const destinationStats = fs.lstatSync(destinationPath);
+        if (backupStats.isDirectory() !== destinationStats.isDirectory()) {
+            throw new Error(`Synced item '${item}' restored with mismatched path type`);
+        }
+
+        if (backupStats.isDirectory()) {
+            const allowedExtraDestinationFiles = item.toLowerCase() === 'src'
+                && runningScriptPath !== null
+                && isPathInsideDirectory(destinationPath, runningScriptPath)
+                ? [path.relative(destinationPath, runningScriptPath).replace(/\\/g, '/')]
+                : [];
+            if (!isDirectoryEquivalentAllowingOnlyExtraFiles(
+                backupPath,
+                destinationPath,
+                allowedExtraDestinationFiles
+            )) {
+                throw new Error(`Synced item '${item}' differs from rollback backup after restore`);
+            }
+            continue;
+        }
+
+        if (!areFilesEquivalent(backupPath, destinationPath)) {
+            throw new Error(`Synced item '${item}' differs from rollback backup after restore`);
+        }
+    }
+}
+
+function writeSyncRollbackEvidence(
+    syncBackupRoot: string,
+    evidence: Record<string, unknown>
+): void {
+    try {
+        fs.mkdirSync(syncBackupRoot, { recursive: true });
+        fs.writeFileSync(
+            path.join(syncBackupRoot, SYNC_ROLLBACK_EVIDENCE_FILE_NAME),
+            JSON.stringify({
+                writtenAt: new Date().toISOString(),
+                ...evidence
+            }, null, 2) + '\n',
+            'utf8'
+        );
+    } catch (_error) {
+        // The sync backup metadata is the primary recovery evidence.
+    }
+}
+
+function removeUpdateSentinelAfterVerifiedRollback(deployedBundleRoot: string): void {
+    removeUpdateSentinel(deployedBundleRoot);
+    const sentinelPath = getUpdateSentinelPath(deployedBundleRoot);
+    if (fs.existsSync(sentinelPath)) {
+        throw new Error(`Update sentinel was not removed after verified rollback: ${sentinelPath}`);
+    }
 }
 
 function syncDeferredVersionFile(versionSourcePath: string, versionDestPath: string): void {
@@ -545,10 +668,30 @@ export async function applyAvailableUpdate(options: ApplyAvailableUpdateOptions)
                 result.syncRollbackStatus = 'ATTEMPTED';
                 try {
                     restoreSyncedItemsFromBackup(deployedBundleRoot, syncBackupRoot, syncPreexistingMap, runningScriptPath);
+                    verifySyncedItemsRestoredFromBackup(
+                        deployedBundleRoot,
+                        syncBackupRoot,
+                        syncPreexistingMap,
+                        runningScriptPath
+                    );
+                    writeSyncRollbackEvidence(syncBackupRoot, {
+                        status: 'SUCCESS',
+                        originalError,
+                        restoredItems: Object.keys(syncPreexistingMap),
+                        syncBackupMetadataPath: result.syncBackupMetadataPath
+                    });
+                    removeUpdateSentinelAfterVerifiedRollback(deployedBundleRoot);
                     result.syncRollbackStatus = 'SUCCESS';
                 } catch (rollbackError: unknown) {
                     const rollbackMsg = getErrorMessage(rollbackError);
                     result.syncRollbackStatus = `FAILED: ${rollbackMsg}`;
+                    writeSyncRollbackEvidence(syncBackupRoot, {
+                        status: 'FAILED',
+                        originalError,
+                        rollbackError: rollbackMsg,
+                        restoredItems: Object.keys(syncPreexistingMap),
+                        syncBackupMetadataPath: result.syncBackupMetadataPath
+                    });
                     throw new Error(`Update apply failed. Original error: ${originalError}. Sync rollback failed: ${rollbackMsg}`);
                 }
                 throw new Error(`Update apply failed and sync rollback completed. Original error: ${originalError}`);

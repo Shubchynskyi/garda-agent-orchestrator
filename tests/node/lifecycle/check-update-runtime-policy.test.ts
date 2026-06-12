@@ -6,12 +6,16 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import { buildUpdateLifecycleRunner } from '../../../src/cli/commands/shared-command-utils';
+import { writeProtectedControlPlaneManifest } from '../../../src/gates/shared/helpers';
 import {
     cleanupOldUpdateTempRoots,
     getUpdateTempRoot,
     resolveNpmUpdateSourceSpec,
     runCheckUpdate
 } from '../../../src/lifecycle/check-update';
+import { runUpdate } from '../../../src/lifecycle/update';
+import { verifySyncedItemsRestoredFromBackup } from '../../../src/lifecycle/check-update/check-update-bundle-sync';
+import { runDoctor } from '../../../src/validators/doctor';
 import {
     BUNDLE_SYNC_ITEMS,
     removePathRecursive,
@@ -346,6 +350,19 @@ function setupCheckUpdateWorkspace(
     fs.mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
 
     return { projectRoot: tmpDir, bundleRoot: bundle };
+}
+
+function getLatestBundleBackupRoot(bundleRoot: string): string {
+    const backupsRoot = path.join(bundleRoot, 'runtime', 'bundle-backups');
+    const backups = fs.readdirSync(backupsRoot).sort();
+    assert.ok(backups.length > 0, 'Expected at least one bundle backup');
+    return path.join(backupsRoot, backups[backups.length - 1]);
+}
+
+function readLatestSyncRollbackEvidence(bundleRoot: string): Record<string, unknown> {
+    const evidencePath = path.join(getLatestBundleBackupRoot(bundleRoot), 'sync-rollback-result.json');
+    assert.ok(fs.existsSync(evidencePath), 'Expected sync rollback evidence to be preserved');
+    return JSON.parse(fs.readFileSync(evidencePath, 'utf8')) as Record<string, unknown>;
 }
 
 function seedActiveReviewIndexLock(bundleRoot: string) {
@@ -1053,7 +1070,7 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('preserves sentinel and backup metadata when sync fails after the first item', async () => {
+    it('cleans sentinel and preserves backup metadata when sync rollback succeeds', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             const firstPlannedItem = BUNDLE_SYNC_ITEMS.find((item) => item !== 'VERSION' &&
@@ -1064,6 +1081,7 @@ describe('runCheckUpdate', () => {
             fs.mkdirSync(path.dirname(firstBundleItemPath), { recursive: true });
             fs.writeFileSync(firstBundleItemPath, originalFirstItemContent, 'utf8');
             let checkedBeforeFirstSync = false;
+            let syncBackupRoot: string | null = null;
 
             await assert.rejects(
                 runCheckUpdate({
@@ -1082,6 +1100,7 @@ describe('runCheckUpdate', () => {
                                 assert.equal(typeof preSyncSentinel.syncBackupRoot, 'string');
                                 assert.ok(fs.existsSync(preSyncSentinel.syncBackupMetadataPath as string));
                                 assert.equal(fs.readFileSync(firstBundleItemPath, 'utf8'), originalFirstItemContent);
+                                syncBackupRoot = preSyncSentinel.syncBackupRoot as string;
                                 throw new Error('Simulated sync interruption');
                             }
                         }
@@ -1092,15 +1111,14 @@ describe('runCheckUpdate', () => {
 
             assert.ok(checkedBeforeFirstSync, 'Test must assert sentinel state before the first destructive sync');
             assert.equal(fs.readFileSync(firstBundleItemPath, 'utf8'), originalFirstItemContent);
-            const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
-            assert.equal(sentinel.phase, 'syncing');
-            assert.equal(typeof sentinel.syncBackupRoot, 'string');
-            assert.equal(typeof sentinel.syncBackupMetadataPath, 'string');
-            assert.ok(fs.existsSync(sentinel.syncBackupMetadataPath as string));
-            assert.deepEqual(sentinel.plannedSyncItems, BUNDLE_SYNC_ITEMS.filter((item) => item !== 'VERSION'));
-            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.ok(!fs.existsSync(getUpdateSentinelPath(bundleRoot)),
+                'Sentinel must be removed after verified sync rollback');
+            assert.ok(syncBackupRoot, 'Test must capture rollback backup root before failure');
+            const metadata = readSyncBackupMetadata(syncBackupRoot as string);
             assert.equal(metadata.preexistingMap[firstPlannedItem], true);
             assert.deepEqual(metadata.plannedSyncItems, BUNDLE_SYNC_ITEMS.filter((item) => item !== 'VERSION'));
+            const evidence = readLatestSyncRollbackEvidence(bundleRoot);
+            assert.equal(evidence.status, 'SUCCESS');
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -1221,10 +1239,11 @@ describe('runCheckUpdate', () => {
         }
     });
 
-    it('preserves sentinel on lifecycle failure', async () => {
+    it('cleans sentinel after verified lifecycle failure rollback', async () => {
         const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
         try {
             const sentinelPath = getUpdateSentinelPath(bundleRoot);
+            let syncBackupRoot: string | null = null;
 
             await assert.rejects(
                 runCheckUpdate({
@@ -1235,21 +1254,166 @@ describe('runCheckUpdate', () => {
                     apply: true,
                     trustOverride: true,
                     updateRunner: () => {
+                        const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
+                        syncBackupRoot = sentinel.syncBackupRoot as string;
                         throw new Error('Simulated failure');
                     }
                 }),
                 /Simulated failure/
             );
 
-            assert.ok(fs.existsSync(sentinelPath),
-                'Sentinel must remain after failure for recovery diagnostics');
-            const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
-            assert.equal(sentinel.phase, 'lifecycle');
-            assert.equal(typeof sentinel.syncBackupRoot, 'string');
-            assert.equal(typeof sentinel.syncBackupMetadataPath, 'string');
-            assert.ok(fs.existsSync(sentinel.syncBackupMetadataPath as string));
-            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.ok(!fs.existsSync(sentinelPath),
+                'Sentinel must be removed after verified sync rollback');
+            assert.ok(syncBackupRoot, 'Test must capture rollback backup root before failure');
+            const metadata = readSyncBackupMetadata(syncBackupRoot as string);
             assert.equal(metadata.preexistingMap.VERSION, true);
+            const evidence = readLatestSyncRollbackEvidence(bundleRoot);
+            assert.equal(evidence.status, 'SUCCESS');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('restores package and dist after lifecycle install failure rollback', async () => {
+        const sourceRoot = createSourcePathFixture(repoRoot);
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1', {
+            syncSurfaceFrom: repoRoot
+        });
+        try {
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const oldPackage = {
+                name: 'garda-agent-orchestrator',
+                version: '0.0.1',
+                rollbackMarker: 'old-package'
+            };
+            const newPackage = {
+                name: 'garda-agent-orchestrator',
+                version: '1.1.0',
+                rollbackMarker: 'new-package'
+            };
+            const distRelativePath = path.join('dist', 'src', 'core', 'task-md-table.js');
+            const oldDist = 'exports.legacyOnly = true;\n';
+            const newDist = 'exports.formatActiveTaskQueueTable = function () {};\n';
+
+            fs.writeFileSync(path.join(bundleRoot, 'package.json'), JSON.stringify(oldPackage, null, 2), 'utf8');
+            fs.mkdirSync(path.dirname(path.join(bundleRoot, distRelativePath)), { recursive: true });
+            fs.writeFileSync(path.join(bundleRoot, distRelativePath), oldDist, 'utf8');
+            writeProtectedControlPlaneManifest(projectRoot);
+
+            fs.writeFileSync(path.join(sourceRoot, 'VERSION'), '1.1.0\n', 'utf8');
+            fs.writeFileSync(path.join(sourceRoot, 'package.json'), JSON.stringify(newPackage, null, 2), 'utf8');
+            fs.mkdirSync(path.dirname(path.join(sourceRoot, distRelativePath)), { recursive: true });
+            fs.writeFileSync(path.join(sourceRoot, distRelativePath), newDist, 'utf8');
+
+            let lifecycleSawNewPackage = false;
+            await assert.rejects(
+                runCheckUpdate({
+                    targetRoot: projectRoot,
+                    bundleRoot,
+                    sourcePath: sourceRoot,
+                    noPrompt: true,
+                    apply: true,
+                    trustOverride: true,
+                    updateRunner: () => {
+                        const packageDuringLifecycle = JSON.parse(
+                            fs.readFileSync(path.join(bundleRoot, 'package.json'), 'utf8')
+                        ) as Record<string, unknown>;
+                        lifecycleSawNewPackage = packageDuringLifecycle.rollbackMarker === 'new-package';
+                        throw new Error('INSTALL_EXPORT_FAIL');
+                    }
+                }),
+                /sync rollback completed.*INSTALL_EXPORT_FAIL/
+            );
+
+            assert.equal(lifecycleSawNewPackage, true, 'Lifecycle must fail after destructive bundle sync');
+            assert.deepEqual(
+                JSON.parse(fs.readFileSync(path.join(bundleRoot, 'package.json'), 'utf8')),
+                oldPackage
+            );
+            assert.equal(fs.readFileSync(path.join(bundleRoot, distRelativePath), 'utf8'), oldDist);
+            assert.ok(!fs.existsSync(getUpdateSentinelPath(bundleRoot)),
+                'Sentinel must be removed after package/dist rollback verifies');
+            const evidence = readLatestSyncRollbackEvidence(bundleRoot);
+            assert.equal(evidence.status, 'SUCCESS');
+            assert.equal(evidence.originalError, 'INSTALL_EXPORT_FAIL');
+            assert.equal(evidence.syncBackupMetadataPath, path.join(getLatestBundleBackupRoot(bundleRoot), 'sync-backup-metadata.json'));
+            assert.ok(Array.isArray(evidence.restoredItems), 'Sync rollback evidence must list restored items');
+            assert.ok((evidence.restoredItems as unknown[]).includes('package.json'));
+            assert.ok((evidence.restoredItems as unknown[]).includes('dist'));
+            assert.ok((evidence.restoredItems as unknown[]).includes('VERSION'));
+            const doctorResult = runDoctor({
+                targetRoot: projectRoot,
+                sourceOfTruth: 'Codex'
+            });
+            assert.equal(
+                doctorResult.passed,
+                true,
+                [
+                    'Doctor must pass after successful sync rollback',
+                    ...doctorResult.partialStateEvidence.violations,
+                    ...(doctorResult.verifyResult.violations
+                        ? Object.values(doctorResult.verifyResult.violations).flat()
+                        : []),
+                    ...(doctorResult.manifestResult?.diagnostics.map((diagnostic) => diagnostic.message) ?? []),
+                    ...(doctorResult.manifestError ? [doctorResult.manifestError] : []),
+                    JSON.stringify({
+                        parityResult: doctorResult.parityResult,
+                        protectedManifestAssessment: doctorResult.protectedManifestAssessment,
+                        lockHealth: doctorResult.lockHealth,
+                        reviewLockHealth: doctorResult.reviewLockHealth,
+                        completionFinalizationLockHealth: doctorResult.completionFinalizationLockHealth,
+                        providerComplianceResult: doctorResult.providerComplianceResult,
+                        runtimeMismatchEvidence: doctorResult.runtimeMismatchEvidence,
+                        permissionEvidence: doctorResult.permissionEvidence,
+                        rollbackHealthEvidence: doctorResult.rollbackHealthEvidence,
+                        profileHealthEvidence: doctorResult.profileHealthEvidence
+                    }, null, 2)
+                ].join('\n')
+            );
+        } finally {
+            removePathRecursive(sourceRoot);
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('rejects arbitrary extra src files after rollback verification with running script path', async () => {
+        const { projectRoot, bundleRoot } = setupCheckUpdateWorkspace(repoRoot, '0.0.1');
+        try {
+            const backupRoot = path.join(bundleRoot, 'runtime', 'bundle-backups', 'verify-extra');
+            const backupSrc = path.join(backupRoot, 'src');
+            const destinationSrc = path.join(bundleRoot, 'src');
+            const runningScriptPath = path.join(destinationSrc, 'bin', 'garda.js');
+
+            fs.mkdirSync(path.join(backupSrc, 'bin'), { recursive: true });
+            fs.writeFileSync(path.join(backupSrc, 'bin', 'index.js'), 'backup index\n', 'utf8');
+            fs.mkdirSync(path.dirname(runningScriptPath), { recursive: true });
+            fs.writeFileSync(path.join(destinationSrc, 'bin', 'index.js'), 'backup index\n', 'utf8');
+            fs.writeFileSync(runningScriptPath, 'current running script\n', 'utf8');
+
+            assert.doesNotThrow(() => verifySyncedItemsRestoredFromBackup(
+                bundleRoot,
+                backupRoot,
+                { src: true },
+                runningScriptPath
+            ));
+
+            fs.writeFileSync(path.join(destinationSrc, 'bin', 'unexpected.js'), 'leftover\n', 'utf8');
+
+            assert.throws(
+                () => verifySyncedItemsRestoredFromBackup(
+                    bundleRoot,
+                    backupRoot,
+                    { src: true },
+                    runningScriptPath
+                ),
+                /differs from rollback backup/
+            );
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -1414,6 +1578,7 @@ describe('runCheckUpdate', () => {
             }, null, 2) + '\n', 'utf8');
             let lifecycleStartedAt: unknown = null;
             let versionDeferredStartedAt: unknown = null;
+            let versionDeferredSyncBackupRoot: string | null = null;
 
             await assert.rejects(
                 runCheckUpdate({
@@ -1428,7 +1593,10 @@ describe('runCheckUpdate', () => {
                     },
                     _testHooks: {
                         afterDeferredVersionSync: () => {
-                            versionDeferredStartedAt = (readUpdateSentinel(bundleRoot) as Record<string, unknown>).startedAt;
+                            const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
+                            assert.equal(sentinel.phase, 'version_deferred');
+                            versionDeferredStartedAt = sentinel.startedAt;
+                            versionDeferredSyncBackupRoot = sentinel.syncBackupRoot as string;
                             throw new Error('Simulated post-version failure');
                         }
                     }
@@ -1446,13 +1614,16 @@ describe('runCheckUpdate', () => {
                 '0.0.1',
                 'live/version.json must roll back with VERSION after a later apply failure'
             );
-            const sentinel = readUpdateSentinel(bundleRoot) as Record<string, unknown>;
-            assert.equal(sentinel.phase, 'version_deferred');
+            assert.ok(!fs.existsSync(getUpdateSentinelPath(bundleRoot)),
+                'Sentinel must be removed after verified deferred-version rollback');
             assert.equal(lifecycleStartedAt, versionDeferredStartedAt,
                 'Sentinel startedAt must remain stable across phase updates');
-            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.ok(versionDeferredSyncBackupRoot, 'Test must capture deferred-version backup root');
+            const metadata = readSyncBackupMetadata(versionDeferredSyncBackupRoot as string);
             assert.equal(metadata.preexistingMap.VERSION, true);
             assert.equal(metadata.preexistingMap['live/version.json'], true);
+            const evidence = readLatestSyncRollbackEvidence(bundleRoot);
+            assert.equal(evidence.status, 'SUCCESS');
         } finally {
             removePathRecursive(projectRoot);
         }

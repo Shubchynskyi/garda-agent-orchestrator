@@ -20,8 +20,7 @@ import { runUninstall } from '../../../src/lifecycle/uninstall';
 import {
     removePathRecursive,
     getUpdateSentinelPath,
-    readSyncBackupMetadata,
-    readUpdateSentinel
+    readSyncBackupMetadata
 } from '../../../src/lifecycle/common';
 import { MANAGED_START, MANAGED_END, COMMIT_GUARD_START, COMMIT_GUARD_END } from '../../../src/materialization/content-builders';
 
@@ -54,6 +53,13 @@ function seedExecutableBundleSurface(repoRoot: string, bundleRoot: string) {
     copyDirRecursive(path.join(repoRoot, 'bin'), path.join(bundleRoot, 'bin'));
     fs.mkdirSync(path.join(bundleRoot, 'dist', 'src'), { recursive: true });
     fs.writeFileSync(path.join(bundleRoot, 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
+}
+
+function getLatestBundleBackupRoot(bundleRoot: string): string {
+    const backupsRoot = path.join(bundleRoot, 'runtime', 'bundle-backups');
+    const backups = fs.readdirSync(backupsRoot).sort();
+    assert.ok(backups.length > 0, 'Expected at least one bundle backup');
+    return path.join(backupsRoot, backups[backups.length - 1]);
 }
 
 const MANAGED_END_MARKER = '<!-- garda-agent-orchestrator:managed-end -->';
@@ -432,14 +438,12 @@ describe('Check-update partial sync failure paths', () => {
                 versionBefore,
                 'VERSION must be restored after sync rollback'
             );
-            // Sentinel must remain with rollback metadata for interrupted-update recovery.
-            assert.ok(fs.existsSync(getUpdateSentinelPath(bundle)),
-                'Update sentinel must remain after failure for recovery diagnostics');
-            const sentinel = readUpdateSentinel(bundle) as Record<string, unknown>;
-            assert.equal(sentinel.phase, 'lifecycle');
-            assert.equal(typeof sentinel.syncBackupRoot, 'string');
-            const metadata = readSyncBackupMetadata(sentinel.syncBackupRoot as string);
+            assert.ok(!fs.existsSync(getUpdateSentinelPath(bundle)),
+                'Update sentinel must be cleaned after verified sync rollback');
+            const metadata = readSyncBackupMetadata(getLatestBundleBackupRoot(bundle));
             assert.equal(metadata.preexistingMap.VERSION, true);
+            const evidencePath = path.join(getLatestBundleBackupRoot(bundle), 'sync-rollback-result.json');
+            assert.ok(fs.existsSync(evidencePath), 'Sync rollback evidence must remain after sentinel cleanup');
         } finally {
             removePathRecursive(tmpDir);
         }
