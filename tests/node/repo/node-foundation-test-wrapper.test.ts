@@ -265,6 +265,345 @@ test('runNodeFoundationTests accepts cross-platform shard options and writes sha
     }
 });
 
+test('runNodeFoundationTests times out a hung shard and records cleanup diagnostics', async () => {
+    const { PassThrough } = require('node:stream') as typeof import('node:stream');
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardTimeoutEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+    const originalShardHeartbeatEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const originalProcessKill = process.kill;
+    let hungShardKilled = false;
+    let spawnedShardCount = 0;
+    const observedProcessKill: Array<{ pid: number; signal: string | number | undefined; }> = [];
+    const spawnedChildren = new Map<number, childProcess.ChildProcess & {
+        stdout: import('node:stream').PassThrough;
+        stderr: import('node:stream').PassThrough;
+    }>();
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-shard-log-dir',
+            path.join(buildResult.repoRoot, 'timeout-shard-logs')
+        ];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = '20';
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = '0';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        (process.kill as unknown as typeof originalProcessKill) = ((pid: number, signal?: string | number) => {
+            observedProcessKill.push({ pid, signal });
+            if (pid < 0) {
+                const child = spawnedChildren.get(Math.abs(pid));
+                if (child) {
+                    setImmediate(() => {
+                        child.stdout.end();
+                        child.stderr.end();
+                        child.emit('exit', null);
+                        child.emit('close', null);
+                    });
+                }
+            }
+            return true;
+        }) as typeof process.kill;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = [], options?: childProcess.SpawnOptions) => {
+            spawnedShardCount += 1;
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, {
+                pid: 99 + spawnedShardCount,
+                stdout,
+                stderr,
+                kill() {
+                    hungShardKilled = true;
+                    setImmediate(() => {
+                        stdout.end();
+                        stderr.end();
+                        events.emit('exit', null);
+                        events.emit('close', null);
+                    });
+                    return true;
+                }
+            });
+            spawnedChildren.set(99 + spawnedShardCount, events as childProcess.ChildProcess & {
+                stdout: import('node:stream').PassThrough;
+                stderr: import('node:stream').PassThrough;
+            });
+            if (process.platform !== 'win32') {
+                assert.equal(options?.detached, true);
+            }
+            if (hungShardKilled) {
+                return events;
+            }
+            stdout.write('hung shard started\n');
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 1);
+        if (process.platform === 'win32') {
+            assert.equal(hungShardKilled, true);
+        } else {
+            assert.deepEqual(observedProcessKill.map((item) => item.pid), [-100, -101]);
+            assert.ok(observedProcessKill.every((item) => item.signal === 'SIGKILL'));
+        }
+        const logDir = path.join(buildResult.repoRoot, 'timeout-shard-logs');
+        const timeoutLog = fs.readFileSync(path.join(logDir, 'shard-01-of-02.log'), 'utf8');
+        assert.match(timeoutLog, /hung shard started/);
+        assert.match(timeoutLog, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1\/2/);
+        assert.match(timeoutLog, /last_output_age_ms=\d+/);
+        if (process.platform === 'win32') {
+            assert.match(timeoutLog, /cleanup=child_kill_sigkill|cleanup=taskkill_tree/);
+        } else {
+            assert.match(timeoutLog, /cleanup=kill_process_group_sigkill/);
+        }
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardTimeoutEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = originalShardTimeoutEnv;
+        }
+        if (originalShardHeartbeatEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = originalShardHeartbeatEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        process.kill = originalProcessKill;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests finishes timed out shards when cleanup never emits close', async () => {
+    const { PassThrough } = require('node:stream') as typeof import('node:stream');
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardTimeoutEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+    const originalShardHeartbeatEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const originalProcessKill = process.kill;
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-shard-log-dir',
+            path.join(buildResult.repoRoot, 'cleanup-grace-shard-logs')
+        ];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = '20';
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = '0';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        (process.kill as unknown as typeof originalProcessKill) = (() => true) as typeof process.kill;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = []) => {
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, {
+                pid: 800,
+                stdout,
+                stderr,
+                kill() {
+                    return true;
+                }
+            });
+            stdout.write('cleanup grace shard started\n');
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 1);
+        const logDir = path.join(buildResult.repoRoot, 'cleanup-grace-shard-logs');
+        const cleanupGraceLog = fs.readFileSync(path.join(logDir, 'shard-01-of-02.log'), 'utf8');
+        assert.match(cleanupGraceLog, /cleanup grace shard started/);
+        assert.match(cleanupGraceLog, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1\/2/);
+        assert.match(cleanupGraceLog, /NODE_FOUNDATION_TEST_SHARD_CLEANUP_GRACE_EXPIRED 1\/2/);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardTimeoutEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = originalShardTimeoutEnv;
+        }
+        if (originalShardHeartbeatEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = originalShardHeartbeatEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        process.kill = originalProcessKill;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests does not time out a shard that keeps producing output', async () => {
+    const { PassThrough } = require('node:stream') as typeof import('node:stream');
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardTimeoutEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+    const originalShardHeartbeatEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const originalProcessKill = process.kill;
+    let childKillCalled = false;
+    const observedProcessKill: Array<{ pid: number; signal: string | number | undefined; }> = [];
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-shard-log-dir',
+            path.join(buildResult.repoRoot, 'active-output-shard-logs')
+        ];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = '80';
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = '0';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        (process.kill as unknown as typeof originalProcessKill) = ((pid: number, signal?: string | number) => {
+            observedProcessKill.push({ pid, signal });
+            return true;
+        }) as typeof process.kill;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = [], options?: childProcess.SpawnOptions) => {
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, {
+                pid: 700 + observedProcessKill.length,
+                stdout,
+                stderr,
+                kill() {
+                    childKillCalled = true;
+                    return true;
+                }
+            });
+            if (process.platform !== 'win32') {
+                assert.equal(options?.detached, true);
+            }
+            setImmediate(() => stdout.write('active shard output 0\n'));
+            setTimeout(() => stdout.write('active shard output 1\n'), 25);
+            setTimeout(() => stdout.write('active shard output 2\n'), 55);
+            setTimeout(() => stdout.write('active shard output 3\n'), 85);
+            setTimeout(() => {
+                stdout.end('active shard done\n');
+                stderr.end();
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            }, 115);
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        assert.equal(childKillCalled, false);
+        assert.deepEqual(observedProcessKill, []);
+        const logDir = path.join(buildResult.repoRoot, 'active-output-shard-logs');
+        const activeOutputLog = fs.readFileSync(path.join(logDir, 'shard-01-of-02.log'), 'utf8');
+        assert.match(activeOutputLog, /active shard output 3/);
+        assert.doesNotMatch(activeOutputLog, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT/);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardTimeoutEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = originalShardTimeoutEnv;
+        }
+        if (originalShardHeartbeatEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = originalShardHeartbeatEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        process.kill = originalProcessKill;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests writes shard heartbeat diagnostics to shard logs', async () => {
+    const { PassThrough } = require('node:stream') as typeof import('node:stream');
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardTimeoutEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+    const originalShardHeartbeatEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shards',
+            '2',
+            '--garda-shard-log-dir',
+            path.join(buildResult.repoRoot, 'heartbeat-shard-logs')
+        ];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = '0';
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = '5';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = []) => {
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            setTimeout(() => {
+                stdout.end('heartbeat shard done\n');
+                stderr.end();
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            }, 20);
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 0);
+        const logDir = path.join(buildResult.repoRoot, 'heartbeat-shard-logs');
+        const heartbeatLog = fs.readFileSync(path.join(logDir, 'shard-01-of-02.log'), 'utf8');
+        assert.match(heartbeatLog, /NODE_FOUNDATION_TEST_SHARD_HEARTBEAT 1\/2/);
+        assert.match(heartbeatLog, /heartbeat shard done/);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardTimeoutEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = originalShardTimeoutEnv;
+        }
+        if (originalShardHeartbeatEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = originalShardHeartbeatEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests balances shards with duration telemetry before size fallback', async () => {
     const { buildResult, cleanup } = createBuildResultFixture(1);
     const originalArgv = process.argv;

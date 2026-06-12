@@ -6,9 +6,14 @@ import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } fr
 
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
 const NODE_FOUNDATION_TEST_SHARD_LOG_DIR_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_LOG_DIR';
+const NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS';
+const NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS';
 const NODE_FOUNDATION_TEST_DURATION_FILE_ENV = 'GARDA_NODE_FOUNDATION_TEST_DURATION_FILE';
 const NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT = 24_000;
 const NODE_FOUNDATION_TEST_SLOWEST_REPORT_COUNT = 10;
+const DEFAULT_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = 10 * 60 * 1000;
+const DEFAULT_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = 60 * 1000;
+const NODE_FOUNDATION_TEST_SHARD_CLEANUP_GRACE_MS = 1_000;
 const GARDA_SHARDS_OPTION = '--garda-shards';
 const GARDA_SHARD_LOG_DIR_OPTION = '--garda-shard-log-dir';
 const GARDA_DURATION_FILE_OPTION = '--garda-duration-file';
@@ -50,6 +55,14 @@ function parsePositiveInteger(value: string, label: string): number {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed < 1) {
         throw new Error(`${label} must be a positive integer.`);
+    }
+    return parsed;
+}
+
+function parseNonNegativeInteger(value: string, label: string): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+        throw new Error(`${label} must be a non-negative integer.`);
     }
     return parsed;
 }
@@ -376,6 +389,25 @@ interface NodeTestShardResult {
     exitCode: number;
     durationMs: number;
     shardFiles: string[];
+    timedOut?: boolean;
+}
+
+interface NodeTestShardRuntimeConfig {
+    timeoutMs: number;
+    heartbeatMs: number;
+}
+
+function resolveNodeTestShardRuntimeConfig(): NodeTestShardRuntimeConfig {
+    const configuredTimeout = String(process.env[NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV] || '').trim();
+    const configuredHeartbeat = String(process.env[NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS_ENV] || '').trim();
+    return {
+        timeoutMs: configuredTimeout
+            ? parseNonNegativeInteger(configuredTimeout, NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV)
+            : DEFAULT_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS,
+        heartbeatMs: configuredHeartbeat
+            ? parseNonNegativeInteger(configuredHeartbeat, NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS_ENV)
+            : DEFAULT_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS
+    };
 }
 
 function resolveNodeFoundationRuntimeDir(repoRoot: string): string {
@@ -615,15 +647,57 @@ function resolveShardLogDir(repoRoot: string, buildRoot: string, requestedShardL
 function writeShardOutput(
     stream: NodeJS.ReadableStream | null | undefined,
     logStream: fs.WriteStream,
-    consoleStream: NodeJS.WritableStream
+    consoleStream: NodeJS.WritableStream,
+    onData?: () => void
 ): void {
     if (!stream) {
         return;
     }
     stream.on('data', (chunk: Buffer | string) => {
+        if (onData) {
+            onData();
+        }
         logStream.write(chunk);
         consoleStream.write(chunk);
     });
+}
+
+function writeShardDiagnostic(logStream: fs.WriteStream, line: string, emitToConsole: boolean): void {
+    logStream.write(`${line}\n`);
+    if (emitToConsole) {
+        console.error(line);
+    }
+}
+
+function killShardChildTree(child: childProcess.ChildProcess): string {
+    if (process.platform === 'win32' && child.pid) {
+        try {
+            childProcess.execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+                stdio: 'ignore',
+                windowsHide: true,
+                timeout: 5000
+            });
+            return 'taskkill_tree';
+        } catch (_error) {
+            // Fall through to ChildProcess.kill for test doubles and already-exited children.
+        }
+    }
+
+    if (process.platform !== 'win32' && child.pid) {
+        try {
+            process.kill(-child.pid, 'SIGKILL');
+            return 'kill_process_group_sigkill';
+        } catch (_error) {
+            // Fall through to ChildProcess.kill for test doubles and processes without a group.
+        }
+    }
+
+    try {
+        child.kill('SIGKILL');
+        return 'child_kill_sigkill';
+    } catch (_error) {
+        return 'already_exited_or_kill_failed';
+    }
 }
 
 function runNodeTestShard(
@@ -632,34 +706,144 @@ function runNodeTestShard(
     shardFiles: string[],
     shardIndex: number,
     shardCount: number,
-    shardLogDir: string
+    shardLogDir: string,
+    runtimeConfig: NodeTestShardRuntimeConfig
 ): Promise<NodeTestShardResult> {
     return new Promise((resolve, reject) => {
         fs.mkdirSync(shardLogDir, { recursive: true });
         const logPath = path.join(shardLogDir, `shard-${String(shardIndex + 1).padStart(2, '0')}-of-${String(shardCount).padStart(2, '0')}.log`);
         const logStream = fs.createWriteStream(logPath, { flags: 'w' });
         const startedAt = Date.now();
+        let lastOutputAt = startedAt;
+        let timedOut = false;
+        let settled = false;
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        let heartbeatHandle: ReturnType<typeof setInterval> | null = null;
+        let cleanupGraceHandle: ReturnType<typeof setTimeout> | null = null;
         console.log(`NODE_FOUNDATION_TEST_SHARD_START ${shardIndex + 1}/${shardCount} files=${shardFiles.length}`);
         console.log(`NODE_FOUNDATION_TEST_SHARD_LOG ${shardIndex + 1}/${shardCount} ${logPath}`);
         const child = childProcess.spawn(process.execPath, ['--test', ...optionArgs, ...shardFiles], {
             cwd: repoRoot,
+            detached: process.platform !== 'win32',
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true
         });
         let exitCode = 1;
-        writeShardOutput(child.stdout, logStream, process.stdout);
-        writeShardOutput(child.stderr, logStream, process.stderr);
+
+        function cleanupTimers(): void {
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+                timeoutHandle = null;
+            }
+            if (heartbeatHandle) {
+                clearInterval(heartbeatHandle);
+                heartbeatHandle = null;
+            }
+            if (cleanupGraceHandle) {
+                clearTimeout(cleanupGraceHandle);
+                cleanupGraceHandle = null;
+            }
+        }
+
+        function buildProgressFields(): string {
+            const now = Date.now();
+            return `pid=${child.pid ?? 'unknown'} elapsed_ms=${Math.max(1, now - startedAt)} `
+                + `last_output_age_ms=${Math.max(0, now - lastOutputAt)} log=${logPath}`;
+        }
+
+        function finishShard(): void {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanupTimers();
+            const durationMs = Math.max(1, Date.now() - startedAt);
+            console.log(`NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode} duration_ms=${durationMs} timed_out=${timedOut}`);
+            logStream.end(() => resolve({ exitCode, durationMs, shardFiles, timedOut }));
+        }
+
+        function scheduleCleanupGrace(): void {
+            if (cleanupGraceHandle || settled) {
+                return;
+            }
+            cleanupGraceHandle = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                writeShardDiagnostic(
+                    logStream,
+                    `NODE_FOUNDATION_TEST_SHARD_CLEANUP_GRACE_EXPIRED ${shardIndex + 1}/${shardCount} ${buildProgressFields()}`,
+                    true
+                );
+                finishShard();
+            }, NODE_FOUNDATION_TEST_SHARD_CLEANUP_GRACE_MS);
+        }
+
+        function scheduleIdleTimeout(): void {
+            if (runtimeConfig.timeoutMs <= 0 || settled) {
+                return;
+            }
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+            }
+            timeoutHandle = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+                const idleForMs = Date.now() - lastOutputAt;
+                if (idleForMs < runtimeConfig.timeoutMs) {
+                    scheduleIdleTimeout();
+                    return;
+                }
+                timedOut = true;
+                exitCode = 1;
+                const cleanupMethod = killShardChildTree(child);
+                writeShardDiagnostic(
+                    logStream,
+                    `NODE_FOUNDATION_TEST_SHARD_TIMEOUT ${shardIndex + 1}/${shardCount} ${buildProgressFields()} cleanup=${cleanupMethod}`,
+                    true
+                );
+                scheduleCleanupGrace();
+            }, runtimeConfig.timeoutMs);
+        }
+
+        function recordProgress(): void {
+            lastOutputAt = Date.now();
+            scheduleIdleTimeout();
+        }
+
+        writeShardOutput(child.stdout, logStream, process.stdout, () => {
+            recordProgress();
+        });
+        writeShardOutput(child.stderr, logStream, process.stderr, () => {
+            recordProgress();
+        });
+        scheduleIdleTimeout();
+        if (runtimeConfig.heartbeatMs > 0) {
+            heartbeatHandle = setInterval(() => {
+                if (settled) {
+                    return;
+                }
+                writeShardDiagnostic(
+                    logStream,
+                    `NODE_FOUNDATION_TEST_SHARD_HEARTBEAT ${shardIndex + 1}/${shardCount} ${buildProgressFields()}`,
+                    false
+                );
+            }, runtimeConfig.heartbeatMs);
+        }
         child.once('error', (error) => {
+            settled = true;
+            cleanupTimers();
             logStream.destroy();
             reject(error);
         });
         child.once('exit', (code) => {
-            exitCode = code == null ? 1 : code;
+            if (!timedOut) {
+                exitCode = code == null ? 1 : code;
+            }
         });
         child.once('close', () => {
-            const durationMs = Math.max(1, Date.now() - startedAt);
-            console.log(`NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode} duration_ms=${durationMs}`);
-            logStream.end(() => resolve({ exitCode, durationMs, shardFiles }));
+            finishShard();
         });
     });
 }
@@ -677,10 +861,12 @@ async function runShardedNodeTestProcesses(
 ): Promise<number> {
     const shards = buildNodeFoundationTestShards(buildResult, selectedTestFiles, shardCount, telemetry);
     const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
+    const runtimeConfig = resolveNodeTestShardRuntimeConfig();
     console.log(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${shardLogDir}`);
     console.log(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY ${telemetryPath}`);
+    console.log(`NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=${runtimeConfig.timeoutMs} heartbeat_ms=${runtimeConfig.heartbeatMs}`);
     const results = await Promise.all(shards.map((shardFiles, index) =>
-        runNodeTestShard(repoRoot, optionArgs, shardFiles, index, shards.length, shardLogDir)
+        runNodeTestShard(repoRoot, optionArgs, shardFiles, index, shards.length, shardLogDir, runtimeConfig)
     ));
     recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, results);
     return results.find((result) => result.exitCode !== 0)?.exitCode || 0;
