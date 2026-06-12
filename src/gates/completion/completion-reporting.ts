@@ -71,7 +71,7 @@ export function buildCompletionGateSuccessAfterCommand(repoRoot: string, taskId:
         ? getSourceCliCommand()
         : getBundleCliCommand(resolveBundleName());
     return `AfterCommand: rerun ${cliPrefix} next-step "${taskId}" --repo-root "."; `
-        + 'follow the task-audit-summary command it prints before delivering the mandatory final report or asking for commit permission.';
+        + 'deliver the mandatory final report that next-step prints before asking for commit permission.';
 }
 
 export function formatCompletionGateResult(result: Record<string, unknown>): string {

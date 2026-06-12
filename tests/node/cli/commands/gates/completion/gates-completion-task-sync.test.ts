@@ -110,6 +110,10 @@ describe('cli/commands/gates', () => {
         assert.equal(observedExitCode, 0);
         assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
         assert.match(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8'), /\|\s*T-903-completion-status-sync\s*\|\s*🟩 DONE\s*\|/);
+        const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.json`)), true);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.md`)), true);
+        assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-user-report.md`)), true);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

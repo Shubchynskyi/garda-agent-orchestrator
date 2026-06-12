@@ -397,6 +397,7 @@ export function createReviewerRoutingFixture(
         execution_provider_source: executionProviderSource,
         identity_status: 'resolved',
         capability_level: policy.capability_level,
+        delegation_required: policy.delegation_required,
         expected_execution_mode: policy.expected_execution_mode,
         fallback_allowed: policy.fallback_allowed,
         fallback_reason_required: policy.fallback_reason_required,

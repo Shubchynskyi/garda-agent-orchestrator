@@ -34,7 +34,7 @@ describe('gates/completion-reporting', () => {
 
         assert.match(output, /COMPLETION_GATE_PASSED/);
         assert.match(output, /AfterCommand: rerun node bin\/garda\.js next-step "T-645" --repo-root "\."/);
-        assert.match(output, /task-audit-summary command/);
+        assert.doesNotMatch(output, /task-audit-summary command/);
         assert.match(output, /mandatory final report/);
         assert.match(output, /asking for commit permission/);
     });
@@ -57,6 +57,7 @@ describe('gates/completion-reporting', () => {
         const command = buildCompletionGateSuccessAfterCommand(process.cwd(), 'T-645');
 
         assert.match(command, /^AfterCommand: rerun node bin\/garda\.js next-step "T-645" --repo-root "\."/);
-        assert.match(command, /task-audit-summary/);
+        assert.doesNotMatch(command, /task-audit-summary/);
+        assert.match(command, /mandatory final report/);
     });
 });

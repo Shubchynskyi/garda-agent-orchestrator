@@ -346,7 +346,133 @@ describe('cli/commands/gates', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    test('task-audit-summary materializes canonical final closeout artifacts through the CLI handler', async () => {
+    test('completion-gate rolls back DONE and partial closeout artifacts when final user report materialization fails', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903-completion-closeout-rollback';
+        seedTaskQueue(repoRoot, taskId, '🟦 TODO');
+        seedInitAnswers(repoRoot);
+        const preflightPath = writePreflight(repoRoot, taskId);
+        const commandsPath = path.join(repoRoot, 'commands-completion-closeout-rollback.md');
+        const outputFiltersPath = path.resolve('live/config/output-filters.json');
+        fs.writeFileSync(commandsPath, [
+            '### Compile Gate (Mandatory)',
+            '```bash',
+            'node -e "console.log(\'build ok\')"',
+            '```'
+        ].join('\n'), 'utf8');
+
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary: 'Roll back DONE when final user report materialization fails'
+        });
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath);
+
+        await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        writeCleanReviewArtifact(repoRoot, taskId, 'code', 'REVIEW PASSED');
+
+        const reviewResult = runRequiredReviewsCheckCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            codeReviewVerdict: 'REVIEW PASSED',
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(reviewResult.exitCode, 0, JSON.stringify(reviewResult, null, 2));
+
+        const docImpactResult = runDocImpactGateCommand({
+            repoRoot,
+            taskId,
+            preflightPath,
+            decision: 'NO_DOC_UPDATES',
+            behaviorChanged: false,
+            changelogUpdated: false,
+            rationale: 'Completion final closeout rollback regression fixture only.',
+            emitMetrics: false
+        });
+        assert.equal(docImpactResult.exitCode, 0);
+
+        const reviewsRoot = getReviewsRoot(repoRoot);
+        const finalCloseoutJsonPath = path.join(reviewsRoot, `${taskId}-final-closeout.json`);
+        const finalCloseoutMarkdownPath = path.join(reviewsRoot, `${taskId}-final-closeout.md`);
+        const finalUserReportPath = path.join(reviewsRoot, `${taskId}-final-user-report.md`);
+        const fsModule = require('node:fs') as typeof import('node:fs');
+        const originalRenameSync = fsModule.renameSync;
+        let injectedReportWriteFailure = false;
+        fsModule.renameSync = ((oldPath: fs.PathLike, newPath: fs.PathLike) => {
+            if (
+                !injectedReportWriteFailure
+                && typeof newPath === 'string'
+                && path.resolve(newPath) === path.resolve(finalUserReportPath)
+            ) {
+                injectedReportWriteFailure = true;
+                throw new Error('Injected final user report write failure');
+            }
+            return originalRenameSync(oldPath, newPath);
+        }) as typeof fsModule.renameSync;
+
+        try {
+            const error = await captureExpectedAsyncError(async () => {
+                await handleCompletionGate([
+                    '--preflight-path', preflightPath,
+                    '--task-id', taskId,
+                    '--repo-root', repoRoot
+                ]);
+            });
+            assert.match(error.message, /mandatory final closeout materialization failed/i);
+            assert.match(error.message, /Injected final user report write failure/i);
+        } finally {
+            fsModule.renameSync = originalRenameSync;
+        }
+
+        assert.equal(injectedReportWriteFailure, true);
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'IN_REVIEW');
+        assert.equal(fs.existsSync(finalCloseoutJsonPath), false);
+        assert.equal(fs.existsSync(finalCloseoutMarkdownPath), false);
+        assert.equal(fs.existsSync(finalUserReportPath), false);
+        const failedAttemptEvents = readTaskTimelineEvents(repoRoot, taskId);
+        assert.equal(
+            failedAttemptEvents.filter((event) => event.event_type === 'COMPLETION_GATE_PASSED').length,
+            0
+        );
+        assert.equal(
+            failedAttemptEvents.filter((event) => (
+                event.event_type === 'STATUS_CHANGED'
+                && typeof (event.details as Record<string, unknown> | undefined)?.new_status === 'string'
+                && String((event.details as Record<string, unknown>).new_status).toUpperCase() === 'DONE'
+            )).length,
+            0
+        );
+        assert.equal(
+            failedAttemptEvents.filter((event) => event.event_type === 'COMPLETION_GATE_FAILED').length,
+            1
+        );
+
+        await handleCompletionGate([
+            '--preflight-path', preflightPath,
+            '--task-id', taskId,
+            '--repo-root', repoRoot
+        ]);
+        assert.equal(readTaskQueueStatusFromTaskFile(repoRoot, taskId), 'DONE');
+        assert.equal(fs.existsSync(finalCloseoutJsonPath), true);
+        assert.equal(fs.existsSync(finalCloseoutMarkdownPath), true);
+        assert.equal(fs.existsSync(finalUserReportPath), true);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    test('completion-gate materializes canonical final closeout artifacts through the CLI handler', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903-final-closeout-artifact';
         seedTaskQueue(repoRoot, taskId, '🟦 TODO');
@@ -428,15 +554,10 @@ describe('cli/commands/gates', () => {
             ]);
             assert.equal(process.exitCode ?? 0, 0);
 
-            process.exitCode = 0;
-            await runCliMain([
-                'gate',
-                'task-audit-summary',
-                '--task-id', taskId,
-                '--repo-root', repoRoot,
-                '--as-json'
-            ]);
-            assert.equal(process.exitCode ?? 0, 0);
+            const reviewsRoot = getReviewsRoot(repoRoot);
+            assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.json`)), true);
+            assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-closeout.md`)), true);
+            assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-final-user-report.md`)), true);
         } finally {
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;

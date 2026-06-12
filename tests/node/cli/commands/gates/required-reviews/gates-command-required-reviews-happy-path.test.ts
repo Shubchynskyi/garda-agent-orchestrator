@@ -968,9 +968,10 @@ describe('gates command required reviews', () => {
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'test'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
-                execution_provider_source: 'provider_bridge',
                 routed_to: '.antigravity/agents/orchestrator.md',
-                provider_bridge: '.antigravity/agents/orchestrator.md'
+                provider_bridge: '.antigravity/agents/orchestrator.md',
+                reviewer_subagent_launch_status: 'launchable',
+                reviewer_subagent_launch_route: '.antigravity/agents/orchestrator.md'
             })
         }, null, 2) + '\n', 'utf8');
         appendTaskEvent(getOrchestratorRoot(repoRoot), taskId, 'SKILL_SELECTED', 'INFO', 'selected', { skill_id: 'testing-strategy' });
@@ -1361,7 +1362,6 @@ describe('gates command required reviews', () => {
             task_scope: manualReviewContextTaskScopeFixture(repoRoot, taskId),
             scoped_diff: reviewContextScopedDiffFixture(repoRoot, taskId, 'code'),
             reviewer_routing: createReviewerRoutingFixture('Antigravity', {
-                execution_provider_source: 'provider_bridge',
                 routed_to: '.antigravity/agents/orchestrator.md',
                 reviewer_subagent_launch_status: 'launchable',
                 reviewer_subagent_launch_route: '.antigravity/agents/orchestrator.md'

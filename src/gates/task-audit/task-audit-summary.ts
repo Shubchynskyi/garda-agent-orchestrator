@@ -2,7 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { assertValidTaskId, inspectTaskEventFile } from '../../gate-runtime/task-events';
 import { withReviewArtifactReadBarrier } from '../../gate-runtime/review-artifacts';
-import { inspectCompletionGateFinalizationLock } from '../locks/finalization-lock';
+import {
+    inspectCompletionGateFinalizationLock,
+    type FinalizationLockInspection
+} from '../locks/finalization-lock';
 import { toPosix } from '../shared/helpers';
 import {
     buildTokenEconomySummary,
@@ -373,8 +376,10 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const failedGateNames = gates.filter((g) => g.status === 'FAIL').map((g) => g.gate);
     const hasNonCompletionFailure = failedGateNames.some((gateName) => gateName !== 'completion-gate');
     const hasIntegrityFailure = integrityStatus === 'FAILED';
-    const completionGateLock = inspectCompletionGateFinalizationLock(reviewsRoot, safeTaskId);
-    if (completionGateLock.active || completionGateLock.stale) {
+    const completionGateLock: FinalizationLockInspection | null = options.ignoreActiveCompletionFinalizationLock
+        ? null
+        : inspectCompletionGateFinalizationLock(reviewsRoot, safeTaskId);
+    if (completionGateLock && (completionGateLock.active || completionGateLock.stale)) {
         const ownerPidText = completionGateLock.owner_pid === null ? 'unknown' : String(completionGateLock.owner_pid);
         const ownerHostText = completionGateLock.owner_hostname || 'unknown';
         pointInTimeSnapshot = {

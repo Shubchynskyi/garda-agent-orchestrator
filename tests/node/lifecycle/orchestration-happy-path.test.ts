@@ -22,8 +22,7 @@ import {
     runLoadRulePackCommand,
     runProjectMemoryImpactCommand,
     runRequiredReviewsCheckCommand,
-    runShellSmokePreflightCommand,
-    runTaskAuditSummaryCommand
+    runShellSmokePreflightCommand
 } from '../../../src/cli/commands/gates';
 import { runBuildReviewContextCommand } from '../../../src/cli/commands/gate-flows/review-context/review-context-flow';
 import { handleCompletionGate } from '../../../src/cli/commands/gate-task-handlers';
@@ -636,17 +635,16 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
         assertNextGate(workspaceRoot, 'completion-gate');
         await runCompletion(workspaceRoot, preflightPath);
 
-        assertNextGate(workspaceRoot, 'task-audit-summary');
-        const taskAuditResult = runTaskAuditSummaryCommand({
-            repoRoot: workspaceRoot,
-            taskId: TASK_ID,
-            asJson: true
-        });
-        assert.equal(taskAuditResult.exitCode, 0, taskAuditResult.rendered);
+        const completedNextStep = resolveNextStep({ taskId: TASK_ID, repoRoot: workspaceRoot });
+        assert.equal(completedNextStep.status, 'DONE', completedNextStep.reason);
+        assert.equal(completedNextStep.next_gate, null, completedNextStep.reason);
+        assert.ok(completedNextStep.final_report, 'Expected final report to be ready immediately after completion-gate.');
         const finalCloseout = JSON.parse(
             fs.readFileSync(path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-final-closeout.json`), 'utf8')
         ) as Record<string, unknown>;
         assert.equal(finalCloseout.status, 'READY');
+        assert.equal(fs.existsSync(path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-final-closeout.md`)), true);
+        assert.equal(fs.existsSync(path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-final-user-report.md`)), true);
         assert.equal(readTaskQueueStatusFromTaskFile(workspaceRoot, TASK_ID), 'DONE');
 
         const eventTypes = readTaskTimelineEvents(workspaceRoot, TASK_ID).map((event) => String(event.event_type));

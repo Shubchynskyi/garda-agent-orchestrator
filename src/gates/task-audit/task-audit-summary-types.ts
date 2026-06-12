@@ -26,6 +26,7 @@ export interface TaskAuditSummaryOptions {
     repoRoot: string;
     eventsRoot?: string | null;
     reviewsRoot?: string | null;
+    ignoreActiveCompletionFinalizationLock?: boolean;
 }
 
 export interface FinalCloseoutArtifact {

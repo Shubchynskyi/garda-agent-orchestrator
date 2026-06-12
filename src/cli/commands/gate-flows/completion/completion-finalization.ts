@@ -11,11 +11,16 @@ import {
     emitMandatoryCompletionGateEventAsync,
     emitMandatoryStatusChangedEventAsync
 } from '../../../../gate-runtime/lifecycle-events';
+import { resolveTaskHistoryLedgerPath } from '../../../../gate-runtime/task-history-ledger';
 import { collectOrderedTimelineEvents } from '../../../../gates/completion/completion-evidence';
 import {
     isOrchestratorSourceCheckout,
     joinOrchestratorPath
 } from '../../../../gates/shared/helpers';
+import {
+    buildTaskAuditSummary,
+    synchronizeFinalCloseoutArtifacts
+} from '../../../../gates/task-audit/task-audit-summary';
 import { withFilesystemLock } from '../../../../gate-runtime/task-events-locking';
 import { reconcileTimelineSummaryForTask } from '../../../../gate-runtime/timeline-summary';
 import {
@@ -32,6 +37,8 @@ interface CompletionEventDetails {
     timeline_path: unknown;
     violations: unknown;
 }
+
+type CompletionFinalizationStep = 'STATUS_CHANGED' | 'COMPLETION_GATE_PASSED' | 'FINAL_CLOSEOUT';
 
 interface TimelineStatusTransition {
     previous_status: string | null;
@@ -230,6 +237,15 @@ function captureFileSnapshot(filePath: string): FileSnapshot {
     };
 }
 
+function captureFinalCloseoutSnapshots(orchestratorRoot: string, reviewsRoot: string, taskId: string): FileSnapshot[] {
+    return [
+        path.join(reviewsRoot, `${taskId}-final-closeout.json`),
+        path.join(reviewsRoot, `${taskId}-final-closeout.md`),
+        path.join(reviewsRoot, `${taskId}-final-user-report.md`),
+        resolveTaskHistoryLedgerPath(orchestratorRoot, taskId)
+    ].map((artifactPath) => captureFileSnapshot(artifactPath));
+}
+
 function restoreFileSnapshot(snapshot: FileSnapshot): void {
     if (fs.existsSync(snapshot.path)) {
         const stat = fs.statSync(snapshot.path);
@@ -377,9 +393,11 @@ function getRollbackEventSignatures(rawLines: readonly string[]): RollbackEventS
 }
 
 function resolveAllowedRollbackEventSequences(
-    pendingFinalizationStep: 'STATUS_CHANGED' | 'COMPLETION_GATE_PASSED' | null,
+    pendingFinalizationStep: CompletionFinalizationStep | null,
     statusDoneRecorded: boolean,
     completionPassRecorded: boolean,
+    statusEventRecorded: boolean,
+    completionEventRecorded: boolean,
     previousStatusForDoneTransition: string,
     completionEventDetails: CompletionEventDetails
 ): RollbackEventSignature[][] {
@@ -404,7 +422,55 @@ function resolveAllowedRollbackEventSequences(
             ? [[], [completionPassedSignature]]
             : [[statusChangedSignature], [statusChangedSignature, completionPassedSignature]];
     }
+    if (pendingFinalizationStep === 'FINAL_CLOSEOUT') {
+        const sequence: RollbackEventSignature[] = [];
+        if (statusEventRecorded) {
+            sequence.push(statusChangedSignature);
+        }
+        if (completionEventRecorded) {
+            sequence.push(completionPassedSignature);
+        }
+        return [sequence];
+    }
     return [[]];
+}
+
+function materializeFinalCloseoutArtifactsForCompletionGate(options: {
+    repoRoot: string;
+    taskId: string;
+    eventsRoot: string;
+    reviewsRoot: string;
+}): void {
+    const summary = buildTaskAuditSummary({
+        taskId: options.taskId,
+        repoRoot: options.repoRoot,
+        eventsRoot: options.eventsRoot,
+        reviewsRoot: options.reviewsRoot,
+        ignoreActiveCompletionFinalizationLock: true
+    });
+    synchronizeFinalCloseoutArtifacts(summary);
+    const finalCloseout = summary.final_closeout;
+    const requiredArtifactPaths = [
+        finalCloseout.artifact_paths.json,
+        finalCloseout.artifact_paths.markdown,
+        finalCloseout.artifact_paths.final_user_report
+    ].filter(Boolean) as string[];
+    const missingArtifacts = requiredArtifactPaths.filter((artifactPath) => (
+        !fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()
+    ));
+    if (
+        summary.status !== 'PASS'
+        || finalCloseout.status !== 'READY'
+        || finalCloseout.artifact_state !== 'MATERIALIZED'
+        || missingArtifacts.length > 0
+    ) {
+        throw new Error(
+            `final closeout materialization did not produce a READY report: `
+            + `audit_status=${summary.status}, closeout_status=${finalCloseout.status}, `
+            + `artifact_state=${finalCloseout.artifact_state}, `
+            + `missing_artifacts=${missingArtifacts.map((entry) => path.basename(entry)).join(', ') || '<none>'}`
+        );
+    }
 }
 
 function formatRollbackEventSignature(signature: RollbackEventSignature): string {
@@ -515,12 +581,14 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
     const orchestratorRoot = joinOrchestratorPath(repoRoot, '');
     const taskPath = path.join(repoRoot, 'TASK.md');
     const taskEventsRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events'));
+    const reviewsRoot = joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
     const timelinePath = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${taskId}.jsonl`));
     const aggregatePath = joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', 'all-tasks.jsonl'));
     const snapshots = [
         captureFileSnapshot(taskPath),
         captureFileSnapshot(timelinePath),
-        captureFileSnapshot(aggregatePath)
+        captureFileSnapshot(aggregatePath),
+        ...captureFinalCloseoutSnapshots(orchestratorRoot, reviewsRoot, taskId)
     ] as const;
     const orderedEvents = collectOrderedTimelineEvents(timelinePath, []);
     const queueStatusBefore = readTaskQueueStatus(repoRoot, taskId);
@@ -568,7 +636,7 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
 
     let statusEventRecorded = false;
     let completionEventRecorded = false;
-    let pendingFinalizationStep: 'STATUS_CHANGED' | 'COMPLETION_GATE_PASSED' | null = null;
+    let pendingFinalizationStep: CompletionFinalizationStep | null = null;
 
     try {
         if (!statusDoneRecorded) {
@@ -581,6 +649,13 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
             await emitMandatoryCompletionGateEventAsync(orchestratorRoot, taskId, true, options.completionEventDetails);
             completionEventRecorded = true;
         }
+        pendingFinalizationStep = 'FINAL_CLOSEOUT';
+        materializeFinalCloseoutArtifactsForCompletionGate({
+            repoRoot,
+            taskId,
+            eventsRoot: taskEventsRoot,
+            reviewsRoot
+        });
         pendingFinalizationStep = null;
     } catch (error: unknown) {
         const taskEventRollbackResult = rollbackTaskEventArtifacts({
@@ -592,6 +667,8 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
                 pendingFinalizationStep,
                 statusDoneRecorded,
                 completionPassRecorded,
+                statusEventRecorded,
+                completionEventRecorded,
                 previousStatusForDoneTransition,
                 options.completionEventDetails
             )
@@ -599,9 +676,11 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
         const queueRollbackErrors = taskEventRollbackResult.timeline_restored
             ? restoreSnapshots([snapshots[0]])
             : [];
+        const finalCloseoutRollbackErrors = restoreSnapshots(snapshots.slice(3));
         const rollbackErrors = [
             ...taskEventRollbackResult.errors,
-            ...queueRollbackErrors
+            ...queueRollbackErrors,
+            ...finalCloseoutRollbackErrors
         ];
 
         const restoredEvents = collectOrderedTimelineEvents(timelinePath, []);
@@ -622,7 +701,9 @@ export async function reconcileSuccessfulCompletionFinalizationAsync(
                 repoRoot,
                 taskId,
                 options.preflightPath,
-                `${pendingFinalizationStep === 'COMPLETION_GATE_PASSED'
+                `${pendingFinalizationStep === 'FINAL_CLOSEOUT'
+                    ? `mandatory final closeout materialization failed. ${error instanceof Error ? error.message : String(error)}`
+                    : pendingFinalizationStep === 'COMPLETION_GATE_PASSED'
                     ? `mandatory COMPLETION_GATE_PASSED append failed. ${error instanceof Error ? error.message : String(error)}`
                     : `mandatory STATUS_CHANGED append failed. ${error instanceof Error ? error.message : String(error)}`}${rollbackErrors.length > 0 ? ` Rollback failed: ${rollbackErrors.join(' ')}` : ''}`,
                 restoredQueueStatus,
