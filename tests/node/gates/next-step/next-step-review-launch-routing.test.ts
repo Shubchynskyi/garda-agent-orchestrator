@@ -1808,6 +1808,97 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--launch-input-artifact-sha256'));
     });
 
+    it('routes delegation-started refactor launch to completion before record-review-result', () => {
+        const repoRoot = makeTempRepo();
+        const reviewType = 'refactor';
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-refactor';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, refactor: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, reviewType, reviewerIdentity);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-review-context.json`);
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}.md`);
+        const receiptPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-${reviewType}-receipt.json`);
+        const artifactText = '# refactor review\n\n## Verdict\nREFACTOR REVIEW PASSED\n';
+        fs.writeFileSync(artifactPath, artifactText, 'utf8');
+        writeJson(receiptPath, {
+            task_id: TASK_ID,
+            review_type: reviewType,
+            trust_level: 'INDEPENDENT_AUDITED',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_artifact_sha256: sha256Text(artifactText),
+            review_context_sha256: fileSha256(reviewContextPath),
+            reviewer_provenance: {
+                controller_event_type: 'REVIEWER_INVOCATION_ATTESTED',
+                event_sha256: '0'.repeat(64),
+                reviewer_identity: reviewerIdentity,
+                review_context_sha256: fileSha256(reviewContextPath)
+            }
+        });
+        const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        const launchBindingSha256 = 'c'.repeat(64);
+        const preparedIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
+            task_id: TASK_ID,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256
+        });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, reviewType, 'reviewer-launch.json');
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const copyPastePrompt = 'Delegated refactor reviewer launch prompt.';
+        const copyPastePromptSha256 = sha256Text(copyPastePrompt);
+        writeJson(launchArtifactPath, {
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch_preparation',
+            attestation_state: 'prepared',
+            task_id: TASK_ID,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256,
+            prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            reviewer_launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
+            copy_paste_reviewer_launch_prompt: copyPastePrompt,
+            copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256
+        });
+        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
+        const launchInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        writeJson(launchArtifactPath, {
+            ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            attestation_state: 'delegation_started',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-refactor-invocation',
+            delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_sha256: launchInputArtifactSha256,
+            launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
+            launch_input_artifact_sha256: launchInputArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: launchInputArtifactSha256,
+            reviewer_launch_input_artifact_sha256: launchInputArtifactSha256,
+            fork_context: false
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'complete-reviewer-launch', result.reason);
+        assert.equal(result.review.next_review_type, reviewType);
+        assert.ok(result.commands[0].command.includes('gate complete-reviewer-launch'));
+        assert.ok(!result.commands[0].command.includes('gate record-review-result'));
+        assert.ok(result.reason.includes('launch artifact=delegation started'));
+    });
+
     it('routes to record-review-invocation after current completed launch metadata is present', () => {
         const repoRoot = makeTempRepo();
         const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';

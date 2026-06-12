@@ -93,7 +93,12 @@ export function resolveDelegatedReviewReadinessRoute(
         && !options.currentReviewContextInvocationAttested
         && (
             options.launchArtifactState === 'launched'
-            || (options.launchArtifactState === 'missing_or_invalid' && options.reviewerIdentityIsPlanned)
+            || options.launchArtifactState === 'prepared'
+            || options.launchArtifactState === 'delegation_started'
+            || (
+                options.launchArtifactState === 'missing_or_invalid'
+                && options.reviewerIdentityIsPlanned
+            )
             || !options.artifactExists
             || !options.receiptExists
             || (
