@@ -14,6 +14,7 @@ import {
     isFullSuiteNotRequiredForDocsOnlyScope,
     isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
     loadFullSuiteValidationConfig,
+    persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
     type FullSuiteValidationCycleBinding
 } from '../../../../gates/full-suite/full-suite-validation';
@@ -335,6 +336,13 @@ export async function runFullSuiteValidationCommand(
     );
     fs.writeFileSync(outputArtifactPath, rawOutputText, 'utf8');
     result.output_retention = buildRawOutputRetentionEvidence(rawOutputText, true);
+    result.failure_evidence = persistFullSuiteFailureEvidence({
+        repoRoot,
+        reviewsRoot,
+        taskId,
+        result,
+        outputLines
+    });
     if (generatedLockCleanup.length > 0) {
         result.warnings.push(...generatedLockCleanup.map(formatGeneratedLockCleanupObservation));
     }
@@ -360,6 +368,13 @@ export async function runFullSuiteValidationCommand(
         blockedResult.output_artifact_path = gateHelpers.normalizePath(outputArtifactPath);
         blockedResult.output_retention = buildRawOutputRetentionEvidence(rawOutputText, true);
         blockedResult.duration_ms = durationMs;
+        blockedResult.failure_evidence = persistFullSuiteFailureEvidence({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            result: blockedResult,
+            outputLines
+        });
         if (blockedResult.status !== 'SKIPPED') {
             recordFullSuiteValidationDuration(repoRoot, config, {
                 timestamp_utc: new Date().toISOString(),
@@ -387,7 +402,8 @@ export async function runFullSuiteValidationCommand(
             violations: blockedResult.violations,
             warnings: blockedResult.warnings,
             output_telemetry: blockedResult.output_telemetry,
-            output_retention: blockedResult.output_retention
+            output_retention: blockedResult.output_retention,
+            failure_evidence: blockedResult.failure_evidence
         });
         clearFullSuiteValidationRunMarker(repoRoot, taskId);
         return {
@@ -428,7 +444,8 @@ export async function runFullSuiteValidationCommand(
         violations: result.violations,
         warnings: result.warnings,
         output_telemetry: result.output_telemetry,
-        output_retention: result.output_retention
+        output_retention: result.output_retention,
+        failure_evidence: result.failure_evidence
     });
     clearFullSuiteValidationRunMarker(repoRoot, taskId);
 

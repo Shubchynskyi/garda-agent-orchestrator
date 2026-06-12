@@ -13,6 +13,24 @@ import {
     runCliMainWithHandling
 } from '../../../../src/cli/main';
 
+function isLikelyNodeTestReporterText(text: string): boolean {
+    const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
+    if (lines.length === 0) {
+        return false;
+    }
+    return lines.every((line) =>
+        /^(?:TAP version \d+|\s*(?:ok\b|not ok\b|\d+\.\.\d+|#\s|---|\.\.\.|[✔✖▶ℹ]|duration_ms:|type:|location:|failureType:|error:|code:|stack:|\|-))/u.test(line)
+    );
+}
+
+function isLikelyBinaryNodeTestProtocolChunk(chunk: Buffer): boolean {
+    for (const byte of chunk) {
+        if (byte === 0 || (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13 && byte !== 27)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 export async function captureExpectedAsyncError(callback: () => Promise<void>): Promise<Error> {
     try {
@@ -49,12 +67,26 @@ export async function runCliWithCapturedOutput(
         errors.push(stripAnsi(args.map((value) => String(value)).join(' ')));
     };
     process.stdout.write = ((chunk: unknown, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void) => {
+        if (Buffer.isBuffer(chunk) && isLikelyBinaryNodeTestProtocolChunk(chunk)) {
+            originalStdoutWrite(chunk);
+            if (typeof encoding === 'function') {
+                encoding();
+            }
+            if (typeof callback === 'function') {
+                callback();
+            }
+            return true;
+        }
         const text = typeof chunk === 'string'
             ? chunk
             : Buffer.isBuffer(chunk)
                 ? chunk.toString(typeof encoding === 'string' ? encoding : 'utf8')
                 : String(chunk ?? '');
-        stdoutChunks.push(stripAnsi(text));
+        if (isLikelyNodeTestReporterText(text)) {
+            originalStdoutWrite(text);
+        } else {
+            stdoutChunks.push(stripAnsi(text));
+        }
         if (typeof encoding === 'function') {
             encoding();
         }

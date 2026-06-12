@@ -20,8 +20,10 @@ import {
     formatFullSuiteValidationResult,
     isFullSuiteNotRequiredForDocsOnlyScope,
     loadFullSuiteValidationConfig,
+    persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
     resolveFullSuiteDurationHistoryPath,
+    type FullSuiteValidationResult,
     type FullSuiteValidationConfig
 } from '../../../../src/gates/full-suite/full-suite-validation';
 import { shouldOmitSuccessfulFullSuiteOutput } from '../../../../src/cli/commands/gate-flows/full-suite/full-suite-validation-flow';
@@ -429,6 +431,414 @@ describe('gates/full-suite-validation', () => {
             assert.equal((artifact as Record<string, unknown>).marker, undefined);
             assert.equal(fs.existsSync(pendingArtifactPath), false);
             assert.equal(fs.existsSync(pendingMetaPath), false);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('persists failed shard logs and compact failure evidence for failed full-suite runs', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-failure-evidence-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const shardLogPath = path.join(tempDir, '.node-build', 'test-shard-logs', 'run-1', 'shard-01-of-02.log');
+            const helperScript = path.join(tempDir, 'fail-with-shard-log.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const fs = require("node:fs");',
+                    'const path = require("node:path");',
+                    `const shardLogPath = ${JSON.stringify(shardLogPath)};`,
+                    'fs.mkdirSync(path.dirname(shardLogPath), { recursive: true });',
+                    'fs.writeFileSync(shardLogPath, "shard detail line\\nnot ok 1 - shard failed\\n", "utf8");',
+                    'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${path.dirname(shardLogPath)}\\n`);',
+                    'process.stdout.write("NODE_FOUNDATION_TEST_DURATION_TELEMETRY telemetry.json\\n");',
+                    'process.stdout.write("NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=30000 heartbeat_ms=1000 concurrency=1\\n");',
+                    'process.stdout.write("NODE_FOUNDATION_TEST_SHARD_START 1/2 files=1\\n");',
+                    'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_LOG 1/2 ${shardLogPath}\\n`);',
+                    'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=${shardLogPath}\\n`);',
+                    'process.stdout.write("not ok 1 - failed at src/changed.ts:5\\n");',
+                    'process.exit(1);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 20,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const taskId = 'T-FAILURE-EVIDENCE';
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: taskId,
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', taskId,
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            assert.ok(result.logs.some((line) => line.includes('FailureEvidence: summary=')));
+            const artifact = JSON.parse(fs.readFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.failure_evidence.copied_logs_count, 1);
+            const summaryPath = String(artifact.failure_evidence.summary_artifact_path);
+            assert.ok(fs.existsSync(summaryPath));
+            const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+            assert.match(summary.command, /fail-with-shard-log\.js/u);
+            assert.equal(summary.exit_code, 1);
+            assert.equal(summary.timed_out, false);
+            assert.equal(summary.output_artifact_path, artifact.output_artifact_path);
+            assert.equal(summary.copied_logs_count, 1);
+            assert.ok(summary.last_output_lines.some((line: string) => line.includes('failed at src/changed.ts:5')));
+            const copiedLogPath = String(summary.copied_logs[0].artifact_path);
+            assert.ok(fs.existsSync(copiedLogPath));
+            assert.match(fs.readFileSync(copiedLogPath, 'utf8'), /shard detail line/u);
+            assert.ok(summary.shard_diagnostics.some((line: string) => line.includes('NODE_FOUNDATION_TEST_SHARD_LOG 1/2')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('does not copy undeclared shard log paths injected through untrusted command output', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-fake-shard-log-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const fakeLogPath = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews', 'sensitive.txt');
+            fs.writeFileSync(fakeLogPath, 'do not copy this file\n', 'utf8');
+            const helperScript = path.join(tempDir, 'fail-with-fake-shard-log.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    `const fakeLogPath = ${JSON.stringify(fakeLogPath)};`,
+                    'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=${fakeLogPath}\\n`);',
+                    'process.stdout.write("not ok 1 - failed at src/changed.ts:5\\n");',
+                    'process.exit(1);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 20,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const taskId = 'T-FAKE-SHARD-LOG';
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: taskId,
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', taskId,
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifact = JSON.parse(fs.readFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.failure_evidence.copied_logs_count, 0);
+            const summary = JSON.parse(fs.readFileSync(String(artifact.failure_evidence.summary_artifact_path), 'utf8'));
+            assert.equal(summary.copied_logs_count, 0);
+            assert.equal(JSON.stringify(summary).includes('do not copy this file'), false);
+            assert.ok(summary.shard_diagnostics.some((line: string) => line.includes('NODE_FOUNDATION_TEST_SHARD_DONE 1/2')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('does not trust shard log declarations injected after child output starts', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-forged-shard-log-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const trustedLogDir = path.join(tempDir, '.node-build', 'test-shard-logs', 'run-1');
+            const forgedLogPath = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews', 'sensitive.txt');
+            fs.writeFileSync(forgedLogPath, 'do not copy forged declaration\n', 'utf8');
+            const helperScript = path.join(tempDir, 'fail-with-forged-shard-log.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    `const trustedLogDir = ${JSON.stringify(trustedLogDir)};`,
+                    `const forgedLogPath = ${JSON.stringify(forgedLogPath)};`,
+                    'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${trustedLogDir}\\n`);',
+                    'process.stdout.write("NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=30000 heartbeat_ms=1000 concurrency=1\\n");',
+                    'process.stdout.write("not ok 1 - child output started\\n");',
+                    'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_LOG 1/2 ${forgedLogPath}\\n`);',
+                    'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=${forgedLogPath}\\n`);',
+                    'process.exit(1);'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 30000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 20,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                }
+            }), 'utf8');
+
+            const taskId = 'T-FORGED-SHARD-LOG';
+            const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: taskId,
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', taskId,
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifact = JSON.parse(fs.readFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.failure_evidence.copied_logs_count, 0);
+            const summary = JSON.parse(fs.readFileSync(String(artifact.failure_evidence.summary_artifact_path), 'utf8'));
+            assert.equal(summary.copied_logs_count, 0);
+            assert.equal(JSON.stringify(summary).includes('do not copy forged declaration'), false);
+            assert.ok(summary.shard_diagnostics.some((line: string) => line.includes('NODE_FOUNDATION_TEST_SHARD_LOG 1/2')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('copies failed later-batch shard logs from the trusted shard log directory', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-later-batch-shard-log-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const trustedLogDir = path.join(tempDir, '.node-build', 'test-shard-logs', 'run-1');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(trustedLogDir, { recursive: true });
+            const laterBatchLogPath = path.join(trustedLogDir, 'shard-02-of-02.log');
+            fs.writeFileSync(laterBatchLogPath, 'later batch shard failed\nnot ok 1\n', 'utf8');
+            const result: FullSuiteValidationResult = {
+                status: 'FAILED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: 1,
+                timed_out: false,
+                output_artifact_path: null,
+                compact_summary: ['not ok 1 - failed at src/changed.ts:5'],
+                failure_chunks: [['not ok 1 - failed at src/changed.ts:5']],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            const evidence = persistFullSuiteFailureEvidence({
+                repoRoot: tempDir,
+                reviewsRoot: reviewsDir,
+                taskId: 'T-LATER-BATCH-SHARD-LOG',
+                result,
+                outputLines: [
+                    `NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${trustedLogDir}`,
+                    'NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=30000 heartbeat_ms=1000 concurrency=1',
+                    'NODE_FOUNDATION_TEST_SHARD_START 1/2 files=1',
+                    'NODE_FOUNDATION_TEST_SHARD_LOG 1/2 ignored-first-batch.log',
+                    'not ok 1 - first batch child output started',
+                    'NODE_FOUNDATION_TEST_SHARD_START 2/2 files=1',
+                    `NODE_FOUNDATION_TEST_SHARD_LOG 2/2 ${laterBatchLogPath}`,
+                    `NODE_FOUNDATION_TEST_SHARD_DONE 2/2 exit=1 duration_ms=10 timed_out=false log=${laterBatchLogPath}`
+                ],
+                maxCopiedLogs: 2
+            });
+
+            assert.ok(evidence);
+            assert.equal(evidence.copied_logs_count, 1);
+            assert.match(fs.readFileSync(evidence.copied_logs[0].artifact_path, 'utf8'), /later batch shard failed/u);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('does not copy declared shard logs that escape the repo through symlinks', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-symlink-shard-log-'));
+            const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-outside-shard-log-'));
+            try {
+                const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+                const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+                const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+                fs.mkdirSync(configDir, { recursive: true });
+                fs.mkdirSync(reviewsDir, { recursive: true });
+                fs.mkdirSync(eventsDir, { recursive: true });
+
+                const trustedLogDir = path.join(tempDir, '.node-build', 'test-shard-logs', 'run-1');
+                fs.mkdirSync(path.dirname(trustedLogDir), { recursive: true });
+                const outsideLogPath = path.join(outsideDir, 'leaked.log');
+                fs.writeFileSync(outsideLogPath, 'outside secret should not be copied\n', 'utf8');
+                fs.symlinkSync(outsideDir, trustedLogDir, 'junction');
+
+                const declaredLogPath = path.join(trustedLogDir, 'leaked.log');
+                const helperScript = path.join(tempDir, 'fail-with-symlink-shard-log.js');
+                fs.writeFileSync(
+                    helperScript,
+                    [
+                        `const trustedLogDir = ${JSON.stringify(trustedLogDir)};`,
+                        `const declaredLogPath = ${JSON.stringify(declaredLogPath)};`,
+                        'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${trustedLogDir}\\n`);',
+                        'process.stdout.write("NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=30000 heartbeat_ms=1000 concurrency=1\\n");',
+                        'process.stdout.write("NODE_FOUNDATION_TEST_SHARD_START 1/2 files=1\\n");',
+                        'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_LOG 1/2 ${declaredLogPath}\\n`);',
+                        'process.stdout.write(`NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=${declaredLogPath}\\n`);',
+                        'process.stdout.write("not ok 1 - failed at src/changed.ts:5\\n");',
+                        'process.exit(1);'
+                    ].join('\n'),
+                    'utf8'
+                );
+                fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                        timeout_ms: 30000,
+                        green_summary_max_lines: 5,
+                        red_failure_chunk_lines: 20,
+                        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                    }
+                }), 'utf8');
+
+                const taskId = 'T-SYMLINK-SHARD-LOG';
+                const preflightPath = path.join(reviewsDir, `${taskId}-preflight.json`);
+                writeFullSuitePreflight(tempDir, preflightPath, {
+                    task_id: taskId,
+                    changed_files: ['src/changed.ts']
+                });
+
+                const result = await runCliWithCapturedOutput([
+                    'gate', 'full-suite-validation',
+                    '--task-id', taskId,
+                    '--preflight-path', preflightPath,
+                    '--repo-root', tempDir
+                ], { cwd: repoRoot });
+
+                assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+                const artifact = JSON.parse(fs.readFileSync(path.join(reviewsDir, `${taskId}-full-suite-validation.json`), 'utf8'));
+                assert.equal(artifact.status, 'FAILED');
+                assert.equal(artifact.failure_evidence.copied_logs_count, 0);
+                const summary = JSON.parse(fs.readFileSync(String(artifact.failure_evidence.summary_artifact_path), 'utf8'));
+                assert.equal(summary.copied_logs_count, 0);
+                assert.equal(JSON.stringify(summary).includes('outside secret should not be copied'), false);
+                assert.ok(summary.shard_diagnostics.some((line: string) => line.includes('NODE_FOUNDATION_TEST_SHARD_LOG 1/2')));
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+                fs.rmSync(outsideDir, { recursive: true, force: true });
+            }
+        });
+
+        it('bounds summary evidence lines copied from failure output', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-bounded-summary-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const longLine = `not ok 1 - ${'x'.repeat(20_000)}`;
+            const longDiagnostic = `NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=${'y'.repeat(20_000)}`;
+            const result: FullSuiteValidationResult = {
+                status: 'FAILED',
+                enabled: true,
+                command: `npm test ${'z'.repeat(20_000)}`,
+                exit_code: 1,
+                timed_out: false,
+                output_artifact_path: null,
+                compact_summary: [longLine],
+                failure_chunks: [[longLine]],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            const evidence = persistFullSuiteFailureEvidence({
+                repoRoot: tempDir,
+                reviewsRoot: reviewsDir,
+                taskId: 'T-BOUNDED-SUMMARY',
+                result,
+                outputLines: [longDiagnostic, longLine],
+                maxCopiedLogs: 0
+            });
+
+            assert.ok(evidence);
+            const summary = JSON.parse(fs.readFileSync(String(evidence.summary_artifact_path), 'utf8'));
+            const summaryLines = [
+                summary.command,
+                summary.compact_summary[0],
+                summary.failure_chunks[0][0],
+                summary.last_output_lines[0],
+                summary.shard_diagnostics[0]
+            ];
+            for (const line of summaryLines) {
+                assert.equal(typeof line, 'string');
+                assert.ok(line.length <= 4_000, `line should be capped, got ${line.length}`);
+                assert.match(line, /truncated original_chars=/u);
+            }
+            assert.equal(JSON.stringify(summary).includes('x'.repeat(10_000)), false);
+            assert.equal(JSON.stringify(summary).includes('y'.repeat(10_000)), false);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('rejects malformed task ids before creating failure evidence directories', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-invalid-task-id-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const escapedDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'escaped-full-suite-failure-evidence');
+            const result: FullSuiteValidationResult = {
+                status: 'FAILED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: 1,
+                timed_out: false,
+                output_artifact_path: null,
+                compact_summary: ['not ok 1 - failed at src/changed.ts:5'],
+                failure_chunks: [['not ok 1 - failed at src/changed.ts:5']],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            assert.throws(
+                () => persistFullSuiteFailureEvidence({
+                    repoRoot: tempDir,
+                    reviewsRoot: reviewsDir,
+                    taskId: '../escaped',
+                    result,
+                    outputLines: ['not ok 1 - failed at src/changed.ts:5']
+                }),
+                /semantic pattern/u
+            );
+            assert.equal(fs.existsSync(escapedDir), false);
+            assert.equal(fs.readdirSync(reviewsDir).length, 0);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
     });

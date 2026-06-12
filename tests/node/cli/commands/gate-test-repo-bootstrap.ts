@@ -15,9 +15,20 @@ import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config
 
 const TRANSIENT_CLEANUP_ERROR_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOTEMPTY']);
 const DEFAULT_CLEANUP_RETRY_DELAYS_MS = [25, 50, 100, 200];
+const DEFAULT_GIT_SETUP_RETRY_DELAYS_MS = [0, 25, 100];
+const RETRYABLE_GIT_SETUP_PATTERN = /\b(?:EACCES|EBUSY|ENOTEMPTY|EPERM|Permission denied)\b|\.git[\\/]+config|could not set ['"]?core\./iu;
 
 interface RemoveTempRepoOptions {
     readonly rmSync?: typeof fs.rmSync;
+    readonly retryDelaysMs?: readonly number[];
+}
+
+interface RunGitOptions {
+    readonly spawnSync?: (
+        command: string,
+        args: readonly string[],
+        options: childProcess.SpawnSyncOptionsWithStringEncoding
+    ) => childProcess.SpawnSyncReturns<string>;
     readonly retryDelaysMs?: readonly number[];
 }
 
@@ -34,6 +45,22 @@ function sleepSync(delayMs: number): void {
 
 function isTransientCleanupError(error: unknown): boolean {
     return TRANSIENT_CLEANUP_ERROR_CODES.has(getErrorCode(error));
+}
+
+function isGitSetupCommand(args: string[]): boolean {
+    return args.some((arg) => arg === 'init');
+}
+
+function formatGitOutput(result: childProcess.SpawnSyncReturns<string>): string {
+    return [
+        result.error instanceof Error ? result.error.message : '',
+        result.stderr || '',
+        result.stdout || ''
+    ].filter(Boolean).join('\n');
+}
+
+function isRetryableGitSetupFailure(args: string[], result: childProcess.SpawnSyncReturns<string>): boolean {
+    return isGitSetupCommand(args) && RETRYABLE_GIT_SETUP_PATTERN.test(formatGitOutput(result));
 }
 
 export function removeTempRepoWithRetry(root: string, options: RemoveTempRepoOptions = {}): void {
@@ -178,19 +205,34 @@ export function writeNodeFoundationManifest(manifestPath: string): void {
 }
 
 
-export function runGit(repoRoot: string, args: string[]): childProcess.SpawnSyncReturns<string> {
-    const result = childProcess.spawnSync('git', args, {
-        cwd: repoRoot,
-        windowsHide: true,
-        encoding: 'utf8'
-    });
-    if (result.error) {
+export function runGit(repoRoot: string, args: string[], options: RunGitOptions = {}): childProcess.SpawnSyncReturns<string> {
+    const spawnSync = options.spawnSync || childProcess.spawnSync;
+    const retryDelaysMs = isGitSetupCommand(args)
+        ? (options.retryDelaysMs || DEFAULT_GIT_SETUP_RETRY_DELAYS_MS)
+        : [0];
+    let result: childProcess.SpawnSyncReturns<string> | null = null;
+    for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
+        sleepSync(retryDelaysMs[attempt] || 0);
+        result = spawnSync('git', args, {
+            cwd: repoRoot,
+            windowsHide: true,
+            encoding: 'utf8'
+        });
+        if (!result.error && result.status === 0) {
+            return result;
+        }
+        if (!isRetryableGitSetupFailure(args, result)) {
+            break;
+        }
+    }
+    assert.ok(result, `git ${args.join(' ')} did not run`);
+    if (result.error && !isRetryableGitSetupFailure(args, result)) {
         throw result.error;
     }
     assert.equal(
         result.status,
         0,
-        `git ${args.join(' ')} failed: ${String(result.stderr || result.stdout || '').trim()}`
+        `git ${args.join(' ')} failed: ${formatGitOutput(result).trim()}`
     );
     return result;
 }

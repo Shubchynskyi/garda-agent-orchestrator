@@ -209,6 +209,175 @@ test('runNodeFoundationTests runs prebuilt compiled tests in deterministic shard
     }
 });
 
+test('runNodeFoundationTests diagnoses green node:test summaries with nonzero shard exits', async () => {
+    const { PassThrough } = require('node:stream') as typeof import('node:stream');
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const originalSpawnSync = mutableChildProcess.spawnSync;
+    const originalConsoleError = console.error;
+    const diagnostics: string[] = [];
+    const isolationArgs: string[][] = [];
+    let spawnedShardCount = 0;
+
+    try {
+        process.argv = ['node', 'scripts/node-foundation/test.js'];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = '2';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        console.error = ((...args: unknown[]) => {
+            diagnostics.push(args.map(String).join(' '));
+        }) as typeof console.error;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = []) => {
+            spawnedShardCount += 1;
+            const shardNumber = spawnedShardCount;
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            setImmediate(() => {
+                if (shardNumber === 1) {
+                    stdout.end([
+                        'ok 1 - apparent pass',
+                        'ℹ tests 1',
+                        'ℹ pass 1',
+                        'ℹ fail 0',
+                        'ℹ cancelled 0'
+                    ].join('\n'));
+                    stderr.end();
+                    events.emit('exit', 1);
+                    events.emit('close', 1);
+                    return;
+                }
+                stdout.end('ok 1 - second shard\n');
+                stderr.end();
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            });
+            return events;
+        }) as typeof childProcess.spawn;
+        mutableChildProcess.spawnSync = ((_: string, args: readonly string[] = []) => {
+            isolationArgs.push(Array.from(args));
+            const status = String(args[args.length - 1]).endsWith('gates.test.js') ? 9 : 0;
+            return {
+                status,
+                signal: null,
+                stdout: status === 0 ? 'ok isolated\n' : 'not ok isolated\nℹ fail 0\nℹ cancelled 0\n',
+                stderr: status === 0 ? '' : 'process exit leak\n'
+            } as childProcess.SpawnSyncReturns<string>;
+        }) as typeof childProcess.spawnSync;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 1);
+        assert.ok(diagnostics.some((line) => line.includes('NODE_FOUNDATION_TEST_SHARD_GREEN_EXIT_MISMATCH 1/2 exit=1')));
+        assert.ok(diagnostics.some((line) =>
+            line.includes('NODE_FOUNDATION_TEST_SHARD_ISOLATION_FAIL 1/2 file=tests/node/cli/commands/gates.test.ts exit=9')
+        ));
+        assert.ok(isolationArgs.some((args) =>
+            args.includes(path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js'))
+        ));
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        mutableChildProcess.spawnSync = originalSpawnSync;
+        console.error = originalConsoleError;
+        cleanup();
+    }
+});
+
+test('runNodeFoundationTests does not diagnose nonzero shard exits when the final node:test summary failed', async () => {
+    const { PassThrough } = require('node:stream') as typeof import('node:stream');
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const originalSpawnSync = mutableChildProcess.spawnSync;
+    const originalConsoleError = console.error;
+    const diagnostics: string[] = [];
+    let isolationRuns = 0;
+    let spawnedShardCount = 0;
+
+    try {
+        process.argv = ['node', 'scripts/node-foundation/test.js'];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = '2';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        console.error = ((...args: unknown[]) => {
+            diagnostics.push(args.map(String).join(' '));
+        }) as typeof console.error;
+        mutableChildProcess.spawn = ((_: string, _args: readonly string[] = []) => {
+            spawnedShardCount += 1;
+            const shardNumber = spawnedShardCount;
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, { stdout, stderr });
+            setImmediate(() => {
+                if (shardNumber === 1) {
+                    stdout.end([
+                        'ok 1 - nested runner pass',
+                        'ℹ tests 1',
+                        'ℹ pass 1',
+                        'ℹ fail 0',
+                        'ℹ cancelled 0',
+                        '✖ failing tests:',
+                        '✖ real test failure',
+                        'ℹ tests 2',
+                        'ℹ pass 1',
+                        'ℹ fail 1',
+                        'ℹ cancelled 0'
+                    ].join('\n'));
+                    stderr.end();
+                    events.emit('exit', 1);
+                    events.emit('close', 1);
+                    return;
+                }
+                stdout.end('ok 1 - second shard\n');
+                stderr.end();
+                events.emit('exit', 0);
+                events.emit('close', 0);
+            });
+            return events;
+        }) as typeof childProcess.spawn;
+        mutableChildProcess.spawnSync = ((_: string, _args: readonly string[] = []) => {
+            isolationRuns += 1;
+            return { status: 0, signal: null, stdout: '', stderr: '' } as childProcess.SpawnSyncReturns<string>;
+        }) as typeof childProcess.spawnSync;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 1);
+        assert.equal(isolationRuns, 0);
+        assert.equal(diagnostics.some((line) => line.includes('NODE_FOUNDATION_TEST_SHARD_GREEN_EXIT_MISMATCH')), false);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARDS = originalShardEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        mutableChildProcess.spawnSync = originalSpawnSync;
+        console.error = originalConsoleError;
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests accepts cross-platform shard options and writes shard logs', async () => {
     const { PassThrough } = require('node:stream') as typeof import('node:stream');
     const { buildResult, cleanup } = createBuildResultFixture();

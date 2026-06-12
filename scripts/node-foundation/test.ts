@@ -8,12 +8,15 @@ const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
 const NODE_FOUNDATION_TEST_SHARD_LOG_DIR_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_LOG_DIR';
 const NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS';
 const NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS';
+const NODE_FOUNDATION_TEST_SHARD_CONCURRENCY_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_CONCURRENCY';
 const NODE_FOUNDATION_TEST_DURATION_FILE_ENV = 'GARDA_NODE_FOUNDATION_TEST_DURATION_FILE';
 const NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT = 24_000;
 const NODE_FOUNDATION_TEST_SLOWEST_REPORT_COUNT = 10;
 const DEFAULT_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = 10 * 60 * 1000;
 const DEFAULT_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = 60 * 1000;
 const NODE_FOUNDATION_TEST_SHARD_CLEANUP_GRACE_MS = 1_000;
+const NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_MAX_FILES = 12;
+const NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_TIMEOUT_MS = 30_000;
 const GARDA_SHARDS_OPTION = '--garda-shards';
 const GARDA_SHARD_LOG_DIR_OPTION = '--garda-shard-log-dir';
 const GARDA_DURATION_FILE_OPTION = '--garda-duration-file';
@@ -389,24 +392,32 @@ interface NodeTestShardResult {
     exitCode: number;
     durationMs: number;
     shardFiles: string[];
+    shardIndex: number;
+    shardCount: number;
+    logPath: string;
     timedOut?: boolean;
 }
 
 interface NodeTestShardRuntimeConfig {
     timeoutMs: number;
     heartbeatMs: number;
+    concurrency: number;
 }
 
 function resolveNodeTestShardRuntimeConfig(): NodeTestShardRuntimeConfig {
     const configuredTimeout = String(process.env[NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV] || '').trim();
     const configuredHeartbeat = String(process.env[NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS_ENV] || '').trim();
+    const configuredConcurrency = String(process.env[NODE_FOUNDATION_TEST_SHARD_CONCURRENCY_ENV] || '').trim();
     return {
         timeoutMs: configuredTimeout
             ? parseNonNegativeInteger(configuredTimeout, NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV)
             : DEFAULT_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS,
         heartbeatMs: configuredHeartbeat
             ? parseNonNegativeInteger(configuredHeartbeat, NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS_ENV)
-            : DEFAULT_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS
+            : DEFAULT_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS,
+        concurrency: configuredConcurrency
+            ? parsePositiveInteger(configuredConcurrency, NODE_FOUNDATION_TEST_SHARD_CONCURRENCY_ENV)
+            : Number.POSITIVE_INFINITY
     };
 }
 
@@ -631,9 +642,47 @@ function runSingleNodeTestProcess(
     recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, [{
         exitCode,
         durationMs: Math.max(1, Date.now() - startedAt),
-        shardFiles: selectedTestFiles
+        shardFiles: selectedTestFiles,
+        shardIndex: 0,
+        shardCount: 1,
+        logPath: ''
     }]);
     return exitCode;
+}
+
+function readTextFileIfExists(filePath: string): string {
+    try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            return fs.readFileSync(filePath, 'utf8');
+        }
+    } catch {
+        return '';
+    }
+    return '';
+}
+
+function getTailLines(text: string, maxLines: number): string[] {
+    if (!text) {
+        return [];
+    }
+    return text.split(/\r?\n/u).filter((line) => line.length > 0).slice(-maxLines);
+}
+
+function hasGreenNodeTestSummary(logPath: string): boolean {
+    const content = readTextFileIfExists(logPath);
+    const lastFailCount = getLastNodeTestSummaryCount(content, 'fail');
+    const lastCancelledCount = getLastNodeTestSummaryCount(content, 'cancelled');
+    return lastFailCount === 0 && lastCancelledCount === 0;
+}
+
+function getLastNodeTestSummaryCount(content: string, label: 'fail' | 'cancelled'): number | null {
+    const regex = new RegExp(`(?:^|\\n)ℹ ${label} (\\d+)(?:\\r?\\n|$)`, 'gu');
+    let lastCount: number | null = null;
+    let match: RegExpExecArray | null = null;
+    while ((match = regex.exec(content)) !== null) {
+        lastCount = Number(match[1]);
+    }
+    return lastCount;
 }
 
 function resolveShardLogDir(repoRoot: string, buildRoot: string, requestedShardLogDir: string | null): string {
@@ -729,6 +778,7 @@ function runNodeTestShard(
             windowsHide: true
         });
         let exitCode = 1;
+        let exitSignal: NodeJS.Signals | null = null;
 
         function cleanupTimers(): void {
             if (timeoutHandle) {
@@ -758,8 +808,19 @@ function runNodeTestShard(
             settled = true;
             cleanupTimers();
             const durationMs = Math.max(1, Date.now() - startedAt);
-            console.log(`NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode} duration_ms=${durationMs} timed_out=${timedOut}`);
-            logStream.end(() => resolve({ exitCode, durationMs, shardFiles, timedOut }));
+            console.log(
+                `NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode} `
+                + `duration_ms=${durationMs} timed_out=${timedOut} signal=${exitSignal ?? 'none'} log=${logPath}`
+            );
+            logStream.end(() => resolve({
+                exitCode,
+                durationMs,
+                shardFiles,
+                shardIndex,
+                shardCount,
+                logPath,
+                timedOut
+            }));
         }
 
         function scheduleCleanupGrace(): void {
@@ -837,15 +898,76 @@ function runNodeTestShard(
             logStream.destroy();
             reject(error);
         });
-        child.once('exit', (code) => {
+        child.once('exit', (code, signal) => {
             if (!timedOut) {
                 exitCode = code == null ? 1 : code;
             }
+            exitSignal = signal;
         });
         child.once('close', () => {
             finishShard();
         });
     });
+}
+
+function diagnoseGreenSummaryShardFailure(
+    repoRoot: string,
+    buildResult: BuildResult,
+    optionArgs: string[],
+    result: NodeTestShardResult
+): void {
+    if (result.exitCode === 0 || result.timedOut || !hasGreenNodeTestSummary(result.logPath)) {
+        return;
+    }
+
+    const shardLabel = `${result.shardIndex + 1}/${result.shardCount}`;
+    console.error(
+        `NODE_FOUNDATION_TEST_SHARD_GREEN_EXIT_MISMATCH ${shardLabel} exit=${result.exitCode} `
+        + `files=${result.shardFiles.length} log=${result.logPath}`
+    );
+    for (const line of getTailLines(readTextFileIfExists(result.logPath), 40)) {
+        console.error(`NODE_FOUNDATION_TEST_SHARD_GREEN_EXIT_TAIL ${shardLabel} ${line}`);
+    }
+
+    const isolationFiles = result.shardFiles.slice(0, NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_MAX_FILES);
+    let reproduced = false;
+    for (const filePath of isolationFiles) {
+        const startedAt = Date.now();
+        const rerun = childProcess.spawnSync(process.execPath, ['--test', ...optionArgs, filePath], {
+            cwd: repoRoot,
+            encoding: 'utf8',
+            maxBuffer: 10 * 1024 * 1024,
+            timeout: NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_TIMEOUT_MS,
+            windowsHide: true
+        });
+        const exitCode = rerun.status == null ? 1 : rerun.status;
+        if (exitCode === 0 && rerun.signal == null) {
+            continue;
+        }
+        reproduced = true;
+        const key = compiledTestFileToTelemetryKey(buildResult, filePath);
+        console.error(
+            `NODE_FOUNDATION_TEST_SHARD_ISOLATION_FAIL ${shardLabel} file=${key} `
+            + `exit=${exitCode} signal=${rerun.signal ?? 'none'} duration_ms=${Math.max(1, Date.now() - startedAt)}`
+        );
+        const outputTail = getTailLines(`${rerun.stdout || ''}\n${rerun.stderr || ''}`, 30);
+        for (const line of outputTail) {
+            console.error(`NODE_FOUNDATION_TEST_SHARD_ISOLATION_TAIL ${key} ${line}`);
+        }
+    }
+    if (!reproduced) {
+        console.error(
+            `NODE_FOUNDATION_TEST_SHARD_ISOLATION_NO_REPRO ${shardLabel} `
+            + `checked=${isolationFiles.length} files=${result.shardFiles.length}`
+        );
+    }
+    if (isolationFiles.length < result.shardFiles.length) {
+        console.error(
+            `NODE_FOUNDATION_TEST_SHARD_ISOLATION_CAPPED ${shardLabel} `
+            + `checked=${isolationFiles.length} files=${result.shardFiles.length} `
+            + `timeout_ms=${NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_TIMEOUT_MS}`
+        );
+    }
 }
 
 async function runShardedNodeTestProcesses(
@@ -864,10 +986,23 @@ async function runShardedNodeTestProcesses(
     const runtimeConfig = resolveNodeTestShardRuntimeConfig();
     console.log(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${shardLogDir}`);
     console.log(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY ${telemetryPath}`);
-    console.log(`NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=${runtimeConfig.timeoutMs} heartbeat_ms=${runtimeConfig.heartbeatMs}`);
-    const results = await Promise.all(shards.map((shardFiles, index) =>
-        runNodeTestShard(repoRoot, optionArgs, shardFiles, index, shards.length, shardLogDir, runtimeConfig)
-    ));
+    const shardConcurrency = Math.max(1, Math.min(shards.length, runtimeConfig.concurrency));
+    console.log(
+        `NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=${runtimeConfig.timeoutMs} `
+        + `heartbeat_ms=${runtimeConfig.heartbeatMs} concurrency=${shardConcurrency}`
+    );
+    const results: NodeTestShardResult[] = [];
+    for (let startIndex = 0; startIndex < shards.length; startIndex += shardConcurrency) {
+        const batch = shards.slice(startIndex, startIndex + shardConcurrency);
+        const batchResults = await Promise.all(batch.map((shardFiles, batchIndex) => {
+            const shardIndex = startIndex + batchIndex;
+            return runNodeTestShard(repoRoot, optionArgs, shardFiles, shardIndex, shards.length, shardLogDir, runtimeConfig);
+        }));
+        results.push(...batchResults);
+        for (const result of batchResults) {
+            diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
+        }
+    }
     recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, results);
     return results.find((result) => result.exitCode !== 0)?.exitCode || 0;
 }

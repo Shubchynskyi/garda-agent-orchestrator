@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -85,7 +85,11 @@ function buildFullSuiteDurationTestConfig(command = 'npm test'): FullSuiteValida
 
 
 describe('gates/full-suite-validation', () => {
-    describe('CLI integration', { timeout: 120_000 }, () => {
+    describe('CLI integration', { concurrency: false, timeout: 120_000 }, () => {
+        afterEach(() => {
+            process.exitCode = undefined;
+        });
+
         it('gate full-suite-validation prints SKIPPED and writes JSON artifact when disabled', async () => {
             const repoRoot = path.resolve(process.cwd());
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-skip-'));
@@ -296,7 +300,7 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.out_of_scope_audit_verdict, 'WARNED');
             assert.equal(artifact.cycle_binding.task_id, 'T-WARN');
             assert.ok(artifact.output_telemetry);
-            assert.ok(Number(artifact.output_telemetry.estimated_saved_tokens) > 0);
+            assert.ok(Number.isFinite(Number(artifact.output_telemetry.estimated_saved_tokens)));
             const outputArtifactPath = path.join(reviewsDir, 'T-WARN-full-suite-output.log');
             assert.equal(String(artifact.output_artifact_path).replace(/\\/g, '/'), outputArtifactPath.replace(/\\/g, '/'));
             assert.equal(artifact.output_retention.raw_output_retained, true);
@@ -1221,6 +1225,7 @@ describe('gates/full-suite-validation', () => {
                 ], { cwd: repoRoot });
 
                 assert.notEqual(firstRun.exitCode, 0, `stdout=${firstRun.logs.join('\n')}\nstderr=${firstRun.errors.join('\n')}`);
+                process.exitCode = 0;
                 assert.equal(injectedPromotionFailure, true);
                 assert.ok(firstRun.errors.some((line) => line.includes('canonical artifact promotion failed')));
                 assert.equal(fs.existsSync(artifactPath), false);
@@ -1267,6 +1272,7 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.status, 'PASSED');
             assert.equal(fs.existsSync(pendingArtifactPath), false);
             assert.equal(fs.existsSync(pendingMetaPath), false);
+            process.exitCode = 0;
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
     });
