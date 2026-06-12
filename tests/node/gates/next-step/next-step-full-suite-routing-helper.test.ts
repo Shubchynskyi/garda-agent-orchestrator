@@ -253,4 +253,19 @@ describe('next-step full-suite route helper', () => {
         assert.match(route?.reason || '', /does not replace mandatory full-suite evidence/);
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
     });
+
+    it('routes non-timeout failures to full-suite retry when targeted diagnostics passed afterward', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            gateStatus: 'FAIL',
+            targetedDiagnosticRetryAvailable: true,
+            targetedDiagnosticRetryReason: 'Evidence: artifact=runtime/reviews/T-123-intermediate-command-targeted-test.json.'
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-validation');
+        assert.match(route?.title || '', /targeted diagnostics/);
+        assert.match(route?.reason || '', /do not replace mandatory full-suite evidence/);
+        assert.match(route?.reason || '', /full-suite-retry-evidence\.json/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+    });
 });

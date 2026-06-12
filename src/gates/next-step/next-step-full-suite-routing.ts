@@ -50,6 +50,8 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     timedOutRetryAvailable: boolean;
     transientRetryEvidenceAvailable: boolean;
     transientRetryEvidenceReason: string | null;
+    targetedDiagnosticRetryAvailable?: boolean;
+    targetedDiagnosticRetryReason?: string | null;
     configPath: string;
     commandText: string;
     timeoutForecastLine: string | null;
@@ -125,6 +127,13 @@ function resolveAfterCompileBeforeReviewsRoute(
                 'Rerun the configured full-suite command before launching independent reviewers.'
             );
         }
+        if (options.targetedDiagnosticRetryAvailable) {
+            return buildTargetedDiagnosticRetryRoute(
+                options,
+                'Retry full-suite validation after targeted diagnostics.',
+                'Rerun the configured full-suite command before launching independent reviewers.'
+            );
+        }
         return {
             status: 'BLOCKED',
             nextGate: 'implementation',
@@ -187,6 +196,13 @@ function resolveBeforeTestReviewRoute(
             return buildManualTransientRetryRoute(
                 options,
                 'Retry full-suite validation after focused transient evidence.',
+                'Rerun it before launching the mandatory test reviewer.'
+            );
+        }
+        if (options.targetedDiagnosticRetryAvailable) {
+            return buildTargetedDiagnosticRetryRoute(
+                options,
+                'Retry full-suite validation after targeted diagnostics.',
                 'Rerun it before launching the mandatory test reviewer.'
             );
         }
@@ -382,6 +398,32 @@ function buildManualTransientRetryRoute(
         reason:
             `Full-suite validation failed for the current compiled scope, but task-scoped focused validation evidence marks the failure as transient or already cleared.${evidenceReason} ` +
             `${retryInstruction} Focused validation is recovery guidance only and does not replace mandatory full-suite evidence. ` +
+            `Command: ${options.commandText}. ${options.timeoutForecastLine || ''}`.trim(),
+        commands: [
+            buildCommand(
+                'Retry full-suite validation',
+                options.command
+            )
+        ]
+    };
+}
+
+function buildTargetedDiagnosticRetryRoute(
+    options: NextStepFullSuiteValidationRoutingOptions,
+    title: string,
+    retryInstruction: string
+): NextStepFullSuiteValidationRoute {
+    const evidenceReason = options.targetedDiagnosticRetryReason
+        ? ` ${options.targetedDiagnosticRetryReason}`
+        : '';
+    return {
+        status: 'BLOCKED',
+        nextGate: 'full-suite-validation',
+        title,
+        reason:
+            `Full-suite validation failed for the current compiled scope, and task-scoped targeted diagnostic evidence passed afterward.${evidenceReason} ` +
+            `${retryInstruction} Targeted diagnostics are recovery guidance only and do not replace mandatory full-suite evidence; ` +
+            `use full-suite-retry-evidence.json only when the focused evidence is intentionally promoted as supported retry evidence. ` +
             `Command: ${options.commandText}. ${options.timeoutForecastLine || ''}`.trim(),
         commands: [
             buildCommand(

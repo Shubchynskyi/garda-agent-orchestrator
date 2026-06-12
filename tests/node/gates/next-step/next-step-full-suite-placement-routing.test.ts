@@ -321,6 +321,84 @@ describe('gates/next-step', () => {
 
     });
 
+    it('routes targeted diagnostic pass after failed full-suite to mandatory full-suite retry', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            security: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+
+        const diagnosticArtifactPath = path.join(
+            reviewsRoot(repoRoot),
+            `${TASK_ID}-intermediate-command-targeted-test-diagnostic.json`
+        );
+        writeJson(diagnosticArtifactPath, {
+            task_id: TASK_ID,
+            command_source: 'targeted-test',
+            command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-placement-routing.test.ts',
+            status: 'PASSED',
+            exit_code: 0
+        });
+        appendEvent(repoRoot, TASK_ID, 'INTERMEDIATE_COMMAND_RUN', 'PASSED', {
+            command_source: 'targeted-test',
+            command: 'npm test -- tests/node/gates/next-step/next-step-full-suite-placement-routing.test.ts',
+            artifact_path: normalizeForTimeline(diagnosticArtifactPath),
+            exit_code: 0
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.match(result.title, /targeted diagnostics/);
+
+        assert.match(result.reason, /Targeted diagnostics are recovery guidance only/);
+
+        assert.match(result.reason, /intermediate-command-targeted-test-diagnostic\.json/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+        assert.ok(!result.commands[0].command.includes('--review-type'));
+
+    });
+
 
 
     it('retries after-compile full-suite when focused transient evidence is bound to the current failure', () => {

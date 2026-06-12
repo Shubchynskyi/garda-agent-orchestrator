@@ -37,6 +37,10 @@ import {
     resolveReviewsRoot
 } from '../task-audit/task-audit-summary-collectors';
 import {
+    readOrderedTaskEvents,
+    type TaskAuditEvent
+} from '../task-audit/task-audit-summary-lifecycle';
+import {
     buildFullSuiteTimeoutForecast,
     formatFullSuitePerformanceGuidance,
     formatFullSuiteTimeoutForecast,
@@ -476,6 +480,11 @@ interface FullSuiteManualRetryEvidence {
     reason: string | null;
 }
 
+interface FullSuiteTargetedDiagnosticEvidence {
+    available: boolean;
+    reason: string | null;
+}
+
 function readFullSuiteManualRetryEvidence(options: {
     repoRoot: string;
     taskId: string;
@@ -546,6 +555,80 @@ function readFullSuiteManualRetryEvidence(options: {
     }
     const reason = `Evidence: ${normalizePath(evidencePath)}; reason_kind=${reasonKind}${focusedCommand ? `; focused_command=${focusedCommand}` : ''}.`;
     return { available: true, reason };
+}
+
+function readFullSuiteTargetedDiagnosticEvidence(options: {
+    eventsRoot: string;
+    taskId: string;
+    currentFailedFullSuite: boolean;
+}): FullSuiteTargetedDiagnosticEvidence {
+    if (!options.currentFailedFullSuite) {
+        return { available: false, reason: null };
+    }
+    const timelinePath = path.join(options.eventsRoot, `${options.taskId}.jsonl`);
+    const events = readOrderedTaskEvents(timelinePath).events;
+    const failedIndex = findLatestCurrentTaskEventIndex(events, options.taskId, 'FULL_SUITE_VALIDATION_FAILED');
+    if (failedIndex < 0) {
+        return { available: false, reason: null };
+    }
+    for (let index = events.length - 1; index > failedIndex; index -= 1) {
+        const event = events[index];
+        if (String(event.task_id || '').trim() !== options.taskId) {
+            continue;
+        }
+        if (String(event.event_type || '') !== 'INTERMEDIATE_COMMAND_RUN') {
+            continue;
+        }
+        if (!isPassedIntermediateCommandEvent(event)) {
+            continue;
+        }
+        const details = isPlainRecord(event.details) ? event.details : {};
+        const artifactPath = String(details.artifact_path || '').trim();
+        const commandSource = String(details.command_source || '').trim();
+        const command = String(details.command || '').trim();
+        const evidenceParts = [
+            artifactPath ? `artifact=${normalizePath(artifactPath)}` : null,
+            commandSource ? `command_source=${commandSource}` : null,
+            command ? `command=${command}` : null
+        ].filter((part): part is string => !!part);
+        const reason = evidenceParts.length > 0
+            ? `Evidence: ${evidenceParts.join('; ')}.`
+            : null;
+        return { available: true, reason };
+    }
+    return { available: false, reason: null };
+}
+
+function findLatestCurrentTaskEventIndex(
+    events: TaskAuditEvent[],
+    taskId: string,
+    eventType: string
+): number {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (
+            String(event.task_id || '').trim() === taskId
+            && String(event.event_type || '') === eventType
+        ) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+function isPassedIntermediateCommandEvent(event: TaskAuditEvent): boolean {
+    const details = isPlainRecord(event.details) ? event.details : {};
+    const commandSource = String(details.command_source || '').trim();
+    if (!['node-test', 'targeted-test', 'typecheck', 'validation'].includes(commandSource)) {
+        return false;
+    }
+    const outcome = String(event.outcome || '').trim().toUpperCase();
+    const status = String(details.status || '').trim().toUpperCase();
+    const exitCode = details.exit_code;
+    if (typeof exitCode === 'number' && Number.isInteger(exitCode)) {
+        return exitCode === 0;
+    }
+    return outcome === 'PASS' || outcome === 'PASSED' || status === 'PASS' || status === 'PASSED';
 }
 
 function buildCliPrefix(repoRoot: string): string {
@@ -1479,6 +1562,11 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         fullSuiteArtifact: readinessArtifacts.fullSuiteValidation,
         fullSuiteArtifactPath: readinessArtifacts.paths.fullSuiteValidationPath,
         preflightSha256,
+        currentFailedFullSuite: currentFailedFullSuiteValidation
+    });
+    const fullSuiteTargetedDiagnosticEvidence = readFullSuiteTargetedDiagnosticEvidence({
+        eventsRoot,
+        taskId,
         currentFailedFullSuite: currentFailedFullSuiteValidation
     });
     const currentCompileGateTimestamp = String(
@@ -2428,6 +2516,8 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
         transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
         transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,
+        targetedDiagnosticRetryAvailable: fullSuiteTargetedDiagnosticEvidence.available,
+        targetedDiagnosticRetryReason: fullSuiteTargetedDiagnosticEvidence.reason,
         configPath: fullSuiteSummary.config_path,
         commandText: fullSuiteConfig.command,
         timeoutForecastLine: fullSuiteTimeoutForecastLine,
