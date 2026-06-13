@@ -14,6 +14,8 @@ import {
     validateAllConfigs,
     formatValidationReport,
     formatValidationReportCompact,
+    type ConfigFileReport,
+    type ConfigValidationReport,
     reviewCapabilitiesSchema,
     tokenEconomySchema,
     pathsSchema,
@@ -25,7 +27,8 @@ import {
     reviewArtifactStorageSchema,
     runtimeRetentionSchema,
     workflowConfigSchema,
-    gardaConfigSchema
+    gardaConfigSchema,
+    OPTIONAL_ROOT_CONFIG_NAMES
 } from '../../../src/schemas/config-schemas';
 
 function isWorkspaceRoot(candidate: string): boolean {
@@ -56,10 +59,61 @@ const CLI_ENTRY = path.join(REPO_ROOT, 'bin', 'garda.js');
 const VALIDATE_CONFIG_SCRIPT = path.join(REPO_ROOT, 'scripts', 'validate-config.cjs');
 const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
 
+function readTemplateConfigText(fileName: string): string {
+    return fs.readFileSync(path.join(REPO_ROOT, 'template', 'config', fileName), 'utf8');
+}
+
 function readTemplateConfig(fileName: string): unknown {
-    return JSON.parse(
-        fs.readFileSync(path.join(REPO_ROOT, 'template', 'config', fileName), 'utf8')
+    return JSON.parse(readTemplateConfigText(fileName));
+}
+
+function tempBundleDiagnostics(bundleRoot: string, configDir: string, rootConfigPath: string, configs: unknown): string {
+    return [
+        `repoRoot=${REPO_ROOT}`,
+        `cwd=${process.cwd()}`,
+        `bundleRoot=${bundleRoot}`,
+        `configDir=${configDir}`,
+        `sourceRootConfig=${path.join(REPO_ROOT, 'template', 'config', 'garda.config.json')}`,
+        `tempRootConfig=${rootConfigPath}`,
+        `configs=${JSON.stringify(configs, null, 2)}`
+    ].join('\n');
+}
+
+function assertTempBundleConfigMap(bundleRoot: string, configDir: string): void {
+    const rootConfigPath = path.join(configDir, 'garda.config.json');
+    const rootConfig = JSON.parse(fs.readFileSync(rootConfigPath, 'utf8')) as Record<string, unknown>;
+    const configs = rootConfig.configs;
+    assert.equal(typeof configs, 'object', tempBundleDiagnostics(bundleRoot, configDir, rootConfigPath, configs));
+    assert.notEqual(configs, null, tempBundleDiagnostics(bundleRoot, configDir, rootConfigPath, configs));
+
+    const configMap = configs as Record<string, unknown>;
+    for (const entry of getConfigSchemas()) {
+        const configuredRelativePath = configMap[entry.name];
+        if (configuredRelativePath === undefined && OPTIONAL_ROOT_CONFIG_NAMES.has(entry.name)) {
+            continue;
+        }
+        assert.equal(
+            typeof configuredRelativePath,
+            'string',
+            `Expected temp bundle root config to include ${entry.name}.\n` +
+                tempBundleDiagnostics(bundleRoot, configDir, rootConfigPath, configMap)
+        );
+        const relativePath = configuredRelativePath as string;
+        assert.ok(
+            fs.existsSync(path.join(configDir, relativePath)),
+            `Expected temp bundle config file for ${entry.name} to exist.\n` +
+                tempBundleDiagnostics(bundleRoot, configDir, rootConfigPath, configMap)
+        );
+    }
+}
+
+function getReportConfig(report: ConfigValidationReport, name: string): ConfigFileReport {
+    const configReport = report.configs.find((cfg) => cfg.name === name);
+    assert.ok(
+        configReport,
+        `Expected validation report to include ${name}.\nreport=${JSON.stringify(report, null, 2)}`
     );
+    return configReport;
 }
 
 function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: string } {
@@ -88,6 +142,7 @@ function makeTempBundleRoot(): { tmpDir: string; bundleRoot: string; configDir: 
         );
     }
 
+    assertTempBundleConfigMap(bundleRoot, configDir);
     return { tmpDir, bundleRoot, configDir };
 }
 
@@ -122,6 +177,30 @@ test('getConfigSchemaByName returns correct schema entry', () => {
 
 test('getConfigSchemaByName returns undefined for unknown name', () => {
     assert.equal(getConfigSchemaByName('nonexistent'), undefined);
+});
+
+test('makeTempBundleRoot materializes required managed config map deterministically', () => {
+    const { tmpDir, bundleRoot, configDir } = makeTempBundleRoot();
+    try {
+        const rootConfig = JSON.parse(
+            fs.readFileSync(path.join(configDir, 'garda.config.json'), 'utf8')
+        ) as Record<string, unknown>;
+        const configs = rootConfig.configs as Record<string, unknown>;
+
+        for (const entry of getConfigSchemas()) {
+            if (configs[entry.name] === undefined && OPTIONAL_ROOT_CONFIG_NAMES.has(entry.name)) {
+                continue;
+            }
+            assert.equal(typeof configs[entry.name], 'string');
+            assert.ok(fs.existsSync(path.join(configDir, configs[entry.name] as string)));
+        }
+
+        const report = validateAllConfigs(bundleRoot);
+        assert.equal(report.passed, true, JSON.stringify(report, null, 2));
+        assert.ok(report.configs.some((cfg) => cfg.name === 'review-capabilities'));
+    } finally {
+        cleanupTempBundleRoot(tmpDir);
+    }
 });
 
 
@@ -480,9 +559,8 @@ test('validateAllConfigs rejects manifest paths outside live/config', () => {
         fs.writeFileSync(path.join(configDir, 'garda.config.json'), JSON.stringify(rootConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const reviewReport = report.configs.find((cfg) => cfg.name === 'review-capabilities');
+        const reviewReport = getReportConfig(report, 'review-capabilities');
         assert.equal(report.passed, false);
-        assert.ok(reviewReport);
         assert.ok(reviewReport.errors.some((error) => error.includes('resolve inside live/config')));
     } finally {
         cleanupTempBundleRoot(tmpDir);
@@ -498,9 +576,8 @@ test('validateAllConfigs reports missing manifest-referenced config files', () =
         fs.writeFileSync(path.join(configDir, 'garda.config.json'), JSON.stringify(rootConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const pathsReport = report.configs.find((cfg) => cfg.name === 'paths');
+        const pathsReport = getReportConfig(report, 'paths');
         assert.equal(report.passed, false);
-        assert.ok(pathsReport);
         assert.ok(pathsReport.errors.some((error) => error.includes('File not found')));
     } finally {
         cleanupTempBundleRoot(tmpDir);
@@ -512,9 +589,8 @@ test('validateAllConfigs reports parse failures for manifest-referenced config f
     try {
         fs.writeFileSync(path.join(configDir, 'skill-packs.json'), '{"broken":', 'utf8');
         const report = validateAllConfigs(bundleRoot);
-        const skillPacksReport = report.configs.find((cfg) => cfg.name === 'skill-packs');
+        const skillPacksReport = getReportConfig(report, 'skill-packs');
         assert.equal(report.passed, false);
-        assert.ok(skillPacksReport);
         assert.ok(skillPacksReport.errors.some((error) => error.startsWith('parse:')));
     } finally {
         cleanupTempBundleRoot(tmpDir);
@@ -529,9 +605,8 @@ test('validateAllConfigs reports runtime validator failures', () => {
                 throw new Error('synthetic runtime validation failure');
             }
         });
-        const reviewReport = report.configs.find((cfg) => cfg.name === 'review-capabilities');
+        const reviewReport = getReportConfig(report, 'review-capabilities');
         assert.equal(report.passed, false);
-        assert.ok(reviewReport);
         assert.equal(reviewReport.runtimeValid, false);
         assert.ok(reviewReport.errors.some((error) => error.includes('synthetic runtime validation failure')));
     } finally {
@@ -550,9 +625,8 @@ test('validateAllConfigs accepts workflow-config files with preserved future top
         fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        const workflowReport = getReportConfig(report, 'workflow-config');
         assert.equal(report.passed, true, JSON.stringify(report, null, 2));
-        assert.ok(workflowReport);
         assert.equal(workflowReport.schemaValid, true);
         assert.equal(workflowReport.runtimeValid, true);
     } finally {
@@ -569,9 +643,8 @@ test('validateAllConfigs accepts workflow-config files with preserved future ful
         fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        const workflowReport = getReportConfig(report, 'workflow-config');
         assert.equal(report.passed, true, JSON.stringify(report, null, 2));
-        assert.ok(workflowReport);
         assert.equal(workflowReport.schemaValid, true);
         assert.equal(workflowReport.runtimeValid, true);
     } finally {
@@ -588,9 +661,8 @@ test('validateAllConfigs accepts legacy review_cycle_guard without auto_split_en
         fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        const workflowReport = getReportConfig(report, 'workflow-config');
         assert.equal(report.passed, true, JSON.stringify(report, null, 2));
-        assert.ok(workflowReport);
         assert.equal(workflowReport.schemaValid, true);
         assert.equal(workflowReport.runtimeValid, true);
     } finally {
@@ -610,9 +682,8 @@ test('validateAllConfigs rejects likely typo top-level workflow-config keys', ()
         fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        const workflowReport = getReportConfig(report, 'workflow-config');
         assert.equal(report.passed, false);
-        assert.ok(workflowReport);
         assert.equal(workflowReport.schemaValid, true);
         assert.equal(workflowReport.runtimeValid, false);
         assert.ok(workflowReport.errors.some((error) => error.includes("did you mean 'review_execution_policy'")));
@@ -633,9 +704,8 @@ test('validateAllConfigs rejects case-drifted workflow-config review_execution_p
         fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        const workflowReport = getReportConfig(report, 'workflow-config');
         assert.equal(report.passed, false);
-        assert.ok(workflowReport);
         assert.equal(workflowReport.runtimeValid, false);
         assert.ok(workflowReport.errors.some((error) => error.includes("exact key 'review_execution_policy'")));
     } finally {
@@ -655,9 +725,8 @@ test('validateAllConfigs rejects unknown nested workflow-config review_execution
         fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
 
         const report = validateAllConfigs(bundleRoot);
-        const workflowReport = report.configs.find((cfg) => cfg.name === 'workflow-config');
+        const workflowReport = getReportConfig(report, 'workflow-config');
         assert.equal(report.passed, false);
-        assert.ok(workflowReport);
         assert.equal(workflowReport.schemaValid, false);
         assert.equal(workflowReport.runtimeValid, false);
         assert.ok(workflowReport.errors.some((error) => error.includes('visible_summary_line')));
