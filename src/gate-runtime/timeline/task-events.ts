@@ -74,6 +74,7 @@ export type { AppendTaskEventResult as TaskEventAppendResult } from '../task-eve
 export {
     pruneAggregateLog,
     pruneAggregateLogLocked,
+    pruneAggregateTaskRecordsLocked,
     type AggregateAppendMode,
     type AggregateRetentionResult
 } from '../task-events-retention';

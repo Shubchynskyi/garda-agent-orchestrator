@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 import { writeFileAtomically } from '../../core/filesystem';
-import { isCanonicalTaskId } from '../../core/task-ids';
+import { isCanonicalTaskId, taskIdsEqualCaseInsensitive } from '../../core/task-ids';
 import {
     withFilesystemLock,
     withFilesystemLockAsync,
@@ -36,6 +36,84 @@ function parseAggregateTaskId(line: string): string | null {
         return isCanonicalTaskId(taskId) ? taskId : null;
     } catch {
         return null;
+    }
+}
+
+function removeAggregateTaskRecords(allTasksPath: string, taskId: string): AggregateRetentionResult {
+    if (!fs.existsSync(allTasksPath)) {
+        return { pruned: false, lines_before: 0, lines_after: 0 };
+    }
+
+    const tempPath = `${allTasksPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let readFd: number | null = null;
+    let writeFd: number | null = null;
+    const decoder = new StringDecoder('utf8');
+    let pending = '';
+    let linesBefore = 0;
+    let linesAfter = 0;
+    let pruned = false;
+
+    function processLine(line: string): void {
+        if (line.trim().length === 0) {
+            return;
+        }
+        linesBefore += 1;
+        const lineTaskId = parseAggregateTaskId(line);
+        if (lineTaskId && taskIdsEqualCaseInsensitive(lineTaskId, taskId)) {
+            pruned = true;
+            return;
+        }
+        fs.writeSync(writeFd!, `${line}\n`, undefined, 'utf8');
+        linesAfter += 1;
+    }
+
+    try {
+        const stat = fs.statSync(allTasksPath);
+        if (!stat.isFile() || stat.size === 0) {
+            return { pruned: false, lines_before: 0, lines_after: 0 };
+        }
+        readFd = fs.openSync(allTasksPath, 'r');
+        writeFd = fs.openSync(tempPath, 'wx');
+        const buf = Buffer.alloc(AGGREGATE_PRUNE_CHUNK_SIZE);
+        let position = 0;
+        while (true) {
+            const bytesRead = fs.readSync(readFd, buf, 0, buf.length, position);
+            if (bytesRead === 0) break;
+            pending += decoder.write(buf.subarray(0, bytesRead));
+            let newlineIndex = pending.indexOf('\n');
+            while (newlineIndex >= 0) {
+                const line = pending.slice(0, newlineIndex).replace(/\r$/, '');
+                processLine(line);
+                pending = pending.slice(newlineIndex + 1);
+                newlineIndex = pending.indexOf('\n');
+            }
+            position += bytesRead;
+        }
+        pending += decoder.end();
+        if (pending.length > 0) {
+            processLine(pending.replace(/\r$/, ''));
+        }
+        fs.closeSync(readFd);
+        readFd = null;
+        fs.closeSync(writeFd);
+        writeFd = null;
+
+        if (!pruned) {
+            fs.rmSync(tempPath, { force: true });
+            return { pruned: false, lines_before: linesBefore, lines_after: linesBefore };
+        }
+
+        fs.renameSync(tempPath, allTasksPath);
+        return { pruned: true, lines_before: linesBefore, lines_after: linesAfter };
+    } catch (error) {
+        if (readFd !== null) {
+            try { fs.closeSync(readFd); } catch { /* ignore cleanup failure */ }
+        }
+        if (writeFd !== null) {
+            try { fs.closeSync(writeFd); } catch { /* ignore cleanup failure */ }
+        }
+        try { fs.rmSync(tempPath, { force: true }); } catch { /* ignore cleanup failure */ }
+        throw error;
     }
 }
 
@@ -258,6 +336,19 @@ export function pruneAggregateLogLocked(
     const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
     const lockResult = withFilesystemLock(aggregateLockPath, lockOptions, function (): AggregateRetentionResult {
         return pruneAggregateLog(allTasksPath, maxLines, undefined, protectedTaskIds);
+    });
+    return lockResult.result;
+}
+
+export function pruneAggregateTaskRecordsLocked(
+    eventsRoot: string,
+    taskId: string,
+    lockOptions: LockOptions = {}
+): AggregateRetentionResult {
+    const allTasksPath = path.join(eventsRoot, 'all-tasks.jsonl');
+    const aggregateLockPath = path.join(eventsRoot, '.all-tasks.lock');
+    const lockResult = withFilesystemLock(aggregateLockPath, lockOptions, function (): AggregateRetentionResult {
+        return removeAggregateTaskRecords(allTasksPath, taskId);
     });
     return lockResult.result;
 }

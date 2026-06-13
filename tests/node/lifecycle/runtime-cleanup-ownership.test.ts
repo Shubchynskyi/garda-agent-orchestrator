@@ -107,7 +107,7 @@ describe('runtime cleanup ownership contract', () => {
         );
         assert.deepEqual(
             listRuntimeCleanupSideEffectActionsForRemovedCategories(new Set(['task-events'])),
-            ['prune-timeline-summary']
+            ['prune-all-tasks-aggregate', 'prune-timeline-summary']
         );
         assert.deepEqual(
             listRuntimeCleanupSideEffectActionsForRemovedCategories(new Set(['manual-validation', 'tmp'])),

@@ -76,6 +76,18 @@ export interface CleanupResult {
     runtimeRetentionPreview?: RuntimeRetentionPreviewSummary;
 }
 
+export interface TaskRuntimePurgeResult {
+    targetRoot: string;
+    taskId: string;
+    dryRun: boolean;
+    removed: CleanupItem[];
+    skipped: CleanupItem[];
+    errors: Array<{ path: string; message: string }>;
+    totalFreedBytes: number;
+    result: string;
+    activeTaskProtected: boolean;
+}
+
 export interface GcResult extends CleanupResult {
     staleLocksCleaned: number;
     isolationSandboxCleaned: boolean;

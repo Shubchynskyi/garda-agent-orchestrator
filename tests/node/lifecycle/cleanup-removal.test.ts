@@ -9,6 +9,8 @@ import {
     runCleanup,
     runCleanupWithLock,
     runGc,
+    runTaskRuntimePurge,
+    runTaskRuntimePurgeWithLock,
     appendTaskEvent,
     makeTmpDir,
     setupRuntimeDir,
@@ -799,6 +801,274 @@ describe('runCleanup', () => {
             assert.equal(result.result, 'SUCCESS');
             assert.equal(result.errors.length, 0);
         });
+    });
+});
+
+describe('runTaskRuntimePurge', () => {
+    let tmpDir: string;
+    let bundleRoot: string;
+    let runtimeDir: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('gao-task-purge-');
+        bundleRoot = path.join(tmpDir, 'garda-agent-orchestrator');
+        fs.mkdirSync(bundleRoot, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n');
+        runtimeDir = setupRuntimeDir(bundleRoot);
+    });
+
+    afterEach(() => {
+        try {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+            // Best-effort
+        }
+    });
+
+    it('purges every task-scoped runtime artifact for one task and preserves shared and other-task data', () => {
+        const targetTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-779',
+            includePlan: true,
+            includeProjectMemory: true,
+            includeCompletenessCache: true,
+            ageDays: 45
+        });
+        const otherTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-780',
+            includePlan: true,
+            includeProjectMemory: true,
+            includeCompletenessCache: true,
+            ageDays: 45
+        });
+        writeTaskQueue(tmpDir, [
+            { id: 'T-779', status: '🟩 DONE', title: 'Purge target' },
+            { id: 'T-780', status: '🟩 DONE', title: 'Retained task' }
+        ]);
+
+        const reviewsIndexPath = path.join(targetTask.reviewsDir, 'reviews-index.json');
+        const allTasksPath = path.join(targetTask.eventsDir, 'all-tasks.jsonl');
+        const metricsPath = path.join(runtimeDir, 'metrics.jsonl');
+        const bootstrapReportPath = path.join(runtimeDir, 'project-memory', 'bootstrap-report.json');
+        const genericTmpPath = path.join(runtimeDir, 'tmp', 'generic.log');
+        fs.writeFileSync(reviewsIndexPath, JSON.stringify({ version: 1, entries: [] }), 'utf8');
+        fs.writeFileSync(allTasksPath, '{"task_id":"T-779"}\n{"task_id":"T-780"}\n', 'utf8');
+        fs.writeFileSync(metricsPath, '{"metric":"shared"}\n', 'utf8');
+        fs.writeFileSync(bootstrapReportPath, '{"shared":true}\n', 'utf8');
+        fs.mkdirSync(path.dirname(genericTmpPath), { recursive: true });
+        fs.writeFileSync(genericTmpPath, 'shared tmp\n', 'utf8');
+
+        const manualValidationDir = path.join(runtimeDir, 'manual-validation', 'T-779');
+        const reviewScratchDir = path.join(runtimeDir, 'tmp', 'reviews', 'T-779');
+        const taskPrefixedTmpFile = path.join(runtimeDir, 'tmp', 'T-779-full-suite-validation.log');
+        const taskPrefixedTmpDir = path.join(runtimeDir, 'tmp', 'T-779');
+        fs.mkdirSync(manualValidationDir, { recursive: true });
+        fs.mkdirSync(reviewScratchDir, { recursive: true });
+        fs.mkdirSync(taskPrefixedTmpDir, { recursive: true });
+        fs.writeFileSync(path.join(manualValidationDir, 'review-evidence.json'), '{}', 'utf8');
+        fs.writeFileSync(path.join(reviewScratchDir, 'review-output.md'), 'review\n', 'utf8');
+        fs.writeFileSync(taskPrefixedTmpFile, 'tmp\n', 'utf8');
+        fs.writeFileSync(path.join(taskPrefixedTmpDir, 'output.log'), 'tmp dir\n', 'utf8');
+
+        const dryRun = runTaskRuntimePurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            taskId: 'T-779'
+        });
+
+        assert.equal(dryRun.result, 'SUCCESS');
+        assert.equal(dryRun.dryRun, true);
+        assert.equal(dryRun.removed.length, 0);
+        const dryRunCategories = new Set(dryRun.skipped.map((item) => item.category));
+        for (const category of ['manual-validation', 'reviews', 'task-events', 'plans', 'project-memory', 'task-ledger', 'tmp']) {
+            assert.ok(dryRunCategories.has(category), `dry-run should include ${category}`);
+        }
+        assert.equal(fs.existsSync(targetTask.ledgerPath), true, 'dry-run must preserve task ledger');
+
+        const result = runTaskRuntimePurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            taskId: 'T-779',
+            confirm: true
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.equal(result.activeTaskProtected, false);
+        assert.equal(result.errors.length, 0);
+        for (const category of ['manual-validation', 'reviews', 'task-events', 'plans', 'project-memory', 'task-ledger', 'tmp']) {
+            assert.ok(result.removed.some((item) => item.category === category && item.taskId === 'T-779'),
+                `confirmed purge should remove ${category}`);
+        }
+
+        assert.equal(fs.existsSync(manualValidationDir), false);
+        assert.equal(fs.existsSync(reviewScratchDir), false);
+        assert.equal(fs.existsSync(taskPrefixedTmpFile), false);
+        assert.equal(fs.existsSync(taskPrefixedTmpDir), false);
+        assert.equal(fs.existsSync(targetTask.planPath!), false);
+        assert.equal(targetTask.projectMemoryPaths.every((artifactPath) => !fs.existsSync(artifactPath)), true);
+        assert.equal(fs.existsSync(targetTask.timelinePath), false);
+        assert.equal(fs.existsSync(path.join(targetTask.eventsDir, 'T-779.completeness.json')), false);
+        assert.equal(fs.existsSync(targetTask.ledgerPath), false, 'explicit task purge must remove the task ledger');
+        assert.equal(targetTask.reviewPaths.every((artifactPath) => !fs.existsSync(artifactPath)), true);
+
+        assert.equal(fs.existsSync(otherTask.planPath!), true, 'other task plan must remain');
+        assert.equal(fs.existsSync(otherTask.timelinePath), true, 'other task timeline must remain');
+        assert.equal(fs.existsSync(otherTask.ledgerPath), true, 'other task ledger must remain');
+        assert.equal(otherTask.reviewPaths.every((artifactPath) => fs.existsSync(artifactPath)), true);
+        assert.equal(otherTask.projectMemoryPaths.every((artifactPath) => fs.existsSync(artifactPath)), true);
+        assert.equal(fs.existsSync(path.join(otherTask.eventsDir, 'T-780.completeness.json')), true);
+
+        assert.equal(fs.existsSync(allTasksPath), true, 'shared task-events aggregate must not be deleted by per-task purge');
+        const aggregateRecords = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as { task_id?: string });
+        assert.equal(
+            aggregateRecords.some((entry) => entry.task_id === 'T-779'),
+            false,
+            'per-task purge must prune selected task records from all-tasks aggregate'
+        );
+        assert.equal(
+            aggregateRecords.some((entry) => entry.task_id === 'T-780'),
+            true,
+            'per-task purge must preserve other task records in all-tasks aggregate'
+        );
+        assert.equal(fs.existsSync(metricsPath), true, 'shared metrics stream must not be deleted by per-task purge');
+        assert.equal(fs.existsSync(bootstrapReportPath), true, 'shared project-memory bootstrap report must remain');
+        assert.equal(fs.existsSync(genericTmpPath), true, 'generic tmp must not be treated as task-owned');
+        assert.equal(fs.existsSync(reviewsIndexPath), false, 'review side effect should invalidate reviews index');
+        const updatedSummary = JSON.parse(fs.readFileSync(path.join(targetTask.eventsDir, '.timeline-summary.json'), 'utf8'));
+        assert.equal(updatedSummary.entries['T-779'], undefined, 'removed task must be pruned from timeline summary');
+        assert.ok(updatedSummary.entries['T-780'], 'retained task must stay in timeline summary');
+    });
+
+    it('blocks active task purge before deleting any artifacts', () => {
+        const manualValidationDir = path.join(runtimeDir, 'manual-validation', 'T-779');
+        fs.mkdirSync(manualValidationDir, { recursive: true });
+        fs.writeFileSync(path.join(manualValidationDir, 'review-evidence.json'), '{}', 'utf8');
+
+        const result = runTaskRuntimePurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            taskId: 'T-779',
+            confirm: true,
+            activeTaskIds: ['T-779']
+        });
+
+        assert.equal(result.result, 'BLOCKED');
+        assert.equal(result.activeTaskProtected, true);
+        assert.equal(result.removed.length, 0);
+        assert.equal(fs.existsSync(manualValidationDir), true, 'active task artifacts must remain untouched');
+        assert.match(result.errors[0]?.message || '', /active/i);
+    });
+
+    it('treats missing task paths as a successful no-op purge', () => {
+        const result = runTaskRuntimePurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            taskId: 'T-404',
+            confirm: true
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.equal(result.removed.length, 0);
+        assert.equal(result.errors.length, 0);
+    });
+
+    it('prunes aggregate-only task-event records when owned task files are already gone', () => {
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        const allTasksPath = path.join(eventsDir, 'all-tasks.jsonl');
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.writeFileSync(allTasksPath, '{"task_id":"T-779"}\n{"task_id":"T-780"}\n', 'utf8');
+
+        const result = runTaskRuntimePurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            taskId: 'T-779',
+            confirm: true
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.equal(result.removed.length, 0);
+        assert.equal(result.errors.length, 0);
+        const remainingTaskIds = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => (JSON.parse(line) as { task_id?: string }).task_id);
+        assert.deepEqual(remainingTaskIds, ['T-780']);
+    });
+
+    it('reports PARTIAL when aggregate pruning cannot rewrite all-tasks records', () => {
+        const eventsDir = path.join(runtimeDir, 'task-events');
+        const allTasksPath = path.join(eventsDir, 'all-tasks.jsonl');
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.writeFileSync(allTasksPath, '{"task_id":"T-779"}\n{"task_id":"T-780"}\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalRenameSync = realFs.renameSync;
+        let intercepted = false;
+        try {
+            realFs.renameSync = function (...args: unknown[]) {
+                const destinationPath = typeof args[1] === 'string' ? path.resolve(args[1]) : '';
+                if (!intercepted && destinationPath === path.resolve(allTasksPath)) {
+                    intercepted = true;
+                    throw new Error('simulated aggregate rewrite failure');
+                }
+                return originalRenameSync.apply(realFs, args as [fs.PathLike, fs.PathLike]);
+            };
+
+            const result = runTaskRuntimePurge({
+                targetRoot: tmpDir,
+                bundleRoot,
+                taskId: 'T-779',
+                confirm: true
+            });
+
+            assert.equal(intercepted, true);
+            assert.equal(result.result, 'PARTIAL');
+            assert.equal(result.errors.length, 1);
+            assert.match(result.errors[0].message, /simulated aggregate rewrite failure/);
+            assert.equal(
+                fs.readFileSync(allTasksPath, 'utf8').includes('"task_id":"T-779"'),
+                true,
+                'failed aggregate rewrite must be reported while orphan records remain'
+            );
+        } finally {
+            realFs.renameSync = originalRenameSync;
+        }
+    });
+});
+
+describe('runTaskRuntimePurgeWithLock', () => {
+    let tmpDir: string;
+    let bundleRoot: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('gao-task-purge-lock-');
+        bundleRoot = path.join(tmpDir, 'garda-agent-orchestrator');
+        fs.mkdirSync(bundleRoot, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n');
+        setupRuntimeDir(bundleRoot);
+    });
+
+    afterEach(() => {
+        try {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+            // Best-effort
+        }
+    });
+
+    it('runs task runtime purge under lifecycle lock', () => {
+        const result = runTaskRuntimePurgeWithLock({
+            targetRoot: tmpDir,
+            bundleRoot,
+            taskId: 'T-404'
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.equal(result.dryRun, true);
     });
 });
 

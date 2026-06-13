@@ -1,7 +1,8 @@
 import * as path from 'node:path';
 import { invalidateIndex as invalidateReviewsIndex } from '../../gate-runtime/reviews-index';
-import { pruneAggregateLogLocked } from '../../gate-runtime/task-events';
+import { pruneAggregateLogLocked, pruneAggregateTaskRecordsLocked } from '../../gate-runtime/task-events';
 import { resolveActiveTaskIds } from '../../core/active-task-state';
+import { assertCanonicalTaskId, taskIdsEqualCaseInsensitive } from '../../core/task-ids';
 import { pruneTimelineSummaryEntries } from '../../gate-runtime/timeline-summary';
 import { DEFAULT_METRICS_MAX_LINES, pruneMetricsFile } from '../../runtime/toxin-metrics';
 import { validateTargetRoot } from '../lifecycle-common';
@@ -13,6 +14,7 @@ import {
     cleanupStaleTaskEventLocks,
     collectIsolationSandbox,
     collectRuntimeRetentionCandidates,
+    collectTaskRuntimePurgeCandidates,
     collectStaleLifecycleLock,
     collectStaleTaskEventLockCandidates,
     collectStandardCandidates,
@@ -24,7 +26,8 @@ import {
     type GcResult,
     type CleanupItem,
     type RetentionPolicy,
-    type ReviewArtifactStoragePolicy
+    type ReviewArtifactStoragePolicy,
+    type TaskRuntimePurgeResult
 } from './cleanup-types';
 import { listRuntimeCleanupSideEffectActionsForRemovedCategories } from './runtime-cleanup-ownership';
 
@@ -54,24 +57,52 @@ export function buildDefaultRetentionPolicy(): RetentionPolicy {
     };
 }
 
-function applyTaskPurgeSharedSideEffects(runtimeDir: string, removed: CleanupItem[], dryRun: boolean): void {
-    if (dryRun || removed.length === 0) {
-        return;
+function applyTaskPurgeSharedSideEffects(
+    runtimeDir: string,
+    removed: CleanupItem[],
+    dryRun: boolean,
+    explicitTaskIds: readonly string[] = []
+): Array<{ path: string; message: string }> {
+    const errors: Array<{ path: string; message: string }> = [];
+    if (dryRun || (removed.length === 0 && explicitTaskIds.length === 0)) {
+        return errors;
     }
     const actions = listRuntimeCleanupSideEffectActionsForRemovedCategories(
         new Set(removed.map((item) => item.category))
     );
-    for (const action of actions) {
+    const removedTaskIds = Array.from(new Set(
+        [
+            ...explicitTaskIds,
+            ...removed.map((item) => item.taskId).filter((taskId): taskId is string => Boolean(taskId))
+        ]
+    ));
+    const effectiveActions = new Set(actions);
+    if (explicitTaskIds.length > 0) {
+        effectiveActions.add('prune-all-tasks-aggregate');
+        effectiveActions.add('prune-timeline-summary');
+    }
+    for (const action of effectiveActions) {
+        const targetPath = action === 'invalidate-reviews-index'
+            ? path.join(runtimeDir, 'reviews')
+            : path.join(runtimeDir, 'task-events');
         try {
             if (action === 'invalidate-reviews-index') {
-                invalidateReviewsIndex(path.join(runtimeDir, 'reviews'));
+                invalidateReviewsIndex(targetPath);
             } else if (action === 'prune-timeline-summary') {
-                pruneTimelineSummaryEntries(path.join(runtimeDir, 'task-events'));
+                pruneTimelineSummaryEntries(targetPath);
+            } else if (action === 'prune-all-tasks-aggregate') {
+                for (const taskId of removedTaskIds) {
+                    pruneAggregateTaskRecordsLocked(targetPath, taskId);
+                }
             }
-        } catch {
-            // Best-effort ownership-map side effect.
+        } catch (error: unknown) {
+            errors.push({
+                path: targetPath,
+                message: error instanceof Error ? error.message : String(error)
+            });
         }
     }
+    return errors;
 }
 
 export interface CleanupOptions {
@@ -150,6 +181,70 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
 
 export function runCleanupWithLock(options: CleanupOptions): CleanupResult {
     return withLifecycleOperationLock(options.targetRoot, 'cleanup', () => runCleanup(options));
+}
+
+export interface TaskRuntimePurgeOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    taskId: string;
+    confirm?: boolean;
+    activeTaskIds?: string[];
+}
+
+function findActiveTaskIdMatch(activeTaskIds: ReadonlySet<string>, taskId: string): string | null {
+    for (const activeTaskId of activeTaskIds) {
+        if (taskIdsEqualCaseInsensitive(activeTaskId, taskId)) {
+            return activeTaskId;
+        }
+    }
+    return null;
+}
+
+export function runTaskRuntimePurge(options: TaskRuntimePurgeOptions): TaskRuntimePurgeResult {
+    const { targetRoot, bundleRoot, confirm = false } = options;
+    validateTargetRoot(targetRoot, bundleRoot);
+
+    const taskId = assertCanonicalTaskId(options.taskId);
+    const runtimeDir = path.join(bundleRoot, 'runtime');
+    const dryRun = !confirm;
+    const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
+    const activeTaskIdMatch = findActiveTaskIdMatch(activeTaskIds, taskId);
+    if (activeTaskIdMatch) {
+        return {
+            targetRoot,
+            taskId,
+            dryRun,
+            removed: [],
+            skipped: [],
+            errors: [{
+                path: runtimeDir,
+                message: `Task '${taskId}' is active as '${activeTaskIdMatch}'; task runtime purge is blocked.`
+            }],
+            totalFreedBytes: 0,
+            result: 'BLOCKED',
+            activeTaskProtected: true
+        };
+    }
+
+    const candidates = collectTaskRuntimePurgeCandidates(runtimeDir, taskId);
+    const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun, runtimeDir);
+    errors.push(...applyTaskPurgeSharedSideEffects(runtimeDir, removed, dryRun, [taskId]));
+
+    return {
+        targetRoot,
+        taskId,
+        dryRun,
+        removed,
+        skipped,
+        errors,
+        totalFreedBytes,
+        result: errors.length > 0 ? 'PARTIAL' : 'SUCCESS',
+        activeTaskProtected: false
+    };
+}
+
+export function runTaskRuntimePurgeWithLock(options: TaskRuntimePurgeOptions): TaskRuntimePurgeResult {
+    return withLifecycleOperationLock(options.targetRoot, 'task-runtime-purge', () => runTaskRuntimePurge(options));
 }
 
 export interface GcOptions {

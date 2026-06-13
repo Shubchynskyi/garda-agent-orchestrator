@@ -10,6 +10,8 @@ import {
     runCleanupWithLock,
     runGc,
     runGcWithLock,
+    runTaskRuntimePurge,
+    runTaskRuntimePurgeWithLock,
     buildDefaultRetentionPolicy,
     GC_ALLOWLIST,
     validateGcCategories,
@@ -22,7 +24,8 @@ import {
     type GcResult,
     type RetentionPolicy,
     type ReviewArtifactStoragePolicy,
-    type StoragePolicyResult
+    type StoragePolicyResult,
+    type TaskRuntimePurgeResult
 } from '../../../src/lifecycle/cleanup';
 import { processCleanupCandidates } from '../../../src/lifecycle/cleanup-removal';
 import { appendTaskEvent } from '../../../src/gate-runtime/task-events';
@@ -41,6 +44,8 @@ export {
     runCleanupWithLock,
     runGc,
     runGcWithLock,
+    runTaskRuntimePurge,
+    runTaskRuntimePurgeWithLock,
     buildDefaultRetentionPolicy,
     GC_ALLOWLIST,
     validateGcCategories,
@@ -55,7 +60,8 @@ export {
     type GcResult,
     type RetentionPolicy,
     type ReviewArtifactStoragePolicy,
-    type StoragePolicyResult
+    type StoragePolicyResult,
+    type TaskRuntimePurgeResult
 };
 
 export function makeTmpDir(prefix: string): string {

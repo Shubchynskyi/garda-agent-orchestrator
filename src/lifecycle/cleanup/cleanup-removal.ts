@@ -423,6 +423,26 @@ function collectTaskTimelineArtifactsInventory(
         }
     }
 
+    if (taskIdFilter) {
+        const existingCandidatePaths = new Set(items.map((item) => path.resolve(item.path)));
+        for (const taskId of taskIdFilter) {
+            if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+                continue;
+            }
+            const cachePath = path.join(eventsDir, `${taskId}.completeness.json`);
+            if (!fs.existsSync(cachePath) || existingCandidatePaths.has(path.resolve(cachePath))) {
+                continue;
+            }
+            items.push({
+                path: cachePath,
+                category: 'task-events',
+                reason: 'retention-inventory',
+                sizeBytes: fileSizeBytes(cachePath),
+                taskId
+            });
+        }
+    }
+
     return items;
 }
 
@@ -711,6 +731,13 @@ function collectTaskScopedArtifactInventory(
         ...collectTaskLedgerArtifactsInventory(standardPaths.taskLedgerDir, activeTaskIds, taskIdFilter),
         ...collectTaskTmpArtifactsInventory(standardPaths.tmpDir, activeTaskIds, taskIdFilter)
     ];
+}
+
+export function collectTaskRuntimePurgeCandidates(runtimeDir: string, taskId: string): CleanupItem[] {
+    const taskIdFilter = new Set([taskId]);
+    return collectTaskScopedArtifactInventory(runtimeDir, new Set<string>(), taskIdFilter)
+        .filter((item) => item.taskId === taskId && isRuntimeCleanupTaskPurgeDeletionCategory(item.category))
+        .map((item) => ({ ...item, reason: 'task-runtime-purge' }));
 }
 
 function addCandidateTaskId(taskIds: Set<string>, taskId: string | null, activeTaskIds: ReadonlySet<string>): void {

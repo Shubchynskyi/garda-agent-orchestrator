@@ -23,7 +23,8 @@ export type RuntimeCleanupTaskPurgeMode =
 
 export type RuntimeCleanupSharedSideEffectAction =
     | 'invalidate-reviews-index'
-    | 'prune-timeline-summary';
+    | 'prune-timeline-summary'
+    | 'prune-all-tasks-aggregate';
 
 export type RuntimeCleanupRetentionMode =
     | 'task-age-or-count'
@@ -206,7 +207,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Remove the task entry from runtime/task-events/.timeline-summary.json or rebuild the summary.',
             'Rewrite or rebuild runtime/task-events/all-tasks.jsonl so removed tasks are no longer referenced.'
         ],
-        sharedSideEffectActions: ['prune-timeline-summary'],
+        sharedSideEffectActions: ['prune-all-tasks-aggregate', 'prune-timeline-summary'],
         notes: [
             'Per-task JSONL timelines are the canonical lifecycle evidence for one task.',
             'Task purge may delete them, but shared aggregates built from them must be repaired instead of deleted wholesale.'
@@ -227,7 +228,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         sharedSideEffects: [
             'Keep timeline summary coherent with the remaining per-task timelines.'
         ],
-        sharedSideEffectActions: ['prune-timeline-summary'],
+        sharedSideEffectActions: ['prune-all-tasks-aggregate', 'prune-timeline-summary'],
         notes: [
             'Completeness cache files are derived companions for one task timeline and should be removed with that task.',
             'They should never outlive the owning per-task JSONL file after purge.'
