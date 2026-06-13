@@ -14,10 +14,9 @@ import { ensureWithinRoot, removePathRecursive } from '../generic-utils';
 import { buildRuntimeRetentionPreview } from '../runtime-policy/runtime-retention-policy';
 import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
 import {
-    listTaskPurgeableRuntimeCandidateCategories,
+    isRuntimeCleanupTaskPurgeDeletionCategory,
     resolveRuntimeCleanupStandardPaths
 } from './runtime-cleanup-ownership';
-import type { TaskScopedRuntimeCandidateCategory } from './runtime-cleanup-ownership';
 import type { CleanupItem, RetentionPolicy } from './cleanup-types';
 
 export interface ProcessCleanupCandidatesResult {
@@ -32,6 +31,18 @@ export interface RuntimeRetentionCandidateSelection {
     compactionCandidates: CleanupItem[];
     selectedTaskIds: Set<string>;
     boundedTaskIds: Set<string> | null;
+}
+
+function isRuntimeRetentionCompactionCandidate(
+    item: CleanupItem,
+    compactableLedgerTaskIds: ReadonlySet<string>
+): boolean {
+    return Boolean(
+        item.taskId
+        && compactableLedgerTaskIds.has(item.taskId)
+        && item.category !== 'task-ledger'
+        && isRuntimeCleanupTaskPurgeDeletionCategory(item.category)
+    );
 }
 
 function parseReviewArtifactTaskId(filePath: string, fileName: string): string | null {
@@ -813,19 +824,12 @@ export function collectRuntimeRetentionCandidates(
             )
             .map((task) => task.task_id)
     );
-    const purgeableCategories = new Set(listTaskPurgeableRuntimeCandidateCategories());
-
     return {
         previewCandidates,
         selectedTaskIds,
         boundedTaskIds,
         compactionCandidates: previewCandidates
-            .filter((item) =>
-                item.taskId
-                && compactableLedgerTaskIds.has(item.taskId)
-                && item.category !== 'task-ledger'
-                && purgeableCategories.has(item.category as TaskScopedRuntimeCandidateCategory)
-            )
+            .filter((item) => isRuntimeRetentionCompactionCandidate(item, compactableLedgerTaskIds))
             .map((item) => ({
                 ...item,
                 reason: 'ledger-compaction',

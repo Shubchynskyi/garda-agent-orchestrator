@@ -417,6 +417,36 @@ export function listTaskPurgeableRuntimeCandidateCategories(): readonly TaskScop
     return TASK_SCOPED_RUNTIME_CANDIDATE_CATEGORIES.filter((category) => categories.has(category));
 }
 
+export function getRuntimeCleanupTaskPurgeModeForCandidateCategory(
+    category: string
+): RuntimeCleanupTaskPurgeMode | null {
+    if (!isTaskScopedRuntimeCandidateCategory(category)) {
+        return null;
+    }
+
+    let resolvedMode: RuntimeCleanupTaskPurgeMode | null = null;
+    for (const entry of RUNTIME_CLEANUP_OWNERSHIP_ENTRIES as readonly RuntimeCleanupOwnershipEntry[]) {
+        if (entry.candidateCategory !== category) {
+            continue;
+        }
+        if (entry.taskPurgeMode === 'delete-owned-artifacts-and-rebuild-shared-state') {
+            return entry.taskPurgeMode;
+        }
+        if (entry.taskPurgeMode === 'delete-owned-artifacts') {
+            resolvedMode = entry.taskPurgeMode;
+        } else if (resolvedMode === null) {
+            resolvedMode = entry.taskPurgeMode;
+        }
+    }
+    return resolvedMode;
+}
+
+export function isRuntimeCleanupTaskPurgeDeletionCategory(category: string): boolean {
+    const purgeMode = getRuntimeCleanupTaskPurgeModeForCandidateCategory(category);
+    return purgeMode === 'delete-owned-artifacts'
+        || purgeMode === 'delete-owned-artifacts-and-rebuild-shared-state';
+}
+
 export function listRuntimeCleanupSideEffectActionsForRemovedCategories(
     categories: ReadonlySet<string>
 ): readonly RuntimeCleanupSharedSideEffectAction[] {

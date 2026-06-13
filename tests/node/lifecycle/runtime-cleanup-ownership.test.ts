@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import {
     findRuntimeCleanupOwnershipEntry,
+    getRuntimeCleanupTaskPurgeModeForCandidateCategory,
+    isRuntimeCleanupTaskPurgeDeletionCategory,
     listRuntimeCleanupSideEffectActionsForRemovedCategories,
     listRuntimeCleanupOwnershipEntries,
     listTaskPurgeableRuntimeCandidateCategories,
@@ -111,6 +113,11 @@ describe('runtime cleanup ownership contract', () => {
             listRuntimeCleanupSideEffectActionsForRemovedCategories(new Set(['manual-validation', 'tmp'])),
             []
         );
+        assert.equal(getRuntimeCleanupTaskPurgeModeForCandidateCategory('reviews'), 'delete-owned-artifacts-and-rebuild-shared-state');
+        assert.equal(getRuntimeCleanupTaskPurgeModeForCandidateCategory('manual-validation'), 'delete-owned-artifacts');
+        assert.equal(getRuntimeCleanupTaskPurgeModeForCandidateCategory('metrics'), null);
+        assert.equal(isRuntimeCleanupTaskPurgeDeletionCategory('task-events'), true);
+        assert.equal(isRuntimeCleanupTaskPurgeDeletionCategory('metrics'), false);
     });
 
     it('marks generic tmp scratch as non-task-purgeable and task-prefixed tmp artifacts as ownership-aware', () => {
