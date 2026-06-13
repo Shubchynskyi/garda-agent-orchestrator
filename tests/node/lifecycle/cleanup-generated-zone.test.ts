@@ -25,9 +25,11 @@ import {
 describe('GC_ALLOWLIST', () => {
     it('contains expected categories', () => {
         assert.ok(GC_ALLOWLIST.includes('backups'));
+        assert.ok(GC_ALLOWLIST.includes('manual-validation'));
         assert.ok(GC_ALLOWLIST.includes('reviews'));
         assert.ok(GC_ALLOWLIST.includes('plans'));
         assert.ok(GC_ALLOWLIST.includes('project-memory'));
+        assert.ok(GC_ALLOWLIST.includes('task-ledger'));
         assert.ok(GC_ALLOWLIST.includes('task-events'));
         assert.ok(GC_ALLOWLIST.includes('tmp'));
         assert.ok(GC_ALLOWLIST.includes('test-scratch'));
@@ -45,7 +47,7 @@ describe('GC_ALLOWLIST', () => {
 
 describe('validateGcCategories', () => {
     it('accepts valid allowlist categories', () => {
-        assert.doesNotThrow(() => validateGcCategories(['backups', 'reviews', 'plans', 'project-memory']));
+        assert.doesNotThrow(() => validateGcCategories(['backups', 'reviews', 'plans', 'project-memory', 'manual-validation', 'task-ledger']));
     });
 
     it('rejects unknown categories', () => {

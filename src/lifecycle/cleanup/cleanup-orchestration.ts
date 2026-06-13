@@ -22,9 +22,11 @@ import {
     GC_ALLOWLIST,
     type CleanupResult,
     type GcResult,
+    type CleanupItem,
     type RetentionPolicy,
     type ReviewArtifactStoragePolicy
 } from './cleanup-types';
+import { listRuntimeCleanupSideEffectActionsForRemovedCategories } from './runtime-cleanup-ownership';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const DEFAULT_MAX_BACKUPS = 10;
@@ -50,6 +52,26 @@ export function buildDefaultRetentionPolicy(): RetentionPolicy {
         maxAggregateLines: DEFAULT_MAX_AGGREGATE_LINES,
         maxMetricsLines: DEFAULT_MAX_METRICS_LINES
     };
+}
+
+function applyTaskPurgeSharedSideEffects(runtimeDir: string, removed: CleanupItem[], dryRun: boolean): void {
+    if (dryRun || removed.length === 0) {
+        return;
+    }
+    const actions = listRuntimeCleanupSideEffectActionsForRemovedCategories(
+        new Set(removed.map((item) => item.category))
+    );
+    for (const action of actions) {
+        try {
+            if (action === 'invalidate-reviews-index') {
+                invalidateReviewsIndex(path.join(runtimeDir, 'reviews'));
+            } else if (action === 'prune-timeline-summary') {
+                pruneTimelineSummaryEntries(path.join(runtimeDir, 'task-events'));
+            }
+        } catch {
+            // Best-effort ownership-map side effect.
+        }
+    }
 }
 
 export interface CleanupOptions {
@@ -86,22 +108,7 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
         runtimeRetentionCandidates.previewCandidates.map((item) => ({ path: item.path, category: item.category }))
     );
     const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun, runtimeDir);
-
-    if (!dryRun && removed.some((item) => item.category === 'reviews')) {
-        try {
-            invalidateReviewsIndex(path.join(runtimeDir, 'reviews'));
-        } catch {
-            // Best-effort cleanup.
-        }
-    }
-
-    if (!dryRun && removed.some((item) => item.category === 'task-events')) {
-        try {
-            pruneTimelineSummaryEntries(path.join(runtimeDir, 'task-events'));
-        } catch {
-            // Best-effort cleanup.
-        }
-    }
+    applyTaskPurgeSharedSideEffects(runtimeDir, removed, dryRun);
 
     let aggregateRetention: CleanupResult['aggregateRetention'];
     if (!dryRun && policy.maxAggregateLines > 0) {
@@ -219,22 +226,7 @@ export function runGc(options: GcOptions): GcResult {
         totalFreedBytes: standardFreedBytes
     } = processCleanupCandidates(allCandidates, dryRun, runtimeDir);
     let totalFreedBytes = standardFreedBytes;
-
-    if (!dryRun && removed.some((item) => item.category === 'reviews')) {
-        try {
-            invalidateReviewsIndex(path.join(runtimeDir, 'reviews'));
-        } catch {
-            // Best-effort cleanup.
-        }
-    }
-
-    if (!dryRun && removed.some((item) => item.category === 'task-events')) {
-        try {
-            pruneTimelineSummaryEntries(path.join(runtimeDir, 'task-events'));
-        } catch {
-            // Best-effort cleanup.
-        }
-    }
+    applyTaskPurgeSharedSideEffects(runtimeDir, removed, dryRun);
 
     let staleLocksCleaned = 0;
     if (shouldCleanTaskEventLocks) {

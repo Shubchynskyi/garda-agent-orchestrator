@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 import {
     findRuntimeCleanupOwnershipEntry,
+    listRuntimeCleanupSideEffectActionsForRemovedCategories,
     listRuntimeCleanupOwnershipEntries,
+    listTaskPurgeableRuntimeCandidateCategories,
     resolveRuntimeCleanupStandardPaths
 } from '../../../src/lifecycle/cleanup';
 
@@ -87,6 +89,30 @@ describe('runtime cleanup ownership contract', () => {
         }
     });
 
+    it('drives task purge category and side-effect decisions from the ownership map', () => {
+        assert.deepEqual(listTaskPurgeableRuntimeCandidateCategories(), [
+            'manual-validation',
+            'reviews',
+            'task-events',
+            'plans',
+            'project-memory',
+            'task-ledger',
+            'tmp'
+        ]);
+        assert.deepEqual(
+            listRuntimeCleanupSideEffectActionsForRemovedCategories(new Set(['reviews'])),
+            ['invalidate-reviews-index']
+        );
+        assert.deepEqual(
+            listRuntimeCleanupSideEffectActionsForRemovedCategories(new Set(['task-events'])),
+            ['prune-timeline-summary']
+        );
+        assert.deepEqual(
+            listRuntimeCleanupSideEffectActionsForRemovedCategories(new Set(['manual-validation', 'tmp'])),
+            []
+        );
+    });
+
     it('marks generic tmp scratch as non-task-purgeable and task-prefixed tmp artifacts as ownership-aware', () => {
         const taskPrefixed = findRuntimeCleanupOwnershipEntry('tmp-task-prefixed-root-artifacts');
         const genericScratch = findRuntimeCleanupOwnershipEntry('tmp-generic-shared-scratch');
@@ -104,8 +130,10 @@ describe('runtime cleanup ownership contract', () => {
         assert.ok(sharedZones);
         assert.match(sharedZones.location, /\.test-scratch/);
         assert.ok(standardPaths.testScratchDir.endsWith('\\.test-scratch'));
+        assert.ok(standardPaths.manualValidationDir.endsWith('\\manual-validation'));
         assert.ok(standardPaths.reviewsDir.endsWith('\\reviews'));
         assert.ok(standardPaths.taskEventsDir.endsWith('\\task-events'));
         assert.ok(standardPaths.projectMemoryDir.endsWith('\\project-memory'));
+        assert.ok(standardPaths.taskLedgerDir.endsWith('\\task-ledger'));
     });
 });

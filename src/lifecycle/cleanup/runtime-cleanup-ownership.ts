@@ -21,6 +21,10 @@ export type RuntimeCleanupTaskPurgeMode =
     | 'prune-or-rebuild-shared-state-only'
     | 'exclude-from-task-purge';
 
+export type RuntimeCleanupSharedSideEffectAction =
+    | 'invalidate-reviews-index'
+    | 'prune-timeline-summary';
+
 export type RuntimeCleanupRetentionMode =
     | 'task-age-or-count'
     | 'task-age-or-count-with-shared-rebuild'
@@ -33,28 +37,35 @@ export interface RuntimeCleanupOwnershipEntry {
     location: string;
     ownership: RuntimeCleanupArtifactOwnership;
     selectionUnit: RuntimeCleanupSelectionUnit;
+    candidateCategory?: TaskScopedRuntimeCandidateCategory;
     taskLocator: string;
     taskPurgeMode: RuntimeCleanupTaskPurgeMode;
     retentionMode: RuntimeCleanupRetentionMode;
     sharedSideEffects: readonly string[];
+    sharedSideEffectActions?: readonly RuntimeCleanupSharedSideEffectAction[];
     notes: readonly string[];
     examples: readonly string[];
 }
 
 export const TASK_SCOPED_RUNTIME_CANDIDATE_CATEGORIES = Object.freeze([
+    'manual-validation',
     'reviews',
     'task-events',
     'plans',
-    'project-memory'
+    'project-memory',
+    'task-ledger',
+    'tmp'
 ] as const);
 
 export type TaskScopedRuntimeCandidateCategory = typeof TASK_SCOPED_RUNTIME_CANDIDATE_CATEGORIES[number];
 
 export interface RuntimeCleanupStandardPaths {
+    manualValidationDir: string;
     reviewsDir: string;
     taskEventsDir: string;
     plansDir: string;
     projectMemoryDir: string;
+    taskLedgerDir: string;
     backupsDir: string;
     bundleBackupsDir: string;
     updateReportsDir: string;
@@ -73,6 +84,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/manual-validation/<task-id>/',
         ownership: 'task-scoped',
         selectionUnit: 'task-subtree',
+        candidateCategory: 'manual-validation',
         taskLocator: 'Canonical task-id directory name owns the full subtree.',
         taskPurgeMode: 'delete-owned-artifacts',
         retentionMode: 'task-age-or-count',
@@ -91,6 +103,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/plans/<task-id>.md',
         ownership: 'task-scoped',
         selectionUnit: 'task-file',
+        candidateCategory: 'plans',
         taskLocator: 'Canonical task-id markdown file name.',
         taskPurgeMode: 'delete-owned-artifacts',
         retentionMode: 'task-age-or-count',
@@ -108,6 +121,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/project-memory/<task-id>-impact.json and <task-id>-update.json',
         ownership: 'task-scoped',
         selectionUnit: 'task-pattern',
+        candidateCategory: 'project-memory',
         taskLocator: 'Canonical task-id file prefix with -impact.json or -update.json suffix.',
         taskPurgeMode: 'delete-owned-artifacts',
         retentionMode: 'task-age-or-count',
@@ -143,12 +157,14 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/reviews/<task-owned artifacts>',
         ownership: 'task-scoped',
         selectionUnit: 'task-pattern',
+        candidateCategory: 'reviews',
         taskLocator: 'Canonical task-id resolved from review artifact file name or embedded task_id payload.',
         taskPurgeMode: 'delete-owned-artifacts-and-rebuild-shared-state',
         retentionMode: 'task-age-or-count-with-shared-rebuild',
         sharedSideEffects: [
             'Invalidate or rebuild runtime/reviews/reviews-index.json after task-owned review artifacts are removed.'
         ],
+        sharedSideEffectActions: ['invalidate-reviews-index'],
         notes: [
             'This area stores preflight, compile, review, doc-impact, full-suite, completion, audit, and final user report artifacts.',
             'Task purge removes only artifacts owned by the selected task id; shared review indexes are rebuilt separately.'
@@ -182,6 +198,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/task-events/<task-id>.jsonl',
         ownership: 'task-scoped',
         selectionUnit: 'task-file',
+        candidateCategory: 'task-events',
         taskLocator: 'Canonical task-id JSONL file name.',
         taskPurgeMode: 'delete-owned-artifacts-and-rebuild-shared-state',
         retentionMode: 'task-age-or-count-with-shared-rebuild',
@@ -189,6 +206,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
             'Remove the task entry from runtime/task-events/.timeline-summary.json or rebuild the summary.',
             'Rewrite or rebuild runtime/task-events/all-tasks.jsonl so removed tasks are no longer referenced.'
         ],
+        sharedSideEffectActions: ['prune-timeline-summary'],
         notes: [
             'Per-task JSONL timelines are the canonical lifecycle evidence for one task.',
             'Task purge may delete them, but shared aggregates built from them must be repaired instead of deleted wholesale.'
@@ -202,12 +220,14 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/task-events/<task-id>.completeness.json',
         ownership: 'task-scoped',
         selectionUnit: 'task-file',
+        candidateCategory: 'task-events',
         taskLocator: 'Canonical task-id completeness cache companion file.',
         taskPurgeMode: 'delete-owned-artifacts-and-rebuild-shared-state',
         retentionMode: 'task-age-or-count-with-shared-rebuild',
         sharedSideEffects: [
             'Keep timeline summary coherent with the remaining per-task timelines.'
         ],
+        sharedSideEffectActions: ['prune-timeline-summary'],
         notes: [
             'Completeness cache files are derived companions for one task timeline and should be removed with that task.',
             'They should never outlive the owning per-task JSONL file after purge.'
@@ -260,6 +280,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/task-ledger/<task-id>.json',
         ownership: 'task-scoped',
         selectionUnit: 'task-file',
+        candidateCategory: 'task-ledger',
         taskLocator: 'Canonical task-id ledger JSON file name.',
         taskPurgeMode: 'delete-owned-artifacts',
         retentionMode: 'task-age-or-count',
@@ -277,6 +298,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/tmp/reviews/<task-id>/',
         ownership: 'task-scoped',
         selectionUnit: 'task-subtree',
+        candidateCategory: 'tmp',
         taskLocator: 'Canonical task-id directory under runtime/tmp/reviews.',
         taskPurgeMode: 'delete-owned-artifacts',
         retentionMode: 'task-age-or-count',
@@ -295,6 +317,7 @@ export const RUNTIME_CLEANUP_OWNERSHIP_ENTRIES = Object.freeze([
         location: 'runtime/tmp/<task-id>-prefixed files and directories',
         ownership: 'mixed',
         selectionUnit: 'mixed-directory',
+        candidateCategory: 'tmp',
         taskLocator: 'Task ownership is explicit only when the file or directory name embeds a canonical task id.',
         taskPurgeMode: 'delete-owned-artifacts',
         retentionMode: 'task-age-or-count',
@@ -377,12 +400,49 @@ export function isTaskScopedRuntimeCandidateCategory(category: string): category
     return TASK_SCOPED_RUNTIME_CANDIDATE_CATEGORIES.includes(category as TaskScopedRuntimeCandidateCategory);
 }
 
+export function listTaskPurgeableRuntimeCandidateCategories(): readonly TaskScopedRuntimeCandidateCategory[] {
+    const categories = new Set<TaskScopedRuntimeCandidateCategory>();
+    for (const entry of RUNTIME_CLEANUP_OWNERSHIP_ENTRIES as readonly RuntimeCleanupOwnershipEntry[]) {
+        if (
+            entry.candidateCategory
+            && isTaskScopedRuntimeCandidateCategory(entry.candidateCategory)
+            && (
+                entry.taskPurgeMode === 'delete-owned-artifacts'
+                || entry.taskPurgeMode === 'delete-owned-artifacts-and-rebuild-shared-state'
+            )
+        ) {
+            categories.add(entry.candidateCategory);
+        }
+    }
+    return TASK_SCOPED_RUNTIME_CANDIDATE_CATEGORIES.filter((category) => categories.has(category));
+}
+
+export function listRuntimeCleanupSideEffectActionsForRemovedCategories(
+    categories: ReadonlySet<string>
+): readonly RuntimeCleanupSharedSideEffectAction[] {
+    const actions = new Set<RuntimeCleanupSharedSideEffectAction>();
+    for (const entry of RUNTIME_CLEANUP_OWNERSHIP_ENTRIES as readonly RuntimeCleanupOwnershipEntry[]) {
+        if (
+            entry.candidateCategory
+            && categories.has(entry.candidateCategory)
+            && entry.taskPurgeMode === 'delete-owned-artifacts-and-rebuild-shared-state'
+        ) {
+            for (const action of entry.sharedSideEffectActions ?? []) {
+                actions.add(action);
+            }
+        }
+    }
+    return Array.from(actions).sort();
+}
+
 export function resolveRuntimeCleanupStandardPaths(runtimeDir: string): RuntimeCleanupStandardPaths {
     return {
+        manualValidationDir: path.join(runtimeDir, 'manual-validation'),
         reviewsDir: path.join(runtimeDir, 'reviews'),
         taskEventsDir: path.join(runtimeDir, 'task-events'),
         plansDir: path.join(runtimeDir, 'plans'),
         projectMemoryDir: path.join(runtimeDir, 'project-memory'),
+        taskLedgerDir: path.join(runtimeDir, 'task-ledger'),
         backupsDir: path.join(runtimeDir, 'backups'),
         bundleBackupsDir: path.join(runtimeDir, 'bundle-backups'),
         updateReportsDir: path.join(runtimeDir, 'update-reports'),

@@ -6,15 +6,18 @@ import { KNOWN_SUFFIXES } from '../../gate-runtime/reviews-index';
 import {
     isCanonicalTaskId,
     parseActiveReviewArtifactTaskId,
-    parseKnownReviewArtifactTaskId
+    parseKnownReviewArtifactTaskId,
+    parseStructuredTaskArtifactTaskId
 } from '../../core/task-ids';
 import { LIFECYCLE_OPERATION_LOCK_DIR_NAME } from '../lock/lifecycle-lock';
 import { ensureWithinRoot, removePathRecursive } from '../generic-utils';
 import { buildRuntimeRetentionPreview } from '../runtime-policy/runtime-retention-policy';
 import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
 import {
+    listTaskPurgeableRuntimeCandidateCategories,
     resolveRuntimeCleanupStandardPaths
 } from './runtime-cleanup-ownership';
+import type { TaskScopedRuntimeCandidateCategory } from './runtime-cleanup-ownership';
 import type { CleanupItem, RetentionPolicy } from './cleanup-types';
 
 export interface ProcessCleanupCandidatesResult {
@@ -550,6 +553,139 @@ function collectTaskWorkingPlanArtifactsInventory(
     return items;
 }
 
+function collectTaskManualValidationArtifactsInventory(
+    manualValidationDir: string,
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
+): CleanupItem[] {
+    if (!fs.existsSync(manualValidationDir)) return [];
+    const items: CleanupItem[] = [];
+    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
+
+    for (const entry of directoryEntries(manualValidationDir)) {
+        if (!isCanonicalTaskId(entry) || activeTaskIdsLower.has(entry.toLowerCase())) {
+            continue;
+        }
+        if (taskIdFilter && !taskIdFilter.has(entry)) {
+            continue;
+        }
+        const entryPath = path.join(manualValidationDir, entry);
+        try {
+            if (!fs.statSync(entryPath).isDirectory()) {
+                continue;
+            }
+        } catch {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'manual-validation',
+            reason: 'retention-inventory',
+            sizeBytes: dirSizeBytes(entryPath),
+            taskId: entry
+        });
+    }
+
+    return items;
+}
+
+function collectTaskLedgerArtifactsInventory(
+    taskLedgerDir: string,
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
+): CleanupItem[] {
+    if (!fs.existsSync(taskLedgerDir)) return [];
+    const items: CleanupItem[] = [];
+
+    for (const entry of directoryEntries(taskLedgerDir)) {
+        if (!entry.endsWith('.json')) {
+            continue;
+        }
+        const taskId = entry.slice(0, -'.json'.length);
+        if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
+            continue;
+        }
+        if (taskIdFilter && !taskIdFilter.has(taskId)) {
+            continue;
+        }
+        const entryPath = path.join(taskLedgerDir, entry);
+        try {
+            if (!fs.statSync(entryPath).isFile()) {
+                continue;
+            }
+        } catch {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'task-ledger',
+            reason: 'retention-inventory',
+            sizeBytes: fileSizeBytes(entryPath),
+            taskId
+        });
+    }
+
+    return items;
+}
+
+function collectTaskTmpArtifactsInventory(
+    tmpDir: string,
+    activeTaskIds: ReadonlySet<string>,
+    taskIdFilter?: ReadonlySet<string>
+): CleanupItem[] {
+    if (!fs.existsSync(tmpDir)) return [];
+    const items: CleanupItem[] = [];
+    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
+    const addCandidate = (entryPath: string, taskId: string, sizeBytes: number): void => {
+        if (!isCanonicalTaskId(taskId) || activeTaskIdsLower.has(taskId.toLowerCase())) {
+            return;
+        }
+        if (taskIdFilter && !taskIdFilter.has(taskId)) {
+            return;
+        }
+        items.push({
+            path: entryPath,
+            category: 'tmp',
+            reason: 'retention-inventory',
+            sizeBytes,
+            taskId
+        });
+    };
+
+    const reviewScratchDir = path.join(tmpDir, 'reviews');
+    for (const entry of directoryEntries(reviewScratchDir)) {
+        const entryPath = path.join(reviewScratchDir, entry);
+        try {
+            const stat = fs.statSync(entryPath);
+            if (!stat.isDirectory()) {
+                continue;
+            }
+            addCandidate(entryPath, entry, dirSizeBytes(entryPath));
+        } catch {
+            // Skip unreadable scratch entries.
+        }
+    }
+
+    for (const entry of directoryEntries(tmpDir)) {
+        if (entry === 'reviews') {
+            continue;
+        }
+        const taskId = isCanonicalTaskId(entry) ? entry : parseStructuredTaskArtifactTaskId(entry);
+        if (!taskId) {
+            continue;
+        }
+        const entryPath = path.join(tmpDir, entry);
+        try {
+            const stat = fs.statSync(entryPath);
+            addCandidate(entryPath, taskId, stat.isDirectory() ? dirSizeBytes(entryPath) : stat.size);
+        } catch {
+            // Skip unreadable tmp entries.
+        }
+    }
+
+    return items;
+}
+
 function collectTaskScopedArtifactInventory(
     runtimeDir: string,
     activeTaskIds: ReadonlySet<string>,
@@ -557,10 +693,13 @@ function collectTaskScopedArtifactInventory(
 ): CleanupItem[] {
     const standardPaths = resolveRuntimeCleanupStandardPaths(runtimeDir);
     return [
+        ...collectTaskManualValidationArtifactsInventory(standardPaths.manualValidationDir, activeTaskIds, taskIdFilter),
         ...collectTaskReviewArtifactsInventory(standardPaths.reviewsDir, activeTaskIds, taskIdFilter),
         ...collectTaskTimelineArtifactsInventory(standardPaths.taskEventsDir, activeTaskIds, taskIdFilter),
         ...collectTaskWorkingPlanArtifactsInventory(standardPaths.plansDir, activeTaskIds, taskIdFilter),
-        ...collectTaskProjectMemoryArtifactsInventory(standardPaths.projectMemoryDir, activeTaskIds, taskIdFilter)
+        ...collectTaskProjectMemoryArtifactsInventory(standardPaths.projectMemoryDir, activeTaskIds, taskIdFilter),
+        ...collectTaskLedgerArtifactsInventory(standardPaths.taskLedgerDir, activeTaskIds, taskIdFilter),
+        ...collectTaskTmpArtifactsInventory(standardPaths.tmpDir, activeTaskIds, taskIdFilter)
     ];
 }
 
@@ -574,6 +713,10 @@ function addCandidateTaskId(taskIds: Set<string>, taskId: string | null, activeT
 function collectTaskScopedArtifactTaskIds(runtimeDir: string, activeTaskIds: ReadonlySet<string>): string[] {
     const taskIds = new Set<string>();
     const standardPaths = resolveRuntimeCleanupStandardPaths(runtimeDir);
+
+    for (const entry of directoryEntries(standardPaths.manualValidationDir)) {
+        addCandidateTaskId(taskIds, isCanonicalTaskId(entry) ? entry : null, activeTaskIds);
+    }
 
     for (const entry of directoryEntries(standardPaths.reviewsDir)) {
         if (parseActiveReviewArtifactTaskId(entry, activeTaskIds)) {
@@ -598,6 +741,21 @@ function collectTaskScopedArtifactTaskIds(runtimeDir: string, activeTaskIds: Rea
 
     for (const entry of directoryEntries(standardPaths.projectMemoryDir)) {
         addCandidateTaskId(taskIds, parseProjectMemoryArtifactTaskId(entry), activeTaskIds);
+    }
+
+    for (const entry of directoryEntries(standardPaths.taskLedgerDir)) {
+        addCandidateTaskId(taskIds, entry.endsWith('.json') ? entry.slice(0, -'.json'.length) : null, activeTaskIds);
+    }
+
+    for (const entry of directoryEntries(path.join(standardPaths.tmpDir, 'reviews'))) {
+        addCandidateTaskId(taskIds, isCanonicalTaskId(entry) ? entry : null, activeTaskIds);
+    }
+
+    for (const entry of directoryEntries(standardPaths.tmpDir)) {
+        if (entry === 'reviews') {
+            continue;
+        }
+        addCandidateTaskId(taskIds, isCanonicalTaskId(entry) ? entry : parseStructuredTaskArtifactTaskId(entry), activeTaskIds);
     }
 
     return Array.from(taskIds).sort((left, right) => left.localeCompare(right));
@@ -656,13 +814,19 @@ export function collectRuntimeRetentionCandidates(
             )
             .map((task) => task.task_id)
     );
+    const purgeableCategories = new Set(listTaskPurgeableRuntimeCandidateCategories());
 
     return {
         previewCandidates,
         selectedTaskIds,
         boundedTaskIds,
         compactionCandidates: previewCandidates
-            .filter((item) => item.taskId && compactableLedgerTaskIds.has(item.taskId))
+            .filter((item) =>
+                item.taskId
+                && compactableLedgerTaskIds.has(item.taskId)
+                && item.category !== 'task-ledger'
+                && purgeableCategories.has(item.category as TaskScopedRuntimeCandidateCategory)
+            )
             .map((item) => ({
                 ...item,
                 reason: 'ledger-compaction',

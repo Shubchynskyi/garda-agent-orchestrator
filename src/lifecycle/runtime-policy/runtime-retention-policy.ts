@@ -288,12 +288,47 @@ function parseTaskIdFromProjectMemoryArtifact(fileName: string): string | null {
     return null;
 }
 
+function parseTaskIdFromManualValidationArtifact(fileName: string): string | null {
+    try {
+        return assertCanonicalTaskId(fileName);
+    } catch {
+        return null;
+    }
+}
+
+function parseTaskIdFromTaskLedgerArtifact(fileName: string): string | null {
+    if (!fileName.endsWith('.json')) {
+        return null;
+    }
+    try {
+        return assertCanonicalTaskId(fileName.slice(0, -'.json'.length));
+    } catch {
+        return null;
+    }
+}
+
+function parseTaskIdFromTmpArtifact(candidatePath: string, fileName: string): string | null {
+    try {
+        if (assertCanonicalTaskId(fileName)) {
+            return fileName;
+        }
+    } catch {
+        // Fall through to structured task artifact parsing.
+    }
+    if (path.basename(path.dirname(candidatePath)) === 'reviews') {
+        return null;
+    }
+    return parseStructuredTaskArtifactTaskId(fileName);
+}
+
 function parseTaskIdFromCandidatePath(candidatePath: string, category: string): string | null {
     if (!isTaskScopedRuntimeCandidateCategory(category)) {
         return null;
     }
     const fileName = path.basename(candidatePath);
     switch (category) {
+        case 'manual-validation':
+            return parseTaskIdFromManualValidationArtifact(fileName);
         case 'reviews':
             return parseTaskIdFromReviewArtifact(candidatePath, fileName);
         case 'task-events':
@@ -305,6 +340,10 @@ function parseTaskIdFromCandidatePath(candidatePath: string, category: string): 
             return parseTaskIdFromWorkingPlan(fileName);
         case 'project-memory':
             return parseTaskIdFromProjectMemoryArtifact(fileName);
+        case 'task-ledger':
+            return parseTaskIdFromTaskLedgerArtifact(fileName);
+        case 'tmp':
+            return parseTaskIdFromTmpArtifact(candidatePath, fileName);
         default:
             return null;
     }
@@ -371,6 +410,10 @@ function scanTimelineEvidence(bundleRoot: string, taskId: string): TimelineEvide
 
 function normalizeAgeDays(ageMs: number): number {
     return Math.floor(ageMs / (24 * 60 * 60 * 1000));
+}
+
+function contributesToRetentionAge(category: string): boolean {
+    return category !== 'task-ledger';
 }
 
 function classifyTaskPreview(
@@ -523,11 +566,13 @@ export function buildRuntimeRetentionPreview(
         };
         group.categories.add(candidate.category);
         group.count += 1;
-        try {
-            const stat = fs.statSync(candidate.path);
-            group.newestMtimeMs = Math.max(group.newestMtimeMs, stat.mtimeMs);
-        } catch {
-            // Best-effort age hint only.
+        if (contributesToRetentionAge(candidate.category)) {
+            try {
+                const stat = fs.statSync(candidate.path);
+                group.newestMtimeMs = Math.max(group.newestMtimeMs, stat.mtimeMs);
+            } catch {
+                // Best-effort age hint only.
+            }
         }
         candidateGroups.set(taskId, group);
     }

@@ -568,6 +568,65 @@ describe('runCleanup', () => {
             assert.ok(seeded.projectMemoryPaths.every((artifactPath) => !fs.existsSync(artifactPath)));
         });
 
+        it('uses the runtime ownership map to compact task-scoped cleanup residue without deleting the retained ledger', () => {
+            const seeded = seedHealthyDoneTaskArtifacts({
+                bundleRoot,
+                taskId: 'T-779',
+                includePlan: true,
+                includeProjectMemory: true,
+                ageDays: 45
+            });
+            const manualValidationDir = path.join(runtimeDir, 'manual-validation', 'T-779');
+            const reviewScratchDir = path.join(runtimeDir, 'tmp', 'reviews', 'T-779');
+            const taskPrefixedTmpLog = path.join(runtimeDir, 'tmp', 'T-779-full-suite-validation.log');
+            fs.mkdirSync(manualValidationDir, { recursive: true });
+            fs.mkdirSync(reviewScratchDir, { recursive: true });
+            fs.writeFileSync(path.join(manualValidationDir, 'review-evidence.json'), '{}', 'utf8');
+            fs.writeFileSync(path.join(reviewScratchDir, 'review-output.md'), 'review', 'utf8');
+            fs.writeFileSync(taskPrefixedTmpLog, 'tmp', 'utf8');
+            const past = daysAgo(45);
+            for (const ownedPath of [
+                manualValidationDir,
+                path.join(manualValidationDir, 'review-evidence.json'),
+                reviewScratchDir,
+                path.join(reviewScratchDir, 'review-output.md'),
+                taskPrefixedTmpLog
+            ]) {
+                fs.utimesSync(ownedPath, past, past);
+            }
+
+            const dryRun = runCleanup({
+                targetRoot: tmpDir,
+                bundleRoot,
+                dryRun: true,
+                retentionPolicy: { maxAgeDays: 30 }
+            });
+            const previewTask = dryRun.runtimeRetentionPreview?.tasks.find((task) => task.task_id === 'T-779');
+            assert.ok(previewTask);
+            assert.ok(previewTask.candidate_categories.includes('manual-validation'));
+            assert.ok(previewTask.candidate_categories.includes('task-ledger'));
+            assert.ok(previewTask.candidate_categories.includes('tmp'));
+            assert.ok(dryRun.skipped.some((item) => item.category === 'manual-validation' && item.taskId === 'T-779'));
+            assert.ok(dryRun.skipped.some((item) => item.category === 'tmp' && item.path === reviewScratchDir));
+            assert.ok(!dryRun.skipped.some((item) => item.category === 'task-ledger' && item.taskId === 'T-779'),
+                'ledger-only compaction must preview the ledger but not delete it');
+
+            const result = runCleanup({
+                targetRoot: tmpDir,
+                bundleRoot,
+                dryRun: false,
+                retentionPolicy: { maxAgeDays: 30 }
+            });
+
+            assert.ok(result.removed.some((item) => item.category === 'manual-validation' && item.taskId === 'T-779'));
+            assert.ok(result.removed.some((item) => item.category === 'tmp' && item.path === reviewScratchDir));
+            assert.ok(result.removed.some((item) => item.category === 'tmp' && item.path === taskPrefixedTmpLog));
+            assert.equal(fs.existsSync(manualValidationDir), false, 'task manual-validation residue should be compacted');
+            assert.equal(fs.existsSync(reviewScratchDir), false, 'task reviewer scratch residue should be compacted');
+            assert.equal(fs.existsSync(taskPrefixedTmpLog), false, 'task-prefixed tmp residue should be compacted');
+            assert.equal(fs.existsSync(seeded.ledgerPath), true, 'verified ledger must remain as ledger-only retention evidence');
+        });
+
         it('preserves detailed artifacts for DONE tasks with failed history', () => {
             const seeded = seedHealthyDoneTaskArtifacts({
                 bundleRoot,

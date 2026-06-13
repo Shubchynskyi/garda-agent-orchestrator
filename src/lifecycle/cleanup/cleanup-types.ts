@@ -21,10 +21,12 @@ export interface StoragePolicyResult {
 export const GC_ALLOWLIST: readonly string[] = Object.freeze([
     'backups',
     'bundle-backups',
+    'manual-validation',
     'task-events',
     'reviews',
     'plans',
     'project-memory',
+    'task-ledger',
     'tmp',
     'test-scratch',
     'cache',
