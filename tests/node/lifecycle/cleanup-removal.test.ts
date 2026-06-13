@@ -576,6 +576,14 @@ describe('runCleanup', () => {
                 includeProjectMemory: true,
                 ageDays: 45
             });
+            const reviewsIndexPath = path.join(seeded.reviewsDir, 'reviews-index.json');
+            fs.writeFileSync(reviewsIndexPath, JSON.stringify({ version: 1, entries: [] }), 'utf8');
+            writeTaskQueue(tmpDir, [
+                { id: 'T-779', status: '🟩 DONE', title: 'Compactable task' },
+                { id: 'T-780', status: '🟨 IN_PROGRESS', title: 'Active task' }
+            ]);
+            createTaskEventFile(seeded.eventsDir, 'T-780');
+            writeTimelineSummary(seeded.eventsDir, 'T-780', { completenessStatus: 'COMPLETE' });
             const manualValidationDir = path.join(runtimeDir, 'manual-validation', 'T-779');
             const reviewScratchDir = path.join(runtimeDir, 'tmp', 'reviews', 'T-779');
             const taskPrefixedTmpLog = path.join(runtimeDir, 'tmp', 'T-779-full-suite-validation.log');
@@ -619,11 +627,17 @@ describe('runCleanup', () => {
             });
 
             assert.ok(result.removed.some((item) => item.category === 'manual-validation' && item.taskId === 'T-779'));
+            assert.ok(result.removed.some((item) => item.category === 'reviews' && item.taskId === 'T-779'));
+            assert.ok(result.removed.some((item) => item.category === 'task-events' && item.taskId === 'T-779'));
             assert.ok(result.removed.some((item) => item.category === 'tmp' && item.path === reviewScratchDir));
             assert.ok(result.removed.some((item) => item.category === 'tmp' && item.path === taskPrefixedTmpLog));
             assert.equal(fs.existsSync(manualValidationDir), false, 'task manual-validation residue should be compacted');
             assert.equal(fs.existsSync(reviewScratchDir), false, 'task reviewer scratch residue should be compacted');
             assert.equal(fs.existsSync(taskPrefixedTmpLog), false, 'task-prefixed tmp residue should be compacted');
+            assert.equal(fs.existsSync(reviewsIndexPath), false, 'review side effect should invalidate reviews index');
+            const updatedSummary = JSON.parse(fs.readFileSync(path.join(seeded.eventsDir, '.timeline-summary.json'), 'utf8'));
+            assert.equal(updatedSummary.entries['T-779'], undefined, 'task-event side effect should prune removed task summary');
+            assert.ok(updatedSummary.entries['T-780'], 'task-event side effect should preserve remaining task summary');
             assert.equal(fs.existsSync(seeded.ledgerPath), true, 'verified ledger must remain as ledger-only retention evidence');
         });
 
