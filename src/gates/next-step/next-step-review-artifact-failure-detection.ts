@@ -14,10 +14,14 @@ const REVIEW_LAUNCH_PACKAGE_FAILURE_MARKER_PATTERN =
     /\b(?:reviewer\s+failed\s+before\s+\w+\s+review|reviewer\s+launch\s+artifact\s+is\s+not\s+eligible\s+for\s+invocation\s+attestation|reviewer\s+launch\s+package\s+failure|launch\s+package\s+failure|launch\s+metadata\s+failure|invocation\s+attestation\s+failed)\b/i;
 const REVIEW_MISSING_VALIDATION_EVIDENCE_PATTERN =
     /\b(?:missing|omitted|absent|not attached|not provided|could not find)\b[\s\S]{0,200}\b(?:manual[-\s]?validation|validation\s+(?:log|logs|evidence)|runtime\/manual-validation|gradle\s+(?:test|check)\s+(?:log|logs|evidence))\b/i;
+const REVIEW_STALE_VALIDATION_EVIDENCE_PATTERN =
+    /(?:\b(?:stale|outdated|old|not current|no longer current|does not match|mismatch(?:ed)?|wrong)\b[\s\S]{0,220}\b(?:compile(?:-gate)?|full[-\s]?suite|validation\s+(?:log|logs|evidence)|current\s+preflight|preflight)\b|\b(?:compile(?:-gate)?|full[-\s]?suite|validation\s+(?:log|logs|evidence)|current\s+preflight|preflight)\b[\s\S]{0,220}\b(?:stale|outdated|old|not current|no longer current|does not match|mismatch(?:ed)?|wrong)\b)/i;
 const REVIEW_EVIDENCE_ONLY_FAILURE_PATTERN =
-    /\b(?:evidence[-\s]?only|implementation\s+diff\s+itself\s+was\s+not\s+reviewed\s+as\s+defective|no\s+(?:implementation|code|security|test|refactor)\s+findings?|no\s+implementation\s+defects?|(?:only\s+(?:defect|finding|blocker|problem|issue)\s+is\s+missing)|(?:manual[-\s]?validation|validation\s+(?:log|logs|evidence)|runtime\/manual-validation)[\s\S]{0,120}\bmust\s+be\s+attached\s+before\s+(?:a\s+)?meaningful\s+\w*\s*review)\b/i;
+    /\b(?:evidence[-\s]?only|implementation\s+diff\s+itself\s+was\s+not\s+reviewed\s+as\s+defective|no\s+(?:implementation|code|security|test|refactor)\s+findings?|no\s+implementation\s+defects?|(?:only\s+(?:defect|finding|blocker|problem|issue)\s+is\s+missing)|(?:manual[-\s]?validation|validation\s+(?:log|logs|evidence)|runtime\/manual-validation)[\s\S]{0,120}\bmust\s+be\s+attached\s+before\s+(?:a\s+)?meaningful\s+\w*\s*review|(?:compile(?:-gate)?|full[-\s]?suite|validation\s+(?:log|logs|evidence))[\s\S]{0,160}\b(?:must|needs?|should)\s+be\s+(?:fresh|current|rerun|refreshed|re-run))\b/i;
 const REVIEW_REAL_FINDING_MARKER_PATTERN =
-    /\b(?:critical|high|medium|low|p[0-3])\s*:\s|\b(?<!no\s)(?:findings?|bugs?|defects?|regressions?|incorrect|unsafe|crashes?|leaks?|bypasses|bypassed|bypass|race|data loss|misroutes?|misrouted|misrouting)\b/i;
+    /\b(?:critical|high|medium|low|p[0-3])\s*:\s|\b(?<!no\s)(?:findings?|bugs?|defects?|regressions?|incorrect|unsafe|crashes?|leaks?|bypasses|bypassed|bypass|race|data loss|misroutes?|misrouted|misrouting|unauthori[sz]ed|authori[sz]ation|authn|authz|access control|secrets?|tokens?|credentials?|privilege escalation|injection|sql injection|xss|cross-site scripting|csrf|ssrf|deserialization|path traversal|directory traversal|remote code execution|rce|exploit(?:able)?|vulnerabilit(?:y|ies))\b/i;
+const REVIEW_ACTIVE_FINDING_MARKER_PATTERN =
+    /\b(?<!no\s)(?:incorrect|unsafe|crashes?|leaks?|bypasses|bypassed|bypass|race|data loss|misroutes?|misrouted|misrouting|unauthori[sz]ed|authori[sz]ation|authn|authz|access control|secrets?|tokens?|credentials?|privilege escalation|injection|sql injection|xss|cross-site scripting|csrf|ssrf|deserialization|path traversal|directory traversal|remote code execution|rce|exploit(?:able)?|vulnerabilit(?:y|ies))\b/i;
 const REVIEW_EVIDENCE_ONLY_BENIGN_REASSURANCE_PATTERN =
     /\bno\s+(?:other\s+)?(?:blocking\s+)?(?:implementation|code|security|test|refactor)?\s*(?:findings?|bugs?|defects?|issues?|problems?|regressions?)\b/giu;
 
@@ -96,6 +100,34 @@ function findingsBySeverityContainsOnlyMissingValidationEvidence(content: string
     });
 }
 
+function findingsBySeverityContainsOnlyStaleValidationEvidence(content: string): boolean {
+    const section = extractMarkdownSection(content, 'Findings by Severity');
+    if (section == null) {
+        return false;
+    }
+    const findingLines = section
+        .replace(/<!--[\s\S]*?-->/gu, '')
+        .split(/\r?\n/u)
+        .map((line) => line.replace(/^[\s>*-]+/u, '').trim())
+        .filter((line) => line && !/^(?:none|no findings|no blocking findings|no issues found|n\/a)[\s.]*$/iu.test(line));
+    if (findingLines.length === 0) {
+        return false;
+    }
+    return findingLines.every((line) => {
+        const withoutSeverity = line.replace(/^(?:critical|high|medium|low|p[0-3])\s*:\s*/iu, '');
+        if (REVIEW_ACTIVE_FINDING_MARKER_PATTERN.test(withoutSeverity)) {
+            return false;
+        }
+        if (!REVIEW_STALE_VALIDATION_EVIDENCE_PATTERN.test(withoutSeverity)) {
+            return false;
+        }
+        const withoutStaleEvidence = withoutSeverity
+            .replace(REVIEW_STALE_VALIDATION_EVIDENCE_PATTERN, '')
+            .replace(REVIEW_EVIDENCE_ONLY_BENIGN_REASSURANCE_PATTERN, '');
+        return !REVIEW_REAL_FINDING_MARKER_PATTERN.test(withoutStaleEvidence);
+    });
+}
+
 export function detectMissingValidationEvidenceFailureReason(content: string): string | null {
     if (!REVIEW_MISSING_VALIDATION_EVIDENCE_PATTERN.test(content)) {
         return null;
@@ -116,4 +148,26 @@ export function detectMissingValidationEvidenceFailureReason(content: string): s
         }
     }
     return 'missing attached manual-validation evidence';
+}
+
+export function detectStaleValidationEvidenceFailureReason(content: string): string | null {
+    if (!REVIEW_STALE_VALIDATION_EVIDENCE_PATTERN.test(content)) {
+        return null;
+    }
+    const emptyFindingsBySeverity = hasEmptyFindingsBySeveritySection(content);
+    const staleOnlyFindingsBySeverity = findingsBySeverityContainsOnlyStaleValidationEvidence(content);
+    const explicitEvidenceOnlyFailure = REVIEW_EVIDENCE_ONLY_FAILURE_PATTERN.test(content);
+    if (!explicitEvidenceOnlyFailure && !staleOnlyFindingsBySeverity) {
+        return null;
+    }
+    if (hasNonEmptyFindingsBySeveritySection(content) && !staleOnlyFindingsBySeverity) {
+        return null;
+    }
+    if (explicitEvidenceOnlyFailure && !emptyFindingsBySeverity && !staleOnlyFindingsBySeverity) {
+        const contentWithoutHeadings = content.replace(/^#{2,6}\s+.+$/gmu, '');
+        if (REVIEW_REAL_FINDING_MARKER_PATTERN.test(contentWithoutHeadings)) {
+            return null;
+        }
+    }
+    return 'stale compile/full-suite validation evidence';
 }

@@ -2740,6 +2740,16 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
                         'Rerun navigator after fixing implementation',
                         navigatorCommand
                     ),
+                    compileGate: buildCommand(
+                        'Run compile gate to refresh validation evidence',
+                        buildCompileGateCommand(
+                            repoRoot,
+                            cliPrefix,
+                            taskId,
+                            preflightCommandPath,
+                            taskModePath
+                        )
+                    ),
                     buildScopedDiff: buildCommand(
                         'Build scoped diff',
                         buildScopedDiffCommand({

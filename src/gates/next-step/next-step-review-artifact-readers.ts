@@ -30,7 +30,8 @@ import {
 } from '../review/review-trust-summary';
 import {
     detectMissingValidationEvidenceFailureReason,
-    detectReviewLaunchPackageFailureReason
+    detectReviewLaunchPackageFailureReason,
+    detectStaleValidationEvidenceFailureReason
 } from './next-step-review-artifact-failure-detection';
 
 const REVIEW_VERDICT_PASS_TOKENS: Record<string, string> = Object.freeze(Object.fromEntries(REVIEW_CONTRACTS));
@@ -56,7 +57,7 @@ export interface ReviewArtifactState {
     failToken: string;
     verdictToken: string | null;
     failed: boolean;
-    failureKind: 'launch-package' | 'missing-validation-evidence' | null;
+    failureKind: 'launch-package' | 'missing-validation-evidence' | 'stale-validation-evidence' | null;
     failureReason: string | null;
     domainScopeCurrent: boolean;
     ready: boolean;
@@ -243,6 +244,14 @@ export function readReviewArtifactState(
                     violations.push(
                         `review artifact contains fail token '${failToken}' for missing attached validation evidence (${failureReason}); preserve the failed artifact and refresh review evidence without fake implementation changes`
                     );
+                } else {
+                    failureReason = detectStaleValidationEvidenceFailureReason(content);
+                    if (failureReason) {
+                        failureKind = 'stale-validation-evidence';
+                        violations.push(
+                            `review artifact contains fail token '${failToken}' for stale validation evidence (${failureReason}); preserve the failed artifact and refresh compile/full-suite evidence without fake implementation changes`
+                        );
+                    }
                 }
             }
             if (!failureKind) {

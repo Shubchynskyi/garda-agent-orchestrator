@@ -90,6 +90,7 @@ export interface FailedReviewRemediationRouteOptions {
     commands: {
         restartReviewCycle: ReviewReuseRoutingCommand;
         rerunNavigator: ReviewReuseRoutingCommand;
+        compileGate: ReviewReuseRoutingCommand;
         buildScopedDiff: ReviewReuseRoutingCommand;
         buildReviewContext: ReviewReuseRoutingCommand;
     };
@@ -126,6 +127,20 @@ export function resolveFailedReviewRemediationRoute(
                 'Do not add task-scoped runtime/manual-validation files to preflight --changed-file scope; restart-review-cycle treats them as ignored attachment evidence and refreshes only the affected review lane plus policy-required dependencies. ' +
                 'After the selector is current, run restart-review-cycle with task-specific impact analysis, then rebuild the failed review context and launch a fresh reviewer before downstream reviews.',
             commands: [options.commands.restartReviewCycle]
+        };
+    }
+
+    if (options.failureKind === 'stale-validation-evidence' && options.currentReviewRecordedEvidenceCurrent) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'compile-gate',
+            title: `Refresh validation evidence for '${options.reviewType}' review.`,
+            reason:
+                `Recorded '${options.reviewType}' review verdict is '${options.verdictToken}', ` +
+                `but the failure matches stale compile/full-suite validation evidence (${options.failureReason || 'stale validation evidence'}). ` +
+                'Preserve the failed review artifact and receipt as audit evidence; do not edit them by hand and do not make fake implementation changes. ' +
+                'Rerun compile-gate for the current preflight; next-step will then require any configured full-suite validation before rebuilding and relaunching the failed review lane.',
+            commands: [options.commands.compileGate]
         };
     }
 

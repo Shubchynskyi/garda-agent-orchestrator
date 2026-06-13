@@ -1366,6 +1366,65 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('record-review-result'));
     });
 
+    it('routes evidence-only stale validation failures to compile refresh instead of implementation self-loop', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- High: The only blocker is stale full-suite validation evidence that no longer matches the current preflight.',
+                '',
+                '## Validation Notes',
+                'No implementation defects were found; compile-gate and full-suite validation evidence must be fresh before meaningful code review can pass.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Refresh validation evidence for 'code' review/);
+        assert.match(result.reason, /stale compile\/full-suite validation evidence/);
+        assert.match(result.reason, /do not make fake implementation changes/);
+        assert.match(result.reason, /configured full-suite validation/);
+        assert.equal(result.commands[0].label, 'Run compile gate to refresh validation evidence');
+        assert.ok(result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+        assert.ok(!result.commands[0].command.includes('gate next-step'));
+    });
+
+    it('routes reverse-order stale validation failures to compile refresh', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- High: The only blocker is that compile-gate evidence is stale and validation logs do not match the current preflight.',
+                '',
+                '## Validation Notes',
+                'No implementation defects were found; refresh validation evidence before relaunching code review.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.reason, /stale compile\/full-suite validation evidence/);
+        assert.ok(result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
     it('routes template-shaped evidence-only validation failures to evidence refresh', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -1519,6 +1578,84 @@ describe('gates/next-step', () => {
         assert.match(result.title, /Fix failed 'code' review findings/);
         assert.match(result.reason, /Fix the findings/);
         assert.ok(!result.commands[0].command.includes('review-evidence-refresh'));
+    });
+
+    it('keeps real implementation defects that mention stale validation evidence on implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- High: The retry route can accept stale full-suite validation evidence after a current preflight, which is a real implementation defect.',
+                '',
+                '## Evidence',
+                'The validation evidence is stale, but the blocking issue is the incorrect route implementation.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'code');
+        assert.match(result.title, /Fix failed 'code' review findings/);
+        assert.ok(!result.commands[0].command.includes('compile-gate'));
+    });
+
+    it('keeps mixed stale-validation and authorization findings on implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'security', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- High: Stale full-suite validation evidence was present, and the route can expose unauthorized token handling by skipping implementation remediation.',
+                '',
+                '## Evidence',
+                'Access control, credential, and token handling must stay on the implementation path when mentioned as a blocking security finding.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'security');
+        assert.match(result.title, /Fix failed 'security' review findings/);
+        assert.ok(!result.commands[0].command.includes('compile-gate'));
+    });
+
+    it('keeps mixed stale-validation and exploit-class findings on implementation remediation', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true, security: true, test: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'security', {
+            verdict: 'fail',
+            body: [
+                '## Findings by Severity',
+                '- High: Stale full-suite validation evidence was present, and this route can hide SQL injection remediation behind compile-gate refresh.',
+                '',
+                '## Evidence',
+                'Exploit-class vulnerabilities such as injection, XSS, SSRF, path traversal, and RCE must stay on implementation remediation.',
+                ''
+            ].join('\n')
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review.next_review_type, 'security');
+        assert.match(result.title, /Fix failed 'security' review findings/);
+        assert.ok(!result.commands[0].command.includes('compile-gate'));
     });
 
     it('keeps prose-only real defects that mention missing manual-validation evidence on implementation remediation', () => {
