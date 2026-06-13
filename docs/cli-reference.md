@@ -431,6 +431,7 @@ Preview or apply retained runtime artifact cleanup under `garda-agent-orchestrat
 garda cleanup --target-root "."
 garda cleanup --target-root "." --dry-run
 garda cleanup --target-root "." --max-age-days 14 --max-backups 5 --max-task-events 30
+garda cleanup --target-root "." --runtime-retention-older-than-days 30 --runtime-retention-keep-latest-tasks 20
 garda cleanup --target-root "." --max-reviews 20 --max-working-plans 50 --max-update-rollbacks 10 --max-update-reports 10 --max-bundle-backups 10
 garda cleanup policy --target-root "."
 garda cleanup policy edit --target-root "."
@@ -438,13 +439,15 @@ garda cleanup policy --edit --target-root "."
 garda cleanup policy reset --target-root "."
 garda cleanup policy --retention-mode summary --compress-after-days 14 --target-root "."
 garda gc --target-root "." --category reviews
+garda gc --target-root "." --runtime-retention-older-than-days 30 --runtime-retention-keep-latest-tasks 20
 garda gc --target-root "." --confirm --category reviews
 ```
 
 Notes:
 - `cleanup` only operates on supported runtime artifact categories: backups, bundle-backups, task-event logs, review artifacts, Markdown working plans, generated temp/cache/report/update zones, project-memory impact artifacts, metrics, update-rollbacks, and update-reports.
 - `--dry-run` reports projected removals, compression, retention tiers, and bytes reclaimed without mutating the filesystem.
-- Retention accepts both a global age limit (`--max-age-days`) and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-working-plans`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
+- Retention accepts a global artifact age limit (`--max-age-days`), task-scoped runtime retention controls (`--runtime-retention-older-than-days`, `--runtime-retention-keep-latest-tasks`), and per-category count limits (`--max-backups`, `--max-task-events`, `--max-reviews`, `--max-working-plans`, `--max-update-rollbacks`, `--max-update-reports`, `--max-bundle-backups`).
+- `--runtime-retention-older-than-days N` limits task-scoped runtime retention to tasks whose retained audited artifacts are older than N days; `--runtime-retention-keep-latest-tasks N` preserves the latest N inactive task groups by filesystem recency. Both values must be non-negative integers and can be combined.
 - Backup-related count defaults keep the latest 10 entries.
 - Count-based eviction uses **real filesystem recency** (file modification time), not task-id ordering. When the number of items exceeds the cap, the least recently modified entries are removed first. When modification times are equal, task-id / filename order is used as a deterministic tie-breaker.
 - For review artifacts, recency is determined per task group: the most recent `mtime` among all files in a `T-xxx-*` group represents that group's freshness.

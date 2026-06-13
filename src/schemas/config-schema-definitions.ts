@@ -289,6 +289,8 @@ export const runtimeRetentionSchema: Record<string, unknown> = Object.freeze({
             properties: {
                 enabled: { type: 'boolean' },
                 max_tasks_per_run: { type: 'integer', minimum: 1 },
+                eligible_older_than_days: { type: 'integer', minimum: 0 },
+                keep_latest_tasks: { type: 'integer', minimum: 0 },
                 dry_run: { type: 'boolean' }
             },
             required: ['enabled', 'max_tasks_per_run'],
@@ -676,4 +678,3 @@ export function getConfigSchemas(): readonly ConfigSchemaEntry[] {
 export function getConfigSchemaByName(name: string): ConfigSchemaEntry | undefined {
     return CONFIG_SCHEMAS.find((entry) => entry.name === name);
 }
-

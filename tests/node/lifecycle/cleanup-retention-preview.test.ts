@@ -21,6 +21,7 @@ import {
     writeTimelineSummary,
     createReviewArtifacts,
     seedHealthyDoneTaskArtifacts,
+    writeRuntimeRetentionPolicy,
     writeTaskQueue
 } from './cleanup-fixtures';
 
@@ -134,6 +135,159 @@ describe('runCleanup', () => {
         assert.equal(fs.existsSync(lowercaseActiveReviewPath), true, 'active task lowercase review artifacts should be preserved');
         assert.equal(fs.existsSync(compactableDone.timelinePath), false, 'eligible DONE task timeline should be compacted');
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-002-task-mode.json')), false, 'inactive task review artifacts should be removed');
+    });
+
+    it('keeps latest runtime-retention tasks by artifact mtime instead of lexical task id order', () => {
+        const newestLexicalFirst = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-010',
+            ageDays: 45
+        });
+        const oldestLexicalLast = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-090',
+            ageDays: 60
+        });
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            runtimeRetentionSelection: {
+                keepLatestTasks: 1
+            }
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.equal(result.runtimeRetentionPreview?.task_count, 1);
+        assert.ok(result.removed.some((item) => item.taskId === 'T-090'));
+        assert.equal(fs.existsSync(oldestLexicalLast.timelinePath), false,
+            'oldest task should be compacted even when its task id sorts after the protected task');
+        assert.equal(fs.existsSync(newestLexicalFirst.timelinePath), true,
+            'newest task should be retained by mtime, not selected because it sorts first lexically');
+    });
+
+    it('does not apply daily age policy to manual keep-latest-only selection', () => {
+        writeRuntimeRetentionPolicy(bundleRoot, {
+            dailyEligibleOlderThanDays: 60,
+            dailyKeepLatestTasks: 0
+        });
+        writeTaskQueue(tmpDir, [
+            { id: 'T-120', status: '🟩 DONE', title: 'Newest young task' },
+            { id: 'T-130', status: '🟩 DONE', title: 'Older young task' }
+        ]);
+        const newestTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-120',
+            ageDays: 35
+        });
+        const olderYoungTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-130',
+            ageDays: 40
+        });
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            runtimeRetentionSelection: {
+                keepLatestTasks: 1
+            }
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.equal(result.runtimeRetentionPreview?.task_count, 1);
+        assert.ok(result.removed.some((item) => item.taskId === 'T-130'),
+            'manual count-only selection should compact the older non-latest task even when it is younger than daily age policy');
+        assert.equal(fs.existsSync(olderYoungTask.timelinePath), false);
+        assert.equal(fs.existsSync(newestTask.timelinePath), true);
+    });
+
+    it('filters manual runtime-retention cleanup by task artifact age before previewing work', () => {
+        const youngTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-020',
+            ageDays: 10
+        });
+        const oldTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-030',
+            ageDays: 45
+        });
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            runtimeRetentionSelection: {
+                eligibleOlderThanDays: 30
+            }
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.deepEqual(result.runtimeRetentionPreview?.tasks.map((task) => task.task_id), ['T-030']);
+        assert.equal(fs.existsSync(oldTask.timelinePath), false);
+        assert.equal(fs.existsSync(youngTask.timelinePath), true,
+            'young task artifacts must remain outside the retention preview and deletion set');
+    });
+
+    it('applies runtime-retention task limit after eligibility classification', () => {
+        const ineligibleOldTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-010',
+            ageDays: 60
+        });
+        const eligibleOldTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-020',
+            ageDays: 45
+        });
+        fs.rmSync(ineligibleOldTask.ledgerPath, { force: true });
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            runtimeRetentionTaskLimit: 1,
+            runtimeRetentionSelection: {
+                eligibleOlderThanDays: 30
+            }
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.deepEqual(
+            result.runtimeRetentionPreview?.tasks.map((task) => `${task.task_id}:${task.eligible_now}`),
+            ['T-010:false', 'T-020:true']
+        );
+        assert.equal(fs.existsSync(ineligibleOldTask.timelinePath), true,
+            'ineligible task must not consume the runtime retention task limit');
+        assert.equal(fs.existsSync(eligibleOldTask.timelinePath), false,
+            'eligible task should still be selected after ineligible preview tasks are classified');
+    });
+
+    it('uses non-ledger artifact age for runtime-retention age selection', () => {
+        const oldTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-040',
+            ageDays: 45
+        });
+        const recent = daysAgo(1);
+        fs.utimesSync(oldTask.ledgerPath, recent, recent);
+
+        const result = runCleanup({
+            targetRoot: tmpDir,
+            bundleRoot,
+            dryRun: false,
+            runtimeRetentionSelection: {
+                eligibleOlderThanDays: 30
+            }
+        });
+
+        const previewTask = result.runtimeRetentionPreview?.tasks.find((task) => task.task_id === 'T-040');
+        assert.equal(previewTask?.eligible_now, true);
+        assert.equal(fs.existsSync(oldTask.timelinePath), false,
+            'recent verified ledger mtime must not hide old heavy task artifacts from age-based cleanup');
     });
 
     it('previews and removes inactive Markdown working plans while preserving active task plans', () => {

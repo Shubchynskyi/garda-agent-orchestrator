@@ -11,7 +11,11 @@ import {
 } from '../../core/task-ids';
 import { LIFECYCLE_OPERATION_LOCK_DIR_NAME } from '../lock/lifecycle-lock';
 import { ensureWithinRoot, removePathRecursive } from '../generic-utils';
-import { buildRuntimeRetentionPreview } from '../runtime-policy/runtime-retention-policy';
+import {
+    buildRuntimeRetentionPreview,
+    contributesToRetentionAge,
+    type RuntimeRetentionTaskPreview
+} from '../runtime-policy/runtime-retention-policy';
 import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
 import {
     isRuntimeCleanupTaskPurgeDeletionCategory,
@@ -31,6 +35,18 @@ export interface RuntimeRetentionCandidateSelection {
     compactionCandidates: CleanupItem[];
     selectedTaskIds: Set<string>;
     boundedTaskIds: Set<string> | null;
+}
+
+export interface RuntimeRetentionSelectionOptions {
+    maxEligibleTasks?: number;
+    eligibleOlderThanDays?: number;
+    keepLatestTasks?: number;
+    now?: Date;
+}
+
+interface TaskArtifactSummary {
+    taskId: string;
+    newestMtimeMs: number;
 }
 
 function isRuntimeRetentionCompactionCandidate(
@@ -740,64 +756,6 @@ export function collectTaskRuntimePurgeCandidates(runtimeDir: string, taskId: st
         .map((item) => ({ ...item, reason: 'task-runtime-purge' }));
 }
 
-function addCandidateTaskId(taskIds: Set<string>, taskId: string | null, activeTaskIds: ReadonlySet<string>): void {
-    if (!taskId || !isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
-        return;
-    }
-    taskIds.add(taskId);
-}
-
-function collectTaskScopedArtifactTaskIds(runtimeDir: string, activeTaskIds: ReadonlySet<string>): string[] {
-    const taskIds = new Set<string>();
-    const standardPaths = resolveRuntimeCleanupStandardPaths(runtimeDir);
-
-    for (const entry of directoryEntries(standardPaths.manualValidationDir)) {
-        addCandidateTaskId(taskIds, isCanonicalTaskId(entry) ? entry : null, activeTaskIds);
-    }
-
-    for (const entry of directoryEntries(standardPaths.reviewsDir)) {
-        if (parseActiveReviewArtifactTaskId(entry, activeTaskIds)) {
-            continue;
-        }
-        addCandidateTaskId(
-            taskIds,
-            parseReviewArtifactTaskId(path.join(standardPaths.reviewsDir, entry), entry),
-            activeTaskIds
-        );
-    }
-
-    for (const entry of directoryEntries(standardPaths.taskEventsDir)) {
-        if (entry.endsWith('.jsonl') && entry !== 'all-tasks.jsonl') {
-            addCandidateTaskId(taskIds, entry.replace(/\.jsonl$/, ''), activeTaskIds);
-        }
-    }
-
-    for (const entry of directoryEntries(standardPaths.plansDir)) {
-        addCandidateTaskId(taskIds, parseMarkdownWorkingPlanTaskId(entry), activeTaskIds);
-    }
-
-    for (const entry of directoryEntries(standardPaths.projectMemoryDir)) {
-        addCandidateTaskId(taskIds, parseProjectMemoryArtifactTaskId(entry), activeTaskIds);
-    }
-
-    for (const entry of directoryEntries(standardPaths.taskLedgerDir)) {
-        addCandidateTaskId(taskIds, entry.endsWith('.json') ? entry.slice(0, -'.json'.length) : null, activeTaskIds);
-    }
-
-    for (const entry of directoryEntries(path.join(standardPaths.tmpDir, 'reviews'))) {
-        addCandidateTaskId(taskIds, isCanonicalTaskId(entry) ? entry : null, activeTaskIds);
-    }
-
-    for (const entry of directoryEntries(standardPaths.tmpDir)) {
-        if (entry === 'reviews') {
-            continue;
-        }
-        addCandidateTaskId(taskIds, isCanonicalTaskId(entry) ? entry : parseStructuredTaskArtifactTaskId(entry), activeTaskIds);
-    }
-
-    return Array.from(taskIds).sort((left, right) => left.localeCompare(right));
-}
-
 function normalizePositiveIntegerLimit(value: unknown): number | null {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
         return null;
@@ -805,18 +763,107 @@ function normalizePositiveIntegerLimit(value: unknown): number | null {
     return Math.floor(value);
 }
 
+function normalizeNonNegativeIntegerLimit(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        return null;
+    }
+    return Math.floor(value);
+}
+
+function updateTaskArtifactSummary(
+    summaries: Map<string, TaskArtifactSummary>,
+    item: CleanupItem
+): void {
+    if (!item.taskId || !contributesToRetentionAge(item.category)) {
+        return;
+    }
+    let newestMtimeMs = 0;
+    try {
+        newestMtimeMs = fs.statSync(item.path).mtimeMs;
+    } catch {
+        // Keep unreadable artifacts eligible for preview with the lowest age priority.
+    }
+    const existing = summaries.get(item.taskId);
+    if (!existing || newestMtimeMs > existing.newestMtimeMs) {
+        summaries.set(item.taskId, { taskId: item.taskId, newestMtimeMs });
+    }
+}
+
+function compareTaskArtifactsByNewestFirst(left: TaskArtifactSummary, right: TaskArtifactSummary): number {
+    if (right.newestMtimeMs !== left.newestMtimeMs) {
+        return right.newestMtimeMs - left.newestMtimeMs;
+    }
+    return left.taskId.localeCompare(right.taskId);
+}
+
+function compareTaskArtifactsByOldestFirst(left: TaskArtifactSummary, right: TaskArtifactSummary): number {
+    if (left.newestMtimeMs !== right.newestMtimeMs) {
+        return left.newestMtimeMs - right.newestMtimeMs;
+    }
+    return left.taskId.localeCompare(right.taskId);
+}
+
+function compareRuntimeRetentionTasksByOldestArtifactFirst(
+    left: RuntimeRetentionTaskPreview,
+    right: RuntimeRetentionTaskPreview
+): number {
+    const leftMtimeMs = left.latest_artifact_mtime_ms ?? 0;
+    const rightMtimeMs = right.latest_artifact_mtime_ms ?? 0;
+    if (leftMtimeMs !== rightMtimeMs) {
+        return leftMtimeMs - rightMtimeMs;
+    }
+    return left.task_id.localeCompare(right.task_id);
+}
+
+function selectRuntimeRetentionPreviewTaskIds(
+    inventory: CleanupItem[],
+    options: RuntimeRetentionSelectionOptions
+): Set<string> | null {
+    const eligibleOlderThanDays = normalizeNonNegativeIntegerLimit(options.eligibleOlderThanDays);
+    const keepLatestTasks = normalizeNonNegativeIntegerLimit(options.keepLatestTasks) ?? 0;
+    const needsBoundedSelection = eligibleOlderThanDays !== null || keepLatestTasks > 0;
+    if (!needsBoundedSelection) {
+        return null;
+    }
+
+    const summaries = new Map<string, TaskArtifactSummary>();
+    for (const item of inventory) {
+        updateTaskArtifactSummary(summaries, item);
+    }
+
+    let candidates = Array.from(summaries.values());
+    if (keepLatestTasks > 0) {
+        const protectedTaskIds = new Set(
+            [...candidates]
+                .sort(compareTaskArtifactsByNewestFirst)
+                .slice(0, keepLatestTasks)
+                .map((summary) => summary.taskId)
+        );
+        candidates = candidates.filter((summary) => !protectedTaskIds.has(summary.taskId));
+    }
+
+    if (eligibleOlderThanDays !== null) {
+        const cutoffMs = (options.now ?? new Date()).getTime() - eligibleOlderThanDays * 24 * 60 * 60 * 1000;
+        candidates = candidates.filter((summary) => summary.newestMtimeMs <= cutoffMs);
+    }
+
+    candidates.sort(compareTaskArtifactsByOldestFirst);
+    return new Set(candidates.map((summary) => summary.taskId));
+}
+
 export function collectRuntimeRetentionCandidates(
     targetRoot: string,
     bundleRoot: string,
     activeTaskIds: ReadonlySet<string>,
-    options: { maxEligibleTasks?: number } = {}
+    options: RuntimeRetentionSelectionOptions = {}
 ): RuntimeRetentionCandidateSelection {
     const runtimeDir = path.join(bundleRoot, 'runtime');
     const maxEligibleTasks = normalizePositiveIntegerLimit(options.maxEligibleTasks);
-    const boundedTaskIds = maxEligibleTasks === null
-        ? null
-        : new Set(collectTaskScopedArtifactTaskIds(runtimeDir, activeTaskIds).slice(0, maxEligibleTasks));
-    const previewCandidates = collectTaskScopedArtifactInventory(runtimeDir, activeTaskIds, boundedTaskIds ?? undefined);
+    const allPreviewCandidates = collectTaskScopedArtifactInventory(runtimeDir, activeTaskIds);
+    const boundedTaskIds = selectRuntimeRetentionPreviewTaskIds(allPreviewCandidates, options);
+    const previewCandidates = boundedTaskIds === null
+        ? allPreviewCandidates
+        : allPreviewCandidates.filter((item) => item.taskId && boundedTaskIds.has(item.taskId));
     const preview = buildRuntimeRetentionPreview(
         targetRoot,
         bundleRoot,
@@ -834,6 +881,7 @@ export function collectRuntimeRetentionCandidates(
                     || task.retention_tier === 'compressed_forensic_candidate'
                 )
             )
+            .sort(compareRuntimeRetentionTasksByOldestArtifactFirst)
             .map((task) => task.task_id);
     const selectedTaskIds = new Set(
         maxEligibleTasks !== null

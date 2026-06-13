@@ -53,6 +53,8 @@ export interface RuntimeRetentionPolicyDocument {
     daily_maintenance: {
         enabled: boolean;
         max_tasks_per_run: number;
+        eligible_older_than_days: number;
+        keep_latest_tasks: number;
         dry_run: boolean;
     };
     [key: string]: unknown;
@@ -79,6 +81,8 @@ export interface RuntimeRetentionPolicy {
     dailyMaintenance: {
         enabled: boolean;
         maxTasksPerRun: number;
+        eligibleOlderThanDays: number;
+        keepLatestTasks: number;
         dryRun: boolean;
     };
 }
@@ -92,6 +96,7 @@ export interface RuntimeRetentionTaskPreview {
     eligible_now: boolean;
     age_days: number | null;
     threshold_days: number | null;
+    latest_artifact_mtime_ms: number | null;
     candidate_categories: string[];
     candidate_count: number;
     reasons: string[];
@@ -143,6 +148,8 @@ const DEFAULT_POLICY_DOCUMENT: RuntimeRetentionPolicyDocument = Object.freeze({
     daily_maintenance: {
         enabled: false,
         max_tasks_per_run: 25,
+        eligible_older_than_days: 30,
+        keep_latest_tasks: 0,
         dry_run: true
     }
 });
@@ -169,6 +176,8 @@ function buildDefaultPolicy(): RuntimeRetentionPolicy {
         dailyMaintenance: {
             enabled: DEFAULT_POLICY_DOCUMENT.daily_maintenance.enabled,
             maxTasksPerRun: DEFAULT_POLICY_DOCUMENT.daily_maintenance.max_tasks_per_run,
+            eligibleOlderThanDays: DEFAULT_POLICY_DOCUMENT.daily_maintenance.eligible_older_than_days,
+            keepLatestTasks: DEFAULT_POLICY_DOCUMENT.daily_maintenance.keep_latest_tasks,
             dryRun: DEFAULT_POLICY_DOCUMENT.daily_maintenance.dry_run
         }
     };
@@ -222,6 +231,11 @@ export function loadRuntimeRetentionPolicy(bundleRoot: string): RuntimeRetention
         dailyMaintenance: {
             enabled: Boolean(document.daily_maintenance?.enabled ?? defaults.dailyMaintenance.enabled),
             maxTasksPerRun: Number(document.daily_maintenance?.max_tasks_per_run ?? defaults.dailyMaintenance.maxTasksPerRun),
+            eligibleOlderThanDays: Number(
+                document.daily_maintenance?.eligible_older_than_days
+                ?? defaults.dailyMaintenance.eligibleOlderThanDays
+            ),
+            keepLatestTasks: Number(document.daily_maintenance?.keep_latest_tasks ?? defaults.dailyMaintenance.keepLatestTasks),
             dryRun: Boolean(document.daily_maintenance?.dry_run ?? defaults.dailyMaintenance.dryRun)
         }
     };
@@ -412,7 +426,7 @@ function normalizeAgeDays(ageMs: number): number {
     return Math.floor(ageMs / (24 * 60 * 60 * 1000));
 }
 
-function contributesToRetentionAge(category: string): boolean {
+export function contributesToRetentionAge(category: string): boolean {
     return category !== 'task-ledger';
 }
 
@@ -541,6 +555,7 @@ function classifyTaskPreview(
         eligible_now: eligibleNow,
         age_days: ageDays,
         threshold_days: thresholdDays,
+        latest_artifact_mtime_ms: candidateGroup.newestMtimeMs > 0 ? Math.floor(candidateGroup.newestMtimeMs) : null,
         candidate_categories: Array.from(candidateGroup.categories).sort(),
         candidate_count: candidateGroup.count,
         reasons

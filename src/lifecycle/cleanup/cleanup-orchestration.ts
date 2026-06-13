@@ -14,6 +14,7 @@ import {
     cleanupStaleTaskEventLocks,
     collectIsolationSandbox,
     collectRuntimeRetentionCandidates,
+    type RuntimeRetentionSelectionOptions,
     collectTaskRuntimePurgeCandidates,
     collectStaleLifecycleLock,
     collectStaleTaskEventLockCandidates,
@@ -109,9 +110,35 @@ export interface CleanupOptions {
     targetRoot: string;
     bundleRoot: string;
     dryRun?: boolean;
+    now?: Date;
     retentionPolicy?: Partial<RetentionPolicy>;
     activeTaskIds?: string[];
     runtimeRetentionTaskLimit?: number;
+    runtimeRetentionSelection?: Omit<RuntimeRetentionSelectionOptions, 'maxEligibleTasks' | 'now'>;
+}
+
+function buildRuntimeRetentionSelectionOptions(
+    bundleRoot: string,
+    now: Date,
+    taskLimit: number | undefined,
+    overrides: Omit<RuntimeRetentionSelectionOptions, 'maxEligibleTasks' | 'now'> | undefined
+): RuntimeRetentionSelectionOptions {
+    const policy = loadRuntimeRetentionPolicy(bundleRoot);
+    if (overrides) {
+        return {
+            maxEligibleTasks: taskLimit,
+            eligibleOlderThanDays: overrides.eligibleOlderThanDays,
+            keepLatestTasks: overrides.keepLatestTasks,
+            now
+        };
+    }
+
+    return {
+        maxEligibleTasks: taskLimit,
+        eligibleOlderThanDays: policy.dailyMaintenance.eligibleOlderThanDays,
+        keepLatestTasks: policy.dailyMaintenance.keepLatestTasks,
+        now
+    };
 }
 
 export function runCleanup(options: CleanupOptions): CleanupResult {
@@ -124,11 +151,14 @@ export function runCleanup(options: CleanupOptions): CleanupResult {
     };
 
     const runtimeDir = path.join(bundleRoot, 'runtime');
-    const now = new Date();
+    const now = options.now ?? new Date();
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
-    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds, {
-        maxEligibleTasks: options.runtimeRetentionTaskLimit
-    });
+    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(
+        targetRoot,
+        bundleRoot,
+        activeTaskIds,
+        buildRuntimeRetentionSelectionOptions(bundleRoot, now, options.runtimeRetentionTaskLimit, options.runtimeRetentionSelection)
+    );
     const candidates = [
         ...collectStandardCandidates(runtimeDir, policy, now, activeTaskIds),
         ...runtimeRetentionCandidates.compactionCandidates
@@ -251,12 +281,14 @@ export interface GcOptions {
     targetRoot: string;
     bundleRoot: string;
     confirm?: boolean;
+    now?: Date;
     retentionPolicy?: Partial<RetentionPolicy>;
     categories?: string[];
     storagePolicy?: ReviewArtifactStoragePolicy;
     activeTaskIds?: string[];
     runtimeRetentionTaskLimit?: number;
     runtimeRetentionOnly?: boolean;
+    runtimeRetentionSelection?: Omit<RuntimeRetentionSelectionOptions, 'maxEligibleTasks' | 'now'>;
 }
 
 export function validateGcCategories(categories: string[]): void {
@@ -286,11 +318,14 @@ export function runGc(options: GcOptions): GcResult {
         : null;
 
     const runtimeDir = path.join(bundleRoot, 'runtime');
-    const now = new Date();
+    const now = options.now ?? new Date();
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
-    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(targetRoot, bundleRoot, activeTaskIds, {
-        maxEligibleTasks: options.runtimeRetentionTaskLimit
-    });
+    const runtimeRetentionCandidates = collectRuntimeRetentionCandidates(
+        targetRoot,
+        bundleRoot,
+        activeTaskIds,
+        buildRuntimeRetentionSelectionOptions(bundleRoot, now, options.runtimeRetentionTaskLimit, options.runtimeRetentionSelection)
+    );
     const standardCandidates = runtimeRetentionOnly
         ? [...runtimeRetentionCandidates.compactionCandidates]
         : [

@@ -33,6 +33,8 @@ export interface DailyRetentionMaintenanceResult {
     report_path: string;
     policy_path: string;
     max_tasks_per_run: number;
+    eligible_older_than_days: number;
+    keep_latest_tasks: number;
     lock_acquired: boolean;
     skipped_reason: string | null;
     error: string | null;
@@ -113,6 +115,8 @@ function buildBaseResult(options: DailyRetentionMaintenanceOptions, localDate: s
         report_path: reportPath,
         policy_path: resolveRuntimeRetentionPolicyConfigPath(options.bundleRoot),
         max_tasks_per_run: policy.dailyMaintenance.maxTasksPerRun,
+        eligible_older_than_days: policy.dailyMaintenance.eligibleOlderThanDays,
+        keep_latest_tasks: policy.dailyMaintenance.keepLatestTasks,
         lock_acquired: false,
         skipped_reason: null,
         error: null
@@ -160,8 +164,13 @@ export function runDailyRetentionMaintenance(
                 targetRoot: options.targetRoot,
                 bundleRoot: options.bundleRoot,
                 confirm: !base.dry_run,
+                now,
                 runtimeRetentionOnly: true,
-                runtimeRetentionTaskLimit: base.max_tasks_per_run
+                runtimeRetentionTaskLimit: base.max_tasks_per_run,
+                runtimeRetentionSelection: {
+                    eligibleOlderThanDays: base.eligible_older_than_days,
+                    keepLatestTasks: base.keep_latest_tasks
+                }
             });
             const gcSummary = summarizeGcResult(gcResult, base.max_tasks_per_run);
             const status: DailyRetentionMaintenanceStatus = gcResult.result === 'SUCCESS'

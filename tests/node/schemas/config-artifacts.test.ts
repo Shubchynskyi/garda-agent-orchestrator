@@ -707,6 +707,8 @@ test('validateRuntimeRetentionConfig normalizes valid config', () => {
         daily_maintenance: {
             enabled: 'false',
             max_tasks_per_run: '25',
+            eligible_older_than_days: '30',
+            keep_latest_tasks: '5',
             dry_run: 'yes'
         }
     });
@@ -717,14 +719,20 @@ test('validateRuntimeRetentionConfig normalizes valid config', () => {
     assert.equal((result.problem_tasks as Record<string, unknown>).compress_after_days, 45);
     assert.equal((result.purge as Record<string, unknown>).require_confirm, true);
     assert.equal((result.daily_maintenance as Record<string, unknown>).max_tasks_per_run, 25);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).eligible_older_than_days, 30);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).keep_latest_tasks, 5);
     assert.equal((result.daily_maintenance as Record<string, unknown>).dry_run, true);
 });
 
 test('validateRuntimeRetentionConfig defaults legacy daily maintenance dry_run to true', () => {
     const config = readTemplateConfig('runtime-retention') as Record<string, unknown>;
     delete ((config.daily_maintenance as Record<string, unknown>).dry_run);
+    delete ((config.daily_maintenance as Record<string, unknown>).eligible_older_than_days);
+    delete ((config.daily_maintenance as Record<string, unknown>).keep_latest_tasks);
     const result = validateRuntimeRetentionConfig(config);
     assert.equal((result.daily_maintenance as Record<string, unknown>).dry_run, true);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).eligible_older_than_days, 30);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).keep_latest_tasks, 0);
 });
 
 test('validateRuntimeRetentionConfig validates template config', () => {
@@ -732,6 +740,8 @@ test('validateRuntimeRetentionConfig validates template config', () => {
     const result = validateRuntimeRetentionConfig(config);
     assert.equal(result.version, 1);
     assert.equal((result.healthy_done as Record<string, unknown>).compact_after_days, 30);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).eligible_older_than_days, 30);
+    assert.equal((result.daily_maintenance as Record<string, unknown>).keep_latest_tasks, 0);
 });
 
 test('validateManagedConfigByName handles runtime-retention', () => {

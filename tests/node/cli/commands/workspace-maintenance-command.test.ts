@@ -134,6 +134,67 @@ test('handleCleanup prints runtime retention preview lines during dry-run cleanu
     }
 });
 
+test('handleCleanup routes manual runtime-retention age selection to preview', async () => {
+    const { projectRoot } = setupRetentionPreviewWorkspace();
+
+    try {
+        const { lines } = await captureConsoleAsync(() => handleCleanup([
+            '--target-root',
+            projectRoot,
+            '--dry-run',
+            '--runtime-retention-older-than-days',
+            '60'
+        ], PACKAGE_JSON));
+        assert.ok(lines.some((line) => line.includes('RuntimeRetentionPreviewTasks: 0')));
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+});
+
+test('workspace maintenance rejects malformed runtime-retention integer flags', async () => {
+    const cases: Array<{
+        name: string;
+        handler: (args: string[], packageJson: typeof PACKAGE_JSON) => void | Promise<void>;
+        args: string[];
+    }> = [
+        {
+            name: 'cleanup older-than suffix',
+            handler: handleCleanup,
+            args: ['--dry-run', '--runtime-retention-older-than-days', '30days']
+        },
+        {
+            name: 'cleanup keep-latest decimal',
+            handler: handleCleanup,
+            args: ['--dry-run', '--runtime-retention-keep-latest-tasks', '1.5']
+        },
+        {
+            name: 'gc older-than exponent',
+            handler: handleGc,
+            args: ['--runtime-retention-older-than-days', '1e2']
+        },
+        {
+            name: 'gc keep-latest suffix',
+            handler: handleGc,
+            args: ['--runtime-retention-keep-latest-tasks', '2tasks']
+        }
+    ];
+
+    for (const entry of cases) {
+        const { projectRoot } = setupRetentionPreviewWorkspace();
+        try {
+            await assert.rejects(
+                async () => {
+                    await entry.handler(['--target-root', projectRoot, ...entry.args], PACKAGE_JSON);
+                },
+                /must be a non-negative integer/,
+                entry.name
+            );
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    }
+});
+
 test('handleGc prints runtime retention preview lines during dry-run gc', async () => {
     const { projectRoot } = setupRetentionPreviewWorkspace();
 

@@ -318,14 +318,6 @@ function writeTaskQueue(repoRoot: string, taskId: string, title: string): void {
     ].join('\n'));
 }
 
-function reservePort(): Promise<net.Server> {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        server.once('error', reject);
-        server.listen(0, DEFAULT_UI_HOST, () => resolve(server));
-    });
-}
-
 function reserveSpecificPort(port: number): Promise<net.Server | null> {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
@@ -398,18 +390,15 @@ async function expectSettlesWithin<T>(promise: Promise<T>, timeoutMs: number, la
 test('local UI server skips busy ports in the default local range', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
-    const reserved = await reservePort();
-    const address = reserved.address();
-    assert.equal(typeof address, 'object');
-    const busyPort = (address as net.AddressInfo).port;
+    const { reserved, busyPort, nextPort } = await reserveConsecutivePortPair();
     const server = await startLocalUiServer({
         repoRoot,
         portStart: busyPort,
-        portEnd: busyPort + 1
+        portEnd: nextPort
     });
     try {
         assert.equal(server.host, DEFAULT_UI_HOST);
-        assert.equal(server.port, busyPort + 1);
+        assert.equal(server.port, nextPort);
     } finally {
         await server.close();
         await closeNetServer(reserved);

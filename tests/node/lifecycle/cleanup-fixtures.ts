@@ -329,6 +329,8 @@ export function writeRuntimeRetentionPolicy(
         omitPreserveDetailedEvidence?: boolean;
         dailyDryRun?: boolean;
         purgeRequireConfirm?: boolean;
+        dailyEligibleOlderThanDays?: number;
+        dailyKeepLatestTasks?: number;
     } = {}
 ): void {
     const configDir = path.join(bundleRoot, 'live', 'config');
@@ -356,6 +358,8 @@ export function writeRuntimeRetentionPolicy(
         daily_maintenance: {
             enabled: true,
             max_tasks_per_run: 25,
+            eligible_older_than_days: options.dailyEligibleOlderThanDays ?? 30,
+            keep_latest_tasks: options.dailyKeepLatestTasks ?? 0,
             dry_run: options.dailyDryRun ?? true
         }
     }, null, 2) + '\n', 'utf8');

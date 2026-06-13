@@ -137,6 +137,8 @@ const TEMPLATE_RUNTIME_RETENTION = {
     daily_maintenance: {
         enabled: false,
         max_tasks_per_run: 25,
+        eligible_older_than_days: 30,
+        keep_latest_tasks: 0,
         dry_run: false
     }
 };

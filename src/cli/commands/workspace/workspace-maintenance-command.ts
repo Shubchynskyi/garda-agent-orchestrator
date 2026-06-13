@@ -57,6 +57,16 @@ function printMetricsRetention(
     return retention.pruned;
 }
 
+function parseNonNegativeIntegerOption(raw: unknown, flagName: string): number | undefined {
+    if (typeof raw !== 'string') {
+        return undefined;
+    }
+    if (!/^\d+$/.test(raw)) {
+        throw new Error(`${flagName} must be a non-negative integer, got: ${raw}`);
+    }
+    return Number.parseInt(raw, 10);
+}
+
 export async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
     const reinitDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
@@ -326,7 +336,9 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
         '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
         '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
-        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' }
+        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' },
+        '--runtime-retention-older-than-days': { key: 'runtimeRetentionOlderThanDays', type: 'string' },
+        '--runtime-retention-keep-latest-tasks': { key: 'runtimeRetentionKeepLatestTasks', type: 'string' }
     };
     const { options: rawOptions } = parseOptions(commandArgv, cleanupDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
@@ -354,12 +366,11 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         ['maxBundleBackups', 'maxBundleBackups']
     ];
     for (const [optKey, policyKey] of intFields) {
-        const raw = options[optKey];
-        if (typeof raw === 'string') {
-            const parsed = parseInt(raw, 10);
-            if (Number.isNaN(parsed) || parsed < 0) {
-                throw new Error(`--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()} must be a non-negative integer, got: ${raw}`);
-            }
+        const parsed = parseNonNegativeIntegerOption(
+            options[optKey],
+            `--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()}`
+        );
+        if (parsed !== undefined) {
             retentionOverrides[policyKey] = parsed;
         }
     }
@@ -368,7 +379,17 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         targetRoot,
         bundleRoot: bundlePath,
         dryRun,
-        retentionPolicy: retentionOverrides
+        retentionPolicy: retentionOverrides,
+        runtimeRetentionSelection: {
+            eligibleOlderThanDays: parseNonNegativeIntegerOption(
+                options.runtimeRetentionOlderThanDays,
+                '--runtime-retention-older-than-days'
+            ),
+            keepLatestTasks: parseNonNegativeIntegerOption(
+                options.runtimeRetentionKeepLatestTasks,
+                '--runtime-retention-keep-latest-tasks'
+            )
+        }
     });
 
     if (dryRun) {
@@ -438,7 +459,9 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
         '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
         '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
-        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' }
+        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' },
+        '--runtime-retention-older-than-days': { key: 'runtimeRetentionOlderThanDays', type: 'string' },
+        '--runtime-retention-keep-latest-tasks': { key: 'runtimeRetentionKeepLatestTasks', type: 'string' }
     };
     const { options: rawOptions } = parseOptions(commandArgv, gcDefinitions);
     const options = rawOptions as ParsedOptionsRecord;
@@ -470,12 +493,11 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         ['maxBundleBackups', 'maxBundleBackups']
     ];
     for (const [optKey, policyKey] of intFields) {
-        const raw = options[optKey];
-        if (typeof raw === 'string') {
-            const parsed = parseInt(raw, 10);
-            if (Number.isNaN(parsed) || parsed < 0) {
-                throw new Error(`--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()} must be a non-negative integer, got: ${raw}`);
-            }
+        const parsed = parseNonNegativeIntegerOption(
+            options[optKey],
+            `--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()}`
+        );
+        if (parsed !== undefined) {
             retentionOverrides[policyKey] = parsed;
         }
     }
@@ -498,7 +520,17 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         bundleRoot: bundlePath,
         confirm,
         retentionPolicy: retentionOverrides,
-        categories: categories.length > 0 ? categories : undefined
+        categories: categories.length > 0 ? categories : undefined,
+        runtimeRetentionSelection: {
+            eligibleOlderThanDays: parseNonNegativeIntegerOption(
+                options.runtimeRetentionOlderThanDays,
+                '--runtime-retention-older-than-days'
+            ),
+            keepLatestTasks: parseNonNegativeIntegerOption(
+                options.runtimeRetentionKeepLatestTasks,
+                '--runtime-retention-keep-latest-tasks'
+            )
+        }
     });
 
     if (!confirm) {

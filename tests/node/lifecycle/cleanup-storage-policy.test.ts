@@ -548,8 +548,11 @@ describe('runGc with storage policy', () => {
             }
         });
 
-        assert.equal(result.runtimeRetentionPreview?.task_count, 1);
-        assert.equal(result.runtimeRetentionPreview?.tasks[0]?.task_id, 'T-710');
+        assert.equal(result.runtimeRetentionPreview?.task_count, 2);
+        assert.deepEqual(
+            result.runtimeRetentionPreview?.tasks.map((task) => `${task.task_id}:${task.eligible_now}`),
+            ['T-710:true', 'T-711:true']
+        );
         assert.ok(result.storagePolicyResult?.compressed.includes('T-710-compile-output.log'));
         assert.equal(fs.existsSync(selectedCompileLogPath), false);
         assert.equal(fs.existsSync(`${selectedCompileLogPath}.gz`), true);
@@ -658,7 +661,14 @@ describe('runGc with storage policy', () => {
 
         const timelinePath = path.join(eventsDir, 'T-702.jsonl');
         const past = daysAgo(45);
-        for (const artifactPath of [compileLogPath, reviewContextPath, scopedDiffPath, timelinePath]) {
+        for (const artifactPath of [
+            path.join(reviewsDir, 'T-702-task-mode.json'),
+            path.join(reviewsDir, 'T-702-preflight.json'),
+            compileLogPath,
+            reviewContextPath,
+            scopedDiffPath,
+            timelinePath
+        ]) {
             fs.utimesSync(artifactPath, past, past);
         }
 
@@ -707,10 +717,10 @@ describe('runGc with storage policy', () => {
         });
 
         assert.equal(result.result, 'SUCCESS');
-        assert.equal(
-            result.runtimeRetentionPreview?.task_count,
-            1,
-            'bounded retention maintenance must not classify every task-scoped artifact before selecting work'
+        assert.equal(result.runtimeRetentionPreview?.task_count, 2);
+        assert.deepEqual(
+            result.runtimeRetentionPreview?.tasks.map((task) => `${task.task_id}:${task.eligible_now}`),
+            ['T-800:true', 'T-801:true']
         );
         assert.equal(fs.existsSync(path.join(reviewsDir, 'T-800-task-mode.json')), false);
         assert.equal(

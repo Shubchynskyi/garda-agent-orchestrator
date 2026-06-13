@@ -29,13 +29,23 @@ function makeWorkspace(prefix: string): { targetRoot: string; bundleRoot: string
 
 function writeRuntimeRetentionConfig(
     bundleRoot: string,
-    options: { enabled: boolean; dryRun?: boolean; maxTasksPerRun?: number; purgeRequireConfirm?: boolean; omitDryRun?: boolean }
+    options: {
+        enabled: boolean;
+        dryRun?: boolean;
+        maxTasksPerRun?: number;
+        eligibleOlderThanDays?: number;
+        keepLatestTasks?: number;
+        purgeRequireConfirm?: boolean;
+        omitDryRun?: boolean;
+    }
 ): void {
     const configDir = path.join(bundleRoot, 'live', 'config');
     fs.mkdirSync(configDir, { recursive: true });
     const dailyMaintenance: Record<string, unknown> = {
         enabled: options.enabled,
         max_tasks_per_run: options.maxTasksPerRun ?? 25,
+        eligible_older_than_days: options.eligibleOlderThanDays ?? 30,
+        keep_latest_tasks: options.keepLatestTasks ?? 0,
         dry_run: options.dryRun ?? false
     };
     if (options.omitDryRun) {
@@ -161,7 +171,11 @@ function writeTimelineSummary(bundleRoot: string, taskId: string): void {
     }, null, 2) + '\n', 'utf8');
 }
 
-function createHealthyDoneRetentionCandidate(bundleRoot: string, taskId: string): { finalCloseoutPath: string; timelinePath: string } {
+function createHealthyDoneRetentionCandidate(
+    bundleRoot: string,
+    taskId: string,
+    artifactTime: Date = new Date('2026-01-01T00:00:00.000Z')
+): { finalCloseoutPath: string; timelinePath: string } {
     const reviewsDir = path.join(bundleRoot, 'runtime', 'reviews');
     fs.mkdirSync(reviewsDir, { recursive: true });
     const finalCloseoutPath = path.join(reviewsDir, `${taskId}-final-closeout.json`);
@@ -178,9 +192,8 @@ function createHealthyDoneRetentionCandidate(bundleRoot: string, taskId: string)
 
     const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
     const ledgerPath = path.join(bundleRoot, 'runtime', 'task-ledger', `${taskId}.json`);
-    const old = new Date('2026-01-01T00:00:00.000Z');
     for (const candidatePath of [finalCloseoutPath, timelinePath, ledgerPath]) {
-        fs.utimesSync(candidatePath, old, old);
+        fs.utimesSync(candidatePath, artifactTime, artifactTime);
     }
     return { finalCloseoutPath, timelinePath };
 }
@@ -211,8 +224,9 @@ function createEscapingRuntimeRetentionCandidate(targetRoot: string, bundleRoot:
     writeVerifiedLedger(bundleRoot, taskId);
 
     const timelinePath = path.join(eventsDir, `${taskId}.jsonl`);
+    const ledgerPath = path.join(bundleRoot, 'runtime', 'task-ledger', `${taskId}.json`);
     const old = new Date('2026-01-01T00:00:00.000Z');
-    for (const candidatePath of [reviewCandidatePath, timelinePath]) {
+    for (const candidatePath of [reviewCandidatePath, timelinePath, ledgerPath]) {
         fs.utimesSync(candidatePath, old, old);
     }
     return reviewCandidatePath;
@@ -563,7 +577,7 @@ describe('daily retention maintenance', () => {
 
             assert.equal(result.status, 'SUCCESS');
             assert.equal(result.gc_result?.selected_task_limit, 1);
-            assert.equal(result.gc_result?.eligible_now_count, 1);
+            assert.equal(result.gc_result?.eligible_now_count, 2);
             assert.ok((result.gc_result?.removed_count ?? 0) > 0);
             assert.equal(fs.existsSync(selectedCandidate.finalCloseoutPath), false,
                 'selected daily retention task should compact heavy review evidence');
@@ -571,6 +585,85 @@ describe('daily retention maintenance', () => {
                 'task outside max_tasks_per_run window must remain untouched for a later pass');
             assert.equal(fs.existsSync(deferredCandidate.timelinePath), true,
                 'daily maintenance must not compact task-event evidence outside the selected task set');
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('applies daily runtime-retention age and keep-latest selection before deleting artifacts', () => {
+        const workspace = makeWorkspace('daily-retention-selection-');
+        try {
+            writeRuntimeRetentionConfig(workspace.bundleRoot, {
+                enabled: true,
+                dryRun: false,
+                maxTasksPerRun: 25,
+                eligibleOlderThanDays: 30,
+                keepLatestTasks: 2,
+                purgeRequireConfirm: false
+            });
+            const youngCandidate = createHealthyDoneRetentionCandidate(
+                workspace.bundleRoot,
+                'T-100',
+                new Date('2026-05-15T00:00:00.000Z')
+            );
+            const protectedLatestCandidate = createHealthyDoneRetentionCandidate(
+                workspace.bundleRoot,
+                'T-010',
+                new Date('2026-04-15T00:00:00.000Z')
+            );
+            const selectedOldCandidate = createHealthyDoneRetentionCandidate(
+                workspace.bundleRoot,
+                'T-090',
+                new Date('2026-01-01T00:00:00.000Z')
+            );
+
+            const result = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(result.status, 'SUCCESS');
+            assert.equal(result.eligible_older_than_days, 30);
+            assert.equal(result.keep_latest_tasks, 2);
+            assert.equal(result.gc_result?.eligible_now_count, 1);
+            assert.equal(fs.existsSync(selectedOldCandidate.timelinePath), false,
+                'oldest eligible task should be compacted');
+            assert.equal(fs.existsSync(protectedLatestCandidate.timelinePath), true,
+                'latest eligible task should be retained even when its id sorts first');
+            assert.equal(fs.existsSync(youngCandidate.timelinePath), true,
+                'task younger than eligible_older_than_days must stay outside daily deletion');
+        } finally {
+            workspace.cleanup();
+        }
+    });
+
+    it('uses the maintenance clock for daily age-based runtime-retention selection', () => {
+        const workspace = makeWorkspace('daily-retention-injected-now-');
+        try {
+            writeRuntimeRetentionConfig(workspace.bundleRoot, {
+                enabled: true,
+                dryRun: false,
+                maxTasksPerRun: 25,
+                eligibleOlderThanDays: 30,
+                purgeRequireConfirm: false
+            });
+            const candidate = createHealthyDoneRetentionCandidate(
+                workspace.bundleRoot,
+                'T-120',
+                new Date('2026-05-01T00:00:00.000Z')
+            );
+
+            const result = runDailyRetentionMaintenance({
+                targetRoot: workspace.targetRoot,
+                bundleRoot: workspace.bundleRoot,
+                now: new Date('2026-05-21T10:00:00.000Z')
+            });
+
+            assert.equal(result.status, 'SUCCESS');
+            assert.equal(result.gc_result?.eligible_now_count, 0);
+            assert.equal(fs.existsSync(candidate.timelinePath), true,
+                'daily maintenance must not use wall-clock time when evaluating age filters');
         } finally {
             workspace.cleanup();
         }
