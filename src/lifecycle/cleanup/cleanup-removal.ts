@@ -269,8 +269,7 @@ function collectRuntimeRootTempFiles(runtimeDir: string, maxAgeDays: number, now
     return items;
 }
 
-function collectRuntimeTmp(runtimeDir: string, maxAgeDays: number, now: Date, activeTaskIds: ReadonlySet<string>): CleanupItem[] {
-    const tmpDir = path.join(runtimeDir, 'tmp');
+function collectRuntimeTmp(tmpDir: string, maxAgeDays: number, now: Date, activeTaskIds: ReadonlySet<string>): CleanupItem[] {
     const items = collectAgedEntries(tmpDir, 'tmp', maxAgeDays, now)
         .filter((item) => path.basename(item.path) !== 'reviews');
     const reviewScratchDir = path.join(tmpDir, 'reviews');
@@ -937,7 +936,7 @@ export function collectStandardCandidates(
         ...collectTimestampedDirs(standardPaths.bundleBackupsDir, 'bundle-backups', policy.maxBundleBackups, policy.maxAgeDays, now),
         ...collectOrphanedCompletenessCaches(standardPaths.taskEventsDir, activeTaskIds),
         ...collectRuntimeRootTempFiles(runtimeDir, policy.maxAgeDays, now),
-        ...collectRuntimeTmp(runtimeDir, policy.maxAgeDays, now, activeTaskIds),
+        ...collectRuntimeTmp(standardPaths.tmpDir, policy.maxAgeDays, now, activeTaskIds),
         ...collectAgedEntries(standardPaths.testScratchDir, 'test-scratch', policy.maxAgeDays, now),
         ...collectAgedEntries(standardPaths.cacheDir, 'cache', policy.maxAgeDays, now),
         ...collectAgedEntries(standardPaths.reportsDir, 'reports', policy.maxAgeDays, now),

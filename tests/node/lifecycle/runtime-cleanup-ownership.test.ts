@@ -135,5 +135,6 @@ describe('runtime cleanup ownership contract', () => {
         assert.ok(standardPaths.taskEventsDir.endsWith('\\task-events'));
         assert.ok(standardPaths.projectMemoryDir.endsWith('\\project-memory'));
         assert.ok(standardPaths.taskLedgerDir.endsWith('\\task-ledger'));
+        assert.ok(standardPaths.tmpDir.endsWith('\\tmp'));
     });
 });
