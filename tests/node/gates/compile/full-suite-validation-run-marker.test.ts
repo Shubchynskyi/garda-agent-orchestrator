@@ -132,7 +132,7 @@ describe('full-suite validation run marker', () => {
         ]);
     });
 
-    it('clears dead current-cycle markers only after preserving recovery evidence', () => {
+    it('clears dead current-cycle markers only after preserving recovery evidence', async () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-clear-'));
         try {
             const taskId = 'T-MARKER-CLEAR';
@@ -168,7 +168,7 @@ describe('full-suite validation run marker', () => {
                 }
             }, null, 2)}\n`, 'utf8');
 
-            const result = runFullSuiteRunMarkerRecoveryCommand({
+            const result = await runFullSuiteRunMarkerRecoveryCommand({
                 repoRoot,
                 taskId,
                 preflightPath,
@@ -183,12 +183,140 @@ describe('full-suite validation run marker', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
             assert.equal(artifact.status, 'CLEARED_DEAD_MARKER');
             assert.equal(artifact.marker_path, normalizePath(markerPath));
+            const fullSuiteArtifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
+            const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuiteArtifactPath, 'utf8')) as Record<string, unknown>;
+            assert.equal(fullSuiteArtifact.status, 'FAILED');
+            assert.equal(fullSuiteArtifact.timed_out, true);
+            assert.equal(fullSuiteArtifact.output_retention && typeof fullSuiteArtifact.output_retention === 'object'
+                ? (fullSuiteArtifact.output_retention as Record<string, unknown>).raw_output_retained
+                : null, true);
+            assert.equal(fullSuiteArtifact.failure_evidence && typeof fullSuiteArtifact.failure_evidence === 'object'
+                ? (fullSuiteArtifact.failure_evidence as Record<string, unknown>).copied_logs_count
+                : null, 0);
+            const compactSummary = fullSuiteArtifact.compact_summary;
+            assert.ok(Array.isArray(compactSummary));
+            const compactSummaryText = compactSummary.join('\n');
+            assert.match(compactSummaryText, new RegExp(`NextRecoveryCommand: .+next-step "${taskId}" --repo-root "\\."`, 'u'));
+            assert.match(compactSummaryText, new RegExp(`CleanupCommand: .+gate full-suite-run-marker-recovery --task-id "${taskId}"`, 'u'));
+            const outputLog = fs.readFileSync(path.join(reviewsRoot, `${taskId}-full-suite-output.log`), 'utf8');
+            assert.match(outputLog, /FULL_SUITE_INTERRUPTED_TIMEOUT_RECOVERY/u);
+            assert.match(outputLog, new RegExp(`CleanupCommand: .+gate full-suite-run-marker-recovery --task-id "${taskId}"`, 'u'));
+            const timeline = fs.readFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`), 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/u);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
     });
 
-    it('prints a bundle-relative cleanup command outside source checkouts', () => {
+    it('preserves existing current-cycle successful full-suite evidence when clearing a dead marker', async () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-preserve-pass-'));
+        try {
+            const taskId = 'T-MARKER-PRESERVE-PASS';
+            const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+            fs.mkdirSync(path.dirname(configPath), { recursive: true });
+            fs.writeFileSync(configPath, JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: 'npm test',
+                    timeout_ms: 600000
+                }
+            }), 'utf8');
+            const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({ task_id: taskId }), 'utf8');
+            const preflightSha256 = fileSha256(preflightPath) || '';
+            const markerPath = writeCurrentMarker({ repoRoot, taskId, preflightPath, preflightSha256 });
+            const fullSuiteArtifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
+            fs.writeFileSync(fullSuiteArtifactPath, `${JSON.stringify({
+                status: 'PASSED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: 0,
+                timed_out: false,
+                output_artifact_path: null,
+                compact_summary: ['preexisting pass evidence'],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: [],
+                cycle_binding: {
+                    task_id: taskId,
+                    preflight_path: normalizePath(preflightPath),
+                    preflight_sha256: preflightSha256,
+                    compile_gate_timestamp: null,
+                    scope_binding: null
+                }
+            }, null, 2)}\n`, 'utf8');
+
+            const result = await runFullSuiteRunMarkerRecoveryCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                clearDeadMarker: true,
+                operatorConfirmed: 'yes'
+            });
+
+            assert.equal(result.exitCode, 0);
+            assert.equal(fs.existsSync(markerPath), false);
+            const fullSuiteArtifact = JSON.parse(fs.readFileSync(fullSuiteArtifactPath, 'utf8')) as Record<string, unknown>;
+            assert.equal(fullSuiteArtifact.status, 'PASSED');
+            assert.deepEqual(fullSuiteArtifact.compact_summary, ['preexisting pass evidence']);
+            assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-full-suite-output.log`)), false);
+            const recoveryArtifact = JSON.parse(fs.readFileSync(
+                path.join(reviewsRoot, `${taskId}-full-suite-run-marker-recovery.json`),
+                'utf8'
+            )) as Record<string, unknown>;
+            const terminalEvidence = recoveryArtifact.terminal_full_suite_evidence as Record<string, unknown>;
+            assert.equal(terminalEvidence.status, 'PRESERVED_CURRENT_TERMINAL');
+            assert.equal(terminalEvidence.full_suite_status, 'PASSED');
+            const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+            const timeline = fs.existsSync(timelinePath) ? fs.readFileSync(timelinePath, 'utf8') : '';
+            assert.doesNotMatch(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/u);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('does not claim cleared cleanup when terminal evidence materialization fails', async () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-materialize-fail-'));
+        try {
+            const taskId = 'T-MARKER-MATERIALIZE-FAIL';
+            const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsRoot, { recursive: true });
+            const preflightPath = path.join(reviewsRoot, `${taskId}-preflight.json`);
+            fs.writeFileSync(preflightPath, JSON.stringify({ task_id: taskId }), 'utf8');
+            const preflightSha256 = fileSha256(preflightPath) || '';
+            const markerPath = writeCurrentMarker({ repoRoot, taskId, preflightPath, preflightSha256 });
+            const eventsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(path.dirname(eventsRoot), { recursive: true });
+            fs.writeFileSync(eventsRoot, 'not a directory', 'utf8');
+
+            await assert.rejects(() => runFullSuiteRunMarkerRecoveryCommand({
+                repoRoot,
+                taskId,
+                preflightPath,
+                clearDeadMarker: true,
+                operatorConfirmed: 'yes'
+            }));
+
+            assert.equal(fs.existsSync(markerPath), true);
+            const recoveryArtifact = JSON.parse(fs.readFileSync(
+                path.join(reviewsRoot, `${taskId}-full-suite-run-marker-recovery.json`),
+                'utf8'
+            )) as Record<string, unknown>;
+            assert.equal(recoveryArtifact.status, 'DEAD_MARKER');
+            assert.equal(recoveryArtifact.terminal_full_suite_evidence, null);
+            const fullSuiteArtifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
+            assert.equal(fs.existsSync(fullSuiteArtifactPath), false);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('prints a bundle-relative cleanup command outside source checkouts', async () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-bundle-command-'));
         try {
             const taskId = 'T-MARKER-BUNDLE-COMMAND';
@@ -199,7 +327,7 @@ describe('full-suite validation run marker', () => {
             const preflightSha256 = fileSha256(preflightPath) || '';
             writeCurrentMarker({ repoRoot, taskId, preflightPath, preflightSha256 });
 
-            const result = runFullSuiteRunMarkerRecoveryCommand({
+            const result = await runFullSuiteRunMarkerRecoveryCommand({
                 repoRoot,
                 taskId,
                 preflightPath
@@ -213,7 +341,7 @@ describe('full-suite validation run marker', () => {
         }
     });
 
-    it('rejects recovery artifact paths that alias the run marker path', () => {
+    it('rejects recovery artifact paths that alias the run marker path', async () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-alias-'));
         try {
             const taskId = 'T-MARKER-ALIAS';
@@ -224,7 +352,7 @@ describe('full-suite validation run marker', () => {
             const preflightSha256 = fileSha256(preflightPath) || '';
             const markerPath = writeCurrentMarker({ repoRoot, taskId, preflightPath, preflightSha256 });
 
-            assert.throws(
+            await assert.rejects(
                 () => runFullSuiteRunMarkerRecoveryCommand({
                     repoRoot,
                     taskId,
@@ -241,7 +369,7 @@ describe('full-suite validation run marker', () => {
         }
     });
 
-    it('refuses to clear current-cycle markers with Windows descendant process evidence', () => {
+    it('refuses to clear current-cycle markers with Windows descendant process evidence', async () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-descendants-'));
         try {
             const taskId = 'T-MARKER-DESCENDANTS';
@@ -262,7 +390,7 @@ describe('full-suite validation run marker', () => {
                 { ProcessId: 1400, ParentProcessId: 1300, CommandLine: 'powershell.exe nested.ps1' }
             ]);
 
-            const result = runFullSuiteRunMarkerRecoveryCommand({
+            const result = await runFullSuiteRunMarkerRecoveryCommand({
                 repoRoot,
                 taskId,
                 preflightPath,
@@ -283,12 +411,13 @@ describe('full-suite validation run marker', () => {
             assert.equal(artifact.status, 'REFUSED_LIVE_CLEAR');
             const summary = artifact.recovery_summary as { descendant_process_candidates: unknown[] };
             assert.equal(summary.descendant_process_candidates.length, 2);
+            assert.equal(fs.existsSync(path.join(reviewsRoot, `${taskId}-full-suite-validation.json`)), false);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
     });
 
-    it('refuses cleanup when process scanning warning makes descendant state unknown', () => {
+    it('refuses cleanup when process scanning warning makes descendant state unknown', async () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-scan-warning-'));
         try {
             const taskId = 'T-MARKER-SCAN-WARNING';
@@ -305,7 +434,7 @@ describe('full-suite validation run marker', () => {
                 childPid: 1200
             });
 
-            const result = runFullSuiteRunMarkerRecoveryCommand({
+            const result = await runFullSuiteRunMarkerRecoveryCommand({
                 repoRoot,
                 taskId,
                 preflightPath,
@@ -329,7 +458,7 @@ describe('full-suite validation run marker', () => {
         }
     });
 
-    it('refuses to clear stale or unknown marker state automatically', () => {
+    it('refuses to clear stale or unknown marker state automatically', async () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-marker-unknown-'));
         try {
             const taskId = 'T-MARKER-UNKNOWN';
@@ -364,7 +493,7 @@ describe('full-suite validation run marker', () => {
                 }
             }, null, 2)}\n`, 'utf8');
 
-            const result = runFullSuiteRunMarkerRecoveryCommand({
+            const result = await runFullSuiteRunMarkerRecoveryCommand({
                 repoRoot,
                 taskId,
                 preflightPath,

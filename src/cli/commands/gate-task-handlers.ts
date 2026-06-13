@@ -473,7 +473,7 @@ export async function handleFullSuiteRunMarkerRecovery(gateArgv: string[]): Prom
         '--repo-root': { key: 'repoRoot', type: 'string' }
     };
     const { options } = parseOptions(gateArgv, defs);
-    const result = runFullSuiteRunMarkerRecoveryCommand(options);
+    const result = await runFullSuiteRunMarkerRecoveryCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;
