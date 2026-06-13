@@ -41,6 +41,8 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     copyPasteReviewerLaunchPromptSha256?: string | null;
     reviewTreeStateSha256: string | null;
     launchBindingSha256: string;
+    recordReviewerDelegationStartedCommand?: string | null;
+    completeReviewerLaunchCommand?: string | null;
     routingEventSequence: number;
     timelineEvents: readonly ReviewDependencyTimelineEvent[];
 }): string[] {
@@ -83,6 +85,20 @@ export function getCurrentPreparedReviewerLaunchMismatches(options: {
     }
     if (getStringField(options.artifact, 'attestation_source', 'attestationSource', 'source') !== PREPARED_REVIEWER_LAUNCH_ATTESTATION_SOURCE) {
         mismatches.push('attestation_source mismatch');
+    }
+    if (
+        options.recordReviewerDelegationStartedCommand
+        && getStringField(options.artifact, 'record_reviewer_delegation_started_command', 'recordReviewerDelegationStartedCommand')
+            !== options.recordReviewerDelegationStartedCommand
+    ) {
+        mismatches.push('record_reviewer_delegation_started_command mismatch');
+    }
+    if (
+        options.completeReviewerLaunchCommand
+        && getStringField(options.artifact, 'complete_reviewer_launch_command', 'completeReviewerLaunchCommand')
+            !== options.completeReviewerLaunchCommand
+    ) {
+        mismatches.push('complete_reviewer_launch_command mismatch');
     }
     if (!preparedLaunchEventSha256) {
         mismatches.push('prepared_launch_event_sha256 missing');
@@ -343,4 +359,3 @@ export function assertPreparedReviewerLaunchArtifact(options: {
         );
     }
 }
-

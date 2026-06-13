@@ -329,6 +329,19 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assertNoDefaultReviewerReservationGuidance(helpOutput);
     });
 
+    it('includes provider invocation and launch-input evidence in complete launch help', () => {
+        const helpOutput = stripAnsi(buildGateHelpText('complete-reviewer-launch', path.resolve('.')));
+
+        assert.ok(helpOutput.includes('--reviewer-execution-mode "delegated_subagent"'));
+        assert.ok(helpOutput.includes('--provider-invocation-id "<provider-owned invocation id from delegated reviewer launch result>"'));
+        assert.ok(helpOutput.includes('--attestation-source "<provider-owned attestation source from delegated reviewer launch result>"'));
+        assert.ok(helpOutput.includes('--launch-input-mode "launch_artifact_path"'));
+        assert.ok(helpOutput.includes('--launch-input-artifact-path "garda-agent-orchestrator/runtime/tmp/reviews/<task-id>/<review-type>/reviewer-launch-input.json"'));
+        assert.ok(helpOutput.includes('--launch-input-sha256 "<ReviewerLaunchInputArtifactSha256>"'));
+        assert.ok(helpOutput.includes('--fork-context false'));
+        assertNoDefaultReviewerReservationGuidance(helpOutput);
+    });
+
     it('does not treat --help as a standalone help request when it is a string option value', async () => {
         const sourceCheckoutNestedCwd = getSourceCheckoutNestedCwd();
         const result = await runCliWithCapturedOutput([

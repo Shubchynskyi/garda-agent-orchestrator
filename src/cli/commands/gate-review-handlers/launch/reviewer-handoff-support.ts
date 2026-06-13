@@ -1,7 +1,12 @@
 import * as path from 'node:path';
 
+import {
+    getBundleCliCommand,
+    getSourceCliCommand,
+    resolveBundleNameForTarget
+} from '../../../../core/constants';
 import { getProviderEntryById } from '../../../../core/provider-registry';
-import { normalizePath } from '../../../../gates/shared/helpers';
+import { isOrchestratorSourceCheckout, normalizePath } from '../../../../gates/shared/helpers';
 import {
     resolveReviewerHandoffArtifactBinding,
 } from '../../../../gates/review/review-prompt-artifact';
@@ -42,6 +47,12 @@ function toRepoRelativeCommandPath(repoRoot: string, artifactPath: string): stri
     return normalizePath(relativePath);
 }
 
+function buildReviewerHandoffCliPrefix(repoRoot: string): string {
+    return isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(repoRoot));
+}
+
 export function getReviewerScopedDiffHandoffPaths(repoRoot: string, reviewContext: Record<string, unknown>) {
     const scopedDiff = getObjectField(reviewContext, 'scoped_diff');
     if (!scopedDiff) {
@@ -68,8 +79,9 @@ export function buildRecordReviewInvocationCommand(options: {
     reviewContextPath: string;
     reviewerLaunchArtifactPath: string;
 }): string {
+    const cliPrefix = buildReviewerHandoffCliPrefix(options.repoRoot);
     const commandParts = [
-        'node bin/garda.js gate record-review-invocation',
+        `${cliPrefix} gate record-review-invocation`,
         '--task-id', quoteReviewerLaunchCommandValue(options.taskId),
         '--review-type', quoteReviewerLaunchCommandValue(options.reviewType),
         '--review-context-path', quoteReviewerLaunchCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.reviewContextPath)),
@@ -92,8 +104,9 @@ export function buildRecordReviewResultCommand(options: {
     reviewOutputPath: string;
     taskModePath?: string | null;
 }): string {
+    const cliPrefix = buildReviewerHandoffCliPrefix(options.repoRoot);
     const commandParts = [
-        'node bin/garda.js gate record-review-result',
+        `${cliPrefix} gate record-review-result`,
         '--task-id', quoteRecordReviewResultCommandValue(options.taskId),
         '--review-type', quoteRecordReviewResultCommandValue(options.reviewType),
         '--preflight-path', quoteRecordReviewResultCommandValue(toRepoRelativeCommandPath(options.repoRoot, options.preflightPath)),

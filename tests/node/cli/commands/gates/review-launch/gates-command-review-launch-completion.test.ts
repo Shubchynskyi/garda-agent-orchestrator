@@ -387,7 +387,7 @@ describe('cli/commands/gates review launch completion', () => {
         assert.ok(complete.logs.some((line) => line.includes(`LaunchInputArtifactSha256: ${pinnedInputArtifactSha256}`)));
         const recordResultCommand = complete.logs.find((line) => line.startsWith('RecordReviewResultCommand: ')) || '';
         const reviewOutputPath = String(completedArtifact.review_output_path);
-        assert.ok(recordResultCommand.includes('node bin/garda.js gate record-review-result'));
+        assert.ok(recordResultCommand.includes('node garda-agent-orchestrator/bin/garda.js gate record-review-result'));
         assert.ok(recordResultCommand.includes(`--task-id '${taskId}'`));
         assert.ok(recordResultCommand.includes("--review-type 'code'"));
         assert.ok(recordResultCommand.includes(`--preflight-path '${path.relative(repoRoot, fixture.preflightPath).replace(/\\/g, '/')}'`));

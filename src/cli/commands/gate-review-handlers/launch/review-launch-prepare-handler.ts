@@ -20,6 +20,12 @@ import {
     REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION,
     REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION
 } from '../../../../gate-runtime/reviewer-session-contract';
+import {
+    getBundleCliCommand,
+    getSourceCliCommand,
+    resolveBundleNameForTarget
+} from '../../../../core/constants';
+import { isOrchestratorSourceCheckout } from '../../../../gates/shared/helpers';
 import { parseOptions, normalizePathValue } from '../../cli-helpers';
 import { resolveReviewerIdentityOption } from './reviewer-identity-options';
 import {
@@ -41,6 +47,92 @@ function buildReviewerLaunchNextAction(): string {
         `${REVIEWER_REAL_SUBAGENT_OR_STOP_INSTRUCTION} ` +
         'Immediately run record-reviewer-delegation-started with the resolved provider reviewer identity and launch_input evidence, then run complete-reviewer-launch after reviewer completion.'
     );
+}
+
+const RESOLVED_REVIEWER_IDENTITY_PLACEHOLDER = '<agent:resolved-provider-reviewer-id-from-delegated-agent>';
+const PROVIDER_INVOCATION_ID_PLACEHOLDER = '<provider-owned invocation id from delegated reviewer launch result>';
+const PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER = '<provider-owned attestation source from delegated reviewer launch result>';
+
+function quoteLaunchCommandValue(value: string): string {
+    const normalizedValue = value.replace(/\\/g, '/');
+    if (normalizedValue.includes("'")) {
+        throw new Error(`Cannot emit a shell-agnostic copy-paste reviewer launch command for values containing apostrophes: ${normalizedValue}`);
+    }
+    return `'${normalizedValue}'`;
+}
+
+function toRepoRelativeLaunchCommandPath(repoRoot: string, artifactPath: string): string {
+    if (/^<[^>]+>$/.test(String(artifactPath || '').trim())) {
+        return artifactPath;
+    }
+    const relativePath = path.relative(repoRoot, artifactPath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        return normalizePath(artifactPath);
+    }
+    return normalizePath(relativePath);
+}
+
+function buildLaunchCommandCliPrefix(repoRoot: string): string {
+    return isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(repoRoot));
+}
+
+function buildRecordReviewerDelegationStartedCommandTemplate(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewContextPath: string;
+    launchArtifactPath: string;
+    launchInputArtifactPath: string;
+    launchInputArtifactSha256: string;
+}): string {
+    const cliPrefix = buildLaunchCommandCliPrefix(options.repoRoot);
+    return [
+        `${cliPrefix} gate record-reviewer-delegation-started`,
+        '--task-id', quoteLaunchCommandValue(options.taskId),
+        '--review-type', quoteLaunchCommandValue(options.reviewType),
+        '--review-context-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.reviewContextPath)),
+        '--reviewer-execution-mode', quoteLaunchCommandValue('delegated_subagent'),
+        '--reviewer-identity', quoteLaunchCommandValue(RESOLVED_REVIEWER_IDENTITY_PLACEHOLDER),
+        '--reviewer-launch-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchArtifactPath)),
+        '--provider-invocation-id', quoteLaunchCommandValue(PROVIDER_INVOCATION_ID_PLACEHOLDER),
+        '--attestation-source', quoteLaunchCommandValue(PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER),
+        '--launch-input-mode', quoteLaunchCommandValue('launch_artifact_path'),
+        '--launch-input-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchInputArtifactPath)),
+        '--launch-input-sha256', quoteLaunchCommandValue(options.launchInputArtifactSha256),
+        '--fork-context', 'false',
+        '--repo-root', quoteLaunchCommandValue('.')
+    ].join(' ');
+}
+
+function buildCompleteReviewerLaunchCommandTemplate(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewContextPath: string;
+    launchArtifactPath: string;
+    launchInputArtifactPath: string;
+    launchInputArtifactSha256: string;
+}): string {
+    const cliPrefix = buildLaunchCommandCliPrefix(options.repoRoot);
+    return [
+        `${cliPrefix} gate complete-reviewer-launch`,
+        '--task-id', quoteLaunchCommandValue(options.taskId),
+        '--review-type', quoteLaunchCommandValue(options.reviewType),
+        '--review-context-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.reviewContextPath)),
+        '--reviewer-execution-mode', quoteLaunchCommandValue('delegated_subagent'),
+        '--reviewer-identity', quoteLaunchCommandValue(RESOLVED_REVIEWER_IDENTITY_PLACEHOLDER),
+        '--reviewer-launch-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchArtifactPath)),
+        '--provider-invocation-id', quoteLaunchCommandValue(PROVIDER_INVOCATION_ID_PLACEHOLDER),
+        '--attestation-source', quoteLaunchCommandValue(PROVIDER_ATTESTATION_SOURCE_PLACEHOLDER),
+        '--launch-input-mode', quoteLaunchCommandValue('launch_artifact_path'),
+        '--launch-input-artifact-path', quoteLaunchCommandValue(toRepoRelativeLaunchCommandPath(options.repoRoot, options.launchInputArtifactPath)),
+        '--launch-input-sha256', quoteLaunchCommandValue(options.launchInputArtifactSha256),
+        '--fork-context', 'false',
+        '--record-invocation',
+        '--repo-root', quoteLaunchCommandValue('.')
+    ].join(' ');
 }
 
 export interface PrepareReviewerLaunchHandlerDependencies {
@@ -304,6 +396,25 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             evidenceManifestSha256: handoffBindings.evidenceManifestSha256,
             reviewOutputPath: toReviewerHandoffAbsolutePath(repoRoot, reviewOutputPath)
         });
+        const existingLaunchInputArtifactSha256 = fileSha256(launchInputArtifactPath) || '';
+        const recordReviewerDelegationStartedCommand = buildRecordReviewerDelegationStartedCommandTemplate({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewContextPath: contextPath,
+            launchArtifactPath,
+            launchInputArtifactPath,
+            launchInputArtifactSha256: existingLaunchInputArtifactSha256
+        });
+        const completeReviewerLaunchCommand = buildCompleteReviewerLaunchCommandTemplate({
+            repoRoot,
+            taskId,
+            reviewType,
+            reviewContextPath: contextPath,
+            launchArtifactPath,
+            launchInputArtifactPath,
+            launchInputArtifactSha256: existingLaunchInputArtifactSha256
+        });
         const preparedMismatches = getCurrentPreparedReviewerLaunchMismatches({
             artifactPath: launchArtifactPath,
             artifact: existingArtifact,
@@ -323,6 +434,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             copyPasteReviewerLaunchPromptSha256: stringSha256(copyPasteReviewerLaunchPrompt),
             reviewTreeStateSha256: reviewTreeStateSha256 || null,
             launchBindingSha256,
+            recordReviewerDelegationStartedCommand,
+            completeReviewerLaunchCommand,
             routingEventSequence: routingEvent.sequence,
             timelineEvents
         });
@@ -332,7 +445,6 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             && preparedMismatches.length === 0
         ) {
             const existingLaunchArtifactSha256 = fileSha256(launchArtifactPath) || '';
-            const existingLaunchInputArtifactSha256 = fileSha256(launchInputArtifactPath) || '';
             console.log(`REVIEWER_LAUNCH_PREPARED: ${reviewType}`);
             console.log(`ReviewerIdentity: ${reviewerIdentity}`);
             console.log(`RepoRoot: ${toReviewerHandoffAbsolutePath(repoRoot, repoRoot)}`);
@@ -370,6 +482,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
             console.log('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256; launch_input_sha256 and launch_input_artifact_sha256 are artifact JSON fields, not CLI flags.');
             console.log('AttestationState: prepared');
             console.log('SupersededLaunchArtifact: none');
+            console.log(`RecordReviewerDelegationStartedCommand: ${recordReviewerDelegationStartedCommand}`);
+            console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
             printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
             console.log(`NextAction: existing reviewer launch metadata is current; ${buildReviewerLaunchNextAction()}`);
             return;
@@ -611,13 +725,37 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
         copyPasteReviewerLaunchPromptSha256,
         reviewTreeStateSha256
     });
-    const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
     const launchInputArtifactSha256 = fileSha256(launchInputArtifactPath) || '';
     if (launchInputArtifactSha256 !== pinnedReviewerLaunchInputArtifactSha256) {
         throw new Error(
             'Reviewer launch input artifact must remain byte-for-byte identical to the immutable prepare-time handoff copy.'
         );
     }
+    const recordReviewerDelegationStartedCommand = buildRecordReviewerDelegationStartedCommandTemplate({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewContextPath: contextPath,
+        launchArtifactPath,
+        launchInputArtifactPath,
+        launchInputArtifactSha256
+    });
+    const completeReviewerLaunchCommand = buildCompleteReviewerLaunchCommandTemplate({
+        repoRoot,
+        taskId,
+        reviewType,
+        reviewContextPath: contextPath,
+        launchArtifactPath,
+        launchInputArtifactPath,
+        launchInputArtifactSha256
+    });
+    const preparedArtifactWithCommands = {
+        ...preparedArtifactWithPinnedInput,
+        record_reviewer_delegation_started_command: recordReviewerDelegationStartedCommand,
+        complete_reviewer_launch_command: completeReviewerLaunchCommand
+    };
+    writeReviewArtifactJson(launchArtifactPath, preparedArtifactWithCommands);
+    const launchArtifactSha256 = fileSha256(launchArtifactPath) || '';
 
     console.log(`REVIEWER_LAUNCH_PREPARED: ${reviewType}`);
     console.log(`ReviewerIdentity: ${reviewerIdentity}`);
@@ -666,6 +804,8 @@ return async function handlePrepareReviewerLaunch(gateArgv: string[]): Promise<v
     console.log(`TrustBoundary: ${LOCAL_REVIEWER_LAUNCH_TRUST_BOUNDARY}`);
     console.log(`RequiredCompletedFields: ${REVIEWER_LAUNCH_COMPLETION_FIELD_HINTS.join('; ')}`);
     console.log(`PreservePreparedFields: ${preservePreparedFields.join(', ')}`);
+    console.log(`RecordReviewerDelegationStartedCommand: ${recordReviewerDelegationStartedCommand}`);
+    console.log(`CompleteReviewerLaunchCommand: ${completeReviewerLaunchCommand}`);
     console.log(`RecordInvocationCommand: ${recordInvocationCommand}`);
     printCopyPasteReviewerLaunchPrompt(copyPasteReviewerLaunchPrompt);
     console.log(`NextAction: ${buildReviewerLaunchNextAction()}`);

@@ -186,6 +186,34 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         ]);
         assert.ok(String(launchArtifact.record_invocation_command).includes('gate record-review-invocation'));
         assert.ok(String(launchArtifact.record_invocation_command).includes(`--reviewer-identity "${fixture.reviewerIdentity}"`));
+        const commandReviewContextPath = path.relative(repoRoot, fixture.reviewContextPath).replace(/\\/g, '/');
+        const commandLaunchArtifactPath = path.relative(repoRoot, launchArtifactPath).replace(/\\/g, '/');
+        const commandLaunchInputArtifactPath = path.relative(repoRoot, launchInputArtifactPath).replace(/\\/g, '/');
+        const recordDelegationCommand = String(launchArtifact.record_reviewer_delegation_started_command);
+        assert.ok(recordDelegationCommand.includes('gate record-reviewer-delegation-started'));
+        assert.ok(recordDelegationCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
+        assert.ok(recordDelegationCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
+        assert.ok(recordDelegationCommand.includes("--reviewer-identity '<agent:resolved-provider-reviewer-id-from-delegated-agent>'"));
+        assert.ok(recordDelegationCommand.includes(`--reviewer-launch-artifact-path '${commandLaunchArtifactPath}'`));
+        assert.ok(recordDelegationCommand.includes("--provider-invocation-id '<provider-owned invocation id from delegated reviewer launch result>'"));
+        assert.ok(recordDelegationCommand.includes("--attestation-source '<provider-owned attestation source from delegated reviewer launch result>'"));
+        assert.ok(recordDelegationCommand.includes("--launch-input-mode 'launch_artifact_path'"));
+        assert.ok(recordDelegationCommand.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`));
+        assert.ok(recordDelegationCommand.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`));
+        assert.ok(recordDelegationCommand.includes('--fork-context false'));
+        const completeLaunchCommand = String(launchArtifact.complete_reviewer_launch_command);
+        assert.ok(completeLaunchCommand.includes('gate complete-reviewer-launch'));
+        assert.ok(completeLaunchCommand.includes(`--review-context-path '${commandReviewContextPath}'`));
+        assert.ok(completeLaunchCommand.includes("--reviewer-execution-mode 'delegated_subagent'"));
+        assert.ok(completeLaunchCommand.includes("--reviewer-identity '<agent:resolved-provider-reviewer-id-from-delegated-agent>'"));
+        assert.ok(completeLaunchCommand.includes(`--reviewer-launch-artifact-path '${commandLaunchArtifactPath}'`));
+        assert.ok(completeLaunchCommand.includes("--provider-invocation-id '<provider-owned invocation id from delegated reviewer launch result>'"));
+        assert.ok(completeLaunchCommand.includes("--attestation-source '<provider-owned attestation source from delegated reviewer launch result>'"));
+        assert.ok(completeLaunchCommand.includes("--launch-input-mode 'launch_artifact_path'"));
+        assert.ok(completeLaunchCommand.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`));
+        assert.ok(completeLaunchCommand.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`));
+        assert.ok(completeLaunchCommand.includes('--fork-context false'));
+        assert.ok(completeLaunchCommand.includes('--record-invocation'));
         assert.ok(String(launchArtifact.next_action).includes('Launch a real subagent using built-in tools'));
         assert.ok(String(launchArtifact.next_action).includes('if for some reason that is impossible right now, you must stop and report this to the user'));
         assert.ok(String(launchArtifact.next_action).includes('this is expected behavior in this repository'));
@@ -230,7 +258,13 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('RequiredCompletedFields:')));
         assert.ok(capturedLogs.some((line) => line.includes('launch_input_sha256=<ReviewerLaunchInputArtifactSha256 for launch_artifact_path, or CopyPasteReviewerLaunchPromptSha256>')));
         assert.ok(capturedLogs.some((line) => line.includes('PreservePreparedFields: review_context_sha256')));
-        assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node bin/garda.js gate record-review-invocation')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
+        assert.ok(capturedLogs.some((line) => line.includes(`--launch-input-artifact-path '${commandLaunchInputArtifactPath}'`)));
+        assert.ok(capturedLogs.some((line) => line.includes(`--launch-input-sha256 '${pinnedInputArtifactSha256}'`)));
+        assert.ok(capturedLogs.some((line) => line.includes('--fork-context false')));
+        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.ok(capturedLogs.some((line) => line.includes('--record-invocation')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordInvocationCommand: node garda-agent-orchestrator/bin/garda.js gate record-review-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('CopyPasteReviewerLaunchPrompt:')));
         assert.ok(capturedLogs.some((line) => line.includes('First open and read RolePromptPath:')));
         assert.ok(capturedLogs.some((line) => line.includes(`RolePromptSha256: ${rolePromptSha256}`)));
@@ -249,6 +283,120 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
         assertNoDefaultReviewerReservationGuidance(capturedLogs.join('\n'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch single-quotes shell-substitution metacharacters in launch commands', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-shell-safe';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const dangerousSegment = 'reviewer-$(whoami)`x';
+        const launchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            dangerousSegment,
+            'reviewer-launch.json'
+        );
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.equal(result.exitCode, 0, result.errors.join('\n') || result.logs.join('\n'));
+        const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const quoteLaunchCommandValueForTest = (value: string): string => `'${value.replace(/\\/g, '/')}'`;
+        const commandLaunchArtifactPath = quoteLaunchCommandValueForTest(path.relative(repoRoot, launchArtifactPath));
+        const commandLaunchInputArtifactPath = quoteLaunchCommandValueForTest(path.relative(repoRoot, launchInputArtifactPath));
+        const recordDelegationCommand = String(launchArtifact.record_reviewer_delegation_started_command);
+        const completeLaunchCommand = String(launchArtifact.complete_reviewer_launch_command);
+
+        assert.ok(recordDelegationCommand.includes(`--reviewer-launch-artifact-path ${commandLaunchArtifactPath}`));
+        assert.ok(recordDelegationCommand.includes(`--launch-input-artifact-path ${commandLaunchInputArtifactPath}`));
+        assert.ok(completeLaunchCommand.includes(`--reviewer-launch-artifact-path ${commandLaunchArtifactPath}`));
+        assert.ok(completeLaunchCommand.includes(`--launch-input-artifact-path ${commandLaunchInputArtifactPath}`));
+        assert.ok(!recordDelegationCommand.includes('--reviewer-launch-artifact-path "'));
+        assert.ok(!recordDelegationCommand.includes('--launch-input-artifact-path "'));
+        assert.ok(!completeLaunchCommand.includes('--reviewer-launch-artifact-path "'));
+        assert.ok(!completeLaunchCommand.includes('--launch-input-artifact-path "'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch uses source-checkout CLI prefix for source workspaces', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-source-prefix';
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n', 'utf8');
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', fixture.launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.equal(result.exitCode, 0, result.errors.join('\n') || result.logs.join('\n'));
+        const launchArtifact = JSON.parse(fs.readFileSync(fixture.launchArtifactPath, 'utf8'));
+        assert.match(String(launchArtifact.record_reviewer_delegation_started_command), /^node bin\/garda\.js gate record-reviewer-delegation-started /);
+        assert.match(String(launchArtifact.complete_reviewer_launch_command), /^node bin\/garda\.js gate complete-reviewer-launch /);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('prepare-reviewer-launch rejects apostrophes instead of emitting shell-specific copy-paste commands', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-266-prepare-launch-apostrophe-path';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(
+            repoRoot,
+            'garda-agent-orchestrator',
+            'runtime',
+            'tmp',
+            'reviews',
+            taskId,
+            'code',
+            "reviewer'quote",
+            'reviewer-launch.json'
+        );
+
+        const result = await runCliWithCapturedOutput([
+            'gate',
+            'prepare-reviewer-launch',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(result.exitCode, 0);
+        assert.match(result.errors.join('\n') || result.logs.join('\n'), /Cannot emit a shell-agnostic copy-paste reviewer launch command/);
+        if (fs.existsSync(launchArtifactPath)) {
+            const launchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+            assert.equal(launchArtifact.record_reviewer_delegation_started_command, undefined);
+            assert.equal(launchArtifact.complete_reviewer_launch_command, undefined);
+        }
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -627,6 +775,9 @@ describe('cli/commands/gates review launch prepared metadata', () => {
         assert.ok(capturedLogs.some((line) => line.includes('NextAction: existing reviewer launch metadata is current')));
         assert.ok(capturedLogs.some((line) => line.includes('LaunchInputCliFlagHelp: for launch_artifact_path mode, pass ReviewerLaunchInputArtifactSha256 to --launch-input-sha256')));
         assert.ok(capturedLogs.some((line) => line.includes('OneShotLaunchState: default_handoff_ready_not_review_evidence')));
+        assert.ok(capturedLogs.some((line) => line.includes('RecordReviewerDelegationStartedCommand: node garda-agent-orchestrator/bin/garda.js gate record-reviewer-delegation-started')));
+        assert.ok(capturedLogs.some((line) => line.includes('CompleteReviewerLaunchCommand: node garda-agent-orchestrator/bin/garda.js gate complete-reviewer-launch')));
+        assert.ok(capturedLogs.some((line) => line.includes('--record-invocation')));
         assert.ok(capturedLogs.some((line) => line.includes('Launch a real subagent using built-in tools')));
         assert.ok(capturedLogs.some((line) => line.includes('if for some reason that is impossible right now, you must stop and report this to the user')));
         assert.ok(capturedLogs.some((line) => line.includes('this is expected behavior in this repository')));
