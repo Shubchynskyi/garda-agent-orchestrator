@@ -9,7 +9,6 @@ import { DEFAULT_BUNDLE_NAME } from '../../../src/core/constants';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 import { handleSetup } from '../../../src/cli/commands/setup';
 import { handleGate } from '../../../src/cli/commands/gate-command';
-import { buildReviewReceiptReviewerInvocationProvenance } from '../../../src/gate-runtime/review-context';
 import { runAgentInit } from '../../../src/lifecycle/agent-init';
 import { resolveNextStep } from '../../../src/gates/next-step';
 import {
@@ -113,55 +112,6 @@ function materializeProjectMemory(bundleRoot: string): void {
             ].join('\n')
         );
     }
-}
-
-function syncReviewReceiptToCurrentCycle(
-    repoRoot: string,
-    taskId: string,
-    reviewType: string,
-    reviewerIdentity: string,
-    reviewContextPath: string,
-    reviewOutputPath: string
-): void {
-    const receiptPath = path.join(repoRoot, DEFAULT_BUNDLE_NAME, 'runtime', 'reviews', `${taskId}-${reviewType}-receipt.json`);
-    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8')) as Record<string, unknown>;
-    const reviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
-    const treeState = reviewContext.tree_state && typeof reviewContext.tree_state === 'object' && !Array.isArray(reviewContext.tree_state)
-        ? reviewContext.tree_state as Record<string, unknown>
-        : null;
-    const reviewContextSha256 = createHash('sha256').update(fs.readFileSync(reviewContextPath)).digest('hex');
-    const reviewTreeStateSha256 = String(treeState?.tree_state_sha256 || treeState?.treeStateSha256 || '').trim().toLowerCase() || null;
-    const invocationEvent = [...readTaskTimelineEvents(repoRoot, taskId)].reverse().find((event) => {
-        if (String(event.event_type || '').trim() !== 'REVIEWER_INVOCATION_ATTESTED') {
-            return false;
-        }
-        const details = event.details && typeof event.details === 'object'
-            ? event.details as Record<string, unknown>
-            : {};
-        return String(details.review_type || '').trim() === reviewType
-            && String(details.reviewer_identity || details.reviewer_session_id || '').trim() === reviewerIdentity;
-    });
-    assert.ok(invocationEvent, `Missing invocation attestation for ${taskId}/${reviewType}.`);
-    const provenance = buildReviewReceiptReviewerInvocationProvenance(
-        String(invocationEvent.event_type || ''),
-        invocationEvent.integrity as any,
-        invocationEvent.details
-    );
-    assert.ok(provenance, `Missing valid reviewer provenance for ${taskId}/${reviewType}.`);
-    const mutableProvenance = provenance as unknown as Record<string, unknown>;
-    mutableProvenance.review_context_sha256 = reviewContextSha256;
-    mutableProvenance.review_tree_state_sha256 = reviewTreeStateSha256;
-    receipt.review_context_sha256 = reviewContextSha256;
-    receipt.review_tree_state_sha256 = reviewTreeStateSha256;
-    receipt.reviewer_identity = reviewerIdentity;
-    receipt.reviewer_execution_mode = 'delegated_subagent';
-    receipt.trust_level = 'INDEPENDENT_AUDITED';
-    receipt.review_result_recorded_at_utc = receipt.recorded_at_utc ?? new Date().toISOString();
-    if (fs.existsSync(reviewOutputPath) && fs.statSync(reviewOutputPath).isFile()) {
-        receipt.review_output_source_mtime_utc = fs.statSync(reviewOutputPath).mtime.toISOString();
-    }
-    receipt.reviewer_provenance = mutableProvenance;
-    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
 }
 
 function seedFixtureProject(workspaceRoot: string): void {
@@ -338,6 +288,10 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
     const reviewerLaunchArtifactPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'reviewer-launch.json');
     const reviewerLaunchInputArtifactPath = path.join(bundleRoot, 'runtime', 'tmp', 'reviews', TASK_ID, 'test', 'reviewer-launch-input.json');
     const reviewReceiptPath = path.join(bundleRoot, 'runtime', 'reviews', `${TASK_ID}-test-receipt.json`);
+    const plannedReviewerIdentity = `agent:pending:${TASK_ID}-test`;
+    const resolvedReviewerIdentity = 'agent:e2e-provider-resolved-test-reviewer';
+    const providerInvocationId = 'provider-e2e-test-reviewer-001';
+    const attestationSource = 'test_provider_controller';
 
     try {
         runGit(workspaceRoot, ['init']);
@@ -487,9 +441,11 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--task-id', TASK_ID,
             '--review-type', 'test',
             '--review-context-path', reviewContextPath,
-            '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', 'agent:e2e-test-reviewer'
+            '--reviewer-execution-mode', 'delegated_subagent'
         ]);
+        const routedReviewContext = JSON.parse(fs.readFileSync(reviewContextPath, 'utf8')) as Record<string, unknown>;
+        const routedMetadata = routedReviewContext.reviewer_routing as Record<string, unknown>;
+        assert.equal(routedMetadata.reviewer_session_id, plannedReviewerIdentity);
 
         assertNextGate(workspaceRoot, 'prepare-reviewer-launch');
         await runReviewGateCommand(workspaceRoot, [
@@ -498,9 +454,12 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--review-type', 'test',
             '--review-context-path', reviewContextPath,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', 'agent:e2e-test-reviewer',
             '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath
         ]);
+        const preparedLaunchArtifact = JSON.parse(fs.readFileSync(reviewerLaunchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(preparedLaunchArtifact.reviewer_identity, plannedReviewerIdentity);
+        assert.equal(preparedLaunchArtifact.planned_reviewer_identity, plannedReviewerIdentity);
+        assert.equal(String(preparedLaunchArtifact.record_invocation_command || '').includes(plannedReviewerIdentity), true);
 
         assertNextGate(workspaceRoot, 'record-reviewer-delegation-started');
         const preparedReviewerLaunchInputArtifactSha256 = createHash('sha256')
@@ -512,16 +471,21 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--review-type', 'test',
             '--review-context-path', reviewContextPath,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', 'agent:e2e-test-reviewer',
+            '--reviewer-identity', resolvedReviewerIdentity,
             '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
-            '--provider-invocation-id', 'codex-e2e-test-reviewer-001',
-            '--attestation-source', 'codex_agent_launch',
+            '--provider-invocation-id', providerInvocationId,
+            '--attestation-source', attestationSource,
             '--launch-input-mode', 'launch_artifact_path',
             '--launch-input-artifact-path', reviewerLaunchInputArtifactPath,
             '--launch-input-sha256', preparedReviewerLaunchInputArtifactSha256,
             '--fresh-context',
             '--fork-context', 'false'
         ]);
+        const startedLaunchArtifact = JSON.parse(fs.readFileSync(reviewerLaunchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(startedLaunchArtifact.reviewer_identity, resolvedReviewerIdentity);
+        assert.equal(startedLaunchArtifact.planned_reviewer_identity, plannedReviewerIdentity);
+        assert.equal(String(startedLaunchArtifact.record_invocation_command || '').includes(resolvedReviewerIdentity), true);
+        assert.equal(String(startedLaunchArtifact.record_invocation_command || '').includes(plannedReviewerIdentity), false);
         await new Promise((resolve) => setTimeout(resolve, 10_100));
 
         assertNextGate(workspaceRoot, 'complete-reviewer-launch');
@@ -531,10 +495,10 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--review-type', 'test',
             '--review-context-path', reviewContextPath,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', 'agent:e2e-test-reviewer',
+            '--reviewer-identity', resolvedReviewerIdentity,
             '--reviewer-launch-artifact-path', reviewerLaunchArtifactPath,
-            '--provider-invocation-id', 'codex-e2e-test-reviewer-001',
-            '--attestation-source', 'codex_agent_launch',
+            '--provider-invocation-id', providerInvocationId,
+            '--attestation-source', attestationSource,
             '--launch-input-mode', 'launch_artifact_path',
             '--launch-input-artifact-path', reviewerLaunchInputArtifactPath,
             '--launch-input-sha256', preparedReviewerLaunchInputArtifactSha256,
@@ -542,6 +506,19 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--fork-context', 'false',
             '--record-invocation'
         ]);
+        const completedLaunchArtifact = JSON.parse(fs.readFileSync(reviewerLaunchArtifactPath, 'utf8')) as Record<string, unknown>;
+        assert.equal(completedLaunchArtifact.attestation_state, 'launched');
+        assert.equal(completedLaunchArtifact.reviewer_identity, resolvedReviewerIdentity);
+        assert.equal(completedLaunchArtifact.planned_reviewer_identity, plannedReviewerIdentity);
+        assert.ok(readTaskTimelineEvents(workspaceRoot, TASK_ID).some((event) => {
+            if (String(event.event_type || '').trim() !== 'REVIEWER_INVOCATION_ATTESTED') {
+                return false;
+            }
+            const details = event.details && typeof event.details === 'object'
+                ? event.details as Record<string, unknown>
+                : {};
+            return String(details.reviewer_identity || details.reviewer_session_id || '').trim() === resolvedReviewerIdentity;
+        }), 'Expected complete-reviewer-launch --record-invocation to record resolved reviewer invocation telemetry.');
 
         assertNextGate(workspaceRoot, 'record-review-result');
 
@@ -573,17 +550,9 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             '--review-context-path', reviewContextPath,
             '--review-output-path', reviewOutputPath,
             '--reviewer-execution-mode', 'delegated_subagent',
-            '--reviewer-identity', 'agent:e2e-test-reviewer'
+            '--reviewer-identity', resolvedReviewerIdentity
         ]);
         assert.ok(fs.existsSync(reviewReceiptPath), `Expected review receipt at ${reviewReceiptPath}.`);
-        syncReviewReceiptToCurrentCycle(
-            workspaceRoot,
-            TASK_ID,
-            'test',
-            'agent:e2e-test-reviewer',
-            reviewContextPath,
-            reviewOutputPath
-        );
         if (resolveNextStep({ taskId: TASK_ID, repoRoot: workspaceRoot }).next_gate === 'record-review-result') {
             await runReviewGateCommand(workspaceRoot, [
                 'record-review-result',
@@ -593,16 +562,8 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
                 '--review-context-path', reviewContextPath,
                 '--review-output-path', materializedReviewOutputPath,
                 '--reviewer-execution-mode', 'delegated_subagent',
-                '--reviewer-identity', 'agent:e2e-test-reviewer'
+                '--reviewer-identity', resolvedReviewerIdentity
             ]);
-            syncReviewReceiptToCurrentCycle(
-                workspaceRoot,
-                TASK_ID,
-                'test',
-                'agent:e2e-test-reviewer',
-                reviewContextPath,
-                materializedReviewOutputPath
-            );
         }
 
         assertNextGate(workspaceRoot, 'required-reviews-check');
@@ -660,6 +621,7 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             'REVIEW_PHASE_STARTED',
             'REVIEWER_DELEGATION_ROUTED',
             'REVIEWER_LAUNCH_PREPARED',
+            'REVIEWER_DELEGATION_STARTED',
             'REVIEWER_INVOCATION_ATTESTED',
             'REVIEW_RECORDED',
             'REVIEW_GATE_PASSED',

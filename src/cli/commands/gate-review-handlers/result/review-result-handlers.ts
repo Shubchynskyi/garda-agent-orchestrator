@@ -22,6 +22,8 @@ import {
     REVIEWER_CLEANUP_AFTER_RECEIPT_INSTRUCTION
 } from '../../../../gate-runtime/reviewer-session-contract';
 import {
+    buildPlannedReviewerIdentity,
+    isResolvedReviewerIdentity,
     isPlannedReviewerIdentity
 } from '../../../../gate-runtime/review/reviewer-identity-contract';
 import {
@@ -409,6 +411,18 @@ async function recordReviewReceiptFromArtifacts(options: {
         options.reviewerExecutionMode,
         routingReviewerIdentity,
         options.reviewerFallbackReason
+    ) || (
+        explicitRoutingReviewerIdentity && explicitRoutingReviewerIdentity !== options.reviewerIdentity
+            ? null
+            : isResolvedReviewerIdentity(options.reviewerIdentity)
+                ? dependencies.findMatchingRoutingEvent(
+                    timelineEvents,
+                    options.reviewType,
+                    options.reviewerExecutionMode,
+                    buildPlannedReviewerIdentity(options.taskId, options.reviewType),
+                    options.reviewerFallbackReason
+                )
+                : null
     );
     if (!routingEvent) {
         throw new Error(
@@ -431,15 +445,30 @@ async function recordReviewReceiptFromArtifacts(options: {
     }
     const invocationReviewContextSha256 = String(options.invocationReviewContextSha256 || '').trim().toLowerCase()
         || contextSha256;
+    const reviewTreeStateSha256 = dependencies.getReviewTreeStateSha256(parsedReviewContext) || null;
     const invocationEvent = dependencies.findMatchingReviewerInvocationAttestationEvent(timelineEvents, {
         taskId: options.taskId,
         reviewType: options.reviewType,
         reviewerExecutionMode: options.reviewerExecutionMode,
         reviewerIdentity: options.reviewerIdentity,
         reviewContextSha256: invocationReviewContextSha256,
-        reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
+        reviewTreeStateSha256,
         routingEventSha256: routingEventProvenance.event_sha256
-    });
+    }) || (
+        isResolvedReviewerIdentity(options.reviewerIdentity)
+            ? [...timelineEvents].reverse().find((entry) => {
+                const details = entry.details;
+                return entry.event_type === 'REVIEWER_INVOCATION_ATTESTED'
+                    && String(details?.task_id || details?.taskId || '').trim() === options.taskId
+                    && String(details?.review_type || details?.reviewType || '').trim().toLowerCase() === options.reviewType
+                    && String(details?.reviewer_execution_mode || details?.reviewerExecutionMode || '').trim() === options.reviewerExecutionMode
+                    && String(details?.reviewer_identity || details?.reviewer_session_id || '').trim() === options.reviewerIdentity
+                    && String(details?.routing_event_sha256 || details?.routingEventSha256 || '').trim().toLowerCase() === routingEventProvenance.event_sha256
+                    && (!reviewTreeStateSha256 || String(details?.review_tree_state_sha256 || details?.reviewTreeStateSha256 || '').trim().toLowerCase() === reviewTreeStateSha256)
+                    && entry.integrity;
+            }) || null
+            : null
+    );
     const reviewerProvenance = buildReviewReceiptReviewerInvocationProvenance(
         invocationEvent?.event_type || '',
         invocationEvent?.integrity,
@@ -488,7 +517,7 @@ async function recordReviewReceiptFromArtifacts(options: {
             changedFiles: Array.isArray(preflight.changed_files) ? preflight.changed_files as string[] : []
         }),
         reviewContextSha256: contextSha256,
-        reviewTreeStateSha256: dependencies.getReviewTreeStateSha256(parsedReviewContext) || null,
+        reviewTreeStateSha256,
         reviewContextReuseSha256: computeReviewContextReuseHash(parsedReviewContext),
         reviewArtifactSha256: artifactSha256,
         reviewerExecutionMode: options.reviewerExecutionMode,

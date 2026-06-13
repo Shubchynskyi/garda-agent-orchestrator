@@ -41,6 +41,7 @@ export interface CurrentReviewerLaunchArtifactEvidence {
     launchInputArtifactSha256: string | null;
     reviewOutputPath: string | null;
     reviewerIdentity: string | null;
+    reviewContextSha256: string | null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -384,7 +385,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
         launchInputArtifactPath: null,
         launchInputArtifactSha256: null,
         reviewOutputPath: null,
-        reviewerIdentity: null
+        reviewerIdentity: null,
+        reviewContextSha256: null
     };
     const contextReviewerIdentity = String(state.contextReviewerIdentity || '').trim();
     const reviewerIdentity = contextReviewerIdentity || buildPlannedReviewerIdentity(taskId, state.reviewType);
@@ -443,6 +445,30 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 'reviewer_session_id',
                 'reviewerSessionId'
             );
+            const artifactReviewContextSha256 = getArtifactStringField(
+                launchArtifact,
+                'review_context_sha256',
+                'reviewContextSha256'
+            ).toLowerCase();
+            const preparedEventReviewContextSha256 = String(
+                details.review_context_sha256 || details.reviewContextSha256 || ''
+            ).trim().toLowerCase();
+            const artifactReviewTreeStateSha256 = getArtifactStringField(
+                launchArtifact,
+                'review_tree_state_sha256',
+                'reviewTreeStateSha256'
+            ).toLowerCase();
+            const currentContextShaMatches = artifactReviewContextSha256 === reviewContextSha256
+                && preparedEventReviewContextSha256 === reviewContextSha256;
+            const launchBoundContextMatchesCurrentTree = Boolean(
+                /^[0-9a-f]{64}$/.test(artifactReviewContextSha256)
+                && artifactReviewContextSha256 === preparedEventReviewContextSha256
+                && artifactReviewTreeStateSha256
+                && artifactReviewTreeStateSha256 === String(state.contextReviewTreeStateSha256 || '').trim().toLowerCase()
+            );
+            const matchedReviewContextSha256 = currentContextShaMatches || launchBoundContextMatchesCurrentTree
+                ? artifactReviewContextSha256
+                : '';
             const launchBindingSha256 = getArtifactStringField(
                 launchArtifact,
                 'launch_binding_sha256',
@@ -464,7 +490,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     artifactPlannedReviewerIdentity,
                     artifactResolvedReviewerIdentity: artifactReviewerIdentity
                 })
-                || getArtifactStringField(launchArtifact, 'review_context_sha256', 'reviewContextSha256').toLowerCase() !== reviewContextSha256
+                || !matchedReviewContextSha256
                 || getArtifactStringField(launchArtifact, 'routing_event_sha256', 'routingEventSha256').toLowerCase() !== routingEventSha256
                 || String(details.review_type || '').trim() !== state.reviewType
                 || String(details.reviewer_execution_mode || '').trim() !== 'delegated_subagent'
@@ -475,7 +501,6 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     reviewType: state.reviewType,
                     plannedReviewerIdentity
                 })
-                || String(details.review_context_sha256 || '').trim().toLowerCase() !== reviewContextSha256
                 || String(details.routing_event_sha256 || '').trim().toLowerCase() !== routingEventSha256
                 || String(details.launch_binding_sha256 || '').trim().toLowerCase() !== launchBindingSha256
             ) {
@@ -502,7 +527,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                     reviewType: state.reviewType,
                     reviewerIdentity,
                     plannedReviewerIdentity,
-                    reviewContextSha256,
+                    reviewContextSha256: matchedReviewContextSha256,
                     routingEventSha256,
                     launchBindingSha256,
                     preparedLaunchEventSha256,
@@ -565,7 +590,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 launchInputArtifactPath,
                 launchInputArtifactSha256,
                 reviewOutputPath,
-                reviewerIdentity: artifactReviewerIdentity || null
+                reviewerIdentity: artifactReviewerIdentity || null,
+                reviewContextSha256: matchedReviewContextSha256 || null
             };
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
@@ -700,7 +726,7 @@ export function timelineHasDelegatedReviewInvocationForCurrentContext(
             })
             || !reviewContextSha256Candidates.includes(
                 String(details.review_context_sha256 || '').trim().toLowerCase()
-            )
+            ) && String(details.review_context_sha256 || '').trim().toLowerCase() !== reviewerLaunchArtifactEvidence.reviewContextSha256
             || String(details.review_tree_state_sha256 || '').trim().toLowerCase() !== reviewTreeStateSha256
             || String(details.routing_event_sha256 || '').trim().toLowerCase() !== routingEventSha256
             || String(details.reviewer_launch_artifact_sha256 || '').trim().toLowerCase() !== reviewerLaunchArtifactEvidence.sha256
