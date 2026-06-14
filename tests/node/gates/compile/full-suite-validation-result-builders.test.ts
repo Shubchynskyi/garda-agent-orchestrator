@@ -281,6 +281,57 @@ describe('gates/full-suite-validation', () => {
             assert.ok(text.includes('PerformanceMode: mode=optimized_sharded; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run test:sharded"; fallback_command="npm test"'));
         });
 
+        it('formatFullSuiteValidationResult surfaces top failure diagnostics', () => {
+            const config = {
+                ...loadFullSuiteValidationConfig('/nonexistent'),
+                enabled: true,
+                command: 'npm run test:sharded'
+            };
+            const result = {
+                ...buildValidationResult(config, 1, false, ['not ok 1 - failing test'], null, ['src/changed.ts'], {
+                    task_id: 'T-123',
+                    preflight_path: 'runtime/reviews/T-123-preflight.json',
+                    preflight_sha256: 'abc123',
+                    compile_gate_timestamp: null
+                }),
+                failure_evidence: {
+                    schema_version: 1 as const,
+                    task_id: 'T-123',
+                    status: 'FAILED' as const,
+                    command: 'npm run test:sharded',
+                    exit_code: 1,
+                    timed_out: false,
+                    output_artifact_path: 'runtime/reviews/T-123-full-suite-output.log',
+                    summary_artifact_path: 'runtime/reviews/T-123-full-suite-failure-evidence/summary.json',
+                    copied_logs: [],
+                    copied_logs_count: 0,
+                    max_copied_logs: 6,
+                    max_log_chars: 200000,
+                    failure_kind: 'assertion' as const,
+                    top_failures: [{
+                        kind: 'assertion' as const,
+                        summary: 'AssertionError [ERR_ASSERTION]: expected true',
+                        source: 'copied_log' as const,
+                        source_path: '.node-build/test-shard-logs/run-1/shard-01-of-02.log',
+                        artifact_path: 'runtime/reviews/T-123-full-suite-failure-evidence/shard-log-01.log',
+                        test_name: 'fails usefully',
+                        file_path: 'tests/node/failing.test.ts',
+                        line: 12
+                    }],
+                    failure_chunks: [],
+                    compact_summary: [],
+                    last_output_lines: [],
+                    shard_diagnostics: [],
+                    timeout_diagnostics: []
+                }
+            };
+            const text = formatFullSuiteValidationResult(result);
+
+            assert.ok(text.includes('FailureEvidence: summary=runtime/reviews/T-123-full-suite-failure-evidence/summary.json; copied_logs=0; kind=assertion; top_failures=1'));
+            assert.ok(text.includes('TopFailures:'));
+            assert.ok(text.includes('kind=assertion; test=fails usefully; file=tests/node/failing.test.ts:12; artifact=runtime/reviews/T-123-full-suite-failure-evidence/shard-log-01.log; source=.node-build/test-shard-logs/run-1/shard-01-of-02.log; summary=AssertionError [ERR_ASSERTION]: expected true'));
+        });
+
         it('formatFullSuiteValidationResult labels reuse-aware full-suite commands as mandatory evidence', () => {
             const config = {
                 ...loadFullSuiteValidationConfig('/nonexistent'),

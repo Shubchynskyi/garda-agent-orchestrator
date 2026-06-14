@@ -756,6 +756,115 @@ describe('gates/full-suite-validation', () => {
             }
         });
 
+        it('summarizes top failing node tests from copied shard logs', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-top-failures-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const trustedLogDir = path.join(tempDir, '.node-build', 'test-shard-logs', 'run-1');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(trustedLogDir, { recursive: true });
+            const shardLogPath = path.join(trustedLogDir, 'shard-01-of-02.log');
+            fs.writeFileSync(shardLogPath, [
+                '✔ surfaces timeout output through the same failed-command path (1729.3283ms)',
+                '▶ gates command timeout and execution wrappers',
+                'ok 1 - previous test',
+                'test at .node-build\\tests\\node\\cli\\commands\\gates\\shared\\gates-command-help.test.js:299:24',
+                '✖ includes real-subagent hard-stop guidance in delegation-start help (3.0376ms)',
+                '  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:',
+                '    ok(helpOutput.includes("Provider-owned placeholders are --provider-invocation-id and --attestation-source"))',
+                `tail filler ${'x'.repeat(500)}`,
+                'NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=' + shardLogPath
+            ].join('\n'), 'utf8');
+            const result: FullSuiteValidationResult = {
+                status: 'FAILED',
+                enabled: true,
+                command: 'npm run test:sharded',
+                exit_code: 1,
+                timed_out: false,
+                output_artifact_path: path.join(reviewsDir, 'T-TOP-FAILURES-full-suite-output.log'),
+                compact_summary: ['NODE_FOUNDATION_TEST_SHARD_LOG_DIR ' + trustedLogDir],
+                failure_chunks: [['NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=' + shardLogPath]],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            const evidence = persistFullSuiteFailureEvidence({
+                repoRoot: tempDir,
+                reviewsRoot: reviewsDir,
+                taskId: 'T-TOP-FAILURES',
+                result,
+                outputLines: [
+                    '✔ loadCliMainModule enforces one runtime lock timeout budget per candidate (370.4191ms)',
+                    '▶ gates command timeout and execution wrappers',
+                    `NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${trustedLogDir}`,
+                    'NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=30000 heartbeat_ms=1000 concurrency=1',
+                    'NODE_FOUNDATION_TEST_SHARD_START 1/2 files=1',
+                    `NODE_FOUNDATION_TEST_SHARD_LOG 1/2 ${shardLogPath}`,
+                    `NODE_FOUNDATION_TEST_SHARD_DONE 1/2 exit=1 duration_ms=10 timed_out=false log=${shardLogPath}`
+                ],
+                maxLogChars: 120
+            });
+
+            assert.ok(evidence);
+            assert.equal(evidence.copied_logs[0].truncated, true);
+            const copiedArtifact = fs.readFileSync(evidence.copied_logs[0].artifact_path, 'utf8');
+            assert.match(copiedArtifact, /retained_failure_window_chars=/u);
+            assert.match(copiedArtifact, /includes real-subagent hard-stop guidance/u);
+            assert.equal(evidence.failure_kind, 'assertion');
+            assert.equal(evidence.top_failures.length, 1);
+            assert.equal(evidence.top_failures[0].kind, 'assertion');
+            assert.equal(evidence.top_failures[0].test_name, 'includes real-subagent hard-stop guidance in delegation-start help');
+            assert.equal(evidence.top_failures[0].file_path, '.node-build/tests/node/cli/commands/gates/shared/gates-command-help.test.js');
+            assert.equal(evidence.top_failures[0].line, 299);
+            assert.equal(evidence.top_failures[0].source, 'copied_log');
+            assert.equal(evidence.top_failures[0].source_path, shardLogPath.replace(/\\/g, '/'));
+            assert.match(evidence.top_failures[0].artifact_path || '', /shard-log-01\.log$/u);
+            const summary = JSON.parse(fs.readFileSync(String(evidence.summary_artifact_path), 'utf8'));
+            assert.equal(summary.failure_kind, 'assertion');
+            assert.equal(summary.top_failures[0].test_name, 'includes real-subagent hard-stop guidance in delegation-start help');
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('classifies shard timeout diagnostics as process hangs', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-process-hang-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const result: FullSuiteValidationResult = {
+                status: 'FAILED',
+                enabled: true,
+                command: 'npm run test:sharded',
+                exit_code: 1,
+                timed_out: true,
+                output_artifact_path: null,
+                compact_summary: [],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            const evidence = persistFullSuiteFailureEvidence({
+                repoRoot: tempDir,
+                reviewsRoot: reviewsDir,
+                taskId: 'T-PROCESS-HANG',
+                result,
+                outputLines: [
+                    'NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1/2 pid=100 elapsed_ms=759 last_output_age_ms=758 log=.node-build/test-shard-logs/run-1/shard-01-of-02.log cleanup=child_kill_sigkill'
+                ],
+                maxCopiedLogs: 0
+            });
+
+            assert.ok(evidence);
+            assert.equal(evidence.failure_kind, 'process_hang');
+            assert.equal(evidence.top_failures[0].kind, 'process_hang');
+            assert.match(evidence.top_failures[0].summary, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT/u);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
         it('bounds summary evidence lines copied from failure output', () => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-bounded-summary-'));
             const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');

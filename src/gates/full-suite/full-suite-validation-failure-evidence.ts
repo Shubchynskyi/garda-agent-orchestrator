@@ -8,17 +8,25 @@ import { normalizePath } from '../shared/helpers';
 import {
     type FullSuiteFailureEvidence,
     type FullSuiteFailureEvidenceCopiedLog,
-    type FullSuiteFailureEvidenceOptions
+    type FullSuiteFailureEvidenceOptions,
+    type FullSuiteFailureKind,
+    type FullSuiteTopFailure
 } from './full-suite-validation-types';
 
 const DEFAULT_FAILURE_EVIDENCE_MAX_LOGS = 6;
 const DEFAULT_FAILURE_EVIDENCE_MAX_LOG_CHARS = 200_000;
 const DEFAULT_FAILURE_EVIDENCE_LAST_OUTPUT_LINES = 80;
 const DEFAULT_FAILURE_EVIDENCE_MAX_SUMMARY_LINE_CHARS = 4_000;
+const DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES = 8;
 
 interface TrustedShardLogDeclarations {
     declaredPaths: Set<string>;
     trustedShardLogDir: string | null;
+}
+
+interface CopiedFailureEvidenceLog {
+    copiedLog: FullSuiteFailureEvidenceCopiedLog;
+    sourceLines: string[];
 }
 
 function isFailedOrWarnedStatus(status: string): status is 'FAILED' | 'WARNED' {
@@ -142,6 +150,249 @@ function redactLineChunks(chunks: string[][]): string[][] {
     return chunks.map(redactLineList);
 }
 
+function parseSourceLocation(value: string): { filePath: string | null; line: number | null; } {
+    const match = value.match(/(.+?):(\d+)(?::\d+)?$/u);
+    if (!match) {
+        return { filePath: value.trim() || null, line: null };
+    }
+    return {
+        filePath: normalizePath(match[1].trim()),
+        line: Number.parseInt(match[2], 10)
+    };
+}
+
+function classifyFailureLine(line: string): FullSuiteFailureKind {
+    if (/NODE_FOUNDATION_TEST_SHARD_TIMEOUT/u.test(line)) {
+        return /\blast_output_age_ms=\d+/u.test(line) ? 'process_hang' : 'timeout';
+    }
+    if (/\b(?:AssertionError|ERR_ASSERTION)\b/u.test(line)) {
+        return 'assertion';
+    }
+    if (
+        /^(?:Error:\s+)?(?:node(?:\.exe)?|npm|pnpm|yarn)\b.*\bfailed \(exit \d+\)/iu.test(line)
+        || /\bNODE_FOUNDATION_TEST_SHARD_DONE\b.*\bexit=(?!0\b)\S+/u.test(line)
+        || /\b(?:failed \(exit \d+\)|exit!=0)\b/u.test(line)
+    ) {
+        return 'process_exit';
+    }
+    if (
+        /\bNODE_FOUNDATION_TEST_SHARD_DONE\b.*\btimed_out=true\b/u.test(line)
+        || /\b(?:Process|Command|Full suite|Shard|Test command)\b.*\btimed out\b/iu.test(line)
+        || /\btimed out after \d+\s*ms\b/iu.test(line)
+    ) {
+        return 'timeout';
+    }
+    return 'unknown';
+}
+
+function mergeFailureKind(current: FullSuiteFailureKind, next: FullSuiteFailureKind): FullSuiteFailureKind {
+    const rank: Record<FullSuiteFailureKind, number> = {
+        process_hang: 5,
+        timeout: 4,
+        assertion: 3,
+        process_exit: 2,
+        unknown: 1
+    };
+    return rank[next] > rank[current] ? next : current;
+}
+
+function pushTopFailure(
+    failures: FullSuiteTopFailure[],
+    seenKeys: Set<string>,
+    failure: FullSuiteTopFailure
+): void {
+    if (!failure.summary.trim()) {
+        return;
+    }
+    const key = [
+        failure.kind,
+        failure.source,
+        failure.source_path || '',
+        failure.artifact_path || '',
+        failure.test_name || '',
+        failure.file_path || '',
+        String(failure.line || ''),
+        failure.summary
+    ].join('\u0000');
+    if (seenKeys.has(key)) {
+        return;
+    }
+    seenKeys.add(key);
+    failures.push(failure);
+}
+
+function isNonFailureNodeTestLine(line: string): boolean {
+    return /^(?:✔|✓)\s/u.test(line)
+        || /^ok\s+\d+\b/u.test(line)
+        || /^▶\s/u.test(line)
+        || /^Summary:/u.test(line)
+        || /^COMMAND_TIMEOUT_DIAGNOSTICS_PASSED$/u.test(line);
+}
+
+function lineLooksLikePrimaryFailureAnchor(line: string): boolean {
+    const trimmed = line.trim();
+    if (!trimmed || isNonFailureNodeTestLine(trimmed) || /^✖ failing tests:?$/u.test(trimmed)) {
+        return false;
+    }
+    return /^(?:✖|x)\s+.+/u.test(trimmed)
+        || /^not ok\s+\d+\s+-\s+.+/u.test(trimmed)
+        || classifyFailureLine(trimmed) !== 'unknown';
+}
+
+function lineLooksLikeFailureAnchor(line: string): boolean {
+    return lineLooksLikePrimaryFailureAnchor(line) || /^test at .+$/u.test(line.trim());
+}
+
+function findFailureAnchorOffsetBy(content: string, predicate: (line: string) => boolean): number | null {
+    let offset = 0;
+    for (const line of content.split(/\r?\n/u)) {
+        if (predicate(line)) {
+            return offset;
+        }
+        offset += line.length + 1;
+    }
+    return null;
+}
+
+function findFailureAnchorOffset(content: string): number | null {
+    return findFailureAnchorOffsetBy(content, lineLooksLikePrimaryFailureAnchor)
+        ?? findFailureAnchorOffsetBy(content, lineLooksLikeFailureAnchor);
+}
+
+function buildTruncatedCopiedContent(redactedContent: string, maxLogChars: number): string {
+    const anchorOffset = findFailureAnchorOffset(redactedContent);
+    if (anchorOffset === null) {
+        return [
+            `FULL_SUITE_FAILURE_EVIDENCE_LOG_TRUNCATED original_chars=${redactedContent.length} retained_tail_chars=${maxLogChars}`,
+            redactedContent.slice(-maxLogChars)
+        ].join('\n');
+    }
+    const prefix = `FULL_SUITE_FAILURE_EVIDENCE_LOG_TRUNCATED original_chars=${redactedContent.length} retained_failure_window_chars=${maxLogChars}`;
+    const halfWindow = Math.floor(maxLogChars / 2);
+    const start = Math.max(0, anchorOffset - halfWindow);
+    const end = Math.min(redactedContent.length, start + maxLogChars);
+    const finalStart = Math.max(0, end - maxLogChars);
+    return [
+        prefix,
+        `FULL_SUITE_FAILURE_EVIDENCE_WINDOW source_start_char=${finalStart} source_end_char=${end}`,
+        redactedContent.slice(finalStart, end)
+    ].join('\n');
+}
+
+function collectTopFailuresFromLines(options: {
+    lines: string[];
+    source: FullSuiteTopFailure['source'];
+    sourcePath: string | null;
+    artifactPath: string | null;
+    seenKeys: Set<string>;
+    maxFailures: number;
+}): FullSuiteTopFailure[] {
+    const failures: FullSuiteTopFailure[] = [];
+    let pendingLocation: { filePath: string | null; line: number | null; } | null = null;
+    let lastFailure: FullSuiteTopFailure | null = null;
+
+    for (const rawLine of options.lines) {
+        if (failures.length >= options.maxFailures) {
+            break;
+        }
+        const line = redactFailureEvidenceSummaryLine(rawLine.trim());
+        if (!line) {
+            continue;
+        }
+        const testAtMatch = line.match(/^test at (.+)$/u);
+        if (testAtMatch) {
+            pendingLocation = parseSourceLocation(testAtMatch[1]);
+            continue;
+        }
+        if (/^✖ failing tests:?$/u.test(line) || isNonFailureNodeTestLine(line)) {
+            continue;
+        }
+        const failedTestMatch = line.match(/^(?:✖|x)\s+(.+?)(?:\s+\([\d.]+ms\))?$/u)
+            || line.match(/^not ok\s+\d+\s+-\s+(.+)$/u);
+        if (failedTestMatch) {
+            const failure: FullSuiteTopFailure = {
+                kind: 'unknown',
+                summary: line,
+                source: options.source,
+                source_path: options.sourcePath,
+                artifact_path: options.artifactPath,
+                test_name: failedTestMatch[1].trim(),
+                file_path: pendingLocation?.filePath || null,
+                line: pendingLocation?.line || null
+            };
+            pushTopFailure(failures, options.seenKeys, failure);
+            lastFailure = failure;
+            pendingLocation = null;
+            continue;
+        }
+        const kind = classifyFailureLine(line);
+        if (kind === 'unknown') {
+            continue;
+        }
+        if (lastFailure && lastFailure.kind === 'unknown') {
+            lastFailure.kind = kind;
+            lastFailure.summary = `${lastFailure.summary}; ${line}`;
+            continue;
+        }
+        pushTopFailure(failures, options.seenKeys, {
+            kind,
+            summary: line,
+            source: options.source,
+            source_path: options.sourcePath,
+            artifact_path: options.artifactPath,
+            file_path: pendingLocation?.filePath || null,
+            line: pendingLocation?.line || null
+        });
+        lastFailure = failures[failures.length - 1] || lastFailure;
+        pendingLocation = null;
+    }
+
+    return failures;
+}
+
+function collectTopFailures(options: {
+    outputLines: string[];
+    outputArtifactPath: string | null;
+    copiedLogs: CopiedFailureEvidenceLog[];
+}): FullSuiteTopFailure[] {
+    const seenKeys = new Set<string>();
+    const topFailures = collectTopFailuresFromLines({
+        lines: options.outputLines,
+        source: 'main_output',
+        sourcePath: options.outputArtifactPath,
+        artifactPath: options.outputArtifactPath,
+        seenKeys,
+        maxFailures: DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES
+    });
+    for (const copiedLog of options.copiedLogs) {
+        if (topFailures.length >= DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES) {
+            break;
+        }
+        topFailures.push(...collectTopFailuresFromLines({
+            lines: copiedLog.sourceLines,
+            source: 'copied_log',
+            sourcePath: copiedLog.copiedLog.source_path,
+            artifactPath: copiedLog.copiedLog.artifact_path,
+            seenKeys,
+            maxFailures: DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES - topFailures.length
+        }));
+    }
+    const actionableFailures = topFailures.filter((failure) => (
+        failure.kind !== 'process_exit'
+        && failure.kind !== 'unknown'
+    ));
+    return (actionableFailures.length > 0 ? actionableFailures : topFailures)
+        .slice(0, DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES);
+}
+
+function resolveFailureKind(topFailures: FullSuiteTopFailure[], timedOut: boolean): FullSuiteFailureKind {
+    let kind: FullSuiteFailureKind = timedOut ? 'timeout' : 'unknown';
+    for (const failure of topFailures) {
+        kind = mergeFailureKind(kind, failure.kind);
+    }
+    return kind;
+}
+
 function copyFailureEvidenceLog(
     sourcePath: string,
     evidenceDir: string,
@@ -149,7 +400,7 @@ function copyFailureEvidenceLog(
     trustedShardLogDir: string | null,
     index: number,
     maxLogChars: number
-): FullSuiteFailureEvidenceCopiedLog | null {
+): CopiedFailureEvidenceLog | null {
     let canonicalSource: string;
     let canonicalRepoRoot: string;
     let canonicalTrustedShardLogDir: string | null = null;
@@ -174,21 +425,21 @@ function copyFailureEvidenceLog(
     const redactedContent = redactSecretText(rawContent);
     const truncated = redactedContent.length > maxLogChars;
     const copiedContent = truncated
-        ? [
-            `FULL_SUITE_FAILURE_EVIDENCE_LOG_TRUNCATED original_chars=${redactedContent.length} retained_tail_chars=${maxLogChars}`,
-            redactedContent.slice(-maxLogChars)
-        ].join('\n')
+        ? buildTruncatedCopiedContent(redactedContent, maxLogChars)
         : redactedContent;
     const extension = path.extname(canonicalSource) || '.log';
     const artifactPath = path.join(evidenceDir, `shard-log-${String(index + 1).padStart(2, '0')}${extension}`);
     fs.writeFileSync(artifactPath, copiedContent, 'utf8');
     return {
-        source_path: normalizePath(canonicalSource),
-        artifact_path: normalizePath(artifactPath),
-        sha256: createHash('sha256').update(copiedContent).digest('hex'),
-        bytes: Buffer.byteLength(copiedContent, 'utf8'),
-        lines: copiedContent.length === 0 ? 0 : copiedContent.split(/\r?\n/u).length,
-        truncated
+        copiedLog: {
+            source_path: normalizePath(canonicalSource),
+            artifact_path: normalizePath(artifactPath),
+            sha256: createHash('sha256').update(copiedContent).digest('hex'),
+            bytes: Buffer.byteLength(copiedContent, 'utf8'),
+            lines: copiedContent.length === 0 ? 0 : copiedContent.split(/\r?\n/u).length,
+            truncated
+        },
+        sourceLines: redactedContent.split(/\r?\n/u)
     };
 }
 
@@ -203,7 +454,7 @@ export function persistFullSuiteFailureEvidence(options: FullSuiteFailureEvidenc
     fs.mkdirSync(evidenceDir, { recursive: true });
 
     const shardLogPaths = collectShardLogPaths(options.outputLines, options.repoRoot);
-    const copiedLogs = Array.from(shardLogPaths.declaredPaths)
+    const copiedLogEvidence = Array.from(shardLogPaths.declaredPaths)
         .slice(0, maxCopiedLogs)
         .map((sourcePath, index) => copyFailureEvidenceLog(
             sourcePath,
@@ -213,7 +464,13 @@ export function persistFullSuiteFailureEvidence(options: FullSuiteFailureEvidenc
             index,
             maxLogChars
         ))
-        .filter((entry): entry is FullSuiteFailureEvidenceCopiedLog => entry !== null);
+        .filter((entry): entry is CopiedFailureEvidenceLog => entry !== null);
+    const copiedLogs = copiedLogEvidence.map((entry) => entry.copiedLog);
+    const topFailures = collectTopFailures({
+        outputLines: options.outputLines,
+        outputArtifactPath: options.result.output_artifact_path,
+        copiedLogs: copiedLogEvidence
+    });
     const summaryPath = path.join(evidenceDir, 'summary.json');
     const evidence: FullSuiteFailureEvidence = {
         schema_version: 1,
@@ -228,6 +485,8 @@ export function persistFullSuiteFailureEvidence(options: FullSuiteFailureEvidenc
         copied_logs_count: copiedLogs.length,
         max_copied_logs: maxCopiedLogs,
         max_log_chars: maxLogChars,
+        failure_kind: resolveFailureKind(topFailures, options.result.timed_out),
+        top_failures: topFailures,
         failure_chunks: redactLineChunks(options.result.failure_chunks),
         compact_summary: redactLineList(options.result.compact_summary),
         last_output_lines: redactLineList(options.outputLines.slice(-DEFAULT_FAILURE_EVIDENCE_LAST_OUTPUT_LINES)),

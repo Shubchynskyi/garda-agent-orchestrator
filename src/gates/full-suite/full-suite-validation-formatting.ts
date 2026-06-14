@@ -44,8 +44,24 @@ function buildFullSuiteValidationOutputLines(result: FullSuiteValidationResult):
         lines.push(
             'FailureEvidence: '
             + `summary=${result.failure_evidence.summary_artifact_path}; `
-            + `copied_logs=${result.failure_evidence.copied_logs_count}`
+            + `copied_logs=${result.failure_evidence.copied_logs_count}; `
+            + `kind=${result.failure_evidence.failure_kind}; `
+            + `top_failures=${result.failure_evidence.top_failures.length}`
         );
+        if (result.failure_evidence.top_failures.length > 0) {
+            lines.push('TopFailures:');
+            for (const failure of result.failure_evidence.top_failures.slice(0, 5)) {
+                const detailParts = [
+                    `kind=${failure.kind}`,
+                    failure.test_name ? `test=${failure.test_name}` : null,
+                    failure.file_path ? `file=${failure.line ? `${failure.file_path}:${failure.line}` : failure.file_path}` : null,
+                    failure.artifact_path ? `artifact=${failure.artifact_path}` : null,
+                    failure.source_path && failure.source_path !== failure.artifact_path ? `source=${failure.source_path}` : null,
+                    `summary=${failure.summary}`
+                ].filter((part): part is string => part !== null);
+                lines.push(`  - ${detailParts.join('; ')}`);
+            }
+        }
     }
     if (typeof result.duration_ms === 'number') {
         lines.push(`DurationMs: ${result.duration_ms}`);

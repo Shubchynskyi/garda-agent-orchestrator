@@ -104,6 +104,19 @@ export interface FullSuiteFailureEvidenceCopiedLog {
     truncated: boolean;
 }
 
+export type FullSuiteFailureKind = 'assertion' | 'timeout' | 'process_hang' | 'process_exit' | 'unknown';
+
+export interface FullSuiteTopFailure {
+    kind: FullSuiteFailureKind;
+    summary: string;
+    source: 'main_output' | 'copied_log';
+    source_path: string | null;
+    artifact_path: string | null;
+    test_name?: string | null;
+    file_path?: string | null;
+    line?: number | null;
+}
+
 export interface FullSuiteFailureEvidence {
     schema_version: 1;
     task_id: string;
@@ -117,6 +130,8 @@ export interface FullSuiteFailureEvidence {
     copied_logs_count: number;
     max_copied_logs: number;
     max_log_chars: number;
+    failure_kind: FullSuiteFailureKind;
+    top_failures: FullSuiteTopFailure[];
     failure_chunks: string[][];
     compact_summary: string[];
     last_output_lines: string[];
