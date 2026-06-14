@@ -2,6 +2,10 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import {
+    formatNodeFoundationTestMarker,
+    NODE_FOUNDATION_TEST_MARKERS
+} from '../../src/core/node-foundation-test-shard-markers';
 import { buildNodeFoundation, buildPublishRuntime, getRepoRoot, BuildResult } from './build';
 
 const NODE_FOUNDATION_TEST_SHARDS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARDS';
@@ -537,11 +541,14 @@ function printSlowestKnownTests(fileWeights: TestFileWeight[]): void {
         .sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0) || a.key.localeCompare(b.key))
         .slice(0, NODE_FOUNDATION_TEST_SLOWEST_REPORT_COUNT);
     if (slowest.length === 0) {
-        console.log('NODE_FOUNDATION_TEST_SLOWEST none');
+        console.log(formatNodeFoundationTestMarker(NODE_FOUNDATION_TEST_MARKERS.SHARD_SLOWEST, 'none'));
         return;
     }
     for (const item of slowest) {
-        console.log(`NODE_FOUNDATION_TEST_SLOWEST ${item.key} duration_ms=${Math.trunc(item.durationMs ?? 0)}`);
+        console.log(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.SHARD_SLOWEST,
+            `${item.key} duration_ms=${Math.trunc(item.durationMs ?? 0)}`
+        ));
     }
 }
 
@@ -579,7 +586,10 @@ function buildNodeFoundationTestShards(
         : knownDurationCount === fileWeights.length
             ? 'duration'
             : 'duration_with_size_fallback';
-    console.log(`NODE_FOUNDATION_TEST_SHARD_PLAN source=${source} duration_known=${knownDurationCount}/${fileWeights.length}`);
+    console.log(formatNodeFoundationTestMarker(
+        NODE_FOUNDATION_TEST_MARKERS.SHARD_PLAN,
+        `source=${source} duration_known=${knownDurationCount}/${fileWeights.length}`
+    ));
     printSlowestKnownTests(fileWeights);
 
     return shards.map((s) => s.files).filter((files) => files.length > 0);
@@ -621,7 +631,10 @@ function recordTestDurationTelemetry(
     };
     fs.mkdirSync(path.dirname(telemetryPath), { recursive: true });
     fs.writeFileSync(telemetryPath, `${JSON.stringify(nextTelemetry, null, 2)}\n`, 'utf8');
-    console.log(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY_UPDATED ${telemetryPath} entries=${Object.keys(nextTelemetry.entries).length}`);
+    console.log(formatNodeFoundationTestMarker(
+        NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY_UPDATED,
+        `${telemetryPath} entries=${Object.keys(nextTelemetry.entries).length}`
+    ));
 }
 
 function runSingleNodeTestProcess(
@@ -769,8 +782,14 @@ function runNodeTestShard(
         let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
         let heartbeatHandle: ReturnType<typeof setInterval> | null = null;
         let cleanupGraceHandle: ReturnType<typeof setTimeout> | null = null;
-        console.log(`NODE_FOUNDATION_TEST_SHARD_START ${shardIndex + 1}/${shardCount} files=${shardFiles.length}`);
-        console.log(`NODE_FOUNDATION_TEST_SHARD_LOG ${shardIndex + 1}/${shardCount} ${logPath}`);
+        console.log(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.SHARD_START,
+            `${shardIndex + 1}/${shardCount} files=${shardFiles.length}`
+        ));
+        console.log(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.SHARD_LOG,
+            `${shardIndex + 1}/${shardCount} ${logPath}`
+        ));
         const child = childProcess.spawn(process.execPath, ['--test', ...optionArgs, ...shardFiles], {
             cwd: repoRoot,
             detached: process.platform !== 'win32',
@@ -808,10 +827,11 @@ function runNodeTestShard(
             settled = true;
             cleanupTimers();
             const durationMs = Math.max(1, Date.now() - startedAt);
-            console.log(
-                `NODE_FOUNDATION_TEST_SHARD_DONE ${shardIndex + 1}/${shardCount} exit=${exitCode} `
+            console.log(formatNodeFoundationTestMarker(
+                NODE_FOUNDATION_TEST_MARKERS.SHARD_DONE,
+                `${shardIndex + 1}/${shardCount} exit=${exitCode} `
                 + `duration_ms=${durationMs} timed_out=${timedOut} signal=${exitSignal ?? 'none'} log=${logPath}`
-            );
+            ));
             logStream.end(() => resolve({
                 exitCode,
                 durationMs,
@@ -833,7 +853,10 @@ function runNodeTestShard(
                 }
                 writeShardDiagnostic(
                     logStream,
-                    `NODE_FOUNDATION_TEST_SHARD_CLEANUP_GRACE_EXPIRED ${shardIndex + 1}/${shardCount} ${buildProgressFields()}`,
+                    formatNodeFoundationTestMarker(
+                        NODE_FOUNDATION_TEST_MARKERS.SHARD_CLEANUP_GRACE_EXPIRED,
+                        `${shardIndex + 1}/${shardCount} ${buildProgressFields()}`
+                    ),
                     true
                 );
                 finishShard();
@@ -861,7 +884,10 @@ function runNodeTestShard(
                 const cleanupMethod = killShardChildTree(child);
                 writeShardDiagnostic(
                     logStream,
-                    `NODE_FOUNDATION_TEST_SHARD_TIMEOUT ${shardIndex + 1}/${shardCount} ${buildProgressFields()} cleanup=${cleanupMethod}`,
+                    formatNodeFoundationTestMarker(
+                        NODE_FOUNDATION_TEST_MARKERS.SHARD_TIMEOUT,
+                        `${shardIndex + 1}/${shardCount} ${buildProgressFields()} cleanup=${cleanupMethod}`
+                    ),
                     true
                 );
                 scheduleCleanupGrace();
@@ -887,7 +913,10 @@ function runNodeTestShard(
                 }
                 writeShardDiagnostic(
                     logStream,
-                    `NODE_FOUNDATION_TEST_SHARD_HEARTBEAT ${shardIndex + 1}/${shardCount} ${buildProgressFields()}`,
+                    formatNodeFoundationTestMarker(
+                        NODE_FOUNDATION_TEST_MARKERS.SHARD_HEARTBEAT,
+                        `${shardIndex + 1}/${shardCount} ${buildProgressFields()}`
+                    ),
                     false
                 );
             }, runtimeConfig.heartbeatMs);
@@ -921,12 +950,15 @@ function diagnoseGreenSummaryShardFailure(
     }
 
     const shardLabel = `${result.shardIndex + 1}/${result.shardCount}`;
-    console.error(
-        `NODE_FOUNDATION_TEST_SHARD_GREEN_EXIT_MISMATCH ${shardLabel} exit=${result.exitCode} `
-        + `files=${result.shardFiles.length} log=${result.logPath}`
-    );
+    console.error(formatNodeFoundationTestMarker(
+        NODE_FOUNDATION_TEST_MARKERS.SHARD_GREEN_EXIT_MISMATCH,
+        `${shardLabel} exit=${result.exitCode} files=${result.shardFiles.length} log=${result.logPath}`
+    ));
     for (const line of getTailLines(readTextFileIfExists(result.logPath), 40)) {
-        console.error(`NODE_FOUNDATION_TEST_SHARD_GREEN_EXIT_TAIL ${shardLabel} ${line}`);
+        console.error(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.SHARD_GREEN_EXIT_TAIL,
+            `${shardLabel} ${line}`
+        ));
     }
 
     const isolationFiles = result.shardFiles.slice(0, NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_MAX_FILES);
@@ -946,27 +978,31 @@ function diagnoseGreenSummaryShardFailure(
         }
         reproduced = true;
         const key = compiledTestFileToTelemetryKey(buildResult, filePath);
-        console.error(
-            `NODE_FOUNDATION_TEST_SHARD_ISOLATION_FAIL ${shardLabel} file=${key} `
+        console.error(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.SHARD_ISOLATION_FAIL,
+            `${shardLabel} file=${key} `
             + `exit=${exitCode} signal=${rerun.signal ?? 'none'} duration_ms=${Math.max(1, Date.now() - startedAt)}`
-        );
+        ));
         const outputTail = getTailLines(`${rerun.stdout || ''}\n${rerun.stderr || ''}`, 30);
         for (const line of outputTail) {
-            console.error(`NODE_FOUNDATION_TEST_SHARD_ISOLATION_TAIL ${key} ${line}`);
+            console.error(formatNodeFoundationTestMarker(
+                NODE_FOUNDATION_TEST_MARKERS.SHARD_ISOLATION_TAIL,
+                `${key} ${line}`
+            ));
         }
     }
     if (!reproduced) {
-        console.error(
-            `NODE_FOUNDATION_TEST_SHARD_ISOLATION_NO_REPRO ${shardLabel} `
-            + `checked=${isolationFiles.length} files=${result.shardFiles.length}`
-        );
+        console.error(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.SHARD_ISOLATION_NO_REPRO,
+            `${shardLabel} checked=${isolationFiles.length} files=${result.shardFiles.length}`
+        ));
     }
     if (isolationFiles.length < result.shardFiles.length) {
-        console.error(
-            `NODE_FOUNDATION_TEST_SHARD_ISOLATION_CAPPED ${shardLabel} `
-            + `checked=${isolationFiles.length} files=${result.shardFiles.length} `
+        console.error(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.SHARD_ISOLATION_CAPPED,
+            `${shardLabel} checked=${isolationFiles.length} files=${result.shardFiles.length} `
             + `timeout_ms=${NODE_FOUNDATION_TEST_GREEN_EXIT_ISOLATION_TIMEOUT_MS}`
-        );
+        ));
     }
 }
 
@@ -984,13 +1020,13 @@ async function runShardedNodeTestProcesses(
     const shards = buildNodeFoundationTestShards(buildResult, selectedTestFiles, shardCount, telemetry);
     const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
     const runtimeConfig = resolveNodeTestShardRuntimeConfig();
-    console.log(`NODE_FOUNDATION_TEST_SHARD_LOG_DIR ${shardLogDir}`);
-    console.log(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY ${telemetryPath}`);
+    console.log(formatNodeFoundationTestMarker(NODE_FOUNDATION_TEST_MARKERS.SHARD_LOG_DIR, shardLogDir));
+    console.log(formatNodeFoundationTestMarker(NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY, telemetryPath));
     const shardConcurrency = Math.max(1, Math.min(shards.length, runtimeConfig.concurrency));
-    console.log(
-        `NODE_FOUNDATION_TEST_SHARD_RUNTIME timeout_ms=${runtimeConfig.timeoutMs} `
-        + `heartbeat_ms=${runtimeConfig.heartbeatMs} concurrency=${shardConcurrency}`
-    );
+    console.log(formatNodeFoundationTestMarker(
+        NODE_FOUNDATION_TEST_MARKERS.SHARD_RUNTIME,
+        `timeout_ms=${runtimeConfig.timeoutMs} heartbeat_ms=${runtimeConfig.heartbeatMs} concurrency=${shardConcurrency}`
+    ));
     const results: NodeTestShardResult[] = [];
     for (let startIndex = 0; startIndex < shards.length; startIndex += shardConcurrency) {
         const batch = shards.slice(startIndex, startIndex + shardConcurrency);

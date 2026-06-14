@@ -2,6 +2,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
+import {
+    isNodeFoundationTestShardDiagnosticLine,
+    isNodeFoundationTestShardSetupLine,
+    lineHasNodeFoundationTestMarker,
+    NODE_FOUNDATION_TEST_MARKERS,
+    parseNodeFoundationTestShardDoneLine,
+    parseNodeFoundationTestShardLogDirLine,
+    parseNodeFoundationTestShardLogLine
+} from '../../core/node-foundation-test-shard-markers';
 import { assertCanonicalTaskId } from '../../core/task-ids';
 import { redactSecretText } from '../../core/redaction';
 import { normalizePath } from '../shared/helpers';
@@ -62,28 +71,26 @@ function collectTrustedShardLogDeclarations(outputLines: string[], repoRoot: str
             break;
         }
 
-        const logDirMatch = line.match(/^NODE_FOUNDATION_TEST_SHARD_LOG_DIR\s+(.+)$/u);
+        const logDir = parseNodeFoundationTestShardLogDirLine(line);
         if (!collectingSetupBlock) {
-            if (!logDirMatch) {
+            if (!logDir) {
                 continue;
             }
-            trustedShardLogDir = normalizeAbsolutePath(logDirMatch[1], repoRoot);
+            trustedShardLogDir = normalizeAbsolutePath(logDir, repoRoot);
             collectingSetupBlock = true;
             continue;
         }
 
-        if (logDirMatch) {
+        if (logDir) {
             continue;
         }
-        if (/^NODE_FOUNDATION_TEST_DURATION_TELEMETRY\s+/u.test(line)
-            || /^NODE_FOUNDATION_TEST_SHARD_RUNTIME\s+/u.test(line)
-            || /^NODE_FOUNDATION_TEST_SHARD_START\s+\d+\/\d+\s+/u.test(line)) {
+        if (isNodeFoundationTestShardSetupLine(line)) {
             continue;
         }
 
-        const directMatch = line.match(/^NODE_FOUNDATION_TEST_SHARD_LOG\s+\d+\/\d+\s+(.+)$/u);
-        if (directMatch) {
-            const resolved = normalizeAbsolutePath(directMatch[1], repoRoot);
+        const shardLog = parseNodeFoundationTestShardLogLine(line);
+        if (shardLog) {
+            const resolved = normalizeAbsolutePath(shardLog.log_path, repoRoot);
             if (
                 resolved
                 && trustedShardLogDir
@@ -104,9 +111,9 @@ function collectShardLogPaths(outputLines: string[], repoRoot: string): TrustedS
     const failedDonePaths = new Set<string>();
     const { declaredPaths, trustedShardLogDir } = collectTrustedShardLogDeclarations(outputLines, repoRoot);
     for (const line of outputLines) {
-        const failedDoneMatch = line.match(/^NODE_FOUNDATION_TEST_SHARD_DONE\s+\d+\/\d+\s+exit=(?!0\b)\S+.*\slog=(.+)$/u);
-        if (failedDoneMatch) {
-            const resolved = normalizeAbsolutePath(failedDoneMatch[1], repoRoot);
+        const doneLine = parseNodeFoundationTestShardDoneLine(line);
+        if (doneLine && doneLine.exit !== '0') {
+            const resolved = normalizeAbsolutePath(doneLine.log_path, repoRoot);
             if (resolved && (
                 declaredPaths.has(resolved)
                 || (trustedShardLogDir !== null && isInsideOrEqualPath(trustedShardLogDir, resolved))
@@ -121,7 +128,7 @@ function collectShardLogPaths(outputLines: string[], repoRoot: string): TrustedS
     };
 }
 
-function collectFailureDiagnostics(outputLines: string[], pattern: RegExp): string[] {
+function collectFailureDiagnostics(outputLines: string[], pattern: { test(line: string): boolean; }): string[] {
     return outputLines
         .map((line) => line.trim())
         .map(redactFailureEvidenceSummaryLine)
@@ -162,21 +169,22 @@ function parseSourceLocation(value: string): { filePath: string | null; line: nu
 }
 
 function classifyFailureLine(line: string): FullSuiteFailureKind {
-    if (/NODE_FOUNDATION_TEST_SHARD_TIMEOUT/u.test(line)) {
+    if (lineHasNodeFoundationTestMarker(line, NODE_FOUNDATION_TEST_MARKERS.SHARD_TIMEOUT)) {
         return /\blast_output_age_ms=\d+/u.test(line) ? 'process_hang' : 'timeout';
     }
+    const shardDone = parseNodeFoundationTestShardDoneLine(line);
     if (/\b(?:AssertionError|ERR_ASSERTION)\b/u.test(line)) {
         return 'assertion';
     }
     if (
         /^(?:Error:\s+)?(?:node(?:\.exe)?|npm|pnpm|yarn)\b.*\bfailed \(exit \d+\)/iu.test(line)
-        || /\bNODE_FOUNDATION_TEST_SHARD_DONE\b.*\bexit=(?!0\b)\S+/u.test(line)
+        || (shardDone !== null && shardDone.exit !== '0')
         || /\b(?:failed \(exit \d+\)|exit!=0)\b/u.test(line)
     ) {
         return 'process_exit';
     }
     if (
-        /\bNODE_FOUNDATION_TEST_SHARD_DONE\b.*\btimed_out=true\b/u.test(line)
+        (shardDone !== null && shardDone.timed_out === true)
         || /\b(?:Process|Command|Full suite|Shard|Test command)\b.*\btimed out\b/iu.test(line)
         || /\btimed out after \d+\s*ms\b/iu.test(line)
     ) {
@@ -492,9 +500,14 @@ export function persistFullSuiteFailureEvidence(options: FullSuiteFailureEvidenc
         last_output_lines: redactLineList(options.outputLines.slice(-DEFAULT_FAILURE_EVIDENCE_LAST_OUTPUT_LINES)),
         shard_diagnostics: collectFailureDiagnostics(
             options.outputLines,
-            /\bNODE_FOUNDATION_TEST_SHARD_(?:DONE|TIMEOUT|CLEANUP_GRACE_EXPIRED|LOG|GREEN_EXIT_MISMATCH|GREEN_EXIT_TAIL|ISOLATION_FAIL|ISOLATION_TAIL|ISOLATION_NO_REPRO|ISOLATION_CAPPED)\b/u
+            { test: isNodeFoundationTestShardDiagnosticLine }
         ),
-        timeout_diagnostics: collectFailureDiagnostics(options.outputLines, /\b(?:timed out|timeout|NODE_FOUNDATION_TEST_SHARD_TIMEOUT)\b/iu)
+        timeout_diagnostics: collectFailureDiagnostics(options.outputLines, {
+            test: (line: string) => (
+                /\b(?:timed out|timeout)\b/iu.test(line)
+                || lineHasNodeFoundationTestMarker(line, NODE_FOUNDATION_TEST_MARKERS.SHARD_TIMEOUT)
+            )
+        })
     };
     fs.writeFileSync(summaryPath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
     return evidence;

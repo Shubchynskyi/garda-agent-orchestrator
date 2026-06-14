@@ -136,6 +136,7 @@ function createBuildScriptsFixture(repoRoot: string): string {
         'VERSION',
         'tsconfig.scripts.json',
         'src/bin',
+        'src/core/node-foundation-test-shard-markers.ts',
         'scripts/node-foundation'
     ];
 
