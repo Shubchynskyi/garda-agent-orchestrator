@@ -76,7 +76,9 @@ test('syncRepoCliEntrypoint tolerates transient EBUSY when peer already updated 
             existsSync: fs.existsSync.bind(fs),
             mkdirSync: fs.mkdirSync.bind(fs),
             readFileSync: fs.readFileSync.bind(fs),
+            readdirSync: fs.readdirSync.bind(fs),
             rmSync: fs.rmSync.bind(fs),
+            statSync: fs.statSync.bind(fs),
             writeFileSync: fs.writeFileSync.bind(fs),
             renameSync(oldPath: fs.PathLike, newPath: fs.PathLike) {
                 renameAttempts += 1;
@@ -96,6 +98,91 @@ test('syncRepoCliEntrypoint tolerates transient EBUSY when peer already updated 
         assert.equal(renameAttempts, 1);
         assert.ok(!binEntries.some((entry) => entry.endsWith('.tmp')), 'temp launcher files must be cleaned up');
         assert.ok(!binEntries.includes('.garda-cli-sync.lock'), 'lock directory must be removed after sync');
+    } finally {
+        fs.rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('syncRepoCliEntrypoint publishes launcher companion modules', () => {
+    const fixture = createRepoCliFixture();
+    const companionContent = 'exports.value = "current";\n';
+    const nestedContent = 'exports.nested = true;\n';
+
+    try {
+        writeTextFile(
+            path.join(fixture.compiledRoot, 'src', 'bin', 'garda', 'root-discovery.js'),
+            `${companionContent}//# sourceMappingURL=root-discovery.js.map\n`
+        );
+        writeTextFile(
+            path.join(fixture.compiledRoot, 'src', 'bin', 'garda', 'nested', 'runtime-loading.js'),
+            nestedContent
+        );
+        writeTextFile(
+            path.join(fixture.repoRoot, 'bin', 'garda', 'stale.js'),
+            'exports.value = "stale";\n'
+        );
+
+        const repoCliPath = syncRepoCliEntrypoint(fixture.compiledRoot, fixture.repoRoot);
+
+        assert.equal(repoCliPath, fixture.repoCliPath);
+        assert.equal(
+            fs.readFileSync(path.join(fixture.repoRoot, 'bin', 'garda', 'root-discovery.js'), 'utf8'),
+            companionContent
+        );
+        assert.equal(
+            fs.readFileSync(path.join(fixture.repoRoot, 'bin', 'garda', 'nested', 'runtime-loading.js'), 'utf8'),
+            nestedContent
+        );
+        assert.ok(!fs.existsSync(path.join(fixture.repoRoot, 'bin', 'garda', 'stale.js')));
+    } finally {
+        fs.rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('syncRepoCliEntrypoint keeps prior launcher when companion sync fails', () => {
+    const fixture = createRepoCliFixture();
+    const previousCompanionContent = 'exports.value = "previous";\n';
+    const nextCompanionContent = 'exports.value = "next";\n';
+    const writeFileSync = fs.writeFileSync.bind(fs);
+
+    try {
+        writeTextFile(
+            path.join(fixture.compiledRoot, 'src', 'bin', 'garda', 'root-discovery.js'),
+            nextCompanionContent
+        );
+        writeTextFile(
+            path.join(fixture.repoRoot, 'bin', 'garda', 'root-discovery.js'),
+            previousCompanionContent
+        );
+
+        assert.throws(
+            () => syncRepoCliEntrypoint(fixture.compiledRoot, fixture.repoRoot, {
+                chmodSync: fs.chmodSync.bind(fs),
+                existsSync: fs.existsSync.bind(fs),
+                mkdirSync: fs.mkdirSync.bind(fs),
+                readFileSync: fs.readFileSync.bind(fs),
+                readdirSync: fs.readdirSync.bind(fs),
+                renameSync: fs.renameSync.bind(fs),
+                rmSync: fs.rmSync.bind(fs),
+                statSync: fs.statSync.bind(fs),
+                writeFileSync(filePath: fs.PathOrFileDescriptor, data: string | NodeJS.ArrayBufferView) {
+                    if (String(filePath).includes(`root-discovery.js.${process.pid}`)) {
+                        throw new Error('simulated companion write failure');
+                    }
+                    return writeFileSync(filePath, data);
+                }
+            }),
+            /simulated companion write failure/
+        );
+
+        assert.equal(
+            fs.readFileSync(fixture.repoCliPath, 'utf8'),
+            '#!/usr/bin/env node\nconsole.log("old launcher");\n'
+        );
+        assert.equal(
+            fs.readFileSync(path.join(fixture.repoRoot, 'bin', 'garda', 'root-discovery.js'), 'utf8'),
+            previousCompanionContent
+        );
     } finally {
         fs.rmSync(fixture.tempRoot, { recursive: true, force: true });
     }

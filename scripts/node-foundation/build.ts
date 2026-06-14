@@ -11,6 +11,8 @@ const REPO_CLI_SYNC_BACKOFF_MAX_MS = 2000;
 const REPO_CLI_SYNC_MAX_RETRIES = 8;
 const PRIMARY_COMPILED_CLI_RELATIVE_PATH = path.join('src', 'bin', 'garda.js');
 const PRIMARY_REPO_CLI_RELATIVE_PATH = path.join('bin', 'garda.js');
+const PRIMARY_COMPILED_CLI_COMPANION_DIRECTORY = path.join('src', 'bin', 'garda');
+const PRIMARY_REPO_CLI_COMPANION_DIRECTORY = path.join('bin', 'garda');
 const REPO_CLI_SYNC_LOCK_NAME = '.garda-cli-sync.lock';
 const BUILD_FINGERPRINT_SCHEMA_VERSION = 1 as const;
 const NODE_FOUNDATION_FORCE_REBUILD_ENV = 'GARDA_NODE_FOUNDATION_FORCE_REBUILD';
@@ -68,8 +70,10 @@ export interface RepoCliSyncFsLike {
     existsSync: typeof fs.existsSync;
     mkdirSync: typeof fs.mkdirSync;
     readFileSync: typeof fs.readFileSync;
+    readdirSync: typeof fs.readdirSync;
     renameSync: typeof fs.renameSync;
     rmSync: typeof fs.rmSync;
+    statSync: typeof fs.statSync;
     writeFileSync: typeof fs.writeFileSync;
 }
 
@@ -424,6 +428,56 @@ function fileContentMatches(filePath: string, expectedContent: Buffer, fileSyste
     return currentContent !== null && Buffer.compare(currentContent, expectedContent) === 0;
 }
 
+function collectCliCompanionFiles(rootPath: string, fileSystem: RepoCliSyncFsLike): string[] {
+    if (!fileSystem.existsSync(rootPath)) {
+        return [];
+    }
+
+    const files: string[] = [];
+    const visit = (currentPath: string, relativePrefix: string): void => {
+        const entries = fileSystem.readdirSync(currentPath, { withFileTypes: true });
+        for (const entry of entries) {
+            const absolutePath = path.join(currentPath, entry.name);
+            const relativePath = relativePrefix ? path.join(relativePrefix, entry.name) : entry.name;
+            if (entry.isDirectory()) {
+                visit(absolutePath, relativePath);
+                continue;
+            }
+            if (entry.isFile() && (entry.name.endsWith('.js') || entry.name.endsWith('.json'))) {
+                files.push(relativePath.split(path.sep).join('/'));
+            }
+        }
+    };
+
+    visit(rootPath, '');
+    return files.sort();
+}
+
+function cliCompanionDirectoryMatches(
+    compiledCompanionDirectory: string,
+    repoCompanionDirectory: string,
+    fileSystem: RepoCliSyncFsLike
+): boolean {
+    const compiledFiles = collectCliCompanionFiles(compiledCompanionDirectory, fileSystem);
+    const repoFiles = collectCliCompanionFiles(repoCompanionDirectory, fileSystem);
+    if (compiledFiles.length !== repoFiles.length) {
+        return false;
+    }
+    for (let index = 0; index < compiledFiles.length; index += 1) {
+        const relativePath = compiledFiles[index];
+        if (repoFiles[index] !== relativePath) {
+            return false;
+        }
+        const compiledPath = path.join(compiledCompanionDirectory, ...relativePath.split('/'));
+        const repoPath = path.join(repoCompanionDirectory, ...relativePath.split('/'));
+        const compiledContent = readFileIfExists(compiledPath, fileSystem);
+        if (compiledContent === null || !fileContentMatches(repoPath, normalizeRepoCliEntrypointContent(compiledContent), fileSystem)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function normalizeRepoCliEntrypointContent(content: Buffer): Buffer {
     const text = content.toString('utf8');
     const normalized = text.replace(SOURCE_MAPPING_URL_COMMENT_RE, '$1');
@@ -543,6 +597,29 @@ function replaceRepoCliEntrypoint(repoCliPath: string, desiredContent: Buffer, f
     }
 }
 
+function replaceRepoCliCompanionDirectory(
+    compiledCompanionDirectory: string,
+    repoCompanionDirectory: string,
+    fileSystem: RepoCliSyncFsLike
+): void {
+    const companionFiles = collectCliCompanionFiles(compiledCompanionDirectory, fileSystem);
+    const expectedCompanionFiles = new Set(companionFiles);
+    for (const relativePath of companionFiles) {
+        const sourcePath = path.join(compiledCompanionDirectory, ...relativePath.split('/'));
+        const destinationPath = path.join(repoCompanionDirectory, ...relativePath.split('/'));
+        const sourceContent = normalizeRepoCliEntrypointContent(fileSystem.readFileSync(sourcePath));
+        fileSystem.mkdirSync(path.dirname(destinationPath), { recursive: true });
+        replaceRepoCliEntrypoint(destinationPath, sourceContent, fileSystem);
+    }
+
+    for (const relativePath of collectCliCompanionFiles(repoCompanionDirectory, fileSystem)) {
+        if (expectedCompanionFiles.has(relativePath)) {
+            continue;
+        }
+        fileSystem.rmSync(path.join(repoCompanionDirectory, ...relativePath.split('/')), { force: true });
+    }
+}
+
 export function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string, fileSystem: RepoCliSyncFsLike = DEFAULT_REPO_CLI_SYNC_FS): string {
     const primaryCompiledPath = path.join(compiledRoot, PRIMARY_COMPILED_CLI_RELATIVE_PATH);
     if (!fileSystem.existsSync(primaryCompiledPath)) {
@@ -550,13 +627,19 @@ export function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string, fi
     }
 
     const repoCliPath = path.join(repoRoot, PRIMARY_REPO_CLI_RELATIVE_PATH);
+    const compiledCompanionDirectory = path.join(compiledRoot, PRIMARY_COMPILED_CLI_COMPANION_DIRECTORY);
+    const repoCompanionDirectory = path.join(repoRoot, PRIMARY_REPO_CLI_COMPANION_DIRECTORY);
 
     // Fast no-op path: skip lock acquisition when entrypoint is already up-to-date
     const compiledCliContentForCheck = readFileIfExists(primaryCompiledPath, fileSystem);
     const desiredCliContentForCheck = compiledCliContentForCheck === null
         ? null
         : normalizeRepoCliEntrypointContent(compiledCliContentForCheck);
-    if (desiredCliContentForCheck !== null && fileContentMatches(repoCliPath, desiredCliContentForCheck, fileSystem)) {
+    if (
+        desiredCliContentForCheck !== null
+        && fileContentMatches(repoCliPath, desiredCliContentForCheck, fileSystem)
+        && cliCompanionDirectoryMatches(compiledCompanionDirectory, repoCompanionDirectory, fileSystem)
+    ) {
         ensureExecutableMode(repoCliPath, fileSystem);
         return repoCliPath;
     }
@@ -566,6 +649,7 @@ export function syncRepoCliEntrypoint(compiledRoot: string, repoRoot: string, fi
     acquireRepoCliSyncLock(repoCliLockPath, fileSystem);
     try {
         const compiledCliContent = normalizeRepoCliEntrypointContent(fileSystem.readFileSync(primaryCompiledPath));
+        replaceRepoCliCompanionDirectory(compiledCompanionDirectory, repoCompanionDirectory, fileSystem);
         replaceRepoCliEntrypoint(repoCliPath, compiledCliContent, fileSystem);
     } finally {
         releaseRepoCliSyncLock(repoCliLockPath, fileSystem);
