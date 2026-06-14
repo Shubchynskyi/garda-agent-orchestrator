@@ -763,6 +763,22 @@ function writeReviewEvidence(
             delegation_started_at_utc: delegationStartedAtUtc
         });
         reviewerLaunchArtifactSha256 = fileSha256(reviewerLaunchArtifactPath);
+        appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_COMPLETED', 'INFO', {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: `agent:${reviewType}-reviewer`,
+            reviewer_identity: `agent:${reviewType}-reviewer`,
+            review_context_sha256: sha256Text(reviewContextText),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            reviewer_launch_artifact_path: reviewerLaunchArtifactPath,
+            reviewer_launch_artifact_sha256: reviewerLaunchArtifactSha256,
+            provider_invocation_id: `test-${reviewType}-invocation`,
+            launch_prepared_at_utc: launchPreparedAtUtc,
+            delegation_started_at_utc: delegationStartedAtUtc,
+            launched_at_utc: launchedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc
+        });
     }
     const invocationIntegrity = appendEvent(repoRoot, taskId, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
         task_id: taskId,
@@ -1100,6 +1116,7 @@ function seedCompletedReviewerLaunchAndInvocation(
     });
     const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, reviewType, 'reviewer-launch.json');
     const delegationStartedAtUtc = '2026-04-28T00:00:00.000Z';
+    const launchCompletedAtUtc = '2026-04-28T00:00:12.000Z';
     writeJson(launchArtifactPath, {
         schema_version: 1,
         evidence_type: 'delegated_reviewer_launch',
@@ -1116,6 +1133,7 @@ function seedCompletedReviewerLaunchAndInvocation(
         provider_invocation_id: `test-${reviewType}-invocation`,
         delegation_started_at_utc: delegationStartedAtUtc,
         launched_at_utc: delegationStartedAtUtc,
+        launch_completed_at_utc: launchCompletedAtUtc,
         ...launchInputEvidenceFixture(taskId, reviewType),
         fork_context: false
     });
@@ -1129,6 +1147,21 @@ function seedCompletedReviewerLaunchAndInvocation(
         routing_event_sha256: routeIntegrity.event_sha256,
         provider_invocation_id: `test-${reviewType}-invocation`,
         delegation_started_at_utc: delegationStartedAtUtc
+    });
+    appendEvent(repoRoot, taskId, 'REVIEWER_LAUNCH_COMPLETED', 'INFO', {
+        task_id: taskId,
+        review_type: reviewType,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: reviewerIdentity,
+        reviewer_identity: reviewerIdentity,
+        review_context_sha256: fileSha256(reviewContextPath),
+        routing_event_sha256: routeIntegrity.event_sha256,
+        reviewer_launch_artifact_path: launchArtifactPath,
+        reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
+        provider_invocation_id: `test-${reviewType}-invocation`,
+        delegation_started_at_utc: delegationStartedAtUtc,
+        launched_at_utc: delegationStartedAtUtc,
+        launch_completed_at_utc: launchCompletedAtUtc
     });
     if (options.includeInvocation === false) {
         return;
@@ -1150,6 +1183,7 @@ function seedCompletedReviewerLaunchAndInvocation(
         provider_invocation_id: `test-${reviewType}-invocation`,
         delegation_started_at_utc: delegationStartedAtUtc,
         launched_at_utc: delegationStartedAtUtc,
+        launch_completed_at_utc: launchCompletedAtUtc,
         launch_input_mode: launchArtifact.launch_input_mode,
         launch_input_sha256: launchArtifact.launch_input_sha256,
         copy_paste_reviewer_launch_prompt_sha256: launchArtifact.copy_paste_reviewer_launch_prompt_sha256

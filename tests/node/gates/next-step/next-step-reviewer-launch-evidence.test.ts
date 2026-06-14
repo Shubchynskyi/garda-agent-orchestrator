@@ -222,6 +222,7 @@ function overwriteLaunchedArtifact(
     const copyPastePrompt = `Delegated ${REVIEW_TYPE} reviewer launch prompt for ${TASK_ID}.`;
     const copyPastePromptSha256 = sha256Text(copyPastePrompt);
     const delegationStartedAtUtc = '2026-06-01T00:00:01.000Z';
+    const launchCompletedAtUtc = '2026-06-01T00:00:12.000Z';
     writeJson(launchArtifactPath, {
         schema_version: 1,
         evidence_type: 'delegated_reviewer_launch',
@@ -238,6 +239,7 @@ function overwriteLaunchedArtifact(
         provider_invocation_id: 'test-provider-invocation',
         delegation_started_at_utc: delegationStartedAtUtc,
         launched_at_utc: delegationStartedAtUtc,
+        launch_completed_at_utc: launchCompletedAtUtc,
         copy_paste_reviewer_launch_prompt: copyPastePrompt,
         copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
         launch_input_mode: 'copy_paste_prompt',
@@ -253,7 +255,23 @@ function overwriteLaunchedArtifact(
         review_context_sha256: contextSha256,
         routing_event_sha256: routingEventSha256,
         provider_invocation_id: 'test-provider-invocation',
-        delegation_started_at_utc: delegationStartedAtUtc
+        delegation_started_at_utc: delegationStartedAtUtc,
+        launched_at_utc: delegationStartedAtUtc,
+        launch_completed_at_utc: launchCompletedAtUtc
+    });
+    appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_COMPLETED', {
+        task_id: TASK_ID,
+        review_type: REVIEW_TYPE,
+        reviewer_execution_mode: 'delegated_subagent',
+        reviewer_session_id: REVIEWER_IDENTITY,
+        reviewer_identity: REVIEWER_IDENTITY,
+        review_context_sha256: contextSha256,
+        routing_event_sha256: routingEventSha256,
+        reviewer_launch_artifact_sha256: fileSha256(launchArtifactPath),
+        provider_invocation_id: 'test-provider-invocation',
+        delegation_started_at_utc: delegationStartedAtUtc,
+        launched_at_utc: delegationStartedAtUtc,
+        launch_completed_at_utc: launchCompletedAtUtc
     });
     return fileSha256(launchArtifactPath);
 }
@@ -304,6 +322,8 @@ describe('next-step reviewer launch evidence helpers', () => {
             preparedLaunchEventSha256,
             routingEventSha256
         );
+        const delegationStartedAtUtc = '2026-06-01T00:00:01.000Z';
+        const launchCompletedAtUtc = '2026-06-01T00:00:12.000Z';
         appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', {
             task_id: TASK_ID,
             review_type: REVIEW_TYPE,
@@ -313,7 +333,11 @@ describe('next-step reviewer launch evidence helpers', () => {
             review_context_sha256: fileSha256(contextPath),
             review_tree_state_sha256: HASH_A,
             routing_event_sha256: routingEventSha256,
-            reviewer_launch_artifact_sha256: launchArtifactSha256
+            reviewer_launch_artifact_sha256: launchArtifactSha256,
+            provider_invocation_id: 'test-provider-invocation',
+            delegation_started_at_utc: delegationStartedAtUtc,
+            launched_at_utc: delegationStartedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc
         });
 
         const state = makeReviewState(contextPath, {

@@ -580,8 +580,10 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
         launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedArtifact.copy_paste_reviewer_launch_prompt_sha256,
         delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
         launched_at_utc: '2026-04-28T00:00:00.000Z',
+        launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC,
         fork_context: false
     }, null, 2) + '\n', 'utf8');
+    const completedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
     appendTaskEvent(
         getOrchestratorRoot(repoRoot),
         taskId,
@@ -601,6 +603,28 @@ function completeReviewerLaunchArtifactForTest(launchArtifactPath: string): void
             provider_invocation_id: 'test-invocation-265',
             delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
             launched_at_utc: '2026-04-28T00:00:00.000Z'
+        }
+    );
+    appendTaskEvent(
+        getOrchestratorRoot(repoRoot),
+        taskId,
+        'REVIEWER_LAUNCH_COMPLETED',
+        'INFO',
+        'Reviewer launch completed by test controller fixture.',
+        {
+            task_id: taskId,
+            review_type: reviewType,
+            reviewer_execution_mode: reviewerExecutionMode,
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: reviewContextSha256,
+            routing_event_sha256: routingEventSha256,
+            reviewer_launch_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+            reviewer_launch_artifact_sha256: completedLaunchArtifactSha256,
+            provider_invocation_id: 'test-invocation-265',
+            delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            launch_completed_at_utc: TEST_REVIEW_LAUNCH_COMPLETED_AT_UTC
         }
     );
 }

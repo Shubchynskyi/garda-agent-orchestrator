@@ -252,6 +252,64 @@ function hasMatchingReviewerDelegationStartedTelemetry(options: {
     return false;
 }
 
+function hasMatchingReviewerLaunchCompletedTelemetry(options: {
+    lines: string[];
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    plannedReviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    launchArtifactSha256: string;
+    providerInvocationId: string;
+    delegationStartedAtUtc: string;
+    launchCompletedAtUtc: string;
+}): boolean {
+    const normalizedReviewContextSha256 = options.reviewContextSha256.toLowerCase();
+    const normalizedRoutingEventSha256 = options.routingEventSha256.toLowerCase();
+    const normalizedLaunchArtifactSha256 = options.launchArtifactSha256.toLowerCase();
+    for (let index = options.lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const event = JSON.parse(options.lines[index]) as Record<string, unknown>;
+            const eventType = String(event.event_type || '').trim();
+            if (eventType !== 'REVIEWER_LAUNCH_COMPLETED') {
+                continue;
+            }
+            const details = isPlainRecord(event.details) ? event.details : {};
+            const detailsProviderInvocationId = getArtifactStringField(
+                details,
+                'provider_invocation_id',
+                'providerInvocationId',
+                'controller_invocation_id',
+                'controllerInvocationId'
+            );
+            if (
+                String(details.task_id || details.taskId || '').trim() === options.taskId
+                && String(details.review_type || details.reviewType || '').trim() === options.reviewType
+                && String(details.reviewer_execution_mode || details.reviewerExecutionMode || '').trim() === 'delegated_subagent'
+                && reviewerIdentityMatchesDelegatedLaunchCycle({
+                    observedIdentity: String(details.reviewer_session_id || details.reviewer_identity || '').trim(),
+                    expectedIdentity: options.reviewerIdentity,
+                    taskId: options.taskId,
+                    reviewType: options.reviewType,
+                    plannedReviewerIdentity: options.plannedReviewerIdentity
+                })
+                && String(details.review_context_sha256 || details.reviewContextSha256 || '').trim().toLowerCase() === normalizedReviewContextSha256
+                && String(details.routing_event_sha256 || details.routingEventSha256 || '').trim().toLowerCase() === normalizedRoutingEventSha256
+                && String(details.reviewer_launch_artifact_sha256 || details.reviewerLaunchArtifactSha256 || '').trim().toLowerCase() === normalizedLaunchArtifactSha256
+                && detailsProviderInvocationId === options.providerInvocationId
+                && String(details.delegation_started_at_utc || details.delegationStartedAtUtc || '').trim() === options.delegationStartedAtUtc
+                && String(details.launch_completed_at_utc || details.launchCompletedAtUtc || '').trim() === options.launchCompletedAtUtc
+            ) {
+                return true;
+            }
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return false;
+}
+
 function resolveReviewerLaunchArtifactPathFromTelemetry(repoRoot: string, rawPath: unknown): string | null {
     const pathValue = String(rawPath || '').trim();
     if (!pathValue) {
@@ -508,6 +566,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
             }
             const evidenceType = getArtifactStringField(launchArtifact, 'evidence_type', 'artifact_type');
             const attestationState = getArtifactStringField(launchArtifact, 'attestation_state', 'attestationState');
+            const launchArtifactSha256 = fileSha256(launchArtifactPath);
             let artifactState: DelegatedReviewLaunchArtifactState = 'missing_or_invalid';
             if (evidenceType === PREPARED_REVIEWER_LAUNCH_EVIDENCE_TYPE && attestationState === 'prepared') {
                 artifactState = 'prepared';
@@ -521,6 +580,7 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 evidenceType === COMPLETED_REVIEWER_LAUNCH_EVIDENCE_TYPE
                 && attestationState === 'launched'
                 && hasCompletedReviewerLaunchEvidence(launchArtifact)
+                && launchArtifactSha256
                 && hasMatchingReviewerDelegationStartedTelemetry({
                     lines,
                     taskId,
@@ -544,13 +604,39 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                         'delegationStartedAtUtc'
                     )
                 })
+                && hasMatchingReviewerLaunchCompletedTelemetry({
+                    lines,
+                    taskId,
+                    reviewType: state.reviewType,
+                    reviewerIdentity,
+                    plannedReviewerIdentity,
+                    reviewContextSha256: matchedReviewContextSha256,
+                    routingEventSha256,
+                    launchArtifactSha256,
+                    providerInvocationId: getArtifactStringField(
+                        launchArtifact,
+                        'provider_invocation_id',
+                        'providerInvocationId',
+                        'controller_invocation_id',
+                        'controllerInvocationId'
+                    ),
+                    delegationStartedAtUtc: getArtifactStringField(
+                        launchArtifact,
+                        'delegation_started_at_utc',
+                        'delegationStartedAtUtc'
+                    ),
+                    launchCompletedAtUtc: getArtifactStringField(
+                        launchArtifact,
+                        'launch_completed_at_utc',
+                        'launchCompletedAtUtc'
+                    )
+                })
             ) {
                 artifactState = 'launched';
             }
             if (artifactState === 'missing_or_invalid') {
                 continue;
             }
-            const launchArtifactSha256 = fileSha256(launchArtifactPath);
             const reviewOutputPath = resolveReviewerLaunchArtifactPathFromTelemetry(
                 repoRoot,
                 getArtifactStringField(launchArtifact, 'review_output_path', 'reviewOutputPath')

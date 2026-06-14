@@ -1,11 +1,13 @@
 import {
     assert,
+    appendTaskEvent,
     completeReviewerLaunchArtifactForTest,
     createReviewerRoutingFixture,
     createTempRepo,
     describe,
     fileSha256ForTest,
     fs,
+    getOrchestratorRoot,
     getReviewsRoot,
     it,
     launchArtifactInputArgsForTest,
@@ -26,6 +28,45 @@ import {
     writeManualReviewerHandoffFixture,
     writePreflight
 } from './gates-command-review-launch-fixtures';
+
+const TEST_LAUNCH_COMPLETED_AT_UTC = '2026-04-28T00:00:12.000Z';
+
+function appendReviewerLaunchCompletedForTest(options: {
+    repoRoot: string;
+    taskId: string;
+    reviewType: string;
+    reviewerIdentity: string;
+    reviewContextSha256: string;
+    routingEventSha256: string;
+    launchArtifactPath: string;
+    providerInvocationId: string;
+    delegationStartedAtUtc: string;
+    launchCompletedAtUtc?: string;
+}): void {
+    const launchCompletedAtUtc = options.launchCompletedAtUtc || TEST_LAUNCH_COMPLETED_AT_UTC;
+    appendTaskEvent(
+        getOrchestratorRoot(options.repoRoot),
+        options.taskId,
+        'REVIEWER_LAUNCH_COMPLETED',
+        'INFO',
+        'Reviewer launch completed by test controller fixture.',
+        {
+            task_id: options.taskId,
+            review_type: options.reviewType,
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: options.reviewerIdentity,
+            reviewer_identity: options.reviewerIdentity,
+            review_context_sha256: options.reviewContextSha256,
+            routing_event_sha256: options.routingEventSha256,
+            reviewer_launch_artifact_path: options.launchArtifactPath.replace(/\\/g, '/'),
+            reviewer_launch_artifact_sha256: fileSha256ForTest(options.launchArtifactPath),
+            provider_invocation_id: options.providerInvocationId,
+            delegation_started_at_utc: options.delegationStartedAtUtc,
+            launched_at_utc: options.delegationStartedAtUtc,
+            launch_completed_at_utc: launchCompletedAtUtc
+        }
+    );
+}
 
 describe('cli/commands/gates review launch invocation', () => {
     it('record-review-invocation accepts completed launch metadata after current preparation', async () => {
@@ -117,8 +158,20 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
             delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
             launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
+            launch_completed_at_utc: TEST_LAUNCH_COMPLETED_AT_UTC,
             fork_context: false
         }, null, 2) + '\n', 'utf8');
+        appendReviewerLaunchCompletedForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: 'agent:test-reviewer',
+            reviewContextSha256: fileSha256ForTest(reviewContextPath),
+            routingEventSha256: String(routingIntegrity.event_sha256),
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-123',
+            delegationStartedAtUtc: String(preparedLaunchArtifact.delegation_started_at_utc)
+        });
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -457,8 +510,20 @@ describe('cli/commands/gates review launch invocation', () => {
             launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
             delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
             launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
+            launch_completed_at_utc: TEST_LAUNCH_COMPLETED_AT_UTC,
             fork_context: false
         }, null, 2) + '\n', 'utf8');
+        appendReviewerLaunchCompletedForTest({
+            repoRoot,
+            taskId,
+            reviewType: 'code',
+            reviewerIdentity: fixture.reviewerIdentity,
+            reviewContextSha256: fixture.reviewContextSha256,
+            routingEventSha256: fixture.routingEventSha256,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-123',
+            delegationStartedAtUtc: String(preparedLaunchArtifact.delegation_started_at_utc)
+        });
 
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
@@ -485,6 +550,68 @@ describe('cli/commands/gates review launch invocation', () => {
         assert.equal(observedExitCode, 0);
         const events = readTaskTimelineEvents(repoRoot, taskId);
         assert.equal(events.filter((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED').length, 1);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('record-review-invocation rejects completed launch artifacts without parent completion telemetry', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-794-invocation-no-launch-completed-event';
+        const fixture = await seedRoutedReviewerLaunchFixture({ repoRoot, taskId });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', taskId, 'code', 'reviewer-launch.json');
+
+        await prepareReviewerLaunchForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath
+        });
+        await recordReviewerDelegationStartedForTest({
+            repoRoot,
+            taskId,
+            reviewerIdentity: fixture.reviewerIdentity,
+            launchArtifactPath,
+            providerInvocationId: 'test-invocation-123',
+            attestationSource: 'test_provider_controller'
+        });
+        const preparedLaunchArtifact = JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8'));
+        const preparedLaunchArtifactSha256 = fileSha256ForTest(launchArtifactPath);
+        fs.writeFileSync(launchArtifactPath, JSON.stringify({
+            ...preparedLaunchArtifact,
+            evidence_type: 'delegated_reviewer_launch',
+            attestation_state: 'launched',
+            attestation_source: 'test_provider_controller',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-123',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_artifact_path: launchArtifactPath.replace(/\\/g, '/'),
+            launch_input_sha256: preparedLaunchArtifactSha256,
+            launch_input_artifact_sha256: preparedLaunchArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: preparedLaunchArtifactSha256,
+            launch_input_copy_paste_reviewer_launch_prompt_sha256: preparedLaunchArtifact.copy_paste_reviewer_launch_prompt_sha256,
+            delegation_started_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
+            launched_at_utc: preparedLaunchArtifact.delegation_started_at_utc,
+            launch_completed_at_utc: TEST_LAUNCH_COMPLETED_AT_UTC,
+            fork_context: false
+        }, null, 2) + '\n', 'utf8');
+
+        const invocation = await runCliWithCapturedOutput([
+            'gate',
+            'record-review-invocation',
+            '--task-id', taskId,
+            '--review-type', 'code',
+            '--repo-root', repoRoot,
+            '--reviewer-execution-mode', 'delegated_subagent',
+            '--reviewer-identity', fixture.reviewerIdentity,
+            '--reviewer-launch-artifact-path', launchArtifactPath
+        ], { cwd: repoRoot });
+
+        assert.notEqual(invocation.exitCode, 0);
+        assert.ok(
+            invocation.errors.some((line) => line.includes('launch_completed_at_utc must reference current REVIEWER_LAUNCH_COMPLETED telemetry')),
+            invocation.errors.join('\n')
+        );
+        assert.equal(readTaskTimelineEvents(repoRoot, taskId).some((event) => event.event_type === 'REVIEWER_INVOCATION_ATTESTED'), false);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

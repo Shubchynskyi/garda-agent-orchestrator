@@ -28,6 +28,7 @@ import {
 } from './review-launch-artifact-fields';
 import {
     findMatchingReviewerDelegationStartedEvent,
+    findMatchingReviewerLaunchCompletedEvent,
     findMatchingReviewerLaunchPreparedEvent
 } from './review-launch-artifact-fields';
 
@@ -109,6 +110,7 @@ export function validateReviewerLaunchArtifact(options: {
     }
 
     const artifact = readJsonFile(artifactPath, 'ReviewerLaunchArtifactPath');
+    const reviewerLaunchArtifactSha256 = fileSha256(artifactPath) || '';
     const schemaVersion = Number(artifact.schema_version);
     const evidenceType = String(artifact.evidence_type || artifact.artifact_type || '').trim();
     const attestationState = getStringField(artifact, 'attestation_state', 'attestationState');
@@ -455,6 +457,30 @@ export function validateReviewerLaunchArtifact(options: {
     if (launchCompletedAtUtc && !isValidUtcIso8601Timestamp(launchCompletedAtUtc)) {
         violations.push('launch_completed_at_utc must be a valid UTC ISO-8601 timestamp');
     }
+    if (!launchCompletedAtUtc) {
+        violations.push('launch_completed_at_utc is required');
+    } else if (
+        isValidUtcIso8601Timestamp(launchCompletedAtUtc)
+        && delegationStartedAtUtc
+        && isValidUtcIso8601Timestamp(delegationStartedAtUtc)
+        && providerInvocationId
+        && reviewerLaunchArtifactSha256
+        && !findMatchingReviewerLaunchCompletedEvent(options.timelineEvents, {
+            taskId: options.taskId,
+            reviewType: options.reviewType,
+            reviewerExecutionMode: options.reviewerExecutionMode,
+            reviewerIdentity: launchBindingReviewerIdentity,
+            reviewContextSha256: options.reviewContextSha256,
+            routingEventSha256: options.routingEventSha256,
+            reviewerLaunchArtifactSha256,
+            providerInvocationId,
+            delegationStartedAtUtc,
+            launchCompletedAtUtc,
+            minSequenceExclusive: options.routingEventSequence
+        })
+    ) {
+        violations.push('launch_completed_at_utc must reference current REVIEWER_LAUNCH_COMPLETED telemetry');
+    }
     if (violations.length > 0) {
         throw new Error(
             'Reviewer launch artifact is not eligible for invocation attestation:\n' +
@@ -466,7 +492,7 @@ export function validateReviewerLaunchArtifact(options: {
 
     return {
         artifactPath,
-        artifactSha256: fileSha256(artifactPath) || '',
+        artifactSha256: reviewerLaunchArtifactSha256,
         attestationSource,
         launchTool,
         providerInvocationId,
