@@ -7,6 +7,9 @@ import { initGitRepo } from '../git-fixtures';
 import { formatNextStepText, resolveNextStep, recordFullSuiteValidationDuration } from './next-step-test-support';
 import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
 import {
+    buildForcedSourceCheckoutRuntimeBuildCommand
+} from '../../../../src/validators/workspace-layout';
+import {
     TASK_ID,
     EXPECTED_LOOP_LINE,
     requireFromTest,
@@ -61,6 +64,8 @@ import {
 } from './next-step-completion-fixtures';
 
 describe('gates/next-step', () => {
+    const expectedSourceRuntimeRebuildCommand = buildForcedSourceCheckoutRuntimeBuildCommand();
+
     it('blocks completion while a current failed code review remains even when independent lanes passed', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
@@ -142,7 +147,7 @@ describe('gates/next-step', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'source-runtime-remediation');
-        assert.equal(result.commands[0].command, 'npm run build');
+        assert.equal(result.commands[0].command, expectedSourceRuntimeRebuildCommand);
         assert.ok(result.reason.includes("intended gate 'required-reviews-check'"));
         assert.ok(result.reason.includes('gate required-reviews-check'));
     });

@@ -14,6 +14,9 @@ import {
     type FullSuiteValidationConfig
 } from './next-step-test-support';
 import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
+import {
+    buildForcedSourceCheckoutRuntimeBuildCommand
+} from '../../../../src/validators/workspace-layout';
 import { getWorkspaceSnapshot } from './next-step-test-support';
 import { getWorkspaceSnapshotCached } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
@@ -28,6 +31,7 @@ import { buildStrictDecompositionDecisionArtifact } from './next-step-test-suppo
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
+const EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND = buildForcedSourceCheckoutRuntimeBuildCommand();
 const requireFromTest = createRequire(__filename);
 const NEXT_STEP_FULL_SUITE_TEST_CONFIG: FullSuiteValidationConfig = Object.freeze({
     enabled: true,
@@ -1386,11 +1390,13 @@ describe('gates/next-step provider and profile output', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'source-runtime-remediation');
-        assert.equal(result.commands[0].command, 'npm run build');
+        assert.equal(result.commands[0].command, EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND);
         assert.ok(result.reason.includes("intended gate 'classify-change'"));
+        assert.ok(result.reason.includes('forced rebuild command'));
+        assert.ok(result.reason.includes('build-script and publish-runtime reuse cannot leave stale runtime evidence in place'));
         assert.ok(result.reason.includes('Generated runtime file is older than source: src/app.ts newer than dist/src/app.js'));
         assert.ok(text.includes('NextGate: source-runtime-remediation'));
-        assert.ok(text.includes('Rebuild source-checkout runtime: npm run build'));
+        assert.ok(text.includes(`Rebuild source-checkout runtime: ${EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND}`));
     });
 
     it('does not report source runtime remediation before classify-change when generated runtime is clean', () => {
@@ -1420,7 +1426,7 @@ describe('gates/next-step provider and profile output', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'source-runtime-remediation');
-        assert.equal(result.commands[0].command, 'npm run build');
+        assert.equal(result.commands[0].command, EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND);
         assert.ok(result.reason.includes("intended gate 'load-rule-pack'"));
         assert.ok(result.reason.includes('gate load-rule-pack'));
     });
@@ -1436,7 +1442,7 @@ describe('gates/next-step provider and profile output', () => {
 
         assert.equal(result.status, 'BLOCKED');
         assert.equal(result.next_gate, 'source-runtime-remediation');
-        assert.equal(result.commands[0].command, 'npm run build');
+        assert.equal(result.commands[0].command, EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND);
         assert.ok(result.reason.includes("intended gate 'build-review-context'"));
         assert.ok(result.reason.includes('gate build-review-context'));
         assert.ok(result.reason.includes('--review-type "code"'));

@@ -400,6 +400,17 @@ function resolveGeneratedRuntimePath(targetRoot: string, runtimeRoot: string, so
     return path.join(runtimeRoot, parsed.dir, `${parsed.name}.js`);
 }
 
+export function buildForcedSourceCheckoutRuntimeBuildCommand(platform: NodeJS.Platform = process.platform): string {
+    return platform === 'win32'
+        ? "$env:GARDA_BUILD_SCRIPTS_FORCE_REBUILD='1'; $env:GARDA_PUBLISH_RUNTIME_FORCE_REBUILD='1'; npm run build"
+        : 'GARDA_BUILD_SCRIPTS_FORCE_REBUILD=1 GARDA_PUBLISH_RUNTIME_FORCE_REBUILD=1 npm run build';
+}
+
+function buildSourceCheckoutRuntimeRemediation(): string {
+    return `Run "${buildForcedSourceCheckoutRuntimeBuildCommand()}" before continuing gate execution from this source checkout. ` +
+        'This disables build-script and publish-runtime reuse so stale generated runtime evidence is refreshed.';
+}
+
 export function detectSourceCheckoutRuntimeStaleness(targetRoot: string): SourceCheckoutRuntimeStalenessResult {
     const resolvedRoot = path.resolve(targetRoot);
     const isSourceCheckout = isSourceCheckoutRoot(resolvedRoot);
@@ -423,7 +434,7 @@ export function detectSourceCheckoutRuntimeStaleness(targetRoot: string): Source
     if (!runtimeRoot) {
         result.isStale = true;
         result.violations.push('Generated source-checkout runtime output is missing: dist/src/index.js or .node-build/src/index.js.');
-        result.remediation = 'Run "npm run build" before continuing gate execution from this source checkout.';
+        result.remediation = buildSourceCheckoutRuntimeRemediation();
         return result;
     }
 
@@ -466,7 +477,7 @@ export function detectSourceCheckoutRuntimeStaleness(targetRoot: string): Source
     }
     result.isStale = result.violations.length > 0;
     if (result.isStale) {
-        result.remediation = 'Run "npm run build" before continuing gate execution from this source checkout.';
+        result.remediation = buildSourceCheckoutRuntimeRemediation();
     }
     return result;
 }

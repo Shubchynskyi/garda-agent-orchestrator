@@ -10,9 +10,12 @@ import {
 } from '../../../src/cli/exit-codes';
 import { dispatchCliCommand } from '../../../src/cli/commands/command-dispatch';
 import {
+    buildForcedSourceCheckoutRuntimeBuildCommand,
     BUNDLE_RUNTIME_INVENTORY_PATHS,
     CRITICAL_BUNDLE_PATHS
 } from '../../../src/validators/workspace-layout';
+
+const EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND = buildForcedSourceCheckoutRuntimeBuildCommand();
 
 function findRepoRoot(startDir: string): string {
     let current = path.resolve(startDir);
@@ -114,7 +117,9 @@ test('gate command warns and continues when source checkout runtime is stale', a
         const combinedErrors = capturedErrors.join('\n');
         assert.ok(combinedErrors.includes('Source Runtime Warning: source checkout generated runtime may be stale.'));
         assert.ok(combinedErrors.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js'));
-        assert.ok(combinedErrors.includes('Remediation: Run "npm run build"'));
+        assert.ok(combinedErrors.includes(`Remediation: Run "${EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND}"`));
+        assert.ok(combinedErrors.includes('GARDA_BUILD_SCRIPTS_FORCE_REBUILD'));
+        assert.ok(combinedErrors.includes('GARDA_PUBLISH_RUNTIME_FORCE_REBUILD'));
     } finally {
         console.error = originalConsoleError;
         process.exitCode = previousExitCode;

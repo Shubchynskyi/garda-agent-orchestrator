@@ -22,11 +22,14 @@ import {
     getCommandsRulePath,
     getMissingProjectCommands,
     readUtf8IfExists,
+    buildForcedSourceCheckoutRuntimeBuildCommand,
     detectSourceBundleParity,
     detectSourceCheckoutRuntimeStaleness,
     validateBundleInvariants,
     detectNestedBundleDuplication
 } from '../../../src/validators/workspace-layout';
+
+const EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND = buildForcedSourceCheckoutRuntimeBuildCommand();
 
 test('detectSourceBundleParity returns isSourceCheckout false for empty dir', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parity-test-'));
@@ -114,6 +117,9 @@ test('detectSourceCheckoutRuntimeStaleness detects gate source newer than genera
         assert.equal(result.isStale, true);
         assert.ok(result.violations.some((violation) => violation.includes('src/gates/next-step.ts newer than dist/src/gates/next-step.js')));
         assert.ok(result.remediation?.includes('npm run build'));
+        assert.ok(result.remediation?.includes(EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND));
+        assert.ok(result.remediation?.includes('GARDA_BUILD_SCRIPTS_FORCE_REBUILD'));
+        assert.ok(result.remediation?.includes('GARDA_PUBLISH_RUNTIME_FORCE_REBUILD'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -135,6 +141,9 @@ test('detectSourceCheckoutRuntimeStaleness detects missing generated runtime out
         assert.equal(result.isStale, true);
         assert.ok(result.violations.some((violation) => violation.includes('Generated source-checkout runtime output is missing')));
         assert.ok(result.remediation?.includes('npm run build'));
+        assert.ok(result.remediation?.includes(EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND));
+        assert.ok(result.remediation?.includes('GARDA_BUILD_SCRIPTS_FORCE_REBUILD'));
+        assert.ok(result.remediation?.includes('GARDA_PUBLISH_RUNTIME_FORCE_REBUILD'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -158,6 +167,9 @@ test('detectSourceCheckoutRuntimeStaleness detects missing generated file under 
         assert.equal(result.isStale, true);
         assert.ok(result.violations.some((violation) => violation.includes('src/gates/next-step.ts -> dist/src/gates/next-step.js')));
         assert.ok(result.remediation?.includes('npm run build'));
+        assert.ok(result.remediation?.includes(EXPECTED_SOURCE_RUNTIME_REBUILD_COMMAND));
+        assert.ok(result.remediation?.includes('GARDA_BUILD_SCRIPTS_FORCE_REBUILD'));
+        assert.ok(result.remediation?.includes('GARDA_PUBLISH_RUNTIME_FORCE_REBUILD'));
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

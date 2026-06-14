@@ -113,6 +113,7 @@ import {
 import { resolveTaskProfileSelection } from '../../policy/task-profile-selection';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
+    buildForcedSourceCheckoutRuntimeBuildCommand,
     detectSourceCheckoutRuntimeStaleness,
     type SourceCheckoutRuntimeStalenessResult
 } from '../../validators';
@@ -1372,7 +1373,9 @@ function buildSourceRuntimeRemediationResult(params: {
     const violationSummary = params.staleness.violations.length > 0
         ? params.staleness.violations.join('; ')
         : 'source checkout generated runtime may be stale';
-    const remediation = params.staleness.remediation || 'Run "npm run build" before continuing gate execution from this source checkout.';
+    const remediation = params.staleness.remediation
+        || `Run "${buildForcedSourceCheckoutRuntimeBuildCommand()}" before continuing gate execution from this source checkout. ` +
+            'This disables build-script and publish-runtime reuse so stale generated runtime evidence is refreshed.';
     return buildResult({
         taskId: params.taskId,
         navigatorCommand: params.navigatorCommand,
@@ -1382,6 +1385,7 @@ function buildSourceRuntimeRemediationResult(params: {
         reason:
             `Source checkout generated runtime is stale: ${violationSummary}. ` +
             `Remediation blocks intended gate '${params.intendedGate}'. ` +
+            'Use the forced rebuild command below so build-script and publish-runtime reuse cannot leave stale runtime evidence in place. ' +
             `After the rebuild, rerun the navigator to continue with '${params.intendedGate}': ${params.intendedCommand}.`,
         commands: [
             buildCommand('Rebuild source-checkout runtime', remediation.replace(/^Run\s+"([^"]+)".*$/u, '$1'))
