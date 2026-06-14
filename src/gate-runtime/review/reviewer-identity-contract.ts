@@ -1,7 +1,7 @@
 export const PLANNED_REVIEWER_IDENTITY_PREFIX = 'agent:pending:';
 
 export const DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER =
-    '<agent:reviewer-session-id-from-delegated-agent>';
+    '<agent:resolved-provider-reviewer-id-from-delegated-agent>';
 
 export function buildPlannedReviewerIdentity(taskId: string, reviewType: string): string {
     const safeTaskId = String(taskId || '').trim();

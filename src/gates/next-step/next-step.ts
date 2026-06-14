@@ -2932,7 +2932,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             state
         );
         const resolvedLaunchReviewerIdentity = String(launchArtifactEvidence.reviewerIdentity || '').trim();
-        const delegatedReviewerIdentity = isResolvedReviewerIdentity(resolvedLaunchReviewerIdentity)
+        const delegatedReviewerIdentity = launchArtifactEvidence.state !== 'prepared'
+            && isResolvedReviewerIdentity(resolvedLaunchReviewerIdentity)
             ? resolvedLaunchReviewerIdentity
             : DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER;
         const reviewerIdentity = isResolvedReviewerIdentity(contextReviewerIdentity)
