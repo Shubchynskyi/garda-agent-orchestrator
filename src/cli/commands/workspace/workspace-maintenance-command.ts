@@ -8,6 +8,7 @@ import {
     runCleanupWithLock,
     runGcWithLock,
     runTaskRuntimePurgeWithLock,
+    RETENTION_POLICY_DEFAULTS,
     validateGcCategories
 } from '../../../lifecycle/cleanup';
 import { runUninstall } from '../../../lifecycle/uninstall';
@@ -70,6 +71,23 @@ function parseNonNegativeIntegerOption(raw: unknown, flagName: string): number |
         throw new Error(`${flagName} must be a non-negative integer, got: ${raw}`);
     }
     return Number.parseInt(raw, 10);
+}
+
+function retentionPolicyOptionDefinitions(): Record<string, { key: string; type: 'string' }> {
+    return Object.fromEntries(
+        RETENTION_POLICY_DEFAULTS.map((item) => [item.flag, { key: item.optionKey, type: 'string' as const }])
+    );
+}
+
+function parseRetentionPolicyOverrides(options: ParsedOptionsRecord): Record<string, number> {
+    const retentionOverrides: Record<string, number> = {};
+    for (const item of RETENTION_POLICY_DEFAULTS) {
+        const parsed = parseNonNegativeIntegerOption(options[item.optionKey], item.flag);
+        if (parsed !== undefined) {
+            retentionOverrides[item.policyKey] = parsed;
+        }
+    }
+    return retentionOverrides;
 }
 
 export async function handleReinit(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> {
@@ -396,16 +414,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--dry-run': { key: 'dryRun', type: 'boolean' },
         '--confirm': { key: 'confirm', type: 'boolean' },
-        '--max-age-days': { key: 'maxAgeDays', type: 'string' },
-        '--max-backups': { key: 'maxBackups', type: 'string' },
-        '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
-        '--max-aggregate-lines': { key: 'maxAggregateLines', type: 'string' },
-        '--max-metrics-lines': { key: 'maxMetricsLines', type: 'string' },
-        '--max-reviews': { key: 'maxReviews', type: 'string' },
-        '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
-        '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
-        '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
-        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' },
+        ...retentionPolicyOptionDefinitions(),
         '--runtime-retention-older-than-days': { key: 'runtimeRetentionOlderThanDays', type: 'string' },
         '--runtime-retention-keep-latest-tasks': { key: 'runtimeRetentionKeepLatestTasks', type: 'string' }
     };
@@ -421,28 +430,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
     const bundlePath = ensureBundleExists(targetRoot, 'cleanup');
     const dryRun = options.dryRun === true || options.confirm !== true;
 
-    const retentionOverrides: Record<string, number> = {};
-    const intFields: Array<[string, string]> = [
-        ['maxAgeDays', 'maxAgeDays'],
-        ['maxBackups', 'maxBackups'],
-        ['maxTaskEvents', 'maxTaskEvents'],
-        ['maxAggregateLines', 'maxAggregateLines'],
-        ['maxMetricsLines', 'maxMetricsLines'],
-        ['maxReviews', 'maxReviews'],
-        ['maxWorkingPlans', 'maxWorkingPlans'],
-        ['maxUpdateReports', 'maxUpdateReports'],
-        ['maxUpdateRollbacks', 'maxUpdateRollbacks'],
-        ['maxBundleBackups', 'maxBundleBackups']
-    ];
-    for (const [optKey, policyKey] of intFields) {
-        const parsed = parseNonNegativeIntegerOption(
-            options[optKey],
-            `--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()}`
-        );
-        if (parsed !== undefined) {
-            retentionOverrides[policyKey] = parsed;
-        }
-    }
+    const retentionOverrides = parseRetentionPolicyOverrides(options);
 
     const cleanupResult = runCleanupWithLock({
         targetRoot,
@@ -519,16 +507,7 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
         '--confirm': { key: 'confirm', type: 'boolean' },
         '--dry-run': { key: 'dryRun', type: 'boolean' },
         '--category': { key: 'category', type: 'string[]' },
-        '--max-age-days': { key: 'maxAgeDays', type: 'string' },
-        '--max-backups': { key: 'maxBackups', type: 'string' },
-        '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
-        '--max-aggregate-lines': { key: 'maxAggregateLines', type: 'string' },
-        '--max-metrics-lines': { key: 'maxMetricsLines', type: 'string' },
-        '--max-reviews': { key: 'maxReviews', type: 'string' },
-        '--max-working-plans': { key: 'maxWorkingPlans', type: 'string' },
-        '--max-update-reports': { key: 'maxUpdateReports', type: 'string' },
-        '--max-update-rollbacks': { key: 'maxUpdateRollbacks', type: 'string' },
-        '--max-bundle-backups': { key: 'maxBundleBackups', type: 'string' },
+        ...retentionPolicyOptionDefinitions(),
         '--runtime-retention-older-than-days': { key: 'runtimeRetentionOlderThanDays', type: 'string' },
         '--runtime-retention-keep-latest-tasks': { key: 'runtimeRetentionKeepLatestTasks', type: 'string' }
     };
@@ -548,28 +527,7 @@ export function handleGc(commandArgv: string[], packageJson: PackageJsonLike): v
     const explicitDryRun = options.dryRun === true;
     const confirm = options.confirm === true && !explicitDryRun;
 
-    const retentionOverrides: Record<string, number> = {};
-    const intFields: Array<[string, string]> = [
-        ['maxAgeDays', 'maxAgeDays'],
-        ['maxBackups', 'maxBackups'],
-        ['maxTaskEvents', 'maxTaskEvents'],
-        ['maxAggregateLines', 'maxAggregateLines'],
-        ['maxMetricsLines', 'maxMetricsLines'],
-        ['maxReviews', 'maxReviews'],
-        ['maxWorkingPlans', 'maxWorkingPlans'],
-        ['maxUpdateReports', 'maxUpdateReports'],
-        ['maxUpdateRollbacks', 'maxUpdateRollbacks'],
-        ['maxBundleBackups', 'maxBundleBackups']
-    ];
-    for (const [optKey, policyKey] of intFields) {
-        const parsed = parseNonNegativeIntegerOption(
-            options[optKey],
-            `--${optKey.replace(/([A-Z])/g, '-$1').toLowerCase()}`
-        );
-        if (parsed !== undefined) {
-            retentionOverrides[policyKey] = parsed;
-        }
-    }
+    const retentionOverrides = parseRetentionPolicyOverrides(options);
 
     const categories: string[] = [];
     if (Array.isArray(options.category)) {

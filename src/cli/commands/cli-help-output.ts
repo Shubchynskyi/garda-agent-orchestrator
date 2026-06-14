@@ -7,6 +7,7 @@ import {
     PRODUCT_ACRONYM_EXPANSION,
     PRODUCT_NAME
 } from '../../core/constants';
+import { buildDefaultRetentionPolicy, RETENTION_POLICY_DEFAULTS } from '../../lifecycle/cleanup';
 import { formatLocalUiLanguageCliChoices } from '../../reports/ui/ui-i18n';
 import { bold, cyan, dim, green, padRight, red, yellow } from './cli-colors';
 import { COMMAND_SUMMARY } from './cli-constants';
@@ -563,6 +564,15 @@ export function printHelp(packageJson: PackageJsonLike): void {
 }
 
 export function buildHelpText(packageJson: PackageJsonLike): string {
+    const defaultRetentionPolicy = buildDefaultRetentionPolicy();
+    const retentionDefaultsSummary = RETENTION_POLICY_DEFAULTS
+        .map((item) => `${defaultRetentionPolicy[item.policyKey]} ${item.label}`)
+        .join(', ');
+    const retentionOverrideFlags = [
+        '--runtime-retention-older-than-days',
+        '--runtime-retention-keep-latest-tasks',
+        ...RETENTION_POLICY_DEFAULTS.map((item) => item.flag)
+    ].join(', ');
     const sections = [
         [
             `${PRODUCT_NAME} CLI v${packageJson.version}`,
@@ -643,7 +653,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  - update compares installed vs available bundle versions and prints a summary before applying changes.',
             '  - rollback without --to-version restores the latest saved pre-update snapshot; with --to-version it acquires that version, syncs the bundle, and re-materializes the workspace.',
             '  - older snapshots created before rollback metadata persistence cannot be restored automatically.',
-            '  - cleanup uses retention defaults (30 days, 10 backups, 50 task events, 100 review sets, 100 working plans, 10 update reports, 10 rollbacks, 10 bundle backups, 10000 aggregate task-event lines, 2000 metrics lines); override with --max-age-days, --runtime-retention-older-than-days, --runtime-retention-keep-latest-tasks, --max-backups, --max-working-plans, --max-aggregate-lines, and --max-metrics-lines.',
+            `  - cleanup uses retention defaults (${retentionDefaultsSummary}); override with ${retentionOverrideFlags}.`,
             '  - runtime retention is tiered: active evidence is preserved, healthy DONE tasks can compact to ledger history after verified ledger evidence, problem tasks keep recovery-readable evidence and compress heavy forensic artifacts, and purge requires explicit confirmation.',
             '  - clean-success compile/full-suite raw logs may be intentionally omitted at gate time; retained summaries still record status, duration, hashes, and line/char counts.',
             `  - use \`${PRIMARY_CLI_NAME} cleanup policy edit\` for the dialog-first review-artifact storage policy editor, or \`${PRIMARY_CLI_NAME} cleanup policy\` to inspect current settings.`,

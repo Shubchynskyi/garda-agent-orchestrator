@@ -47,6 +47,7 @@ import {
 } from '../../../../src/cli/commands/cli-helpers';
 import { dispatchCliCommand } from '../../../../src/cli/commands/command-dispatch';
 import { DEFAULT_SOURCE_OF_TRUTH } from '../../../../src/core/constants';
+import { buildDefaultRetentionPolicy, RETENTION_POLICY_DEFAULTS } from '../../../../src/lifecycle/cleanup';
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
@@ -1014,6 +1015,18 @@ test('buildHelpText documents working-plan retention override', () => {
     const text = buildHelpText({ name: 'test', version: '1.0.0' });
     assert.ok(text.includes('--max-working-plans'));
     assert.ok(text.includes('working plans'));
+});
+
+test('buildHelpText renders cleanup retention defaults from policy metadata', () => {
+    const text = buildHelpText({ name: 'test', version: '1.0.0' });
+    const defaults = buildDefaultRetentionPolicy();
+    for (const item of RETENTION_POLICY_DEFAULTS) {
+        assert.ok(
+            text.includes(`${defaults[item.policyKey]} ${item.label}`),
+            `help should include default for ${String(item.policyKey)}`
+        );
+        assert.ok(text.includes(item.flag), `help should include override flag ${item.flag}`);
+    }
 });
 
 test('runCliMain with --no-color sets NO_COLOR and disables supportsColor', async () => {
