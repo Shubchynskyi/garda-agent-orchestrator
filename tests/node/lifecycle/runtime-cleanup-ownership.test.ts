@@ -5,6 +5,7 @@ import {
     findRuntimeCleanupOwnershipEntry,
     getRuntimeCleanupTaskPurgeModeForCandidateCategory,
     isRuntimeCleanupTaskPurgeDeletionCategory,
+    listRuntimeCleanupCollectorContracts,
     listRuntimeCleanupSideEffectActionsForRemovedCategories,
     listRuntimeCleanupOwnershipEntries,
     listTaskPurgeableRuntimeCandidateCategories,
@@ -118,6 +119,30 @@ describe('runtime cleanup ownership contract', () => {
         assert.equal(getRuntimeCleanupTaskPurgeModeForCandidateCategory('metrics'), null);
         assert.equal(isRuntimeCleanupTaskPurgeDeletionCategory('task-events'), true);
         assert.equal(isRuntimeCleanupTaskPurgeDeletionCategory('metrics'), false);
+    });
+
+    it('registers cleanup collectors through ownership entries', () => {
+        const contracts = listRuntimeCleanupCollectorContracts();
+        const byKey = new Map(contracts.map((contract) => [contract.key, contract]));
+
+        assert.deepEqual(contracts.map((contract) => contract.key), [
+            'manual-validation-task-root',
+            'plans-task-markdown',
+            'project-memory-task-artifacts',
+            'reviews-task-artifacts',
+            'task-events-task-artifacts',
+            'task-ledger-files',
+            'tmp-task-artifacts'
+        ]);
+        assert.equal(byKey.get('manual-validation-task-root')?.candidateCategory, 'manual-validation');
+        assert.deepEqual(byKey.get('task-events-task-artifacts')?.ownershipEntryIds, [
+            'task-events-timelines',
+            'task-events-completeness-cache'
+        ]);
+        assert.deepEqual(byKey.get('task-events-task-artifacts')?.sharedSideEffectActions, [
+            'prune-all-tasks-aggregate',
+            'prune-timeline-summary'
+        ]);
     });
 
     it('marks generic tmp scratch as non-task-purgeable and task-prefixed tmp artifacts as ownership-aware', () => {

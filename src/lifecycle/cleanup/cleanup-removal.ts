@@ -19,9 +19,11 @@ import {
 import { resolveStructuredOrJsonReviewArtifactTaskId } from './cleanup-review-artifact-ownership';
 import {
     isRuntimeCleanupTaskPurgeDeletionCategory,
+    listRuntimeCleanupCollectorContracts,
     resolveRuntimeCleanupStandardPaths
 } from './runtime-cleanup-ownership';
 import type { CleanupItem, RetentionPolicy } from './cleanup-types';
+import type { RuntimeCleanupCollectorKey, RuntimeCleanupStandardPaths } from './runtime-cleanup-ownership';
 
 export interface ProcessCleanupCandidatesResult {
     removed: CleanupItem[];
@@ -48,6 +50,14 @@ interface TaskArtifactSummary {
     taskId: string;
     newestMtimeMs: number;
 }
+
+interface TaskScopedCollectorContext {
+    standardPaths: RuntimeCleanupStandardPaths;
+    activeTaskIds: ReadonlySet<string>;
+    taskIdFilter?: ReadonlySet<string>;
+}
+
+type TaskScopedArtifactCollector = (context: TaskScopedCollectorContext) => CleanupItem[];
 
 function isRuntimeRetentionCompactionCandidate(
     item: CleanupItem,
@@ -732,21 +742,35 @@ function collectTaskTmpArtifactsInventory(
     return items;
 }
 
+const TASK_SCOPED_ARTIFACT_COLLECTORS = Object.freeze({
+    'manual-validation-task-root': ({ standardPaths, activeTaskIds, taskIdFilter }: TaskScopedCollectorContext) =>
+        collectTaskManualValidationArtifactsInventory(standardPaths.manualValidationDir, activeTaskIds, taskIdFilter),
+    'reviews-task-artifacts': ({ standardPaths, activeTaskIds, taskIdFilter }: TaskScopedCollectorContext) =>
+        collectTaskReviewArtifactsInventory(standardPaths.reviewsDir, activeTaskIds, taskIdFilter),
+    'task-events-task-artifacts': ({ standardPaths, activeTaskIds, taskIdFilter }: TaskScopedCollectorContext) =>
+        collectTaskTimelineArtifactsInventory(standardPaths.taskEventsDir, activeTaskIds, taskIdFilter),
+    'plans-task-markdown': ({ standardPaths, activeTaskIds, taskIdFilter }: TaskScopedCollectorContext) =>
+        collectTaskWorkingPlanArtifactsInventory(standardPaths.plansDir, activeTaskIds, taskIdFilter),
+    'project-memory-task-artifacts': ({ standardPaths, activeTaskIds, taskIdFilter }: TaskScopedCollectorContext) =>
+        collectTaskProjectMemoryArtifactsInventory(standardPaths.projectMemoryDir, activeTaskIds, taskIdFilter),
+    'task-ledger-files': ({ standardPaths, activeTaskIds, taskIdFilter }: TaskScopedCollectorContext) =>
+        collectTaskLedgerArtifactsInventory(standardPaths.taskLedgerDir, activeTaskIds, taskIdFilter),
+    'tmp-task-artifacts': ({ standardPaths, activeTaskIds, taskIdFilter }: TaskScopedCollectorContext) =>
+        collectTaskTmpArtifactsInventory(standardPaths.tmpDir, activeTaskIds, taskIdFilter)
+} satisfies Record<RuntimeCleanupCollectorKey, TaskScopedArtifactCollector>);
+
 function collectTaskScopedArtifactInventory(
     runtimeDir: string,
     activeTaskIds: ReadonlySet<string>,
     taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
     const standardPaths = resolveRuntimeCleanupStandardPaths(runtimeDir);
-    return [
-        ...collectTaskManualValidationArtifactsInventory(standardPaths.manualValidationDir, activeTaskIds, taskIdFilter),
-        ...collectTaskReviewArtifactsInventory(standardPaths.reviewsDir, activeTaskIds, taskIdFilter),
-        ...collectTaskTimelineArtifactsInventory(standardPaths.taskEventsDir, activeTaskIds, taskIdFilter),
-        ...collectTaskWorkingPlanArtifactsInventory(standardPaths.plansDir, activeTaskIds, taskIdFilter),
-        ...collectTaskProjectMemoryArtifactsInventory(standardPaths.projectMemoryDir, activeTaskIds, taskIdFilter),
-        ...collectTaskLedgerArtifactsInventory(standardPaths.taskLedgerDir, activeTaskIds, taskIdFilter),
-        ...collectTaskTmpArtifactsInventory(standardPaths.tmpDir, activeTaskIds, taskIdFilter)
-    ];
+    const context: TaskScopedCollectorContext = { standardPaths, activeTaskIds, taskIdFilter };
+    const items: CleanupItem[] = [];
+    for (const contract of listRuntimeCleanupCollectorContracts()) {
+        items.push(...TASK_SCOPED_ARTIFACT_COLLECTORS[contract.key](context));
+    }
+    return items;
 }
 
 export function collectTaskRuntimePurgeCandidates(runtimeDir: string, taskId: string): CleanupItem[] {
