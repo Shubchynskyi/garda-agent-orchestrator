@@ -782,6 +782,16 @@ test('formatVerifyResult shows PASS when all checks pass', () => {
     const output = formatVerifyResult(fakeResult);
     assert.ok(output.includes('Verification: PASSED'));
     assert.ok(!output.includes('Verification failed'));
+
+    const lines = output.split('\n');
+    assert.ok(
+        lines.indexOf('SkillsIndexConfigContractViolationCount: 0') < lines.indexOf('BundleVersion: 1.0.0'),
+        'BundleVersion must stay after config violation counts'
+    );
+    assert.ok(
+        lines.indexOf('BundleVersion: 1.0.0') < lines.indexOf('VersionContractViolationCount: 0'),
+        'BundleVersion must stay before version violation count'
+    );
 });
 
 /* ------------------------------------------------------------------ */

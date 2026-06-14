@@ -133,16 +133,16 @@ function requiresExactTaskModeRuleSectionParity(heading: string): boolean {
 export function parseBooleanLike(value: unknown, defaultValue: boolean): boolean {
     if (value === null || value === undefined) return defaultValue;
     if (typeof value === 'boolean') return value;
-    var normalized = String(value).trim().toLowerCase();
+    const normalized = String(value).trim().toLowerCase();
     if (BOOLEAN_TRUE_VALUES.includes(normalized)) return true;
     if (BOOLEAN_FALSE_VALUES.includes(normalized)) return false;
     return defaultValue;
 }
 
 export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: string, sourceOfTruth: string): VerifyInitAnswersResult {
-    var violations: string[] = [];
-    var defaults: VerifyInitAnswersResult = {
-        violations: violations,
+    const violations: string[] = [];
+    const defaults: VerifyInitAnswersResult = {
+        violations,
         assistantLanguage: null,
         assistantBrevity: null,
         enforceNoAutoCommit: false,
@@ -152,15 +152,15 @@ export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: strin
         activeAgentFiles: []
     };
 
-    var resolvedPath = '';
+    let resolvedPath = '';
     try {
-        var candidate = String(initAnswersPath || '').trim();
+        let candidate = String(initAnswersPath || '').trim();
         if (!path.isAbsolute(candidate)) {
             candidate = path.join(targetRoot, candidate);
         }
         resolvedPath = path.resolve(candidate);
         if (!isPathInsideRoot(targetRoot, resolvedPath)) {
-            violations.push("InitAnswersPath must resolve inside TargetRoot '" + targetRoot + "'. Resolved path: " + resolvedPath);
+            violations.push(`InitAnswersPath must resolve inside TargetRoot '${targetRoot}'. Resolved path: ${resolvedPath}`);
             return defaults;
         }
     } catch (err: unknown) {
@@ -173,20 +173,24 @@ export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: strin
         return defaults;
     }
 
-    var raw;
-    try { raw = readTextFile(resolvedPath); } catch (e) {
-        violations.push('Cannot read init answers artifact: ' + resolvedPath);
+    let raw: string;
+    try {
+        raw = readTextFile(resolvedPath);
+    } catch {
+        violations.push(`Cannot read init answers artifact: ${resolvedPath}`);
         return defaults;
     }
 
     if (!raw.trim()) {
-        violations.push('Init answers artifact is empty: ' + resolvedPath);
+        violations.push(`Init answers artifact is empty: ${resolvedPath}`);
         return defaults;
     }
 
-    var parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch (e) {
-        violations.push('Init answers artifact is not valid JSON: ' + resolvedPath);
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        violations.push(`Init answers artifact is not valid JSON: ${resolvedPath}`);
         return defaults;
     }
 
@@ -195,66 +199,68 @@ export function readVerifyInitAnswers(targetRoot: string, initAnswersPath: strin
         return obj[key] !== undefined ? String(obj[key]) : undefined;
     }
 
-    var assistantLanguage = getField(parsed, 'AssistantLanguage');
+    const assistantLanguage = getField(parsed, 'AssistantLanguage');
     if (!assistantLanguage || !assistantLanguage.trim()) {
-        violations.push('Init answers artifact missing AssistantLanguage: ' + resolvedPath);
+        violations.push(`Init answers artifact missing AssistantLanguage: ${resolvedPath}`);
     }
 
-    var assistantBrevity = getField(parsed, 'AssistantBrevity');
+    const assistantBrevity = getField(parsed, 'AssistantBrevity');
     if (!assistantBrevity || !assistantBrevity.trim()) {
-        violations.push('Init answers artifact missing AssistantBrevity: ' + resolvedPath);
+        violations.push(`Init answers artifact missing AssistantBrevity: ${resolvedPath}`);
     } else {
-        var nb = assistantBrevity.trim().toLowerCase();
-        if (nb !== 'concise' && nb !== 'detailed') {
-            violations.push("Init answers artifact has unsupported AssistantBrevity '" + nb + "'. Allowed values: concise, detailed.");
+        const normalizedBrevity = assistantBrevity.trim().toLowerCase();
+        if (normalizedBrevity !== 'concise' && normalizedBrevity !== 'detailed') {
+            violations.push(`Init answers artifact has unsupported AssistantBrevity '${normalizedBrevity}'. Allowed values: concise, detailed.`);
         }
     }
 
-    var artifactSoT = getField(parsed, 'SourceOfTruth');
-    if (!artifactSoT || !artifactSoT.trim()) {
-        violations.push('Init answers artifact missing SourceOfTruth: ' + resolvedPath);
+    const artifactSourceOfTruth = getField(parsed, 'SourceOfTruth');
+    if (!artifactSourceOfTruth || !artifactSourceOfTruth.trim()) {
+        violations.push(`Init answers artifact missing SourceOfTruth: ${resolvedPath}`);
     } else {
-        var aKey = artifactSoT.trim().toUpperCase().replace(/\s+/g, '');
-        var eKey = sourceOfTruth.trim().toUpperCase().replace(/\s+/g, '');
-        if (aKey !== eKey) {
-            violations.push("Init answers SourceOfTruth '" + artifactSoT.trim() + "' does not match verification SourceOfTruth '" + sourceOfTruth + "'.");
+        const artifactSourceKey = artifactSourceOfTruth.trim().toUpperCase().replace(/\s+/g, '');
+        const expectedSourceKey = sourceOfTruth.trim().toUpperCase().replace(/\s+/g, '');
+        if (artifactSourceKey !== expectedSourceKey) {
+            violations.push(`Init answers SourceOfTruth '${artifactSourceOfTruth.trim()}' does not match verification SourceOfTruth '${sourceOfTruth}'.`);
         }
     }
 
-    var enforceNoAutoCommit = parseBooleanLike(getField(parsed, 'EnforceNoAutoCommit'), false);
-    var claudeOrchestratorFullAccess = parseBooleanLike(getField(parsed, 'ClaudeOrchestratorFullAccess'), false);
-    var tokenEconomyEnabled = parseBooleanLike(getField(parsed, 'TokenEconomyEnabled'), true);
-    var providerMinimalism = parseBooleanLike(getField(parsed, 'ProviderMinimalism'), true);
+    const enforceNoAutoCommit = parseBooleanLike(getField(parsed, 'EnforceNoAutoCommit'), false);
+    const claudeOrchestratorFullAccess = parseBooleanLike(getField(parsed, 'ClaudeOrchestratorFullAccess'), false);
+    const tokenEconomyEnabled = parseBooleanLike(getField(parsed, 'TokenEconomyEnabled'), true);
+    const providerMinimalism = parseBooleanLike(getField(parsed, 'ProviderMinimalism'), true);
 
-    var aafRaw = getField(parsed, 'ActiveAgentFiles');
-    var activeAgentFiles: string[] = [];
-    if (aafRaw) {
-        activeAgentFiles = aafRaw
+    const activeAgentFilesRaw = getField(parsed, 'ActiveAgentFiles');
+    let activeAgentFiles: string[] = [];
+    if (activeAgentFilesRaw) {
+        activeAgentFiles = activeAgentFilesRaw
             .split(/[;,]/g)
-            .map(function (s: string): string { return s.trim(); })
-            .filter(function (s: string): boolean { return s.length > 0; });
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0);
     }
-    var ce = getCanonicalEntrypoint(sourceOfTruth);
-    if (activeAgentFiles.length === 0 && ce) { activeAgentFiles = [ce]; }
+    const canonicalEntrypoint = getCanonicalEntrypoint(sourceOfTruth);
+    if (activeAgentFiles.length === 0 && canonicalEntrypoint) {
+        activeAgentFiles = [canonicalEntrypoint];
+    }
 
     return {
-        violations: violations,
+        violations,
         assistantLanguage: assistantLanguage ? assistantLanguage.trim() : null,
         assistantBrevity: assistantBrevity ? assistantBrevity.trim().toLowerCase() : null,
-        enforceNoAutoCommit: enforceNoAutoCommit,
-        claudeOrchestratorFullAccess: claudeOrchestratorFullAccess,
-        tokenEconomyEnabled: tokenEconomyEnabled,
-        providerMinimalism: providerMinimalism,
-        activeAgentFiles: activeAgentFiles
+        enforceNoAutoCommit,
+        claudeOrchestratorFullAccess,
+        tokenEconomyEnabled,
+        providerMinimalism,
+        activeAgentFiles
     };
 }
 
 export function detectCommandsViolations(targetRoot: string): string[] {
-    var violations: string[] = [];
-    var cp = path.join(targetRoot, resolveBundleName() + '/live/docs/agent-rules/40-commands.md');
-    if (!pathExists(cp)) return violations;
-    var content = readTextFile(cp);
-    var req = [
+    const violations: string[] = [];
+    const commandsPath = path.join(targetRoot, resolveBundleName() + '/live/docs/agent-rules/40-commands.md');
+    if (!pathExists(commandsPath)) return violations;
+    const content = readTextFile(commandsPath);
+    const requiredSnippets = [
         `${getBundleCliCommand()} gate enter-task-mode`,
         `${getBundleCliCommand()} gate load-rule-pack`,
         '### Compile Gate (Mandatory)',
@@ -269,20 +275,20 @@ export function detectCommandsViolations(targetRoot: string): string[] {
         `${getBundleCliCommand()} gate build-review-context`,
         `${getBundleCliCommand()} gate validate-manifest`
     ];
-    for (var i=0;i<req.length;i++) {
-        var alternatives = getCommandSnippetAlternatives(req[i]);
-        var present = false;
-        for (var a=0;a<alternatives.length;a++) {
-            if (content.includes(alternatives[a])) {
-                present = true;
-                break;
-            }
+    for (const requiredSnippet of requiredSnippets) {
+        const alternatives = getCommandSnippetAlternatives(requiredSnippet);
+        const present = alternatives.some((alternative) => content.includes(alternative));
+        if (!present) {
+            violations.push(`40-commands.md must include gate contract snippet '${requiredSnippet}'.`);
         }
-        if (!present) violations.push("40-commands.md must include gate contract snippet '"+req[i]+"'.");
     }
-    for (var j=0;j<PROJECT_COMMAND_PLACEHOLDERS.length;j++) { if (content.includes(PROJECT_COMMAND_PLACEHOLDERS[j])) violations.push('40-commands.md contains unresolved command placeholder: '+PROJECT_COMMAND_PLACEHOLDERS[j]); }
+    for (const placeholder of PROJECT_COMMAND_PLACEHOLDERS) {
+        if (content.includes(placeholder)) {
+            violations.push(`40-commands.md contains unresolved command placeholder: ${placeholder}`);
+        }
+    }
     try {
-        getCompileCommands(cp);
+        getCompileCommands(commandsPath);
     } catch (error) {
         violations.push('40-commands.md compile gate command contract violation: ' + (error instanceof Error ? error.message : String(error)));
     }
@@ -364,105 +370,141 @@ export function detectCoreRuleViolations(
     assistantLanguage: string | null,
     assistantBrevity: string | null
 ): string[] {
-    var violations: string[] = [];
-    var cp = path.join(targetRoot, resolveBundleName() + '/live/docs/agent-rules/00-core.md');
-    if (!pathExists(cp)) { violations.push('00-core.md missing; core contract validation failed.'); return violations; }
-    var content = readTextFile(cp);
-    if (!/^Respond in .+ for explanations and assistance\.$/m.test(content)) violations.push('00-core.md must define configured assistant language sentence.');
-    if (!/^Default response brevity: .+\.$/m.test(content)) violations.push('00-core.md must define configured assistant response brevity sentence.');
+    const violations: string[] = [];
+    const coreRulesPath = path.join(targetRoot, resolveBundleName() + '/live/docs/agent-rules/00-core.md');
+    if (!pathExists(coreRulesPath)) {
+        violations.push('00-core.md missing; core contract validation failed.');
+        return violations;
+    }
+    const content = readTextFile(coreRulesPath);
+    if (!/^Respond in .+ for explanations and assistance\.$/m.test(content)) {
+        violations.push('00-core.md must define configured assistant language sentence.');
+    }
+    if (!/^Default response brevity: .+\.$/m.test(content)) {
+        violations.push('00-core.md must define configured assistant response brevity sentence.');
+    }
     if (assistantLanguage) {
-        var el = 'Respond in '+assistantLanguage+' for explanations and assistance.';
-        if (!new RegExp('^'+el.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$','m').test(content))
-            violations.push("00-core.md language does not match init answers artifact. Expected: '"+el+"'.");
+        const expectedLanguageLine = `Respond in ${assistantLanguage} for explanations and assistance.`;
+        const expectedLanguagePattern = new RegExp(`^${escapeRegex(expectedLanguageLine)}$`, 'm');
+        if (!expectedLanguagePattern.test(content)) {
+            violations.push(`00-core.md language does not match init answers artifact. Expected: '${expectedLanguageLine}'.`);
+        }
     }
     if (assistantBrevity) {
-        var bl = 'Default response brevity: '+assistantBrevity+'.';
-        if (!new RegExp('^'+bl.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$','m').test(content))
-            violations.push("00-core.md response brevity does not match init answers artifact. Expected: '"+bl+"'.");
+        const expectedBrevityLine = `Default response brevity: ${assistantBrevity}.`;
+        const expectedBrevityPattern = new RegExp(`^${escapeRegex(expectedBrevityLine)}$`, 'm');
+        if (!expectedBrevityPattern.test(content)) {
+            violations.push(`00-core.md response brevity does not match init answers artifact. Expected: '${expectedBrevityLine}'.`);
+        }
     }
     return violations;
 }
 
 export function detectTaskViolations(targetRoot: string, canonicalEntrypoint: string | null): string[] {
-    var violations: string[] = [];
-    var tp = path.join(targetRoot, 'TASK.md');
-    if (!pathExists(tp)) { violations.push('TASK.md missing.'); return violations; }
-    var content = readTextFile(tp);
-    var mb = extractManagedBlock(content);
-    if (!mb) { violations.push('TASK.md managed block missing.'); return violations; }
-    if (!/\|\s*ID\s*\|\s*Status\s*\|\s*Priority\s*\|\s*Area\s*\|\s*Title\s*\|\s*Owner\s*\|\s*Updated\s*\|\s*Profile\s*\|\s*Notes\s*\|/.test(mb))
+    const violations: string[] = [];
+    const taskPath = path.join(targetRoot, 'TASK.md');
+    if (!pathExists(taskPath)) {
+        violations.push('TASK.md missing.');
+        return violations;
+    }
+    const content = readTextFile(taskPath);
+    const managedBlock = extractManagedBlock(content);
+    if (!managedBlock) {
+        violations.push('TASK.md managed block missing.');
+        return violations;
+    }
+    if (!/\|\s*ID\s*\|\s*Status\s*\|\s*Priority\s*\|\s*Area\s*\|\s*Title\s*\|\s*Owner\s*\|\s*Updated\s*\|\s*Profile\s*\|\s*Notes\s*\|/.test(managedBlock)) {
         violations.push('TASK.md queue header must include `Profile` column.');
-    if (mb.includes('{{CANONICAL_ENTRYPOINT}}'))
+    }
+    if (managedBlock.includes('{{CANONICAL_ENTRYPOINT}}')) {
         violations.push('TASK.md contains unresolved `{{CANONICAL_ENTRYPOINT}}` placeholder.');
+    }
     if (canonicalEntrypoint) {
-        var ecl = 'Canonical instructions entrypoint for orchestration: `'+canonicalEntrypoint+'`.';
-        if (!mb.includes(ecl)) violations.push("TASK.md must reference canonical instructions entrypoint '"+canonicalEntrypoint+"'.");
+        const expectedEntrypointLine = `Canonical instructions entrypoint for orchestration: \`${canonicalEntrypoint}\`.`;
+        if (!managedBlock.includes(expectedEntrypointLine)) {
+            violations.push(`TASK.md must reference canonical instructions entrypoint '${canonicalEntrypoint}'.`);
+        }
     }
     return violations;
 }
 
 export function detectEntrypointViolations(targetRoot: string, canonicalEntrypoint: string | null): string[] {
-    var violations: string[] = [];
+    const violations: string[] = [];
     if (!canonicalEntrypoint) return violations;
-    var ep = path.join(targetRoot, canonicalEntrypoint);
-    if (!pathExists(ep)) { violations.push('Canonical entrypoint missing: '+canonicalEntrypoint); return violations; }
-    var content = readTextFile(ep);
-    if (!/^# Garda Agent Orchestrator Rule Index$/m.test(content))
-        violations.push(canonicalEntrypoint+' must contain canonical rule index content.');
-    var rulePathPattern = new RegExp(resolveBundleName().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\/live\\/docs\\/agent-rules\\/[0-9]{2}[-a-z]+\\.md', 'g');
-    var rl = content.match(rulePathPattern);
-    var ul = rl ? Array.from(new Set(rl)) : [];
-    if (ul.length < RULE_FILES.length)
-        violations.push(canonicalEntrypoint+' has fewer rule links than expected. Found='+ul.length+', ExpectedAtLeast='+RULE_FILES.length);
-    for (var i=0;i<ul.length;i++) { if (!pathExists(path.join(targetRoot,ul[i]))) violations.push(canonicalEntrypoint+' route target missing: '+ul[i]); }
+    const entrypointPath = path.join(targetRoot, canonicalEntrypoint);
+    if (!pathExists(entrypointPath)) {
+        violations.push(`Canonical entrypoint missing: ${canonicalEntrypoint}`);
+        return violations;
+    }
+    const content = readTextFile(entrypointPath);
+    if (!/^# Garda Agent Orchestrator Rule Index$/m.test(content)) {
+        violations.push(`${canonicalEntrypoint} must contain canonical rule index content.`);
+    }
+    const rulePathPattern = new RegExp(`${escapeRegex(resolveBundleName())}\\/live\\/docs\\/agent-rules\\/[0-9]{2}[-a-z]+\\.md`, 'g');
+    const ruleLinks = content.match(rulePathPattern);
+    const uniqueRuleLinks = ruleLinks ? Array.from(new Set(ruleLinks)) : [];
+    if (uniqueRuleLinks.length < RULE_FILES.length) {
+        violations.push(`${canonicalEntrypoint} has fewer rule links than expected. Found=${uniqueRuleLinks.length}, ExpectedAtLeast=${RULE_FILES.length}`);
+    }
+    for (const ruleLink of uniqueRuleLinks) {
+        if (!pathExists(path.join(targetRoot, ruleLink))) {
+            violations.push(`${canonicalEntrypoint} route target missing: ${ruleLink}`);
+        }
+    }
     return violations;
 }
 
 export function detectQwenSettingsViolations(targetRoot: string, canonicalEntrypoint: string | null): string[] {
-    var violations: string[] = [];
-    var sp = path.join(targetRoot, '.qwen/settings.json');
-    if (!pathExists(sp)) return violations;
-    var settings: unknown;
+    const violations: string[] = [];
+    const settingsPath = path.join(targetRoot, '.qwen/settings.json');
+    if (!pathExists(settingsPath)) return violations;
+    let settings: unknown;
     try {
-        settings = JSON.parse(readTextFile(sp));
+        settings = JSON.parse(readTextFile(settingsPath));
     } catch (e: unknown) {
         violations.push('.qwen/settings.json is not valid JSON: ' + getErrorMessage(e));
         return violations;
     }
-    var fn: string[] = [];
+    const fileNames: string[] = [];
     if (isRecord(settings)) {
-        var contextValue = settings.context;
+        const contextValue = settings.context;
         if (isRecord(contextValue) && contextValue.fileName) {
-            var rf = Array.isArray(contextValue.fileName) ? contextValue.fileName : [contextValue.fileName];
-            for (var i = 0; i < rf.length; i++) {
-                if (rf[i] && typeof rf[i] === 'string' && rf[i].trim()) fn.push(rf[i].trim());
+            const rawFileNames = Array.isArray(contextValue.fileName) ? contextValue.fileName : [contextValue.fileName];
+            for (const rawFileName of rawFileNames) {
+                if (rawFileName && typeof rawFileName === 'string' && rawFileName.trim()) {
+                    fileNames.push(rawFileName.trim());
+                }
             }
         }
     }
-    var uf = Array.from(new Set(fn));
-    if (canonicalEntrypoint && uf.indexOf(canonicalEntrypoint)===-1) violations.push('.qwen/settings.json must include context.fileName entry `'+canonicalEntrypoint+'`.');
-    if (uf.indexOf('TASK.md')===-1) violations.push('.qwen/settings.json must include context.fileName entry `TASK.md`.');
+    const uniqueFileNames = Array.from(new Set(fileNames));
+    if (canonicalEntrypoint && !uniqueFileNames.includes(canonicalEntrypoint)) {
+        violations.push(`.qwen/settings.json must include context.fileName entry \`${canonicalEntrypoint}\`.`);
+    }
+    if (!uniqueFileNames.includes('TASK.md')) {
+        violations.push('.qwen/settings.json must include context.fileName entry `TASK.md`.');
+    }
     return violations;
 }
 
 export function detectManifestContractViolations(targetRoot: string): string[] {
-    var violations: string[] = [];
-    var mp = path.join(targetRoot, resolveBundleName() + '/MANIFEST.md');
-    if (!pathExists(mp)) return violations;
-    var content = readTextFile(mp);
+    const violations: string[] = [];
+    const manifestPath = path.join(targetRoot, resolveBundleName() + '/MANIFEST.md');
+    if (!pathExists(manifestPath)) return violations;
+    const content = readTextFile(manifestPath);
     if (!content.includes('live/USAGE.md')) violations.push("MANIFEST.md must include 'live/USAGE.md'.");
     return violations;
 }
 
 function isManagedConfigMapped(targetRoot: string, configName: string): boolean {
-    var rootConfigPath = path.join(targetRoot, resolveBundleName(), 'live', 'config', 'garda.config.json');
+    const rootConfigPath = path.join(targetRoot, resolveBundleName(), 'live', 'config', 'garda.config.json');
     if (!pathExists(rootConfigPath)) return false;
     try {
-        var raw = JSON.parse(readTextFile(rootConfigPath));
+        const raw = JSON.parse(readTextFile(rootConfigPath));
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
-        var configs = (raw as Record<string, unknown>).configs;
+        const configs = (raw as Record<string, unknown>).configs;
         if (!configs || typeof configs !== 'object' || Array.isArray(configs)) return false;
-        var mappedPath = (configs as Record<string, unknown>)[configName];
+        const mappedPath = (configs as Record<string, unknown>)[configName];
         return typeof mappedPath === 'string' && mappedPath.trim().length > 0;
     } catch {
         return false;
@@ -470,119 +512,141 @@ function isManagedConfigMapped(targetRoot: string, configName: string): boolean 
 }
 
 export function runVerify(options: RunVerifyOptions): VerifyResult {
-    var targetRoot = path.resolve(options.targetRoot);
-    var sourceOfTruth = options.sourceOfTruth.trim();
-    var canonicalEntrypoint = getCanonicalEntrypoint(sourceOfTruth);
-    var iar = readVerifyInitAnswers(targetRoot, options.initAnswersPath, sourceOfTruth);
-    var rp = buildRequiredPaths({ activeAgentFiles: iar.activeAgentFiles, claudeOrchestratorFullAccess: iar.claudeOrchestratorFullAccess });
-    var mp = detectMissingPaths(targetRoot, rp);
-    var vr = detectVersionViolations(targetRoot, sourceOfTruth, canonicalEntrypoint);
-    var rcv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-capabilities.json');
-    var pv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/paths.json');
-    var tev = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/token-economy.json');
-    var ofv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/output-filters.json');
-    var spv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skill-packs.json');
-    var ossp = resolveBundleName() + '/live/config/optional-skill-selection-policy.json';
-    var ossv = isManagedConfigMapped(targetRoot, 'optional-skill-selection-policy')
-        ? detectManagedConfigViolations(targetRoot, ossp)
+    const targetRoot = path.resolve(options.targetRoot);
+    const sourceOfTruth = options.sourceOfTruth.trim();
+    const canonicalEntrypoint = getCanonicalEntrypoint(sourceOfTruth);
+    const initAnswers = readVerifyInitAnswers(targetRoot, options.initAnswersPath, sourceOfTruth);
+    const requiredPaths = buildRequiredPaths({
+        activeAgentFiles: initAnswers.activeAgentFiles,
+        claudeOrchestratorFullAccess: initAnswers.claudeOrchestratorFullAccess
+    });
+    const missingPaths = detectMissingPaths(targetRoot, requiredPaths);
+    const versionViolations = detectVersionViolations(targetRoot, sourceOfTruth, canonicalEntrypoint);
+    const reviewCapabilitiesViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-capabilities.json');
+    const pathsViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/paths.json');
+    const tokenEconomyViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/token-economy.json');
+    const outputFiltersViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/output-filters.json');
+    const skillPacksConfigViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skill-packs.json');
+    const optionalSkillSelectionPolicyPath = resolveBundleName() + '/live/config/optional-skill-selection-policy.json';
+    const optionalSkillSelectionPolicyViolations = isManagedConfigMapped(targetRoot, 'optional-skill-selection-policy')
+        ? detectManagedConfigViolations(targetRoot, optionalSkillSelectionPolicyPath)
         : [];
-    var imv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/isolation-mode.json');
-    var prv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/profiles.json');
-    var rasv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-artifact-storage.json');
-    var rrpv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/runtime-retention.json');
-    var ocv = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/garda.config.json');
-    var six = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skills-index.json');
-    var rfr = detectRuleFileViolations(targetRoot);
-    var tmv = detectTaskModeRuleContractViolations(targetRoot);
-    var cv = detectCommandsViolations(targetRoot);
-    var crv = detectCoreRuleViolations(targetRoot, iar.assistantLanguage, iar.assistantBrevity);
-    var tv = detectTaskViolations(targetRoot, canonicalEntrypoint);
-    var ev = detectEntrypointViolations(targetRoot, canonicalEntrypoint);
-    var qv = detectQwenSettingsViolations(targetRoot, canonicalEntrypoint);
-    var skillPackValidation = validateSkillPacks(path.join(targetRoot, resolveBundleName()));
-    var skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, resolveBundleName()));
-    var ge: string[] = getManagedGitignoreEntries(
-        iar.claudeOrchestratorFullAccess,
-        iar.providerMinimalism && iar.activeAgentFiles.length > 0 ? iar.activeAgentFiles : undefined
+    const isolationModeViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/isolation-mode.json');
+    const profilesViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/profiles.json');
+    const reviewArtifactStorageViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/review-artifact-storage.json');
+    const runtimeRetentionViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/runtime-retention.json');
+    const orchestratorConfigViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/garda.config.json');
+    const skillsIndexConfigViolations = detectManagedConfigViolations(targetRoot, resolveBundleName() + '/live/config/skills-index.json');
+    const ruleFileResult = detectRuleFileViolations(targetRoot);
+    const taskModeViolations = detectTaskModeRuleContractViolations(targetRoot);
+    const commandsViolations = detectCommandsViolations(targetRoot);
+    const coreRuleViolations = detectCoreRuleViolations(targetRoot, initAnswers.assistantLanguage, initAnswers.assistantBrevity);
+    const taskViolations = detectTaskViolations(targetRoot, canonicalEntrypoint);
+    const entrypointViolations = detectEntrypointViolations(targetRoot, canonicalEntrypoint);
+    const qwenSettingsViolations = detectQwenSettingsViolations(targetRoot, canonicalEntrypoint);
+    const skillPackValidation = validateSkillPacks(path.join(targetRoot, resolveBundleName()));
+    const skillsIndexValidation = validateSkillsIndex(path.join(targetRoot, resolveBundleName()));
+    const managedGitignoreEntries = getManagedGitignoreEntries(
+        initAnswers.claudeOrchestratorFullAccess,
+        initAnswers.providerMinimalism && initAnswers.activeAgentFiles.length > 0 ? initAnswers.activeAgentFiles : undefined
     );
-    var gm = detectGitignoreViolations(targetRoot, ge);
-    var mv = detectManifestContractViolations(targetRoot);
+    const gitignoreMissing = detectGitignoreViolations(targetRoot, managedGitignoreEntries);
+    const manifestViolations = detectManifestContractViolations(targetRoot);
 
-    var violations: VerifyViolations = {
-        missingPaths: mp,
-        initAnswersContractViolations: iar.violations,
-        versionContractViolations: vr.violations,
-        reviewCapabilitiesContractViolations: rcv,
-        pathsContractViolations: pv,
-        tokenEconomyContractViolations: tev,
-        outputFiltersContractViolations: ofv,
-        skillPacksConfigContractViolations: spv,
-        skillsIndexConfigContractViolations: six,
-        ruleFileViolations: rfr.ruleFileViolations.concat(tmv),
-        templatePlaceholderViolations: rfr.templatePlaceholderViolations,
-        commandsContractViolations: cv,
-        manifestContractViolations: mv.concat(ossv, imv, prv, rasv, rrpv, ocv),
-        coreRuleContractViolations: crv,
-        entrypointContractViolations: ev,
-        taskContractViolations: tv,
-        qwenSettingsViolations: qv,
+    const violations: VerifyViolations = {
+        missingPaths,
+        initAnswersContractViolations: initAnswers.violations,
+        versionContractViolations: versionViolations.violations,
+        reviewCapabilitiesContractViolations: reviewCapabilitiesViolations,
+        pathsContractViolations: pathsViolations,
+        tokenEconomyContractViolations: tokenEconomyViolations,
+        outputFiltersContractViolations: outputFiltersViolations,
+        skillPacksConfigContractViolations: skillPacksConfigViolations,
+        skillsIndexConfigContractViolations: skillsIndexConfigViolations,
+        ruleFileViolations: ruleFileResult.ruleFileViolations.concat(taskModeViolations),
+        templatePlaceholderViolations: ruleFileResult.templatePlaceholderViolations,
+        commandsContractViolations: commandsViolations,
+        manifestContractViolations: manifestViolations.concat(
+            optionalSkillSelectionPolicyViolations,
+            isolationModeViolations,
+            profilesViolations,
+            reviewArtifactStorageViolations,
+            runtimeRetentionViolations,
+            orchestratorConfigViolations
+        ),
+        coreRuleContractViolations: coreRuleViolations,
+        entrypointContractViolations: entrypointViolations,
+        taskContractViolations: taskViolations,
+        qwenSettingsViolations,
         skillsIndexContractViolations: skillsIndexValidation.issues,
         skillPackContractViolations: skillPackValidation.issues,
-        gitignoreMissing: gm
+        gitignoreMissing
     };
 
-    var total = 0;
-    var keys = Object.keys(violations) as Array<keyof VerifyViolations>;
-    for (var i=0;i<keys.length;i++) total += violations[keys[i]].length;
+    const totalViolationCount = (Object.keys(violations) as Array<keyof VerifyViolations>)
+        .reduce((total, key) => total + violations[key].length, 0);
 
     return {
-        passed: total === 0,
-        targetRoot: targetRoot,
-        sourceOfTruth: sourceOfTruth,
-        canonicalEntrypoint: canonicalEntrypoint,
-        bundleVersion: vr.bundleVersion,
-        requiredPathsChecked: rp.length,
-        violations: violations,
-        totalViolationCount: total
+        passed: totalViolationCount === 0,
+        targetRoot,
+        sourceOfTruth,
+        canonicalEntrypoint,
+        bundleVersion: versionViolations.bundleVersion,
+        requiredPathsChecked: requiredPaths.length,
+        violations,
+        totalViolationCount
     };
 }
 
+const VERIFY_RESULT_COUNT_LABELS: Array<[keyof VerifyViolations, string]> = [
+    ['reviewCapabilitiesContractViolations', 'ReviewCapabilitiesContractViolationCount'],
+    ['pathsContractViolations', 'PathsContractViolationCount'],
+    ['tokenEconomyContractViolations', 'TokenEconomyContractViolationCount'],
+    ['outputFiltersContractViolations', 'OutputFiltersContractViolationCount'],
+    ['skillPacksConfigContractViolations', 'SkillPacksConfigContractViolationCount'],
+    ['skillsIndexConfigContractViolations', 'SkillsIndexConfigContractViolationCount'],
+    ['versionContractViolations', 'VersionContractViolationCount'],
+    ['ruleFileViolations', 'RuleFileViolationCount'],
+    ['templatePlaceholderViolations', 'TemplatePlaceholderViolationCount'],
+    ['commandsContractViolations', 'CommandsContractViolationCount'],
+    ['manifestContractViolations', 'ManifestContractViolationCount'],
+    ['initAnswersContractViolations', 'InitAnswersContractViolationCount'],
+    ['coreRuleContractViolations', 'CoreRuleContractViolationCount'],
+    ['entrypointContractViolations', 'EntrypointContractViolationCount'],
+    ['taskContractViolations', 'TaskContractViolationCount'],
+    ['qwenSettingsViolations', 'QwenSettingsViolationCount'],
+    ['skillsIndexContractViolations', 'SkillsIndexContractViolationCount'],
+    ['skillPackContractViolations', 'SkillPackContractViolationCount']
+];
+
 export function formatVerifyResult(result: VerifyResult): string {
-    var lines: string[] = [];
-    lines.push('TargetRoot: '+result.targetRoot);
-    lines.push('SourceOfTruth: '+result.sourceOfTruth);
-    lines.push('CanonicalEntrypoint: '+(result.canonicalEntrypoint||'n/a'));
-    lines.push('RequiredPathsChecked: '+result.requiredPathsChecked);
-    lines.push('MissingPathCount: '+result.violations.missingPaths.length);
-    lines.push('ReviewCapabilitiesContractViolationCount: '+result.violations.reviewCapabilitiesContractViolations.length);
-    lines.push('PathsContractViolationCount: '+result.violations.pathsContractViolations.length);
-    lines.push('TokenEconomyContractViolationCount: '+result.violations.tokenEconomyContractViolations.length);
-    lines.push('OutputFiltersContractViolationCount: '+result.violations.outputFiltersContractViolations.length);
-    lines.push('SkillPacksConfigContractViolationCount: '+result.violations.skillPacksConfigContractViolations.length);
-    lines.push('SkillsIndexConfigContractViolationCount: '+result.violations.skillsIndexConfigContractViolations.length);
-    lines.push('BundleVersion: '+(result.bundleVersion||'n/a'));
-    lines.push('VersionContractViolationCount: '+result.violations.versionContractViolations.length);
-    lines.push('RuleFileViolationCount: '+result.violations.ruleFileViolations.length);
-    lines.push('TemplatePlaceholderViolationCount: '+result.violations.templatePlaceholderViolations.length);
-    lines.push('CommandsContractViolationCount: '+result.violations.commandsContractViolations.length);
-    lines.push('ManifestContractViolationCount: '+result.violations.manifestContractViolations.length);
-    lines.push('InitAnswersContractViolationCount: '+result.violations.initAnswersContractViolations.length);
-    lines.push('CoreRuleContractViolationCount: '+result.violations.coreRuleContractViolations.length);
-    lines.push('EntrypointContractViolationCount: '+result.violations.entrypointContractViolations.length);
-    lines.push('TaskContractViolationCount: '+result.violations.taskContractViolations.length);
-    lines.push('QwenSettingsViolationCount: '+result.violations.qwenSettingsViolations.length);
-    lines.push('SkillsIndexContractViolationCount: '+result.violations.skillsIndexContractViolations.length);
-    lines.push('SkillPackContractViolationCount: '+result.violations.skillPackContractViolations.length);
-    var keys = Object.keys(result.violations) as Array<keyof VerifyViolations>;
-    for (var i=0;i<keys.length;i++) {
-        var items = result.violations[keys[i]];
-        if (items.length>0) {
-            lines.push(keys[i]+':');
-            for (var j=0;j<items.length;j++) lines.push(' - '+items[j]);
+    const lines: string[] = [];
+    lines.push(`TargetRoot: ${result.targetRoot}`);
+    lines.push(`SourceOfTruth: ${result.sourceOfTruth}`);
+    lines.push(`CanonicalEntrypoint: ${result.canonicalEntrypoint || 'n/a'}`);
+    lines.push(`RequiredPathsChecked: ${result.requiredPathsChecked}`);
+    lines.push(`MissingPathCount: ${result.violations.missingPaths.length}`);
+    for (const [violationKey, label] of VERIFY_RESULT_COUNT_LABELS.slice(0, 6)) {
+        lines.push(`${label}: ${result.violations[violationKey].length}`);
+    }
+    lines.push(`BundleVersion: ${result.bundleVersion || 'n/a'}`);
+    for (const [violationKey, label] of VERIFY_RESULT_COUNT_LABELS.slice(6)) {
+        lines.push(`${label}: ${result.violations[violationKey].length}`);
+    }
+    for (const violationKey of Object.keys(result.violations) as Array<keyof VerifyViolations>) {
+        const items = result.violations[violationKey];
+        if (items.length > 0) {
+            lines.push(`${violationKey}:`);
+            for (const item of items) {
+                lines.push(` - ${item}`);
+            }
         }
     }
-    if (!result.passed) lines.push('Verification failed. Resolve listed issues and rerun.');
-    else lines.push('Verification: PASSED');
+    if (!result.passed) {
+        lines.push('Verification failed. Resolve listed issues and rerun.');
+    } else {
+        lines.push('Verification: PASSED');
+    }
     return lines.join('\n');
 }
 
