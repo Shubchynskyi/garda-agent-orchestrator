@@ -59,6 +59,12 @@ interface TaskScopedCollectorContext {
 
 type TaskScopedArtifactCollector = (context: TaskScopedCollectorContext) => CleanupItem[];
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function ageCutoff(now: Date, maxAgeDays: number): Date {
+    return new Date(now.getTime() - maxAgeDays * MS_PER_DAY);
+}
+
 function isRuntimeRetentionCompactionCandidate(
     item: CleanupItem,
     compactableLedgerTaskIds: ReadonlySet<string>
@@ -116,6 +122,18 @@ function fileSizeBytes(filePath: string): number {
     } catch {
         return 0;
     }
+}
+
+function pathStat(entryPath: string): fs.Stats | null {
+    try {
+        return fs.statSync(entryPath);
+    } catch {
+        return null;
+    }
+}
+
+function cleanupItemSizeBytes(entryPath: string, stat: fs.Stats): number {
+    return stat.isDirectory() ? dirSizeBytes(entryPath) : stat.size;
 }
 
 function isNotFoundError(error: unknown): boolean {
@@ -193,16 +211,23 @@ function parseUpdateTimestampName(name: string): Date | null {
     return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
 }
 
-function collectTimestampedDirs(dirPath: string, category: string, maxCount: number, maxAgeDays: number, now: Date): CleanupItem[] {
+function collectCountOrAgeNamedEntries(
+    dirPath: string,
+    category: string,
+    maxCount: number,
+    maxAgeDays: number,
+    now: Date,
+    parseEntryDate: (name: string) => Date | null
+): CleanupItem[] {
     const entries = directoryEntries(dirPath);
     const items: CleanupItem[] = [];
-    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+    const cutoff = ageCutoff(now, maxAgeDays);
     const excessCount = Math.max(0, entries.length - maxCount);
 
     for (let i = 0; i < entries.length; i += 1) {
         const entryName = entries[i];
         const entryPath = path.join(dirPath, entryName);
-        const entryDate = parseTimestampName(entryName);
+        const entryDate = parseEntryDate(entryName);
 
         let reason: string | null = null;
         if (i < excessCount) {
@@ -212,9 +237,8 @@ function collectTimestampedDirs(dirPath: string, category: string, maxCount: num
         }
 
         if (reason) {
-            const sizeBytes = fs.existsSync(entryPath) && fs.statSync(entryPath).isDirectory()
-                ? dirSizeBytes(entryPath)
-                : fileSizeBytes(entryPath);
+            const stat = pathStat(entryPath);
+            const sizeBytes = stat ? cleanupItemSizeBytes(entryPath, stat) : fileSizeBytes(entryPath);
             items.push({ path: entryPath, category, reason, sizeBytes });
         }
     }
@@ -222,55 +246,35 @@ function collectTimestampedDirs(dirPath: string, category: string, maxCount: num
     return items;
 }
 
+function collectTimestampedDirs(dirPath: string, category: string, maxCount: number, maxAgeDays: number, now: Date): CleanupItem[] {
+    return collectCountOrAgeNamedEntries(dirPath, category, maxCount, maxAgeDays, now, parseTimestampName);
+}
+
 function collectUpdateNamedDirs(dirPath: string, category: string, maxCount: number, maxAgeDays: number, now: Date): CleanupItem[] {
-    const entries = directoryEntries(dirPath);
-    const items: CleanupItem[] = [];
-    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
-    const excessCount = Math.max(0, entries.length - maxCount);
-
-    for (let i = 0; i < entries.length; i += 1) {
-        const entryName = entries[i];
-        const entryPath = path.join(dirPath, entryName);
-        const entryDate = parseUpdateTimestampName(entryName);
-
-        let reason: string | null = null;
-        if (i < excessCount) {
-            reason = 'count';
-        } else if (entryDate && entryDate < cutoff) {
-            reason = 'age';
-        }
-
-        if (reason) {
-            const isDir = fs.existsSync(entryPath) && fs.statSync(entryPath).isDirectory();
-            const sizeBytes = isDir ? dirSizeBytes(entryPath) : fileSizeBytes(entryPath);
-            items.push({ path: entryPath, category, reason, sizeBytes });
-        }
-    }
-
-    return items;
+    return collectCountOrAgeNamedEntries(dirPath, category, maxCount, maxAgeDays, now, parseUpdateTimestampName);
 }
 
 function collectAgedEntries(dirPath: string, category: string, maxAgeDays: number, now: Date): CleanupItem[] {
     const entries = directoryEntries(dirPath);
     const items: CleanupItem[] = [];
-    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+    const cutoff = ageCutoff(now, maxAgeDays);
 
     for (const entryName of entries) {
         const entryPath = path.join(dirPath, entryName);
-        try {
-            const stat = fs.statSync(entryPath);
-            if (stat.mtime >= cutoff) {
-                continue;
-            }
-            items.push({
-                path: entryPath,
-                category,
-                reason: 'age',
-                sizeBytes: stat.isDirectory() ? dirSizeBytes(entryPath) : stat.size
-            });
-        } catch {
+        const stat = pathStat(entryPath);
+        if (!stat) {
             // Skip unreadable entries.
+            continue;
         }
+        if (stat.mtime >= cutoff) {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category,
+            reason: 'age',
+            sizeBytes: cleanupItemSizeBytes(entryPath, stat)
+        });
     }
 
     return items;
@@ -279,29 +283,26 @@ function collectAgedEntries(dirPath: string, category: string, maxAgeDays: numbe
 function collectRuntimeRootTempFiles(runtimeDir: string, maxAgeDays: number, now: Date): CleanupItem[] {
     const entries = directoryEntries(runtimeDir);
     const items: CleanupItem[] = [];
-    const cutoff = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+    const cutoff = ageCutoff(now, maxAgeDays);
     for (const entry of entries) {
         if (!entry.endsWith('.tmp') && !entry.endsWith('.partial')) {
             continue;
         }
         const entryPath = path.join(runtimeDir, entry);
-        try {
-            const stat = fs.statSync(entryPath);
-            if (!stat.isFile()) {
-                continue;
-            }
-            if (stat.mtime >= cutoff) {
-                continue;
-            }
-            items.push({
-                path: entryPath,
-                category: 'tmp',
-                reason: 'orphaned-temp-file',
-                sizeBytes: stat.size
-            });
-        } catch {
+        const stat = pathStat(entryPath);
+        if (!stat) {
             // Skip unreadable temp files.
+            continue;
         }
+        if (!stat.isFile() || stat.mtime >= cutoff) {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'tmp',
+            reason: 'orphaned-temp-file',
+            sizeBytes: stat.size
+        });
     }
     return items;
 }
@@ -311,30 +312,31 @@ function collectRuntimeTmp(tmpDir: string, maxAgeDays: number, now: Date, active
         .filter((item) => path.basename(item.path) !== 'reviews');
     const reviewScratchDir = path.join(tmpDir, 'reviews');
     const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
+    const cutoff = ageCutoff(now, maxAgeDays);
 
     for (const entry of directoryEntries(reviewScratchDir)) {
         const entryPath = path.join(reviewScratchDir, entry);
-        try {
-            const stat = fs.statSync(entryPath);
-            if (!stat.isDirectory()) {
-                if (stat.mtime < new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000)) {
-                    items.push({ path: entryPath, category: 'tmp', reason: 'age', sizeBytes: stat.size });
-                }
-                continue;
-            }
-            if (isCanonicalTaskId(entry) && activeTaskIdsLower.has(entry.toLowerCase())) {
-                continue;
-            }
-            items.push({
-                path: entryPath,
-                category: 'tmp',
-                reason: 'inactive-reviewer-scratch',
-                sizeBytes: dirSizeBytes(entryPath),
-                taskId: isCanonicalTaskId(entry) ? entry : undefined
-            });
-        } catch {
+        const stat = pathStat(entryPath);
+        if (!stat) {
             // Skip unreadable scratch entries.
+            continue;
         }
+        if (!stat.isDirectory()) {
+            if (stat.mtime < cutoff) {
+                items.push({ path: entryPath, category: 'tmp', reason: 'age', sizeBytes: stat.size });
+            }
+            continue;
+        }
+        if (isCanonicalTaskId(entry) && activeTaskIdsLower.has(entry.toLowerCase())) {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category: 'tmp',
+            reason: 'inactive-reviewer-scratch',
+            sizeBytes: dirSizeBytes(entryPath),
+            taskId: isCanonicalTaskId(entry) ? entry : undefined
+        });
     }
 
     return items;
@@ -346,6 +348,68 @@ function parseMarkdownWorkingPlanTaskId(fileName: string): string | null {
     }
     const taskId = fileName.slice(0, -'.md'.length).trim();
     return /^T-\d+(?:-[A-Za-z0-9]+)*$/u.test(taskId) && isCanonicalTaskId(taskId) ? taskId : null;
+}
+
+interface TaskArtifactInventoryCollectorOptions {
+    dirPath: string;
+    category: string;
+    activeTaskIds: ReadonlySet<string>;
+    parseTaskId: (entryName: string) => string | null;
+    taskIdFilter?: ReadonlySet<string>;
+    expectedKind: 'file' | 'directory';
+    activeTaskMatch?: 'exact' | 'case-insensitive';
+}
+
+function collectTaskArtifactInventoryEntries(options: TaskArtifactInventoryCollectorOptions): CleanupItem[] {
+    const {
+        dirPath,
+        category,
+        activeTaskIds,
+        parseTaskId,
+        taskIdFilter,
+        expectedKind,
+        activeTaskMatch = 'exact'
+    } = options;
+    const items: CleanupItem[] = [];
+    const activeTaskIdsLower = activeTaskMatch === 'case-insensitive'
+        ? new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()))
+        : null;
+
+    for (const entry of directoryEntries(dirPath)) {
+        const taskId = parseTaskId(entry);
+        if (!taskId || !isCanonicalTaskId(taskId)) {
+            continue;
+        }
+        const isActiveTask = activeTaskIdsLower
+            ? activeTaskIdsLower.has(taskId.toLowerCase())
+            : activeTaskIds.has(taskId);
+        if (isActiveTask) {
+            continue;
+        }
+        if (taskIdFilter && !taskIdFilter.has(taskId)) {
+            continue;
+        }
+        const entryPath = path.join(dirPath, entry);
+        const stat = pathStat(entryPath);
+        if (!stat) {
+            continue;
+        }
+        if (expectedKind === 'file' && !stat.isFile()) {
+            continue;
+        }
+        if (expectedKind === 'directory' && !stat.isDirectory()) {
+            continue;
+        }
+        items.push({
+            path: entryPath,
+            category,
+            reason: 'retention-inventory',
+            sizeBytes: cleanupItemSizeBytes(entryPath, stat),
+            taskId
+        });
+    }
+
+    return items;
 }
 
 function collectTaskReviewArtifactsInventory(
@@ -513,45 +577,14 @@ function collectTaskProjectMemoryArtifactsInventory(
     activeTaskIds: ReadonlySet<string>,
     taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
-    if (!fs.existsSync(projectMemoryDir)) return [];
-    const items: CleanupItem[] = [];
-
-    let entries: string[];
-    try {
-        entries = fs.readdirSync(projectMemoryDir).sort();
-    } catch {
-        return [];
-    }
-
-    for (const entry of entries) {
-        const taskId = parseProjectMemoryArtifactTaskId(entry);
-        if (!taskId) {
-            continue;
-        }
-        if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
-            continue;
-        }
-        if (taskIdFilter && !taskIdFilter.has(taskId)) {
-            continue;
-        }
-        const entryPath = path.join(projectMemoryDir, entry);
-        try {
-            if (!fs.statSync(entryPath).isFile()) {
-                continue;
-            }
-        } catch {
-            continue;
-        }
-        items.push({
-            path: entryPath,
-            category: 'project-memory',
-            reason: 'retention-inventory',
-            sizeBytes: fileSizeBytes(entryPath),
-            taskId
-        });
-    }
-
-    return items;
+    return collectTaskArtifactInventoryEntries({
+        dirPath: projectMemoryDir,
+        category: 'project-memory',
+        activeTaskIds,
+        taskIdFilter,
+        parseTaskId: parseProjectMemoryArtifactTaskId,
+        expectedKind: 'file'
+    });
 }
 
 function parseProjectMemoryArtifactTaskId(fileName: string): string | null {
@@ -570,43 +603,15 @@ function collectTaskWorkingPlanArtifactsInventory(
     activeTaskIds: ReadonlySet<string>,
     taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
-    if (!fs.existsSync(plansDir)) return [];
-    const items: CleanupItem[] = [];
-    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
-
-    let entries: string[];
-    try {
-        entries = fs.readdirSync(plansDir).sort();
-    } catch {
-        return [];
-    }
-
-    for (const entry of entries) {
-        const taskId = parseMarkdownWorkingPlanTaskId(entry);
-        if (!taskId || activeTaskIdsLower.has(taskId.toLowerCase())) {
-            continue;
-        }
-        if (taskIdFilter && !taskIdFilter.has(taskId)) {
-            continue;
-        }
-        const entryPath = path.join(plansDir, entry);
-        try {
-            if (!fs.statSync(entryPath).isFile()) {
-                continue;
-            }
-        } catch {
-            continue;
-        }
-        items.push({
-            path: entryPath,
-            category: 'plans',
-            reason: 'retention-inventory',
-            sizeBytes: fileSizeBytes(entryPath),
-            taskId
-        });
-    }
-
-    return items;
+    return collectTaskArtifactInventoryEntries({
+        dirPath: plansDir,
+        category: 'plans',
+        activeTaskIds,
+        taskIdFilter,
+        parseTaskId: parseMarkdownWorkingPlanTaskId,
+        expectedKind: 'file',
+        activeTaskMatch: 'case-insensitive'
+    });
 }
 
 function collectTaskManualValidationArtifactsInventory(
@@ -614,35 +619,15 @@ function collectTaskManualValidationArtifactsInventory(
     activeTaskIds: ReadonlySet<string>,
     taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
-    if (!fs.existsSync(manualValidationDir)) return [];
-    const items: CleanupItem[] = [];
-    const activeTaskIdsLower = new Set(Array.from(activeTaskIds).map((taskId) => taskId.toLowerCase()));
-
-    for (const entry of directoryEntries(manualValidationDir)) {
-        if (!isCanonicalTaskId(entry) || activeTaskIdsLower.has(entry.toLowerCase())) {
-            continue;
-        }
-        if (taskIdFilter && !taskIdFilter.has(entry)) {
-            continue;
-        }
-        const entryPath = path.join(manualValidationDir, entry);
-        try {
-            if (!fs.statSync(entryPath).isDirectory()) {
-                continue;
-            }
-        } catch {
-            continue;
-        }
-        items.push({
-            path: entryPath,
-            category: 'manual-validation',
-            reason: 'retention-inventory',
-            sizeBytes: dirSizeBytes(entryPath),
-            taskId: entry
-        });
-    }
-
-    return items;
+    return collectTaskArtifactInventoryEntries({
+        dirPath: manualValidationDir,
+        category: 'manual-validation',
+        activeTaskIds,
+        taskIdFilter,
+        parseTaskId: (entry) => entry,
+        expectedKind: 'directory',
+        activeTaskMatch: 'case-insensitive'
+    });
 }
 
 function collectTaskLedgerArtifactsInventory(
@@ -650,38 +635,14 @@ function collectTaskLedgerArtifactsInventory(
     activeTaskIds: ReadonlySet<string>,
     taskIdFilter?: ReadonlySet<string>
 ): CleanupItem[] {
-    if (!fs.existsSync(taskLedgerDir)) return [];
-    const items: CleanupItem[] = [];
-
-    for (const entry of directoryEntries(taskLedgerDir)) {
-        if (!entry.endsWith('.json')) {
-            continue;
-        }
-        const taskId = entry.slice(0, -'.json'.length);
-        if (!isCanonicalTaskId(taskId) || activeTaskIds.has(taskId)) {
-            continue;
-        }
-        if (taskIdFilter && !taskIdFilter.has(taskId)) {
-            continue;
-        }
-        const entryPath = path.join(taskLedgerDir, entry);
-        try {
-            if (!fs.statSync(entryPath).isFile()) {
-                continue;
-            }
-        } catch {
-            continue;
-        }
-        items.push({
-            path: entryPath,
-            category: 'task-ledger',
-            reason: 'retention-inventory',
-            sizeBytes: fileSizeBytes(entryPath),
-            taskId
-        });
-    }
-
-    return items;
+    return collectTaskArtifactInventoryEntries({
+        dirPath: taskLedgerDir,
+        category: 'task-ledger',
+        activeTaskIds,
+        taskIdFilter,
+        parseTaskId: (entry) => entry.endsWith('.json') ? entry.slice(0, -'.json'.length) : null,
+        expectedKind: 'file'
+    });
 }
 
 function collectTaskTmpArtifactsInventory(
