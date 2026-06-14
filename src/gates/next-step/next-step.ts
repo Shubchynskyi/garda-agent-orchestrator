@@ -9,9 +9,6 @@ import {
     type ResolvedReviewExecutionPolicyConfig
 } from '../../core/review-execution-policy';
 import {
-    assertValidTaskId
-} from '../../gate-runtime/task-events';
-import {
     DELEGATED_REVIEWER_IDENTITY_FROM_PROVIDER_PLACEHOLDER,
     isPlannedReviewerIdentity,
     isResolvedReviewerIdentity
@@ -32,9 +29,7 @@ import {
     type TaskAuditSummaryResult
 } from '../task-audit/task-audit-summary';
 import {
-    type GateOutcome,
-    resolveEventsRoot,
-    resolveReviewsRoot
+    type GateOutcome
 } from '../task-audit/task-audit-summary-collectors';
 import {
     readOrderedTaskEvents,
@@ -150,8 +145,7 @@ import {
 import {
     buildNextStepCoreArtifactSpecs,
     fullSuiteArtifactMatchesCurrentCycle,
-    hasAcceptedDocsOnlyFullSuiteSkipArtifact,
-    readNextStepReadinessArtifacts
+    hasAcceptedDocsOnlyFullSuiteSkipArtifact
 } from './next-step-readiness-readers';
 import {
     getScopedDiffMetadataReadiness,
@@ -294,13 +288,20 @@ import {
     isLatestCompletionCurrent,
     readCoherentCycleReadiness,
     readFailedGateRecovery,
-    readPostPreflightRulePackReadiness,
-    resolveActiveTaskModeArtifactPath
+    readPostPreflightRulePackReadiness
 } from './next-step-preflight-recovery';
 import {
     buildStrictDecompositionDecisionRequirement,
     resolveStrictDecompositionContinuationRoute
 } from './next-step-strict-decomposition-routing';
+import {
+    createNextStepResolutionContext,
+    type NextStepOptions,
+    type NextStepResolutionContext
+} from './next-step-resolution-context';
+import {
+    renderNextStepOutput
+} from './next-step-output-rendering';
 
 const REVIEW_PREPARATION_ORDER = Object.freeze([
     'code',
@@ -434,13 +435,6 @@ export interface NextStepResult {
     final_report: NextStepFinalReportSummary | null;
 }
 
-
-interface NextStepOptions {
-    taskId: string;
-    repoRoot: string;
-    eventsRoot?: string | null;
-    reviewsRoot?: string | null;
-}
 
 interface ArtifactSpec {
     key: string;
@@ -632,12 +626,6 @@ function isPassedIntermediateCommandEvent(event: TaskAuditEvent): boolean {
         return exitCode === 0;
     }
     return outcome === 'PASS' || outcome === 'PASSED' || status === 'PASS' || status === 'PASSED';
-}
-
-function buildCliPrefix(repoRoot: string): string {
-    return fs.existsSync(path.join(path.resolve(repoRoot), 'bin', 'garda.js'))
-        ? 'node bin/garda.js'
-        : `node ${resolveBundleNameForTarget(repoRoot)}/bin/garda.js`;
 }
 
 function resolveBundleRootForNextStep(repoRoot: string): string {
@@ -1121,7 +1109,6 @@ function buildResult(params: {
             staleness: params.sourceRuntimeStaleness
         });
     }
-    const missingArtifacts = params.status === 'DONE' ? [] : params.missingArtifacts;
     const invalidationImpact = buildInvalidationImpactSummary(params);
     const knownNonBlockingSignals = collectKnownNonBlockingSignals({
         projectMemory: params.projectMemory || null,
@@ -1129,32 +1116,12 @@ function buildResult(params: {
         reason: params.reason,
         commands: params.commands
     });
-    return {
-        schema_version: 1,
-        task_id: params.taskId,
-        generated_utc: new Date().toISOString(),
-        navigator_command: params.navigatorCommand,
-        status: params.status,
-        next_gate: params.nextGate,
-        title: params.title,
-        reason: params.reason,
-        commands: params.commands,
-        missing_artifacts: missingArtifacts,
-        present_artifacts: params.presentArtifacts,
-        full_suite_validation: params.fullSuite,
-        project_memory: params.projectMemory || null,
-        review: params.review,
-        task_queue_status_contract: buildTaskQueueStatusContract(params.taskId),
-        audit_status: params.auditStatus,
-        profile: params.profile,
-        markdown_working_plan: params.markdownWorkingPlan || null,
-        optional_skill_selection: params.optionalSkillSelection || null,
-        warnings: params.warnings || [],
-        invalidation_impact: invalidationImpact,
-        known_non_blocking_signals: knownNonBlockingSignals,
-        review_cycle_block: params.reviewCycleBlock || null,
-        final_report: params.finalReport || null
-    };
+    return renderNextStepOutput({
+        ...params,
+        invalidationImpact,
+        knownNonBlockingSignals,
+        taskQueueStatusContract: buildTaskQueueStatusContract(params.taskId)
+    });
 }
 
 function buildFinalCloseoutMissingArtifacts(
@@ -1486,22 +1453,23 @@ function resolveRulePackStage(rulePack: Record<string, unknown> | null): string 
     return typeof rulePack?.stage === 'string' ? rulePack.stage.trim() || null : null;
 }
 
-export function resolveNextStep(options: NextStepOptions): NextStepResult {
-    const repoRoot = path.resolve(options.repoRoot || '.');
-    const taskId = assertValidTaskId(options.taskId);
-    const reviewsRoot = resolveReviewsRoot(repoRoot, options.reviewsRoot);
-    const eventsRoot = resolveEventsRoot(repoRoot, options.eventsRoot);
-    const cliPrefix = buildCliPrefix(repoRoot);
-    const taskModePath = resolveActiveTaskModeArtifactPath(repoRoot, eventsRoot, reviewsRoot, taskId);
-    const preflightCommandPath = buildBundleRelativePath(repoRoot, `runtime/reviews/${taskId}-preflight.json`);
-    const readinessArtifacts = readNextStepReadinessArtifacts({
-        reviewsRoot,
+export function resolveNextStepDecisionRoute(context: NextStepResolutionContext): NextStepResult {
+    const {
+        repoRoot,
         taskId,
+        reviewsRoot,
+        eventsRoot,
+        cliPrefix,
         taskModePath,
-        preflightCommandPath
-    });
-    const { preflightPath, rulePackPath } = readinessArtifacts.paths;
-    const { preflight, rulePack, taskMode, preflightSha256 } = readinessArtifacts;
+        preflightCommandPath,
+        readinessArtifacts,
+        preflightPath,
+        rulePackPath,
+        preflight,
+        rulePack,
+        taskMode,
+        preflightSha256
+    } = context;
     const navigatorCommand = buildNavigatorCommand(cliPrefix, taskId);
     const markdownWorkingPlan = readOptionalMarkdownWorkingPlan(repoRoot, taskId);
     const taskEntries = readTaskQueueEntries(repoRoot);
@@ -3377,6 +3345,10 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         reason: postReviewCloseoutRoute.reason,
         commands: postReviewCloseoutRoute.commands
     });
+}
+
+export function resolveNextStep(options: NextStepOptions): NextStepResult {
+    return resolveNextStepDecisionRoute(createNextStepResolutionContext(options));
 }
 
 

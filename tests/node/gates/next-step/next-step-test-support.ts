@@ -10,7 +10,8 @@ export { recordFullSuiteValidationDuration, type FullSuiteValidationConfig } fro
 export {
     buildReviewReuseCandidatesForDiagnostics,
     formatNextStepText,
-    resolveNextStep
+    resolveNextStep,
+    resolveNextStepDecisionRoute
 } from '../../../../src/gates/next-step';
 export { extractExplicitLinkedChildTaskIds } from '../../../../src/gates/next-step/next-step-task-queue';
 export { assessProjectMemoryImpact, getProjectMemoryImpactLifecycleEvidence } from '../../../../src/gates/project-memory-impact';

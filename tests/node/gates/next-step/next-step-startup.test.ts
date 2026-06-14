@@ -9,7 +9,8 @@ import { initGitRepo } from '../git-fixtures';
 
 import {
     formatNextStepText,
-    resolveNextStep
+    resolveNextStep,
+    resolveNextStepDecisionRoute
 } from './next-step-test-support';
 import {
     COPILOT_PROVIDER_ENV_KEYS,
@@ -31,6 +32,7 @@ import { buildDefaultWorkflowConfig } from './next-step-test-support';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from './next-step-test-support';
 import { buildDomainScopeFingerprints } from './next-step-test-support';
 import { buildStrictDecompositionDecisionArtifact } from './next-step-test-support';
+import { createNextStepResolutionContext } from '../../../../src/gates/next-step/next-step-resolution-context';
 
 const TASK_ID = 'T-NEXT-1';
 const EXPECTED_LOOP_LINE = 'Loop: run the Navigator first, rerun it after every suggested command, and follow only the single Commands entry it prints.';
@@ -1287,6 +1289,31 @@ afterEach(() => {
 });
 
 describe('gates/next-step startup routing', () => {
+    it('loads resolution context before routing a fresh task at enter-task-mode', () => {
+        const repoRoot = makeTempRepo();
+        const context = createNextStepResolutionContext({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(context.repoRoot, path.resolve(repoRoot));
+        assert.equal(context.taskId, TASK_ID);
+        assert.equal(context.reviewsRoot, reviewsRoot(repoRoot));
+        assert.equal(context.eventsRoot, eventsRoot(repoRoot));
+        assert.equal(context.cliPrefix, 'node bin/garda.js');
+        assert.equal(context.taskModePath, path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`));
+        assert.equal(context.preflightPath, path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`));
+        assert.equal(context.preflightCommandPath, 'garda-agent-orchestrator/runtime/reviews/T-NEXT-1-preflight.json');
+        assert.equal(context.preflight, null);
+        assert.equal(context.rulePack, null);
+        assert.equal(context.taskMode, null);
+        assert.equal(context.preflightSha256, null);
+
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
+            resolveNextStepDecisionRoute(context)
+        ));
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.match(result.commands[0]?.command || '', /^node bin\/garda\.js gate enter-task-mode /);
+    });
+
     it('points a fresh task at enter-task-mode', () => {
         const repoRoot = makeTempRepo();
         const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
