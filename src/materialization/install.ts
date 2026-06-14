@@ -39,6 +39,12 @@ import {
 } from './content-builders';
 import { withLifecycleOperationLock } from '../lifecycle/common';
 import { readSwitchModeState, runSwitchMode } from './switch-mode';
+import {
+    applyMaterializationStage,
+    createCopyFileStage,
+    createRemoveFileStage,
+    createWriteTextFileStage
+} from './staged-side-effects';
 
 interface RunInstallOptions {
     targetRoot: string;
@@ -230,6 +236,22 @@ export function runInstall(options: RunInstallOptions) {
     let initResult: Record<string, unknown> | null = null;
     const backedUpSet = new Set<string>();
 
+    function applyStage(stage: ReturnType<typeof createWriteTextFileStage>): void {
+        applyMaterializationStage(stage, { dryRun });
+    }
+
+    function writeTextFileStage(filePath: string, content: string): void {
+        applyStage(createWriteTextFileStage(filePath, content));
+    }
+
+    function copyFileStage(sourcePath: string, destinationPath: string): void {
+        applyStage(createCopyFileStage(sourcePath, destinationPath));
+    }
+
+    function removeFileStage(filePath: string): void {
+        applyStage(createRemoveFileStage(filePath));
+    }
+
     // Pre-existing file tracking
     const preExistingPaths = INSTALL_BACKUP_CANDIDATE_PATHS
         .filter((p) => pathExists(path.join(targetRoot, p)))
@@ -251,11 +273,8 @@ export function runInstall(options: RunInstallOptions) {
         if (skipBackups || !pathExists(destPath)) return;
         const key = relativePath.toLowerCase().replace(/\\/g, '/');
         if (backedUpSet.has(key)) return;
-        if (!dryRun) {
-            const backupPath = path.join(backupRoot, relativePath);
-            ensureDirectory(path.dirname(backupPath));
-            fs.copyFileSync(destPath, backupPath);
-        }
+        const backupPath = path.join(backupRoot, relativePath);
+        copyFileStage(destPath, backupPath);
         backedUp++;
         backedUpSet.add(key);
     }
@@ -267,9 +286,7 @@ export function runInstall(options: RunInstallOptions) {
         const result = syncManagedBlockInContent(content, managedBlock);
         if (!result.changed) return false;
         backupFile(destPath, relativePath);
-        if (!dryRun) {
-            fs.writeFileSync(destPath, result.content, 'utf8');
-        }
+        writeTextFileStage(destPath, result.content);
         return true;
     }
 
@@ -279,9 +296,7 @@ export function runInstall(options: RunInstallOptions) {
         const nextContent = buildTaskContentWithExistingQueue(templateContent, content);
         if (!nextContent || nextContent === content) return false;
         backupFile(destPath, relativePath);
-        if (!dryRun) {
-            fs.writeFileSync(destPath, nextContent, 'utf8');
-        }
+        writeTextFileStage(destPath, nextContent);
         return true;
     }
 
@@ -312,9 +327,9 @@ export function runInstall(options: RunInstallOptions) {
         backupFile(destPath, relativePath);
         if (!dryRun) {
             if (nextContent) {
-                fs.writeFileSync(destPath, `${nextContent}${content.includes('\r\n') ? '\r\n' : '\n'}`, 'utf8');
+                writeTextFileStage(destPath, `${nextContent}${content.includes('\r\n') ? '\r\n' : '\n'}`);
             } else {
-                fs.rmSync(destPath, { force: true });
+                removeFileStage(destPath);
                 removeEmptyParentDirectories(path.dirname(destPath));
             }
         }
@@ -328,7 +343,7 @@ export function runInstall(options: RunInstallOptions) {
         if (!pathExists(destPath)) {
             if (!dryRun) {
                 ensureDirectory(destDir);
-                fs.writeFileSync(destPath, managedBlock + '\r\n', 'utf8');
+                writeTextFileStage(destPath, managedBlock + '\r\n');
             }
             deployed++;
             return;
@@ -381,7 +396,7 @@ export function runInstall(options: RunInstallOptions) {
 
             const content = getTemplateContent(sourcePath, relPath);
             if (content && !dryRun) {
-                fs.writeFileSync(destPath, content, 'utf8');
+                writeTextFileStage(destPath, content);
             }
             deployed++;
         }
@@ -403,7 +418,7 @@ export function runInstall(options: RunInstallOptions) {
                     ensureDirectory(path.dirname(taskDestPath));
                     const content = getTemplateContent(taskSourcePath, 'TASK.md');
                     if (content) {
-                        fs.writeFileSync(taskDestPath, content, 'utf8');
+                        writeTextFileStage(taskDestPath, content);
                     }
                 }
                 deployed++;
@@ -441,7 +456,7 @@ export function runInstall(options: RunInstallOptions) {
             if (!dryRun) {
                 ensureDirectory(path.dirname(qwenPath));
                 if (qwenPlan.content !== null) {
-                    fs.writeFileSync(qwenPath, qwenPlan.content, 'utf8');
+                    writeTextFileStage(qwenPath, qwenPlan.content);
                 }
             }
             qwenUpdated = true;
@@ -468,7 +483,7 @@ export function runInstall(options: RunInstallOptions) {
                 backupFile(claudePath, claudeRelPath);
                 if (!dryRun) {
                     ensureDirectory(path.dirname(claudePath));
-                    fs.writeFileSync(claudePath, claudePlan.content, 'utf8');
+                    writeTextFileStage(claudePath, claudePlan.content);
                 }
                 claudeUpdated = true;
                 if (preserveExisting) aligned++;
@@ -477,7 +492,7 @@ export function runInstall(options: RunInstallOptions) {
         } else {
             if (!dryRun) {
                 ensureDirectory(path.dirname(claudePath));
-                fs.writeFileSync(claudePath, claudePlan.content, 'utf8');
+                writeTextFileStage(claudePath, claudePlan.content);
             }
             claudeUpdated = true;
             deployed++;
@@ -500,7 +515,7 @@ export function runInstall(options: RunInstallOptions) {
         }
         if (!dryRun) {
             ensureDirectory(path.dirname(vscodePath));
-            fs.writeFileSync(vscodePath, vscodePlan.content, 'utf8');
+            writeTextFileStage(vscodePath, vscodePlan.content);
         }
         vscodeSettingsUpdated = true;
         if (pathExists(vscodePath) && preserveExisting) aligned++;
@@ -678,7 +693,7 @@ export function runInstall(options: RunInstallOptions) {
             if (gitignoreExisted) {
                 backupFile(gitignorePath, '.gitignore');
             }
-            fs.writeFileSync(gitignorePath, syncResult.content, 'utf8');
+            writeTextFileStage(gitignorePath, syncResult.content);
         }
         const agentignoreExisted = pathExists(agentignorePath);
         const existingAgentignoreContent = agentignoreExisted ? readTextFile(agentignorePath) : '';
@@ -690,7 +705,7 @@ export function runInstall(options: RunInstallOptions) {
             if (agentignoreExisted) {
                 backupFile(agentignorePath, '.agentignore');
             }
-            fs.writeFileSync(agentignorePath, agentignoreSync.content, 'utf8');
+            writeTextFileStage(agentignorePath, agentignoreSync.content);
             agentignoreUpdated = true;
         }
     } else {
@@ -841,7 +856,7 @@ export function applyCommitGuardHook(
         if (!dryRun) {
             ensureDirectory(path.dirname(hookPath));
             const hookContent = '#!/usr/bin/env bash\n\n' + managedBlock + '\n';
-            fs.writeFileSync(hookPath, hookContent, 'utf8');
+            applyMaterializationStage(createWriteTextFileStage(hookPath, hookContent), { dryRun });
         }
         return true;
     }
@@ -872,7 +887,7 @@ export function applyCommitGuardHook(
         backupFile(hookPath, '.git/hooks/pre-commit');
     }
     if (!dryRun) {
-        fs.writeFileSync(hookPath, updatedContent, 'utf8');
+        applyMaterializationStage(createWriteTextFileStage(hookPath, updatedContent), { dryRun });
     }
     return true;
 }
