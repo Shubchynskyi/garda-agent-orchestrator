@@ -120,26 +120,11 @@ import {
     buildDefaultReviewScratchCommandPath
 } from '../review/review-scratch-paths';
 import {
-    isTaskQueueDecomposedStatus,
-    isTaskQueueDoneStatus,
-    isTaskQueueSplitRequiredStatus
-} from '../../core/active-task-state';
-import {
-    restoreSplitRequiredParentFromPermanentLatch,
-    transitionDecomposedParentsToDone,
-    transitionSplitRequiredParentToDecomposed
-} from './next-step-task-queue-transitions';
-import {
     buildTaskQueueStatusContract,
     type TaskQueueStatusContract
 } from '../../core/task-queue-status-contract';
 import {
-    extractExplicitLinkedChildTaskIds,
-    hasLinkedChildTasks,
-    isDecomposedParentTask,
     parseTaskQueueEntriesFromContent,
-    resolveDecomposedParentCompletionState,
-    resolveNextUnfinishedChildRoute,
     type TaskQueueEntry
 } from './next-step-task-queue';
 import {
@@ -161,12 +146,6 @@ import {
     getDownstreamReviewTypesFor,
     toNextStepBlockedReviewLanes
 } from './next-step-review-launch-planner';
-import {
-    resolveNextStepFullSuiteValidationRoute
-} from './next-step-full-suite-routing';
-import {
-    resolveDelegatedReviewReadinessRoute
-} from './next-step-review-readiness-routing';
 import {
     resolveReviewLaunchableLanePreparationRoute
 } from './next-step-review-cycle-routing';
@@ -209,21 +188,16 @@ import {
     type NextStepFinalReportSummary
 } from './next-step-closeout-status-readers';
 import {
-    resolveDecomposedParentTerminalRoute,
-    resolveDoneTaskQueueTerminalRoute,
-    resolvePermanentSplitRequiredLatchRoute,
-    resolveSplitRequiredTaskQueueRoute
-} from './next-step-terminal-status-routing';
-import {
-    hasCompletedDecomposedParentAfterSplitRequiredClear,
-    hasGateOwnedDecomposedParentCompletionEvidence,
-    hasSplitRequiredClearedEvidence,
     isSuccessfulSplitRequiredStatusSync,
     materializeSplitRequiredLatch,
-    readSplitRequiredLatchEvidence,
     sanitizeScopeBudgetGuardSummary,
     type SplitRequiredLatchResult
 } from './next-step-split-required-latch';
+import {
+    resolveDelegatedReviewDecisionRoute,
+    resolveFullSuiteDecisionRoute,
+    resolveTaskQueueTerminalDecisionRoute
+} from './next-step-decision-route-groups';
 import {
     buildReviewCycleContinuationCommand,
     buildReviewCycleOperatorBlock,
@@ -1728,148 +1702,33 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
 
-    const taskQueueStatus = taskEntry?.status || null;
-    const splitRequiredStatusInTaskQueue = isTaskQueueSplitRequiredStatus(taskQueueStatus);
-    const permanentSplitRequiredLatchEvidence = splitRequiredStatusInTaskQueue
-        ? null
-        : readSplitRequiredLatchEvidence({ reviewsRoot, eventsRoot, taskId });
-    const decomposedStatusHasClearedLatchEvidence =
-        isTaskQueueDecomposedStatus(taskQueueStatus)
-        && permanentSplitRequiredLatchEvidence?.valid === true
-        && hasSplitRequiredClearedEvidence({
-            eventsRoot,
-            taskId,
-            latchEvidence: permanentSplitRequiredLatchEvidence
-        });
-    const doneStatusHasCompletedClearedLatchEvidence =
-        isTaskQueueDoneStatus(taskQueueStatus)
-        && permanentSplitRequiredLatchEvidence?.valid === true
-        && hasCompletedDecomposedParentAfterSplitRequiredClear({
-            eventsRoot,
-            taskId,
-            latchEvidence: permanentSplitRequiredLatchEvidence
-        });
-    const doneStatusHasGateOwnedDecomposedParentCompletionEvidence =
-        isTaskQueueDoneStatus(taskQueueStatus)
-        && hasGateOwnedDecomposedParentCompletionEvidence({
-            eventsRoot,
-            taskId
-        });
-    const doneStatusHasGateOwnedCompletionEvidence = doneStatusHasCompletedClearedLatchEvidence
-        || doneStatusHasGateOwnedDecomposedParentCompletionEvidence;
-    if (
-        !splitRequiredStatusInTaskQueue
-        && !decomposedStatusHasClearedLatchEvidence
-        && !doneStatusHasGateOwnedCompletionEvidence
-        && permanentSplitRequiredLatchEvidence?.valid
-    ) {
-        const restoreResult = restoreSplitRequiredParentFromPermanentLatch({
-            repoRoot,
-            eventsRoot,
-            taskId,
-            latchEvidence: permanentSplitRequiredLatchEvidence
-        });
-
-        const childRoute = resolveNextUnfinishedChildRoute(
-            taskEntries,
-            taskId,
-            new Set<string>(),
-            extractExplicitLinkedChildTaskIds
-        );
-        const hasChildren = hasLinkedChildTasks(taskEntries, taskId);
-        let syncResult: ReturnType<typeof transitionSplitRequiredParentToDecomposed> | null = null;
-        if (hasChildren && (restoreResult.outcome === 'updated' || restoreResult.outcome === 'already_synced')) {
-            syncResult = transitionSplitRequiredParentToDecomposed({ repoRoot, eventsRoot, taskId });
-        }
-
-        const latchRoute = resolvePermanentSplitRequiredLatchRoute({
-            taskId,
-            restoreResult: {
-                outcome: restoreResult.outcome,
-                errorMessage: restoreResult.error_message
-            },
-            hasChildren,
-            transitionResult: syncResult
-                ? {
-                    outcome: syncResult.outcome,
-                    errorMessage: syncResult.error_message
-                }
-                : null,
-            childRoute,
-            continueChildCommand: childRoute
-                ? buildCommand(
-                    'Continue child task',
-                    `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
-                )
-                : null
-        });
+    const taskQueueTerminalRoute = resolveTaskQueueTerminalDecisionRoute({
+        repoRoot,
+        reviewsRoot,
+        eventsRoot,
+        taskId,
+        cliPrefix,
+        taskEntries,
+        taskEntry,
+        completionGatePassed: isGatePassed(summary, 'completion-gate'),
+        latestCompletionCurrent: isLatestCompletionCurrent(eventsRoot, taskId),
+        finalReportContractReady: summary.final_report_contract.status === 'READY',
+        finalReportContractBlocker: summary.final_report_contract.blocker || null,
+        summaryBlockers: summary.blockers.map((blocker) => `${blocker.gate}: ${blocker.reason}`),
+        filteredMissingArtifacts,
+        corePresentArtifacts: coreArtifacts.present
+    });
+    if (taskQueueTerminalRoute) {
         return buildResult({
             ...resultBase,
-            status: latchRoute.status,
-            nextGate: latchRoute.nextGate,
-            title: latchRoute.title,
-            reason: latchRoute.reason,
-            commands: latchRoute.commands,
-            missingArtifacts: [],
-            presentArtifacts: coreArtifacts.present,
-            finalReport: null
-        });
-    }
-
-    if (splitRequiredStatusInTaskQueue) {
-        const latchEvidence = readSplitRequiredLatchEvidence({ reviewsRoot, eventsRoot, taskId });
-        const childRoute = resolveNextUnfinishedChildRoute(
-            taskEntries,
-            taskId,
-            new Set<string>(),
-            extractExplicitLinkedChildTaskIds
-        );
-        const hasChildren = hasLinkedChildTasks(taskEntries, taskId);
-        const syncResult = latchEvidence.valid && hasChildren
-            ? transitionSplitRequiredParentToDecomposed({ repoRoot, eventsRoot, taskId })
-            : null;
-        const splitRoute = resolveSplitRequiredTaskQueueRoute({
-            taskId,
-            latchValid: latchEvidence.valid,
-            latchInvalidReason: latchEvidence.reason,
-            hasChildren,
-            transitionResult: syncResult
-                ? {
-                    outcome: syncResult.outcome,
-                    errorMessage: syncResult.error_message
-                }
-                : null,
-            childRoute,
-            continueChildCommand: childRoute
-                ? buildCommand(
-                    'Continue child task',
-                    `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
-                )
-                : null
-        });
-        if (!latchEvidence.valid) {
-            return buildResult({
-                ...resultBase,
-                status: splitRoute.status,
-                nextGate: splitRoute.nextGate,
-                title: splitRoute.title,
-                reason: splitRoute.reason,
-                commands: splitRoute.commands,
-                missingArtifacts: [],
-                presentArtifacts: coreArtifacts.present,
-                finalReport: null
-            });
-        }
-        return buildResult({
-            ...resultBase,
-            status: splitRoute.status,
-            nextGate: splitRoute.nextGate,
-            title: splitRoute.title,
-            reason: splitRoute.reason,
-            commands: splitRoute.commands,
-            missingArtifacts: [],
-            presentArtifacts: coreArtifacts.present,
-            finalReport: null
+            status: taskQueueTerminalRoute.status,
+            nextGate: taskQueueTerminalRoute.nextGate,
+            title: taskQueueTerminalRoute.title,
+            reason: taskQueueTerminalRoute.reason,
+            commands: taskQueueTerminalRoute.commands,
+            missingArtifacts: taskQueueTerminalRoute.missingArtifacts ?? resultBase.missingArtifacts,
+            presentArtifacts: taskQueueTerminalRoute.presentArtifacts ?? coreArtifacts.present,
+            finalReport: taskQueueTerminalRoute.finalReport ?? null
         });
     }
 
@@ -1906,103 +1765,6 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             commands: completedCloseoutRoute.commands,
             missingArtifacts: completedCloseoutRoute.status === 'DONE' ? [] : finalCloseoutMissingArtifacts,
             finalReport: completedCloseoutRoute.finalReport as NextStepFinalReportSummary | null
-        });
-    }
-
-    if (isTaskQueueDoneStatus(taskEntry?.status || null)) {
-        const doneConflictBlockers = summary.blockers.map((blocker) => `${blocker.gate}: ${blocker.reason}`);
-        if (!isGatePassed(summary, 'completion-gate')) {
-            doneConflictBlockers.unshift('completion-gate: missing or not passed');
-        } else if (!isLatestCompletionCurrent(eventsRoot, taskId)) {
-            doneConflictBlockers.unshift('completion-gate: pass exists but is stale for the current task cycle');
-        }
-        if (summary.final_report_contract.status !== 'READY') {
-            doneConflictBlockers.push(
-                `final-closeout: ${summary.final_report_contract.blocker || 'canonical final closeout is not ready'}`
-            );
-        }
-        const doneRoute = resolveDoneTaskQueueTerminalRoute({
-            taskId,
-            conflictBlockers: doneConflictBlockers,
-            allowCompletedClearedLatchEvidence: doneStatusHasGateOwnedCompletionEvidence,
-            reopenPreviewCommand: buildCommand(
-                'Preview explicit operator reopen',
-                `${cliPrefix} gate task-reset --task-id "${taskId}" --reopen --dry-run --repo-root "."`
-            )
-        });
-        return buildResult({
-            ...resultBase,
-            status: doneRoute.status,
-            nextGate: doneRoute.nextGate,
-            title: doneRoute.title,
-            reason: doneRoute.reason,
-            commands: doneRoute.commands,
-            missingArtifacts: doneRoute.status === 'DONE' ? [] : filteredMissingArtifacts,
-            presentArtifacts: coreArtifacts.present,
-            finalReport: null
-        });
-    }
-
-    if (!isGatePassed(summary, 'completion-gate') && isDecomposedParentTask(taskEntry)) {
-        const completionState = isTaskQueueDecomposedStatus(taskEntry?.status || null)
-            ? resolveDecomposedParentCompletionState(
-                taskEntries,
-                taskId,
-                new Set<string>(),
-                extractExplicitLinkedChildTaskIds
-            )
-            : null;
-        const childRoute = completionState?.unfinishedRoute || resolveNextUnfinishedChildRoute(
-            taskEntries,
-            taskId,
-            new Set<string>(),
-            extractExplicitLinkedChildTaskIds
-        );
-        const decomposedReason = isTaskQueueDecomposedStatus(taskEntry?.status || null)
-            ? 'Task queue marks this parent as DECOMPOSED.'
-            : 'Task queue marks this parent as a legacy BLOCKED split umbrella.';
-        const tasksToComplete = completionState?.hasLinkedChildren && completionState.complete
-            ? [...new Set([...completionState.completedDecomposedTaskIds, taskId])]
-            : [];
-        const syncResult = tasksToComplete.length > 0
-            ? transitionDecomposedParentsToDone({
-                repoRoot,
-                eventsRoot,
-                rootTaskId: taskId,
-                taskIds: tasksToComplete
-            })
-            : null;
-        const decomposedRoute = resolveDecomposedParentTerminalRoute({
-            taskId,
-            decomposedReason,
-            childRoute,
-            continueChildCommand: childRoute
-                ? buildCommand(
-                    'Continue child task',
-                    `${cliPrefix} next-step "${childRoute.taskId}" --repo-root "."`
-                )
-                : null,
-            hasLinkedChildren: completionState?.hasLinkedChildren || false,
-            missingChildTaskIds: completionState?.missingChildTaskIds || [],
-            complete: completionState?.complete || false,
-            statusSyncResult: syncResult
-                ? {
-                    outcome: syncResult.outcome,
-                    errorMessage: syncResult.error_message,
-                    taskIds: syncResult.task_ids
-                }
-                : null
-        });
-        return buildResult({
-            ...resultBase,
-            status: decomposedRoute.status,
-            nextGate: decomposedRoute.nextGate,
-            title: decomposedRoute.title,
-            reason: decomposedRoute.reason,
-            commands: decomposedRoute.commands,
-            missingArtifacts: [],
-            presentArtifacts: coreArtifacts.present,
-            finalReport: null
         });
     }
 
@@ -2577,7 +2339,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --repo-root "."`;
     const fullSuiteRunMarkerCleanupCommand =
         `${cliPrefix} gate full-suite-run-marker-recovery --task-id "${taskId}" --preflight-path "${preflightCommandPath}" --clear-dead-marker --operator-confirmed yes --repo-root "."`;
-    const fullSuiteValidationRoute = resolveNextStepFullSuiteValidationRoute({
+    const fullSuiteValidationRoute = resolveFullSuiteDecisionRoute({
         enabled: fullSuiteConfig.enabled,
         placement: fullSuiteConfig.placement,
         notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
@@ -3018,7 +2780,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         const stateViolations = state.violations.length > 0
             ? state.violations.join('; ')
             : 'review artifact or receipt is missing';
-        const delegatedReadinessRoute = resolveDelegatedReviewReadinessRoute({
+        const delegatedReadinessRoute = resolveDelegatedReviewDecisionRoute({
             reviewType,
             currentReviewReuseRecorded,
             currentReviewEvidenceSatisfied,
