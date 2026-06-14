@@ -31,6 +31,9 @@ import {
 } from '../review-reuse/review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from '../review/review-trust-policy';
 import {
+    validateReviewReceiptEvidenceContract
+} from '../review/review-evidence-contract';
+import {
     normalizeRuntimeIdentitySource,
     resolveReviewerRoutingPolicy
 } from '../review/reviewer-routing';
@@ -62,6 +65,11 @@ function getReviewContextTreeStateSha256(reviewContext: Record<string, unknown> 
         ? reviewContext.tree_state as Record<string, unknown>
         : null;
     return normalizeTimelineDetailString(treeState?.tree_state_sha256 ?? treeState?.treeStateSha256);
+}
+
+function resolveTaskIdFromTimelinePath(timelinePath: string): string | null {
+    const basename = path.basename(timelinePath, path.extname(timelinePath));
+    return basename.trim() || null;
 }
 
 function hasEarlierRecordedReview(
@@ -106,6 +114,7 @@ export function validateReviewSkillEvidence(
     if (!codeChanged) return result;
 
     const normalizedTimelinePath = normalizePath(timelinePath);
+    const timelineTaskId = resolveTaskIdFromTimelinePath(normalizedTimelinePath);
     const requiredKeys = getRequiredReviewKeys(requiredReviews);
 
     const compilePassSequence = findLatestTimelineEvent(events, (entry) => entry.event_type === 'COMPILE_GATE_PASSED')?.sequence ?? null;
@@ -477,13 +486,30 @@ export function validateReviewSkillEvidence(
                 }
                 const receipt = artifact.receipt;
                 if (receipt) {
-                    const reusedExistingReview = receipt.reused_existing_review === true;
-                    const receiptExecutionMode = normalizeCompatibilityReviewerExecutionMode(receipt.reviewer_execution_mode);
-                    const receiptReviewerIdentity = normalizeTimelineDetailString(receipt.reviewer_identity);
-                    const receiptFallbackReason = normalizeTimelineDetailString(receipt.reviewer_fallback_reason);
-                    const receiptTrustLevel = normalizeTimelineDetailString(receipt.trust_level)?.toUpperCase() ?? null;
-                    const receiptReviewTreeStateSha256 = normalizeTimelineDetailString(receipt.review_tree_state_sha256);
-                    const reusedFromReviewTreeStateSha256 = normalizeTimelineDetailString(receipt.reused_from_review_tree_state_sha256);
+                    const expectedReviewContextPath = normalizePath(
+                        artifact.reviewContextPath || artifact.path.replace(/\.md$/, '-review-context.json')
+                    );
+                    const receiptEvidenceContract = validateReviewReceiptEvidenceContract({
+                        taskId: timelineTaskId || '',
+                        reviewType: key,
+                        receipt: receipt as unknown as Record<string, unknown>,
+                        artifactSha256: fileSha256(artifact.path),
+                        contextSha256: fileSha256(expectedReviewContextPath),
+                        contextReviewTreeStateSha256,
+                        contextExecutionMode: actualExecutionMode,
+                        contextReviewerIdentity: reviewerSessionId
+                    });
+                    for (const violation of receiptEvidenceContract.violations) {
+                        result.violations.push(`Required review '${key}' receipt evidence contract violation: ${violation}.`);
+                    }
+                    const receiptEvidenceFields = receiptEvidenceContract.fields;
+                    const reusedExistingReview = receiptEvidenceFields.reusedExistingReview;
+                    const receiptExecutionMode = receiptEvidenceFields.reviewerExecutionMode;
+                    const receiptReviewerIdentity = receiptEvidenceFields.reviewerIdentity;
+                    const receiptFallbackReason = receiptEvidenceFields.reviewerFallbackReason;
+                    const receiptTrustLevel = receiptEvidenceFields.trustLevel;
+                    const receiptReviewTreeStateSha256 = receiptEvidenceFields.reviewTreeStateSha256;
+                    const reusedFromReviewTreeStateSha256 = receiptEvidenceFields.reusedFromReviewTreeStateSha256;
                     const expectedInvocationReviewTreeStateSha256 = reusedExistingReview
                         ? reusedFromReviewTreeStateSha256
                         : contextReviewTreeStateSha256;
@@ -628,9 +654,6 @@ export function validateReviewSkillEvidence(
                     }
                     if (reusedExistingReview) {
                         const expectedReceiptPath = normalizePath(artifact.path.replace(/\.md$/, '-receipt.json'));
-                        const expectedReviewContextPath = normalizePath(
-                            artifact.reviewContextPath || artifact.path.replace(/\.md$/, '-review-context.json')
-                        );
                         const currentReviewArtifactSha256 = fileSha256(artifact.path);
                         const currentReviewContextSha256 = repoRoot
                             ? fileSha256(expectedReviewContextPath)

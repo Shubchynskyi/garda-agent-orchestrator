@@ -2,6 +2,10 @@ import {
     normalizeCompatibilityReviewerExecutionMode,
 } from '../../../../gate-runtime/review-context';
 import {
+    REVIEW_EVIDENCE_AGENT_IDENTITY_PREFIX,
+    REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE
+} from '../../../../gates/review/review-evidence-contract';
+import {
     buildPlannedReviewerIdentity,
     isPlannedReviewerIdentity,
     isResolvedReviewerIdentity
@@ -60,7 +64,7 @@ export function parseReviewerIdentity(
         }
         throw new Error(modeRequiredMessage);
     }
-    if (reviewerExecutionMode !== 'delegated_subagent') {
+    if (reviewerExecutionMode !== REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE) {
         throw new Error(
             `ReviewerExecutionMode '${reviewerExecutionMode}' is no longer supported. ` +
             "Mandatory reviews must use 'delegated_subagent'."
@@ -86,7 +90,7 @@ export function parseReviewerIdentity(
             );
         }
     } else if (!isResolvedReviewerIdentity(reviewerIdentity)) {
-        throw new Error("Delegated review evidence requires an agent-scoped reviewer identity (prefix 'agent:').");
+        throw new Error(`Delegated review evidence requires an agent-scoped reviewer identity (prefix '${REVIEW_EVIDENCE_AGENT_IDENTITY_PREFIX}').`);
     }
     if (reviewerFallbackReason) {
         throw new Error(

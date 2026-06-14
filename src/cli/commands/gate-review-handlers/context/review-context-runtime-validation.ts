@@ -1,6 +1,9 @@
 import {
     normalizeCompatibilityReviewerExecutionMode
 } from '../../../../gate-runtime/review-context';
+import {
+    REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE
+} from '../../../../gates/review/review-evidence-contract';
 import { normalizePath } from '../../../../gates/shared/helpers';
 import {
     type ReviewDependencyTimelineEvent
@@ -15,7 +18,7 @@ import {
     resolveRuntimeReviewerIdentity
 } from '../../../../gates/review/reviewer-routing';
 
-type ReviewerExecutionMode = 'delegated_subagent';
+type ReviewerExecutionMode = typeof REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE;
 
 export function assertRoutingCompatibility(
     options: {
@@ -40,7 +43,7 @@ export function assertRoutingCompatibility(
     const providerLabel = runtimeIdentity.execution_provider
         || runtimeIdentity.canonical_source_of_truth
         || String(currentRouting?.execution_provider || currentRouting?.source_of_truth || 'unknown');
-    if (reviewerExecutionMode !== 'delegated_subagent') {
+    if (reviewerExecutionMode !== REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE) {
         throw new Error(
             `Review '${reviewType}' must use delegated_subagent for provider '${providerLabel}'.`
         );
@@ -51,7 +54,7 @@ export function assertRoutingCompatibility(
             `for provider '${providerLabel}'.`
         );
     }
-    if (expectedExecutionMode !== 'delegated_subagent' || !runtimeIdentity.delegation_required) {
+    if (expectedExecutionMode !== REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE || !runtimeIdentity.delegation_required) {
         throw new Error(
             `Review '${reviewType}' resolved a non-delegated reviewer routing policy for provider '${providerLabel}'. ` +
             'Mandatory reviews require delegated_subagent execution.'

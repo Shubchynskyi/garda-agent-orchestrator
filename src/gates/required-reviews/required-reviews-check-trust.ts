@@ -2,7 +2,6 @@
 import {
     auditReviewArtifactCompaction,
     normalizeCompatibilityReviewerExecutionMode,
-    normalizeReviewReceiptReviewerProvenance,
     type ReviewReceipt
 } from '../../gate-runtime/review-context';
 import { getReviewArtifactFindingsEvidence, isTrivialReview } from '../completion';
@@ -21,6 +20,10 @@ import {
 import { type ReviewDependencyTimelineEvent } from '../review/review-dependencies';
 import { validateStrictReusedReviewEvidence } from '../review-reuse/review-reuse-telemetry';
 import { getMandatoryDelegatedReviewTrustViolation } from '../review/review-trust-policy';
+import {
+    normalizeReviewReceiptEvidenceFields,
+    type ReviewEvidenceReviewerProvenance
+} from '../review/review-evidence-contract';
 import { evaluateHiddenReviewTimingTrust } from '../review/review-timing-trust';
 import { normalizeRuntimeIdentitySource, normalizeSourceOfTruthValue, resolveReviewerRoutingPolicy } from '../review/reviewer-routing';
 import { reviewerIdentityMatchesDelegatedLaunchCycle } from '../../gate-runtime/review/reviewer-identity-contract';
@@ -127,7 +130,7 @@ export function validateReviewArtifactGateEligibility(options: {
     let reviewerExecutionMode: string | null = null;
     let reviewerIdentity: string | null = null;
     let reviewerFallbackReason: string | null = null;
-    let reviewerProvenance: ReturnType<typeof normalizeReviewReceiptReviewerProvenance> = null;
+    let reviewerProvenance: ReviewEvidenceReviewerProvenance = null;
     let trustLevel: string | null = null;
     let receiptReviewContextSha256: string | null = null;
     let validatedReceipt: ReviewReceipt | null = null;
@@ -282,6 +285,7 @@ export function validateReviewArtifactGateEligibility(options: {
             if (receiptSnapshot.receipt) {
                 try {
                     const receipt = receiptSnapshot.receipt;
+                    const evidenceFields = normalizeReviewReceiptEvidenceFields(receipt as unknown as Record<string, unknown>);
                     validatedReceipt = receipt;
                     const currentArtifactHash = receiptSnapshot.artifactSha256 ?? fileSha256(artifactPath);
                     currentArtifactSha256 = currentArtifactHash;
@@ -312,7 +316,7 @@ export function validateReviewArtifactGateEligibility(options: {
                         receiptValid = true;
                     }
                     if (receipt.reviewer_execution_mode) {
-                        reviewerExecutionMode = normalizeCompatibilityReviewerExecutionMode(receipt.reviewer_execution_mode);
+                        reviewerExecutionMode = evidenceFields.reviewerExecutionMode;
                         if (!reviewerExecutionMode) {
                             errors.push(
                                 `Review receipt for '${reviewKey}' has invalid reviewer_execution_mode ` +
@@ -320,27 +324,21 @@ export function validateReviewArtifactGateEligibility(options: {
                             );
                         }
                     }
-                    if (receipt.reviewer_identity) {
-                        reviewerIdentity = String(receipt.reviewer_identity);
-                    }
-                    if (receipt.reviewer_fallback_reason) {
-                        reviewerFallbackReason = String(receipt.reviewer_fallback_reason);
-                    }
+                    reviewerIdentity = evidenceFields.reviewerIdentity;
+                    reviewerFallbackReason = evidenceFields.reviewerFallbackReason;
                     if (receipt.reviewer_provenance != null) {
-                        reviewerProvenance = normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
+                        reviewerProvenance = evidenceFields.reviewerProvenance;
                         if (!reviewerProvenance) {
                             errors.push(`Review receipt for '${reviewKey}' has invalid reviewer_provenance.`);
                         }
                     }
-                    if (receipt.trust_level) {
-                        trustLevel = String(receipt.trust_level).trim().toUpperCase();
-                    }
-                    reusedExistingReview = receipt.reused_existing_review === true;
-                    reusedFromReviewTreeStateSha256 = normalizeSha256String(receipt.reused_from_review_tree_state_sha256);
+                    trustLevel = evidenceFields.trustLevel;
+                    reusedExistingReview = evidenceFields.reusedExistingReview;
+                    reusedFromReviewTreeStateSha256 = evidenceFields.reusedFromReviewTreeStateSha256;
                     if (reusedExistingReview && !reusedFromReviewTreeStateSha256) {
                         errors.push(`Review receipt for '${reviewKey}' is missing reused_from_review_tree_state_sha256 for reused evidence.`);
                     }
-                    receiptReviewContextSha256 = String(receipt.review_context_sha256 || '').trim().toLowerCase() || null;
+                    receiptReviewContextSha256 = evidenceFields.reviewContextSha256;
                 } catch {
                     errors.push(`Review receipt for '${reviewKey}' is invalid JSON: ${normalizePath(receiptPath)}.`);
                 }

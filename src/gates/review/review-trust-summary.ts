@@ -1,6 +1,13 @@
 import { normalizeReviewReceiptReviewerProvenance } from '../../gate-runtime/review-context';
+import {
+    REVIEW_EVIDENCE_AGENT_IDENTITY_PREFIX,
+    REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE,
+    REVIEW_EVIDENCE_REQUIRED_PROVENANCE_ATTESTATION_TYPE,
+    REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL
+} from './review-evidence-contract';
 
 type ReviewerExecutionMode = 'DELEGATED_SUBAGENT';
+const REQUIRED_EXECUTION_MODE_TOKEN = REVIEW_EVIDENCE_REQUIRED_EXECUTION_MODE.toUpperCase() as ReviewerExecutionMode;
 
 export interface ReviewTrustEvidenceEntry {
     review_type: string;
@@ -45,7 +52,7 @@ type NormalizedReviewTrustLevel = 'LOCAL_ASSERTED' | 'LOCAL_AUDITED' | 'INDEPEND
 
 function normalizeReviewTrustLevel(value: unknown): NormalizedReviewTrustLevel | null {
     const normalized = normalizeToken(value);
-    if (normalized === 'LOCAL_ASSERTED' || normalized === 'LOCAL_AUDITED' || normalized === 'INDEPENDENT_AUDITED') {
+    if (normalized === 'LOCAL_ASSERTED' || normalized === 'LOCAL_AUDITED' || normalized === REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL) {
         return normalized;
     }
     return null;
@@ -53,7 +60,7 @@ function normalizeReviewTrustLevel(value: unknown): NormalizedReviewTrustLevel |
 
 function normalizeReviewerExecutionMode(value: unknown): ReviewerExecutionMode | null {
     const normalized = normalizeToken(value);
-    if (normalized === 'DELEGATED_SUBAGENT') {
+    if (normalized === REQUIRED_EXECUTION_MODE_TOKEN) {
         return normalized;
     }
     return null;
@@ -182,10 +189,10 @@ export function buildReviewTrustSummary(
             && normalizedProvenance == null;
         const invalidIndependentProvenance =
             normalizedTrustLevel === 'INDEPENDENT_AUDITED'
-            && normalizedProvenance?.attestation_type !== 'reviewer_invocation_attestation';
+            && normalizedProvenance?.attestation_type !== REVIEW_EVIDENCE_REQUIRED_PROVENANCE_ATTESTATION_TYPE;
         const invalidDelegatedIdentity =
             normalizedExecutionMode === 'DELEGATED_SUBAGENT'
-            && (!normalizedReviewerIdentity || !normalizedReviewerIdentity.startsWith('agent:'));
+            && (!normalizedReviewerIdentity || !normalizedReviewerIdentity.startsWith(REVIEW_EVIDENCE_AGENT_IDENTITY_PREFIX));
         return {
             trust_level: normalizedTrustLevel,
             execution_mode: normalizedExecutionMode,
@@ -244,7 +251,7 @@ export function buildReviewTrustSummary(
 
     let status: ReviewTrustSummary['status'];
     let visibleSummaryLine: string;
-    if (trustLevels.length === 1 && trustLevels[0] === 'INDEPENDENT_AUDITED') {
+    if (trustLevels.length === 1 && trustLevels[0] === REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL) {
         return {
             status: 'INDEPENDENT_AUDITED',
             trust_levels: trustLevels,

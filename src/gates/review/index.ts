@@ -1,4 +1,5 @@
 export * from './review-dependencies';
+export * from './review-evidence-contract';
 export * from './review-lifecycle-guard';
 export * from './review-prompt-artifact';
 export * from './review-scratch-paths';

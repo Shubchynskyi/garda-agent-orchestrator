@@ -4,8 +4,7 @@ import * as path from 'node:path';
 import {
     buildReviewVerdictTokenSet,
     extractReviewVerdictToken,
-    formatReviewVerdictTokenList,
-    normalizeReviewReceiptReviewerProvenance
+    formatReviewVerdictTokenList
 } from '../../gate-runtime/review-context';
 import {
     safeReadJson
@@ -28,6 +27,10 @@ import {
     buildReviewTrustSummary,
     type ReviewTrustSummary
 } from '../review/review-trust-summary';
+import {
+    normalizeReviewEvidenceSha256,
+    validateReviewReceiptEvidenceContract
+} from '../review/review-evidence-contract';
 import {
     detectMissingValidationEvidenceFailureReason,
     detectReviewLaunchPackageFailureReason,
@@ -281,12 +284,6 @@ export function readReviewArtifactState(
     if (context && receipt && artifactExists) {
         const artifactHash = fileSha256(artifactPath);
         const contextHash = fileSha256(contextPath);
-        const receiptArtifactHash = typeof receipt.review_artifact_sha256 === 'string'
-            ? receipt.review_artifact_sha256.trim().toLowerCase()
-            : '';
-        const receiptContextHash = typeof receipt.review_context_sha256 === 'string'
-            ? receipt.review_context_sha256.trim().toLowerCase()
-            : '';
         const reviewerRouting = isPlainRecord(context.reviewer_routing)
             ? context.reviewer_routing
             : null;
@@ -296,155 +293,58 @@ export function readReviewArtifactState(
         const contextReviewerSessionId = typeof reviewerRouting?.reviewer_session_id === 'string'
             ? reviewerRouting.reviewer_session_id.trim()
             : '';
-        const receiptExecutionMode = typeof receipt.reviewer_execution_mode === 'string'
-            ? receipt.reviewer_execution_mode.trim()
-            : '';
-        const receiptReviewerIdentity = typeof receipt.reviewer_identity === 'string'
-            ? receipt.reviewer_identity.trim()
-            : '';
-        reviewerIdentity = receiptReviewerIdentity || null;
-        reusedExistingReview = receipt.reused_existing_review === true;
-        reusedFromReceiptPath = typeof receipt.reused_from_receipt_path === 'string'
-            ? receipt.reused_from_receipt_path.trim() || null
-            : null;
-        reusedFromReceiptSha256 = typeof receipt.reused_from_receipt_sha256 === 'string'
-            ? receipt.reused_from_receipt_sha256.trim().toLowerCase() || null
-            : null;
-        reusedFromReviewContextSha256 = typeof receipt.reused_from_review_context_sha256 === 'string'
-            ? receipt.reused_from_review_context_sha256.trim().toLowerCase() || null
-            : null;
-        reusedFromReviewContextReuseSha256 = typeof receipt.reused_from_review_context_reuse_sha256 === 'string'
-            ? receipt.reused_from_review_context_reuse_sha256.trim().toLowerCase() || null
-            : null;
-        reusedFromReviewTreeStateSha256 = typeof receipt.reused_from_review_tree_state_sha256 === 'string'
-            ? receipt.reused_from_review_tree_state_sha256.trim().toLowerCase() || null
-            : null;
-        reusedFromReviewScopeSha256 = typeof receipt.reused_from_review_scope_sha256 === 'string'
-            ? receipt.reused_from_review_scope_sha256.trim().toLowerCase() || null
-            : null;
-        reusedFromCodeScopeSha256 = typeof receipt.reused_from_code_scope_sha256 === 'string'
-            ? receipt.reused_from_code_scope_sha256.trim().toLowerCase() || null
-            : null;
-        receiptReviewContextSha256 = receiptContextHash || null;
-        receiptReviewContextReuseSha256 = typeof receipt.review_context_reuse_sha256 === 'string'
-            ? receipt.review_context_reuse_sha256.trim().toLowerCase() || null
-            : null;
-        receiptReviewScopeSha256 = typeof receipt.review_scope_sha256 === 'string'
-            ? receipt.review_scope_sha256.trim().toLowerCase() || null
-            : null;
-        receiptCodeScopeSha256 = typeof receipt.code_scope_sha256 === 'string'
-            ? receipt.code_scope_sha256.trim().toLowerCase() || null
-            : null;
-        receiptReviewTreeStateSha256 = typeof receipt.review_tree_state_sha256 === 'string'
-            ? receipt.review_tree_state_sha256.trim().toLowerCase() || null
-            : null;
+        const evidenceContract = validateReviewReceiptEvidenceContract({
+            taskId,
+            reviewType,
+            receipt,
+            artifactSha256: artifactHash || null,
+            contextSha256: contextHash || null,
+            contextReviewTreeStateSha256,
+            contextExecutionMode: contextExecutionMode || null,
+            contextReviewerIdentity: contextReviewerSessionId || null
+        });
+        const evidenceFields = evidenceContract.fields;
+        violations.push(...evidenceContract.violations);
+        reviewerIdentity = evidenceFields.reviewerIdentity;
+        reusedExistingReview = evidenceFields.reusedExistingReview;
+        reusedFromReceiptPath = evidenceFields.reusedFromReceiptPath;
+        reusedFromReceiptSha256 = evidenceFields.reusedFromReceiptSha256;
+        reusedFromReviewContextSha256 = evidenceFields.reusedFromReviewContextSha256;
+        reusedFromReviewContextReuseSha256 = evidenceFields.reusedFromReviewContextReuseSha256;
+        reusedFromReviewTreeStateSha256 = evidenceFields.reusedFromReviewTreeStateSha256;
+        reusedFromReviewScopeSha256 = evidenceFields.reusedFromReviewScopeSha256;
+        reusedFromCodeScopeSha256 = evidenceFields.reusedFromCodeScopeSha256;
+        receiptReviewContextSha256 = evidenceFields.reviewContextSha256;
+        receiptReviewContextReuseSha256 = evidenceFields.reviewContextReuseSha256;
+        receiptReviewScopeSha256 = evidenceFields.reviewScopeSha256;
+        receiptCodeScopeSha256 = evidenceFields.codeScopeSha256;
+        receiptReviewTreeStateSha256 = evidenceFields.reviewTreeStateSha256;
         domainScopeCurrent = reviewReceiptDomainScopeMatchesCurrentPreflight(receipt, context, preflightPayload);
-        reviewResultRecordedAtUtc = typeof receipt.review_result_recorded_at_utc === 'string'
-            ? receipt.review_result_recorded_at_utc.trim() || null
-            : null;
-        recordedAtUtc = typeof receipt.recorded_at_utc === 'string'
-            ? receipt.recorded_at_utc.trim() || null
-            : null;
-        reviewOutputSourceMtimeUtc = typeof receipt.review_output_source_mtime_utc === 'string'
-            ? receipt.review_output_source_mtime_utc.trim() || null
-            : null;
-        const normalizedProvenance = receipt.reviewer_provenance == null
-            ? null
-            : normalizeReviewReceiptReviewerProvenance(receipt.reviewer_provenance);
-        reviewerProvenance = normalizedProvenance
+        reviewResultRecordedAtUtc = evidenceFields.reviewResultRecordedAtUtc;
+        recordedAtUtc = evidenceFields.recordedAtUtc;
+        reviewOutputSourceMtimeUtc = evidenceFields.reviewOutputSourceMtimeUtc;
+        reviewerProvenance = evidenceFields.reviewerProvenance
             ? {
-                attestation_type: normalizedProvenance.attestation_type,
-                controller_event_type: normalizedProvenance.controller_event_type,
-                task_sequence: normalizedProvenance.task_sequence,
-                prev_event_sha256: normalizedProvenance.prev_event_sha256 == null
+                attestation_type: evidenceFields.reviewerProvenance.attestation_type,
+                controller_event_type: evidenceFields.reviewerProvenance.controller_event_type,
+                task_sequence: evidenceFields.reviewerProvenance.task_sequence,
+                prev_event_sha256: evidenceFields.reviewerProvenance.prev_event_sha256 == null
                     ? null
-                    : String(normalizedProvenance.prev_event_sha256 || '').trim().toLowerCase() || null,
-                event_sha256: String(normalizedProvenance.event_sha256 || '').trim().toLowerCase() || null,
-                task_id: 'task_id' in normalizedProvenance ? normalizedProvenance.task_id : undefined,
-                review_type: 'review_type' in normalizedProvenance ? normalizedProvenance.review_type : undefined,
-                reviewer_execution_mode: 'reviewer_execution_mode' in normalizedProvenance ? normalizedProvenance.reviewer_execution_mode : undefined,
-                reviewer_identity: 'reviewer_identity' in normalizedProvenance ? normalizedProvenance.reviewer_identity : undefined,
-                review_context_sha256: 'review_context_sha256' in normalizedProvenance ? normalizedProvenance.review_context_sha256 : undefined,
-                review_tree_state_sha256: 'review_tree_state_sha256' in normalizedProvenance ? normalizedProvenance.review_tree_state_sha256 : undefined,
-                routing_event_sha256: 'routing_event_sha256' in normalizedProvenance ? normalizedProvenance.routing_event_sha256 : undefined,
-                launch_prepared_at_utc: 'launch_prepared_at_utc' in normalizedProvenance ? normalizedProvenance.launch_prepared_at_utc : undefined,
-                launched_at_utc: 'launched_at_utc' in normalizedProvenance ? normalizedProvenance.launched_at_utc : undefined,
-                launch_completed_at_utc: 'launch_completed_at_utc' in normalizedProvenance ? normalizedProvenance.launch_completed_at_utc : undefined,
-                invocation_attested_at_utc: 'invocation_attested_at_utc' in normalizedProvenance ? normalizedProvenance.invocation_attested_at_utc : undefined
+                    : String(evidenceFields.reviewerProvenance.prev_event_sha256 || '').trim().toLowerCase() || null,
+                event_sha256: normalizeReviewEvidenceSha256(evidenceFields.reviewerProvenance.event_sha256),
+                task_id: 'task_id' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.task_id : undefined,
+                review_type: 'review_type' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.review_type : undefined,
+                reviewer_execution_mode: 'reviewer_execution_mode' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.reviewer_execution_mode : undefined,
+                reviewer_identity: 'reviewer_identity' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.reviewer_identity : undefined,
+                review_context_sha256: 'review_context_sha256' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.review_context_sha256 : undefined,
+                review_tree_state_sha256: 'review_tree_state_sha256' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.review_tree_state_sha256 : undefined,
+                routing_event_sha256: 'routing_event_sha256' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.routing_event_sha256 : undefined,
+                launch_prepared_at_utc: 'launch_prepared_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.launch_prepared_at_utc : undefined,
+                launched_at_utc: 'launched_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.launched_at_utc : undefined,
+                launch_completed_at_utc: 'launch_completed_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.launch_completed_at_utc : undefined,
+                invocation_attested_at_utc: 'invocation_attested_at_utc' in evidenceFields.reviewerProvenance ? evidenceFields.reviewerProvenance.invocation_attested_at_utc : undefined
             }
             : null;
-        if (receipt.task_id !== taskId) {
-            violations.push(`review receipt belongs to task '${String(receipt.task_id || '')}'`);
-        }
-        if (receipt.review_type !== reviewType) {
-            violations.push(`review receipt has review_type '${String(receipt.review_type || '')}'`);
-        }
-        if (!artifactHash || receiptArtifactHash !== artifactHash) {
-            violations.push('review artifact hash does not match the receipt');
-        }
-        if (!contextHash || receiptContextHash !== contextHash) {
-            violations.push('review context hash does not match the receipt');
-        }
-        if (contextReviewTreeStateSha256 && !receiptReviewTreeStateSha256) {
-            violations.push('review receipt is missing review_tree_state_sha256');
-        } else if (
-            contextReviewTreeStateSha256
-            && receiptReviewTreeStateSha256
-            && receiptReviewTreeStateSha256 !== contextReviewTreeStateSha256
-        ) {
-            violations.push('review receipt review_tree_state_sha256 does not match the review context tree_state');
-        }
-        if (receiptExecutionMode !== 'delegated_subagent') {
-            violations.push("review receipt does not use reviewer_execution_mode 'delegated_subagent'");
-        }
-        if (String(receipt.trust_level || '').trim() !== 'INDEPENDENT_AUDITED') {
-            violations.push("review receipt trust_level must be 'INDEPENDENT_AUDITED'");
-        }
-        if (!receiptReviewerIdentity.startsWith('agent:')) {
-            violations.push("review receipt reviewer_identity must use 'agent:' scope");
-        }
-        if (!reusedExistingReview && contextExecutionMode !== 'delegated_subagent') {
-            violations.push("review context is missing delegated_subagent routing metadata");
-        }
-        if (!reusedExistingReview && contextReviewerSessionId !== receiptReviewerIdentity) {
-            violations.push('review context reviewer identity does not match the receipt');
-        }
-        if (receipt.reviewer_provenance == null) {
-            violations.push('review receipt is missing reviewer_provenance');
-        } else if (!normalizedProvenance) {
-            violations.push('review receipt reviewer_provenance is invalid');
-        } else if (
-            !reviewerProvenance?.task_sequence
-            || !reviewerProvenance.event_sha256
-            || !/^[0-9a-f]{64}$/.test(reviewerProvenance.event_sha256)
-        ) {
-            violations.push('review receipt reviewer_provenance is incomplete');
-        } else if (reviewerProvenance.controller_event_type !== 'REVIEWER_INVOCATION_ATTESTED') {
-            violations.push('review receipt reviewer_provenance must reference REVIEWER_INVOCATION_ATTESTED telemetry');
-        } else if (
-            !reusedExistingReview
-            && receiptReviewTreeStateSha256
-            && !reviewerProvenance.review_tree_state_sha256
-        ) {
-            violations.push('review receipt reviewer_provenance is missing review_tree_state_sha256');
-        } else if (
-            !reusedExistingReview
-            && receiptReviewTreeStateSha256
-            && reviewerProvenance.review_tree_state_sha256 !== receiptReviewTreeStateSha256
-        ) {
-            violations.push('review receipt reviewer_provenance review_tree_state_sha256 does not match the receipt');
-        } else if (
-            reusedExistingReview
-            && !reusedFromReviewTreeStateSha256
-        ) {
-            violations.push('reused review receipt is missing reused_from_review_tree_state_sha256');
-        } else if (
-            reusedExistingReview
-            && reusedFromReviewTreeStateSha256
-            && reviewerProvenance.review_tree_state_sha256 !== reusedFromReviewTreeStateSha256
-        ) {
-            violations.push('reused review receipt reviewer_provenance review_tree_state_sha256 does not match reused_from_review_tree_state_sha256');
-        }
     }
 
     const effectiveViolations = domainScopeCurrent

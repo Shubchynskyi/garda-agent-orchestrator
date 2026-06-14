@@ -43,6 +43,9 @@ import {
     type ReviewDependencyTimelineEvent
 } from '../../../../gates/review/review-dependencies';
 import {
+    REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL
+} from '../../../../gates/review/review-evidence-contract';
+import {
     computeReviewContextReuseHash,
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint,
@@ -524,7 +527,7 @@ async function recordReviewReceiptFromArtifacts(options: {
         reviewerIdentity: options.reviewerIdentity,
         reviewerFallbackReason: options.reviewerFallbackReason,
         reviewerProvenance,
-        trustLevel: 'INDEPENDENT_AUDITED'
+        trustLevel: REVIEW_EVIDENCE_REQUIRED_TRUST_LEVEL
     });
     (receipt as unknown as Record<string, unknown>).review_result_recorded_at_utc =
         (receipt as unknown as Record<string, unknown>).recorded_at_utc ?? new Date().toISOString();
