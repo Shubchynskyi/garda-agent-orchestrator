@@ -1,2 +1,225 @@
 /** Browser-side dashboard script fragment (core). */
-export const UI_DASHBOARD_CLIENT_CORE = "function normalizeLanguage(value) {\n  return Object.prototype.hasOwnProperty.call(languagePacks, value) ? value : fallbackLanguage;\n}\nfunction readStoredLanguage() {\n  try {\n    return window.localStorage ? window.localStorage.getItem('garda.ui.language') : null;\n  } catch {\n    return null;\n  }\n}\nfunction detectBrowserLanguage() {\n  const supportedIds = languageMetadata.map(language => language.id);\n  const localeIds = [];\n  if (typeof navigator !== 'undefined') {\n    if (navigator.language) {\n      localeIds.push(navigator.language);\n    }\n    if (Array.isArray(navigator.languages)) {\n      for (const locale of navigator.languages) {\n        if (locale) {\n          localeIds.push(locale);\n        }\n      }\n    }\n  }\n  for (const locale of localeIds) {\n    const normalized = String(locale || '').trim();\n    if (!normalized) {\n      continue;\n    }\n    if (supportedIds.includes(normalized)) {\n      return normalized;\n    }\n    const localeLower = normalized.toLowerCase();\n    const exactMatch = supportedIds.find(id => id.toLowerCase() === localeLower);\n    if (exactMatch) {\n      return exactMatch;\n    }\n    const base = normalized.split('-')[0];\n    if (supportedIds.includes(base)) {\n      return base;\n    }\n    const baseLower = base.toLowerCase();\n    const baseMatch = supportedIds.find(id => id.split('-')[0].toLowerCase() === baseLower);\n    if (baseMatch) {\n      return baseMatch;\n    }\n  }\n  return null;\n}\nlet currentLanguage = normalizeLanguage(readStoredLanguage() || detectBrowserLanguage() || initialLanguage);\nfunction t(key) {\n  return (languagePacks[currentLanguage] && languagePacks[currentLanguage][key]) || languagePacks[fallbackLanguage][key] || key;\n}\nfunction localizedEntry(pack, id) {\n  return (pack[currentLanguage] && pack[currentLanguage][id]) || (pack[fallbackLanguage] && pack[fallbackLanguage][id]) || null;\n}\nfunction localizedField(pack, id, field, fallback) {\n  const entry = localizedEntry(pack, id);\n  return entry && entry[field] ? entry[field] : fallback;\n}\nfunction localizedOption(pack, id, option, field, fallback) {\n  const entry = localizedEntry(pack, id);\n  if (entry && entry.options && entry.options[option.value] && entry.options[option.value][field]) {\n    return entry.options[option.value][field];\n  }\n  return fallback;\n}\nfunction safe(value) {\n  return String(value ?? '').replace(/[&<>\"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[ch]));\n}\nfunction inlineText(value) {\n  const tick = String.fromCharCode(96);\n  const parts = String(value ?? '').split(new RegExp('(' + tick + '[^' + tick + ']*' + tick + ')', 'gu'));\n  return parts.map(part => part.length >= 2 && part.startsWith(tick) && part.endsWith(tick)\n    ? '<code>' + safe(part.slice(1, -1)) + '</code>'\n    : safe(part)).join('');\n}\nfunction classToken(value) {\n  return String(value || 'unknown').replace(/[^a-zA-Z0-9_-]+/g, '_');\n}\nfunction badge(value, prefix, extraClass) {\n  const text = String(value || 'unknown');\n  const css = extraClass || (safe(prefix || 'status') + '-' + classToken(text));\n  return '<span class=\"badge ' + css + '\">' + safe(text) + '</span>';\n}\nfunction metric(label, value) {\n  return '<div class=\"metric\"><span>' + safe(label) + '</span><strong>' + safe(value ?? '-') + '</strong></div>';\n}\nfunction fullSuiteValue(value) {\n  return value === null || value === undefined || value === '' ? '-' : value;\n}\nfunction fullSuiteSummary(fullSuite) {\n  if (!fullSuite) {\n    return '<p class=\"empty\">-</p>';\n  }\n  const rows = [\n    [t('fullSuiteCommand'), fullSuite.command],\n    [t('fullSuitePlacement'), fullSuite.placement],\n    [t('fullSuiteFreshness'), fullSuite.freshness],\n    [t('fullSuiteTimeoutForecast'), fullSuite.timeout_forecast_label],\n    [t('fullSuiteArtifact'), fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (' + t('missing') + ')')],\n    [t('fullSuiteOutput'), fullSuite.output_artifact_path]\n  ];\n  const newline = String.fromCharCode(10);\n  const summary = (fullSuite.compact_summary || []).length > 0\n    ? '<h4>' + safe(t('fullSuiteSummary')) + '</h4><pre>' + safe(fullSuite.compact_summary.join(newline)) + '</pre>'\n    : '';\n  const diagnostics = [fullSuite.mismatch_reason, ...(fullSuite.violations || []), ...(fullSuite.warnings || [])]\n    .filter(Boolean);\n  return '<div class=\"detail-table\"><table><tbody>'\n    + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(fullSuiteValue(value)) + '</td></tr>').join('')\n    + '</tbody></table></div>'\n    + summary\n    + (diagnostics.length > 0 ? '<ul class=\"list\">' + diagnostics.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>' : '');\n}\nfunction workflowStatusText(status) {\n  if (status === 'present') return t('workflowStatusPresent');\n  if (status === 'missing') return t('workflowStatusMissing');\n  if (status === 'invalid') return t('workflowStatusInvalid');\n  return String(status || 'unknown');\n}\nfunction resultStatusText(status) {\n  if (status === 'previewed') return t('resultStatusPreviewed');\n  if (status === 'executed') return t('resultStatusExecuted');\n  if (status === 'confirmation_required') return t('resultStatusConfirmationRequired');\n  if (status === 'disabled') return t('resultStatusDisabled');\n  if (status === 'unavailable') return t('resultStatusUnavailable');\n  return String(status || '-');\n}\nfunction uniqueSorted(values) {\n  return Array.from(new Set(values.filter(Boolean).map(value => String(value)))).sort((a, b) => a.localeCompare(b));\n}\nfunction setOptions(select, values, allLabel) {\n  const previous = select.value;\n  select.innerHTML = '<option value=\"\">' + safe(allLabel) + '</option>' + values.map(value => '<option value=\"' + safe(value) + '\">' + safe(value) + '</option>').join('');\n  select.value = values.includes(previous) ? previous : '';\n}\nfunction renderLanguageSelector() {\n  languageSelectNode.innerHTML = languageMetadata.map(language => '<option value=\"' + safe(language.id) + '\">' + safe(language.nativeLabel) + '</option>').join('');\n  languageSelectNode.value = currentLanguage;\n}\nfunction applyLanguage() {\n  if (document.documentElement) {\n    document.documentElement.lang = currentLanguage;\n  }\n  for (const element of document.querySelectorAll('[data-i18n]')) {\n    element.textContent = t(element.getAttribute('data-i18n'));\n  }\n  for (const element of document.querySelectorAll('[data-i18n-placeholder]')) {\n    element.setAttribute('placeholder', t(element.getAttribute('data-i18n-placeholder')));\n  }\n  for (const element of document.querySelectorAll('[data-i18n-aria-label]')) {\n    element.setAttribute('aria-label', t(element.getAttribute('data-i18n-aria-label')));\n  }\n  uiNoticeNode.textContent = actionsEnabled ? t('noticeActionsEnabled') : t('noticeActionsDisabled');\n  renderLanguageSelector();\n  if (currentReport) {\n    renderTasks(currentReport);\n  }\n  if (currentSession) {\n    renderSession(currentSession);\n  }\n  if (currentActionsPayload) {\n    renderActions(currentActionsPayload);\n  }\n  if (currentSettingsPayload) {\n    renderSettingsEditor(currentSettingsPayload);\n  }\n  if (currentSettingResult) {\n    renderSettingResult(currentSettingResult);\n  }\n  if (currentActionResult) {\n    renderActionResult(currentActionResult);\n  }\n  if (currentTaskDetail) {\n    renderTaskDetail(currentTaskDetail);\n  }\n  if (currentReport) {\n    renderBackups(currentReport);\n  }\n  if (currentBackupActionResult) {\n    renderBackupActionResult(currentBackupActionResult);\n  }\n  if (currentCleanupPayload) {\n    renderCleanupSettings(currentCleanupPayload);\n  }\n  if (currentCleanupResult) {\n    renderCleanupResult(currentCleanupResult);\n  }\n}\nfunction formatSeconds(seconds) {\n  const value = Number(seconds);\n  if (!Number.isFinite(value)) {\n    return '-';\n  }\n  const normalized = Math.max(0, Math.ceil(value));\n  if (normalized < 60) {\n    return normalized + 's';\n  }\n  return Math.ceil(normalized / 60) + 'm';\n}\nfunction formatDurationMs(value) {\n  const ms = Number(value);\n  if (!Number.isFinite(ms)) {\n    return '-';\n  }\n  const totalSeconds = Math.max(0, Math.round(ms / 1000));\n  const minutes = Math.floor(totalSeconds / 60);\n  const seconds = totalSeconds % 60;\n  return minutes + 'm ' + seconds + 's (' + Math.trunc(ms) + ' ms)';\n}\nfunction durationPartsFromMs(value) {\n  const ms = Number(value);\n  const totalSeconds = Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : 0;\n  return {\n    minutes: Math.floor(totalSeconds / 60),\n    seconds: totalSeconds % 60\n  };\n}\nfunction isDurationMsSetting(setting) {\n  return setting && setting.value_type === 'integer' && String(setting.key || '').endsWith('_ms');\n}\n";
+export const UI_DASHBOARD_CLIENT_CORE = `function normalizeLanguage(value) {
+  return Object.prototype.hasOwnProperty.call(languagePacks, value) ? value : fallbackLanguage;
+}
+function readStoredLanguage() {
+  try {
+    return window.localStorage ? window.localStorage.getItem('garda.ui.language') : null;
+  } catch {
+    return null;
+  }
+}
+function detectBrowserLanguage() {
+  const supportedIds = languageMetadata.map(language => language.id);
+  const localeIds = [];
+  if (typeof navigator !== 'undefined') {
+    if (navigator.language) {
+      localeIds.push(navigator.language);
+    }
+    if (Array.isArray(navigator.languages)) {
+      for (const locale of navigator.languages) {
+        if (locale) {
+          localeIds.push(locale);
+        }
+      }
+    }
+  }
+  for (const locale of localeIds) {
+    const normalized = String(locale || '').trim();
+    if (!normalized) {
+      continue;
+    }
+    if (supportedIds.includes(normalized)) {
+      return normalized;
+    }
+    const localeLower = normalized.toLowerCase();
+    const exactMatch = supportedIds.find(id => id.toLowerCase() === localeLower);
+    if (exactMatch) {
+      return exactMatch;
+    }
+    const base = normalized.split('-')[0];
+    if (supportedIds.includes(base)) {
+      return base;
+    }
+    const baseLower = base.toLowerCase();
+    const baseMatch = supportedIds.find(id => id.split('-')[0].toLowerCase() === baseLower);
+    if (baseMatch) {
+      return baseMatch;
+    }
+  }
+  return null;
+}
+let currentLanguage = normalizeLanguage(readStoredLanguage() || detectBrowserLanguage() || initialLanguage);
+function t(key) {
+  return (languagePacks[currentLanguage] && languagePacks[currentLanguage][key]) || languagePacks[fallbackLanguage][key] || key;
+}
+function localizedEntry(pack, id) {
+  return (pack[currentLanguage] && pack[currentLanguage][id]) || (pack[fallbackLanguage] && pack[fallbackLanguage][id]) || null;
+}
+function localizedField(pack, id, field, fallback) {
+  const entry = localizedEntry(pack, id);
+  return entry && entry[field] ? entry[field] : fallback;
+}
+function localizedOption(pack, id, option, field, fallback) {
+  const entry = localizedEntry(pack, id);
+  if (entry && entry.options && entry.options[option.value] && entry.options[option.value][field]) {
+    return entry.options[option.value][field];
+  }
+  return fallback;
+}
+function safe(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+function inlineText(value) {
+  const tick = String.fromCharCode(96);
+  const parts = String(value ?? '').split(new RegExp('(' + tick + '[^' + tick + ']*' + tick + ')', 'gu'));
+  return parts.map(part => part.length >= 2 && part.startsWith(tick) && part.endsWith(tick)
+    ? '<code>' + safe(part.slice(1, -1)) + '</code>'
+    : safe(part)).join('');
+}
+function classToken(value) {
+  return String(value || 'unknown').replace(/[^a-zA-Z0-9_-]+/g, '_');
+}
+function badge(value, prefix, extraClass) {
+  const text = String(value || 'unknown');
+  const css = extraClass || (safe(prefix || 'status') + '-' + classToken(text));
+  return '<span class="badge ' + css + '">' + safe(text) + '</span>';
+}
+function metric(label, value) {
+  return '<div class="metric"><span>' + safe(label) + '</span><strong>' + safe(value ?? '-') + '</strong></div>';
+}
+function fullSuiteValue(value) {
+  return value === null || value === undefined || value === '' ? '-' : value;
+}
+function fullSuiteSummary(fullSuite) {
+  if (!fullSuite) {
+    return '<p class="empty">-</p>';
+  }
+  const rows = [
+    [t('fullSuiteCommand'), fullSuite.command],
+    [t('fullSuitePlacement'), fullSuite.placement],
+    [t('fullSuiteFreshness'), fullSuite.freshness],
+    [t('fullSuiteTimeoutForecast'), fullSuite.timeout_forecast_label],
+    [t('fullSuiteArtifact'), fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (' + t('missing') + ')')],
+    [t('fullSuiteOutput'), fullSuite.output_artifact_path]
+  ];
+  const newline = String.fromCharCode(10);
+  const summary = (fullSuite.compact_summary || []).length > 0
+    ? '<h4>' + safe(t('fullSuiteSummary')) + '</h4><pre>' + safe(fullSuite.compact_summary.join(newline)) + '</pre>'
+    : '';
+  const diagnostics = [fullSuite.mismatch_reason, ...(fullSuite.violations || []), ...(fullSuite.warnings || [])]
+    .filter(Boolean);
+  return '<div class="detail-table"><table><tbody>'
+    + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(fullSuiteValue(value)) + '</td></tr>').join('')
+    + '</tbody></table></div>'
+    + summary
+    + (diagnostics.length > 0 ? '<ul class="list">' + diagnostics.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>' : '');
+}
+function workflowStatusText(status) {
+  if (status === 'present') return t('workflowStatusPresent');
+  if (status === 'missing') return t('workflowStatusMissing');
+  if (status === 'invalid') return t('workflowStatusInvalid');
+  return String(status || 'unknown');
+}
+function resultStatusText(status) {
+  if (status === 'previewed') return t('resultStatusPreviewed');
+  if (status === 'executed') return t('resultStatusExecuted');
+  if (status === 'confirmation_required') return t('resultStatusConfirmationRequired');
+  if (status === 'disabled') return t('resultStatusDisabled');
+  if (status === 'unavailable') return t('resultStatusUnavailable');
+  return String(status || '-');
+}
+function uniqueSorted(values) {
+  return Array.from(new Set(values.filter(Boolean).map(value => String(value)))).sort((a, b) => a.localeCompare(b));
+}
+function setOptions(select, values, allLabel) {
+  const previous = select.value;
+  select.innerHTML = '<option value="">' + safe(allLabel) + '</option>' + values.map(value => '<option value="' + safe(value) + '">' + safe(value) + '</option>').join('');
+  select.value = values.includes(previous) ? previous : '';
+}
+function renderLanguageSelector() {
+  languageSelectNode.innerHTML = languageMetadata.map(language => '<option value="' + safe(language.id) + '">' + safe(language.nativeLabel) + '</option>').join('');
+  languageSelectNode.value = currentLanguage;
+}
+function applyLanguage() {
+  if (document.documentElement) {
+    document.documentElement.lang = currentLanguage;
+  }
+  for (const element of document.querySelectorAll('[data-i18n]')) {
+    element.textContent = t(element.getAttribute('data-i18n'));
+  }
+  for (const element of document.querySelectorAll('[data-i18n-placeholder]')) {
+    element.setAttribute('placeholder', t(element.getAttribute('data-i18n-placeholder')));
+  }
+  for (const element of document.querySelectorAll('[data-i18n-aria-label]')) {
+    element.setAttribute('aria-label', t(element.getAttribute('data-i18n-aria-label')));
+  }
+  uiNoticeNode.textContent = actionsEnabled ? t('noticeActionsEnabled') : t('noticeActionsDisabled');
+  renderLanguageSelector();
+  if (currentReport) {
+    renderTasks(currentReport);
+  }
+  if (currentSession) {
+    renderSession(currentSession);
+  }
+  if (currentActionsPayload) {
+    renderActions(currentActionsPayload);
+  }
+  if (currentSettingsPayload) {
+    renderSettingsEditor(currentSettingsPayload);
+  }
+  if (currentSettingResult) {
+    renderSettingResult(currentSettingResult);
+  }
+  if (currentActionResult) {
+    renderActionResult(currentActionResult);
+  }
+  if (currentTaskDetail) {
+    renderTaskDetail(currentTaskDetail);
+  }
+  if (currentReport) {
+    renderBackups(currentReport);
+  }
+  if (currentBackupActionResult) {
+    renderBackupActionResult(currentBackupActionResult);
+  }
+  if (currentCleanupPayload) {
+    renderCleanupSettings(currentCleanupPayload);
+  }
+  if (currentCleanupResult) {
+    renderCleanupResult(currentCleanupResult);
+  }
+}
+function formatSeconds(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  const normalized = Math.max(0, Math.ceil(value));
+  if (normalized < 60) {
+    return normalized + 's';
+  }
+  return Math.ceil(normalized / 60) + 'm';
+}
+function formatDurationMs(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms)) {
+    return '-';
+  }
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes + 'm ' + seconds + 's (' + Math.trunc(ms) + ' ms)';
+}
+function durationPartsFromMs(value) {
+  const ms = Number(value);
+  const totalSeconds = Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : 0;
+  return {
+    minutes: Math.floor(totalSeconds / 60),
+    seconds: totalSeconds % 60
+  };
+}
+function isDurationMsSetting(setting) {
+  return setting && setting.value_type === 'integer' && String(setting.key || '').endsWith('_ms');
+}
+`;

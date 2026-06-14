@@ -1,2 +1,48 @@
 /** Browser-side dashboard script fragment (init-settings). */
-export const UI_DASHBOARD_CLIENT_INIT_SETTINGS = "function localizedValueRow(row) {\n  return {\n    label: localizedField(initSettingTextPacks, row.id, 'label', row.label),\n    description: localizedField(initSettingTextPacks, row.id, 'description', row.description)\n  };\n}\nfunction renderJsonValue(value) {\n  if (Array.isArray(value)) {\n    return value.length === 0 ? '-' : value.join(', ');\n  }\n  if (value === null || value === undefined || value === '') {\n    return '-';\n  }\n  if (typeof value === 'object') {\n    return JSON.stringify(value);\n  }\n  return String(value);\n}\nfunction renderValueTable(rows) {\n  if (!rows || rows.length === 0) {\n    return '<p class=\"empty\">' + safe(t('noInitSettings')) + '</p>';\n  }\n  return '<div class=\"value-table\"><table><thead><tr><th>' + safe(t('fieldColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('valueColumn')) + '</th></tr></thead><tbody>'\n    + rows.map(row => {\n      const localized = localizedValueRow(row);\n      return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(row.id) + '</code></td><td class=\"description-cell\">' + inlineText(localized.description) + '</td><td><code class=\"current-value\">' + safe(renderJsonValue(row.value)) + '</code></td></tr>';\n    }).join('')\n    + '</tbody></table></div>';\n}\nfunction initStatusText(status) {\n  if (status === 'present') return t('initStatusPresent');\n  if (status === 'missing') return t('initStatusMissing');\n  if (status === 'invalid') return t('initStatusInvalid');\n  return String(status || 'unknown');\n}\nfunction renderInitSettings(report) {\n  const tab = report.init_settings_tab || {};\n  const commands = tab.commands || [];\n  initSettingsNode.innerHTML = '<section class=\"workflow-group\"><h3>' + safe(t('initBlockTitle')) + ' <span class=\"config-path\">(' + safe(tab.init_answers_path || '-') + ')</span></h3>'\n    + '<p class=\"workflow-state\">' + safe(initStatusText(tab.init_answers_status)) + '</p>' + renderValueTable(tab.init_answers || []) + '</section>'\n    + '<section class=\"workflow-group\"><h3>' + safe(t('agentInitBlockTitle')) + ' <span class=\"config-path\">(' + safe(tab.agent_init_state_path || '-') + ')</span></h3>'\n    + '<p class=\"workflow-state\">' + safe(initStatusText(tab.agent_init_state_status)) + '</p>' + renderValueTable(tab.agent_init_state || []) + '</section>'\n    + '<section class=\"workflow-group\"><h3>' + safe(t('initCommandsTitle')) + '</h3><div class=\"action-table\"><table><thead><tr><th>' + safe(t('action')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('commandColumn')) + '</th></tr></thead><tbody>'\n    + commands.map(command => '<tr><td><strong>' + safe(localizedField(initSettingTextPacks, command.id, 'title', command.title)) + '</strong></td><td class=\"description-cell\">' + inlineText(localizedField(initSettingTextPacks, command.id, 'description', command.description)) + '</td><td class=\"command-cell\"><code>' + safe(command.command) + '</code></td></tr>').join('')\n    + '</tbody></table></div></section>';\n}\n";
+export const UI_DASHBOARD_CLIENT_INIT_SETTINGS = `function localizedValueRow(row) {
+  return {
+    label: localizedField(initSettingTextPacks, row.id, 'label', row.label),
+    description: localizedField(initSettingTextPacks, row.id, 'description', row.description)
+  };
+}
+function renderJsonValue(value) {
+  if (Array.isArray(value)) {
+    return value.length === 0 ? '-' : value.join(', ');
+  }
+  if (value === null || value === undefined || value === '') {
+    return '-';
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+function renderValueTable(rows) {
+  if (!rows || rows.length === 0) {
+    return '<p class="empty">' + safe(t('noInitSettings')) + '</p>';
+  }
+  return '<div class="value-table"><table><thead><tr><th>' + safe(t('fieldColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('valueColumn')) + '</th></tr></thead><tbody>'
+    + rows.map(row => {
+      const localized = localizedValueRow(row);
+      return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(row.id) + '</code></td><td class="description-cell">' + inlineText(localized.description) + '</td><td><code class="current-value">' + safe(renderJsonValue(row.value)) + '</code></td></tr>';
+    }).join('')
+    + '</tbody></table></div>';
+}
+function initStatusText(status) {
+  if (status === 'present') return t('initStatusPresent');
+  if (status === 'missing') return t('initStatusMissing');
+  if (status === 'invalid') return t('initStatusInvalid');
+  return String(status || 'unknown');
+}
+function renderInitSettings(report) {
+  const tab = report.init_settings_tab || {};
+  const commands = tab.commands || [];
+  initSettingsNode.innerHTML = '<section class="workflow-group"><h3>' + safe(t('initBlockTitle')) + ' <span class="config-path">(' + safe(tab.init_answers_path || '-') + ')</span></h3>'
+    + '<p class="workflow-state">' + safe(initStatusText(tab.init_answers_status)) + '</p>' + renderValueTable(tab.init_answers || []) + '</section>'
+    + '<section class="workflow-group"><h3>' + safe(t('agentInitBlockTitle')) + ' <span class="config-path">(' + safe(tab.agent_init_state_path || '-') + ')</span></h3>'
+    + '<p class="workflow-state">' + safe(initStatusText(tab.agent_init_state_status)) + '</p>' + renderValueTable(tab.agent_init_state || []) + '</section>'
+    + '<section class="workflow-group"><h3>' + safe(t('initCommandsTitle')) + '</h3><div class="action-table"><table><thead><tr><th>' + safe(t('action')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('commandColumn')) + '</th></tr></thead><tbody>'
+    + commands.map(command => '<tr><td><strong>' + safe(localizedField(initSettingTextPacks, command.id, 'title', command.title)) + '</strong></td><td class="description-cell">' + inlineText(localizedField(initSettingTextPacks, command.id, 'description', command.description)) + '</td><td class="command-cell"><code>' + safe(command.command) + '</code></td></tr>').join('')
+    + '</tbody></table></div></section>';
+}
+`;
