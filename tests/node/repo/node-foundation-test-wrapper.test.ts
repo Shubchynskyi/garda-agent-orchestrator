@@ -4,6 +4,7 @@ import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { PassThrough } from 'node:stream';
 
 import type { BuildResult } from '../../../scripts/node-foundation/build';
 
@@ -54,12 +55,26 @@ function createBuildResultFixture(extraTestCount = 0): { buildResult: BuildResul
     };
 }
 
+function createCompletingNodeTestChild(output = 'ok\n'): childProcess.ChildProcess {
+    const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    Object.assign(events, { stdout, stderr });
+    setImmediate(() => {
+        stdout.end(output);
+        stderr.end();
+        events.emit('exit', 0);
+        events.emit('close', 0);
+    });
+    return events;
+}
+
 test('runNodeFoundationTests forwards test-name-pattern args before compiled test files', async () => {
     const { buildResult, cleanup } = createBuildResultFixture();
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
     const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
-    const originalSpawnSync = mutableChildProcess.spawnSync;
+    const originalSpawn = mutableChildProcess.spawn;
     let observedCommand = '';
     let observedArgs: string[] = [];
 
@@ -67,12 +82,12 @@ test('runNodeFoundationTests forwards test-name-pattern args before compiled tes
         process.argv = ['node', 'scripts/node-foundation/test.js', '--test-name-pattern', 'status sync'];
         mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
-        mutableChildProcess.spawnSync = ((command: string, args: readonly string[] = [], options?: childProcess.SpawnSyncOptions) => {
+        mutableChildProcess.spawn = ((command: string, args: readonly string[] = [], options?: childProcess.SpawnOptions) => {
             observedCommand = command;
             observedArgs = Array.from(args);
             void options;
-            return { status: 0 } as childProcess.SpawnSyncReturns<Buffer>;
-        }) as typeof childProcess.spawnSync;
+            return createCompletingNodeTestChild();
+        }) as typeof childProcess.spawn;
 
         const exitCode = await testModule.runNodeFoundationTests();
 
@@ -89,7 +104,7 @@ test('runNodeFoundationTests forwards test-name-pattern args before compiled tes
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
         mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
-        mutableChildProcess.spawnSync = originalSpawnSync;
+        mutableChildProcess.spawn = originalSpawn;
         cleanup();
     }
 });
@@ -99,7 +114,7 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
     const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
-    const originalSpawnSync = mutableChildProcess.spawnSync;
+    const originalSpawn = mutableChildProcess.spawn;
     let observedArgs: string[] = [];
 
     try {
@@ -112,10 +127,10 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
         ];
         mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
-        mutableChildProcess.spawnSync = ((_: string, args: readonly string[] = []) => {
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
             observedArgs = Array.from(args);
-            return { status: 0 } as childProcess.SpawnSyncReturns<Buffer>;
-        }) as typeof childProcess.spawnSync;
+            return createCompletingNodeTestChild();
+        }) as typeof childProcess.spawn;
 
         const exitCode = await testModule.runNodeFoundationTests();
 
@@ -130,7 +145,7 @@ test('runNodeFoundationTests narrows explicit source test targets to compiled ou
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
         mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
-        mutableChildProcess.spawnSync = originalSpawnSync;
+        mutableChildProcess.spawn = originalSpawn;
         cleanup();
     }
 });
@@ -553,6 +568,121 @@ test('runNodeFoundationTests times out a hung shard and records cleanup diagnost
     }
 });
 
+test('runNodeFoundationTests times out a hung single-process run and records cleanup diagnostics', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const originalArgv = process.argv;
+    const originalShardTimeoutEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+    const originalShardHeartbeatEnv = process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+    const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
+    const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
+    const originalSpawn = mutableChildProcess.spawn;
+    const originalProcessKill = process.kill;
+    let childKillCalled = false;
+    const observedArgs: string[][] = [];
+    const observedProcessKill: Array<{ pid: number; signal: string | number | undefined; }> = [];
+    let spawnedChild: childProcess.ChildProcess & {
+        stdout: PassThrough;
+        stderr: PassThrough;
+    } | null = null;
+
+    try {
+        process.argv = [
+            'node',
+            'scripts/node-foundation/test.js',
+            '--garda-shard-log-dir',
+            path.join(buildResult.repoRoot, 'single-timeout-logs'),
+            'tests/node/cli/commands/gates.test.ts'
+        ];
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = '20';
+        process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = '0';
+        mutableBuildModule.buildPublishRuntime = () => buildResult;
+        mutableBuildModule.buildNodeFoundation = () => buildResult;
+        (process.kill as unknown as typeof originalProcessKill) = ((pid: number, signal?: string | number) => {
+            observedProcessKill.push({ pid, signal });
+            if (pid < 0 && spawnedChild) {
+                setImmediate(() => {
+                    spawnedChild?.stdout.end();
+                    spawnedChild?.stderr.end();
+                    spawnedChild?.emit('exit', null);
+                    spawnedChild?.emit('close', null);
+                });
+            }
+            return true;
+        }) as typeof process.kill;
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = [], options?: childProcess.SpawnOptions) => {
+            observedArgs.push(Array.from(args));
+            const events = new (require('node:events').EventEmitter)() as childProcess.ChildProcess;
+            const stdout = new PassThrough();
+            const stderr = new PassThrough();
+            Object.assign(events, {
+                pid: 1234,
+                stdout,
+                stderr,
+                kill() {
+                    childKillCalled = true;
+                    setImmediate(() => {
+                        stdout.end();
+                        stderr.end();
+                        events.emit('exit', null);
+                        events.emit('close', null);
+                    });
+                    return true;
+                }
+            });
+            spawnedChild = events as childProcess.ChildProcess & {
+                stdout: PassThrough;
+                stderr: PassThrough;
+            };
+            if (process.platform !== 'win32') {
+                assert.equal(options?.detached, true);
+            }
+            stdout.write('single process started\n');
+            return events;
+        }) as typeof childProcess.spawn;
+
+        const exitCode = await testModule.runNodeFoundationTests();
+
+        assert.equal(exitCode, 1);
+        assert.equal(observedArgs.length, 1);
+        assert.deepEqual(observedArgs[0], [
+            '--test',
+            path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js')
+        ]);
+        if (process.platform === 'win32') {
+            assert.equal(childKillCalled, true);
+        } else {
+            assert.deepEqual(observedProcessKill.map((item) => item.pid), [-1234]);
+            assert.ok(observedProcessKill.every((item) => item.signal === 'SIGKILL'));
+        }
+        const timeoutLog = fs.readFileSync(
+            path.join(buildResult.repoRoot, 'single-timeout-logs', 'shard-01-of-01.log'),
+            'utf8'
+        );
+        assert.match(timeoutLog, /single process started/);
+        assert.match(timeoutLog, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1\/1/);
+        assert.match(timeoutLog, /command="[^"]*node(?:\.exe)?"/);
+        assert.match(timeoutLog, /argv=\["--test"/);
+        assert.match(timeoutLog, /gates\.test\.js/);
+    } finally {
+        process.argv = originalArgv;
+        if (originalShardTimeoutEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = originalShardTimeoutEnv;
+        }
+        if (originalShardHeartbeatEnv === undefined) {
+            delete process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS;
+        } else {
+            process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS = originalShardHeartbeatEnv;
+        }
+        mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
+        mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
+        mutableChildProcess.spawn = originalSpawn;
+        process.kill = originalProcessKill;
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests finishes timed out shards when cleanup never emits close', async () => {
     const { PassThrough } = require('node:stream') as typeof import('node:stream');
     const { buildResult, cleanup } = createBuildResultFixture();
@@ -949,7 +1079,7 @@ test('runNodeFoundationTests expands a directory fileTarget to all .test.js file
     const originalArgv = process.argv;
     const originalBuildNodeFoundation = mutableBuildModule.buildNodeFoundation;
     const originalBuildPublishRuntime = mutableBuildModule.buildPublishRuntime;
-    const originalSpawnSync = mutableChildProcess.spawnSync;
+    const originalSpawn = mutableChildProcess.spawn;
     let observedArgs: string[] = [];
 
     try {
@@ -961,10 +1091,10 @@ test('runNodeFoundationTests expands a directory fileTarget to all .test.js file
         ];
         mutableBuildModule.buildPublishRuntime = () => buildResult;
         mutableBuildModule.buildNodeFoundation = () => buildResult;
-        mutableChildProcess.spawnSync = ((_: string, args: readonly string[] = []) => {
+        mutableChildProcess.spawn = ((_: string, args: readonly string[] = []) => {
             observedArgs = Array.from(args);
-            return { status: 0 } as childProcess.SpawnSyncReturns<Buffer>;
-        }) as typeof childProcess.spawnSync;
+            return createCompletingNodeTestChild();
+        }) as typeof childProcess.spawn;
 
         const exitCode = await testModule.runNodeFoundationTests();
 
@@ -978,7 +1108,7 @@ test('runNodeFoundationTests expands a directory fileTarget to all .test.js file
         process.argv = originalArgv;
         mutableBuildModule.buildNodeFoundation = originalBuildNodeFoundation;
         mutableBuildModule.buildPublishRuntime = originalBuildPublishRuntime;
-        mutableChildProcess.spawnSync = originalSpawnSync;
+        mutableChildProcess.spawn = originalSpawn;
         cleanup();
     }
 });

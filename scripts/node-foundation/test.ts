@@ -637,30 +637,36 @@ function recordTestDurationTelemetry(
     ));
 }
 
-function runSingleNodeTestProcess(
+async function runSingleNodeTestProcess(
     repoRoot: string,
     buildResult: BuildResult,
+    buildRoot: string,
     optionArgs: string[],
     selectedTestFiles: string[],
+    requestedShardLogDir: string | null,
     telemetryPath: string,
     telemetry: TestDurationTelemetry
-): number {
-    const startedAt = Date.now();
-    const result = childProcess.spawnSync(process.execPath, ['--test', ...optionArgs, ...selectedTestFiles], {
-        cwd: repoRoot,
-        stdio: 'inherit',
-        windowsHide: true
-    });
-    const exitCode = result.status == null ? 1 : result.status;
-    recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, [{
-        exitCode,
-        durationMs: Math.max(1, Date.now() - startedAt),
-        shardFiles: selectedTestFiles,
-        shardIndex: 0,
-        shardCount: 1,
-        logPath: ''
-    }]);
-    return exitCode;
+): Promise<number> {
+    const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
+    const runtimeConfig = resolveNodeTestShardRuntimeConfig();
+    console.log(formatNodeFoundationTestMarker(NODE_FOUNDATION_TEST_MARKERS.SHARD_LOG_DIR, shardLogDir));
+    console.log(formatNodeFoundationTestMarker(NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY, telemetryPath));
+    console.log(formatNodeFoundationTestMarker(
+        NODE_FOUNDATION_TEST_MARKERS.SHARD_RUNTIME,
+        `timeout_ms=${runtimeConfig.timeoutMs} heartbeat_ms=${runtimeConfig.heartbeatMs} concurrency=1`
+    ));
+    const result = await runNodeTestShard(
+        repoRoot,
+        optionArgs,
+        selectedTestFiles,
+        0,
+        1,
+        shardLogDir,
+        runtimeConfig
+    );
+    diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
+    recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, [result]);
+    return result.exitCode;
 }
 
 function readTextFileIfExists(filePath: string): string {
@@ -790,7 +796,9 @@ function runNodeTestShard(
             NODE_FOUNDATION_TEST_MARKERS.SHARD_LOG,
             `${shardIndex + 1}/${shardCount} ${logPath}`
         ));
-        const child = childProcess.spawn(process.execPath, ['--test', ...optionArgs, ...shardFiles], {
+        const childCommand = process.execPath;
+        const childArgs = ['--test', ...optionArgs, ...shardFiles];
+        const child = childProcess.spawn(childCommand, childArgs, {
             cwd: repoRoot,
             detached: process.platform !== 'win32',
             stdio: ['ignore', 'pipe', 'pipe'],
@@ -817,7 +825,8 @@ function runNodeTestShard(
         function buildProgressFields(): string {
             const now = Date.now();
             return `pid=${child.pid ?? 'unknown'} elapsed_ms=${Math.max(1, now - startedAt)} `
-                + `last_output_age_ms=${Math.max(0, now - lastOutputAt)} log=${logPath}`;
+                + `last_output_age_ms=${Math.max(0, now - lastOutputAt)} `
+                + `command=${JSON.stringify(childCommand)} argv=${JSON.stringify(childArgs)} log=${logPath}`;
         }
 
         function finishShard(): void {
@@ -1068,7 +1077,16 @@ export async function runNodeFoundationTests(): Promise<number> {
 
     const shardCount = resolveNodeFoundationShardCount(selectedTestFiles, optionArgs, fileTargets, requestedShardCount);
     const exitCode = shardCount === 1
-        ? runSingleNodeTestProcess(repoRoot, buildResult, optionArgs, selectedTestFiles, telemetryPath, telemetry)
+        ? await runSingleNodeTestProcess(
+            repoRoot,
+            buildResult,
+            buildResult.buildRoot,
+            optionArgs,
+            selectedTestFiles,
+            requestedShardLogDir,
+            telemetryPath,
+            telemetry
+        )
         : await runShardedNodeTestProcesses(
             repoRoot,
             buildResult,
