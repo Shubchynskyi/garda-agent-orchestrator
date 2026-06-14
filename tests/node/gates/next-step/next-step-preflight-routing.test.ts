@@ -1532,6 +1532,219 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(!command.includes('<path>'));
     });
 
+    it('keeps planned refresh explicit when current workspace has no planned-file intersection', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'older-task.md'), 'unrelated dirty file\n', 'utf8');
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const dirtyWorkspaceBaseline = {
+            detection_source: baselineSnapshot.detection_source,
+            include_untracked: baselineSnapshot.include_untracked,
+            changed_files: baselineSnapshot.changed_files,
+            changed_files_sha256: baselineSnapshot.changed_files_sha256,
+            scope_sha256: baselineSnapshot.scope_sha256,
+            file_hashes: Object.fromEntries(
+                baselineSnapshot.changed_files.map((changedFile) => [
+                    changedFile,
+                    fileSha256(path.join(repoRoot, changedFile))
+                ])
+            )
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh a no-intersection planned preflight',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            dirtyWorkspaceBaseline,
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('docs/older-task.md'));
+    });
+
+    it('does not widen planned refresh through stale explicit preflight files', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'older-task.md'), 'unrelated dirty file\n', 'utf8');
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const dirtyWorkspaceBaseline = {
+            detection_source: baselineSnapshot.detection_source,
+            include_untracked: baselineSnapshot.include_untracked,
+            changed_files: baselineSnapshot.changed_files,
+            changed_files_sha256: baselineSnapshot.changed_files_sha256,
+            scope_sha256: baselineSnapshot.scope_sha256,
+            file_hashes: Object.fromEntries(
+                baselineSnapshot.changed_files.map((changedFile) => [
+                    changedFile,
+                    fileSha256(path.join(repoRoot, changedFile))
+                ])
+            )
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh stale explicit preflight without widening planned scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            dirtyWorkspaceBaseline,
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts', 'docs/older-task.md']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('docs/older-task.md'));
+    });
+
+    it('accepts refreshed planned-scope preflight when unrelated dirty files remain outside the task scope', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'older-task.md'), 'unrelated dirty file\n', 'utf8');
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        const dirtyWorkspaceBaseline = {
+            detection_source: baselineSnapshot.detection_source,
+            include_untracked: baselineSnapshot.include_untracked,
+            changed_files: baselineSnapshot.changed_files,
+            changed_files_sha256: baselineSnapshot.changed_files_sha256,
+            scope_sha256: baselineSnapshot.scope_sha256,
+            file_hashes: Object.fromEntries(
+                baselineSnapshot.changed_files.map((changedFile) => [
+                    changedFile,
+                    fileSha256(path.join(repoRoot, changedFile))
+                ])
+            )
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Use refreshed planned preflight in a dirty workspace',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: ['src/app.ts'],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const plannedRefresh = true;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.ok(result.commands[0].command.includes('gate compile-gate'));
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+    });
+
+    it('refreshes planned-scope preflight when a new unplanned file appears after planned files are materialized', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'extra'), { recursive: true });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned preflight with new unplanned current edits',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const plannedRefresh = true;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra', 'unplanned.ts'), 'export const unplanned = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('missing from preflight: [src/extra/unplanned.ts]'), result.reason);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(command.includes('--changed-file "src/extra/unplanned.ts"'));
+    });
+
+    it('refreshes planned-scope preflight when a new unplanned file appears before planned files are materialized', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        fs.mkdirSync(path.join(repoRoot, 'src', 'extra'), { recursive: true });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned preflight with early unplanned current edits',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'extra', 'unplanned.ts'), 'export const unplanned = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('missing from preflight: [src/extra/unplanned.ts]'), result.reason);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(command.includes('--changed-file "src/extra/unplanned.ts"'));
+    });
+
     it('uses current git-auto workspace files when refreshing stale unscoped preflight', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);

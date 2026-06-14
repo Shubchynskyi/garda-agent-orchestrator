@@ -1469,6 +1469,61 @@ describe('gates/next-step startup routing', () => {
         assert.ok(stalePreflight.commands[0].command.includes('--changed-file "src/app.ts"'));
     });
 
+    it('keeps stale preflight refresh scoped to planned files when dirty baseline contains older task files', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        writeJson(taskModePath, buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned preflight scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: ['src/app.ts'],
+            dirtyWorkspaceBaseline: {
+                detection_source: 'git_auto',
+                include_untracked: true,
+                changed_files: [
+                    'docs/older-task.md',
+                    'src/app.ts'
+                ],
+                changed_files_sha256: sha256Text('older-task-baseline'),
+                scope_sha256: sha256Text('older-task-baseline'),
+                file_hashes: {}
+            }
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY', taskModePath);
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts'],
+            seedPostPreflight: false
+        });
+        fs.mkdirSync(path.join(repoRoot, 'docs'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'docs', 'older-task.md'), 'older task dirty file\n', 'utf8');
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED', 'PASS', {
+            restarted: true
+        });
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY', taskModePath);
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.match(result.reason, /Preflight evidence is older than the latest TASK_MODE_ENTERED/);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('docs/older-task.md'));
+    });
+
     it('routes late TASK_ENTRY after shell-smoke through handshake and shell-smoke recovery in order', () => {
         const repoRoot = makeTempRepo();
         seedTaskModeOnly(repoRoot, TASK_ID);

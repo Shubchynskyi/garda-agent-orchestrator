@@ -62,6 +62,8 @@ export interface PreflightWorkspaceReadinessOptions {
     docImpactPath?: string | null;
     allowDocsOnlyDelta?: boolean;
     plannedChangedFiles?: string[];
+    dirtyWorkspaceBaselineChangedFiles?: string[];
+    dirtyWorkspaceBaselineFileHashes?: Record<string, string>;
 }
 
 export function readCompileReadiness(
@@ -248,6 +250,10 @@ export function readPreflightWorkspaceReadiness(
     const plannedChangedFiles = Array.isArray(options.plannedChangedFiles)
         ? [...new Set(options.plannedChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
         : [];
+    const dirtyWorkspaceBaselineChangedFiles = Array.isArray(options.dirtyWorkspaceBaselineChangedFiles)
+        ? [...new Set(options.dirtyWorkspaceBaselineChangedFiles.map((entry) => normalizePath(entry)).filter(Boolean))].sort()
+        : [];
+    const dirtyWorkspaceBaselineFileHashes = options.dirtyWorkspaceBaselineFileHashes || {};
     const expectedChangedFilesSha256 = stringSha256(changedFiles.join('\n'));
     const expectedScopeContentSha256 = typeof metrics.scope_content_sha256 === 'string'
         ? metrics.scope_content_sha256.trim().toLowerCase()
@@ -324,17 +330,35 @@ export function readPreflightWorkspaceReadiness(
                     currentChangedFiles: currentGitSnapshotFiles
                 };
             }
+            const plannedSet = new Set(plannedChangedFiles);
+            const preflightUsesOnlyPlannedScope = plannedSet.size > 0
+                && changedFiles.length > 0
+                && changedFiles.every((entry) => plannedSet.has(entry));
+            const currentGitChangedFilesWithoutProtectedBaseline = currentGitSnapshotFiles.filter((entry) => (
+                !unchangedProtectedFiles.has(entry)
+            ));
+            const currentPlannedScopeGitFiles = currentGitChangedFilesWithoutProtectedBaseline.filter((entry) => plannedSet.has(entry));
+            const dirtyBaselineSet = new Set([
+                ...dirtyWorkspaceBaselineChangedFiles,
+                ...getTriggerPathList(preflight, 'dirty_workspace_baseline_changed_files')
+            ]);
+            const unchangedDirtyBaselineSet = new Set(
+                [...dirtyBaselineSet].filter((entry) => (
+                    dirtyBaselineFileMatchesCurrent(repoRoot, entry, dirtyWorkspaceBaselineFileHashes)
+                ))
+            );
+            const compareOnlyPlannedScope = preflightUsesOnlyPlannedScope && currentPlannedScopeGitFiles.length > 0;
             const currentGitChangedFiles = currentGitSnapshotFiles.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
+                    && (!compareOnlyPlannedScope
+                        || plannedSet.has(entry)
+                        || (!unchangedDirtyBaselineSet.has(entry)
+                            && !(preflightSet.has(entry) && !dirtyBaselineSet.has(entry))))
             ));
             currentChangedFiles = [...new Set([
                 ...currentGitChangedFiles,
                 ...plannedChangedFiles
             ])].sort();
-            const plannedSet = new Set(plannedChangedFiles);
-            const preflightUsesOnlyPlannedScope = plannedSet.size > 0
-                && changedFiles.length > 0
-                && changedFiles.every((entry) => plannedSet.has(entry));
             if (preflightUsesOnlyPlannedScope && currentGitChangedFiles.length === 0) {
                 return {
                     ready: false,
@@ -365,9 +389,8 @@ export function readPreflightWorkspaceReadiness(
             }
             const currentFileSetHash = stringSha256(currentGitChangedFiles.join('\n'));
             if (currentFileSetHash !== expectedChangedFilesSha256) {
-                const expectedSet = new Set(changedFiles);
                 const currentSet = new Set(currentGitChangedFiles);
-                const missingFromPreflight = currentGitChangedFiles.filter((entry) => !expectedSet.has(entry));
+                const missingFromPreflight = currentGitChangedFiles.filter((entry) => !preflightSet.has(entry));
                 const noLongerCurrent = changedFiles.filter((entry) => !currentSet.has(entry));
                 const ignoredProtectedNote = unchangedProtectedFiles.size > 0
                     ? `; ignored unchanged dirty-baseline files: ${describePathList([...unchangedProtectedFiles])}`
@@ -507,6 +530,19 @@ function getTriggerPathList(preflight: Record<string, unknown>, fieldName: strin
     return Array.isArray(triggers[fieldName])
         ? [...new Set(triggers[fieldName].map((entry) => normalizePath(entry)).filter(Boolean))].sort()
         : [];
+}
+
+function dirtyBaselineFileMatchesCurrent(
+    repoRoot: string,
+    changedFile: string,
+    dirtyBaselineFileHashes: Record<string, string>
+): boolean {
+    const expectedHash = dirtyBaselineFileHashes[normalizePath(changedFile)];
+    if (!expectedHash) {
+        return false;
+    }
+    const currentHash = fileSha256(path.join(repoRoot, changedFile));
+    return !!currentHash && currentHash.trim().toLowerCase() === expectedHash;
 }
 
 function fileExists(filePath: string): boolean {

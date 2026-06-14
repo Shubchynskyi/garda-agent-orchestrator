@@ -1512,6 +1512,57 @@ describe('gates/next-step preflight compile recovery', () => {
         assert.ok(!command.includes('--changed-file "src/legacy.ts"'));
     });
 
+    it('keeps dirty-baseline files in stale preflight refresh commands when they changed after task start', () => {
+        const repoRoot = makeTempRepo();
+        const legacyPath = path.join(repoRoot, 'src', 'legacy.ts');
+        fs.writeFileSync(legacyPath, 'export const legacy = 1;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const changed = 2;\n', 'utf8');
+        fs.appendFileSync(legacyPath, 'export const taskStartBaseline = 2;\n', 'utf8');
+        const baselineSnapshot = getWorkspaceSnapshot(repoRoot, 'git_auto', true, []);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh stale dirty baseline scope after new edits',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: ['src/app.ts'],
+            dirtyWorkspaceBaseline: {
+                detection_source: baselineSnapshot.detection_source,
+                include_untracked: baselineSnapshot.include_untracked,
+                changed_files: baselineSnapshot.changed_files,
+                changed_files_sha256: baselineSnapshot.changed_files_sha256,
+                scope_sha256: baselineSnapshot.scope_sha256,
+                file_hashes: Object.fromEntries(
+                    baselineSnapshot.changed_files.map((changedFile) => [
+                        changedFile,
+                        fileSha256(path.join(repoRoot, changedFile))
+                    ])
+                )
+            }
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: ['src/app.ts']
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        fs.appendFileSync(legacyPath, 'export const postStartEdit = 3;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.match(result.reason, /missing from preflight: \[src\/legacy\.ts\]/);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(command.includes('--changed-file "src/legacy.ts"'));
+    });
+
     it('drops line-ending-restored files from stale preflight refresh commands', () => {
         const repoRoot = makeTempRepo();
         const eolPath = path.join(repoRoot, 'src', 'line-ending.ts');

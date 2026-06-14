@@ -230,18 +230,48 @@ export function getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode: Record<s
         : [];
 }
 
-function getTaskModeAuthorizedChangedFiles(taskMode: Record<string, unknown> | null): string[] {
-    return [...new Set([
-        ...getTaskModePlannedChangedFiles(taskMode),
-        ...getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode)
-    ])].sort();
+export function getTaskModeDirtyWorkspaceBaselineFileHashes(taskMode: Record<string, unknown> | null): Record<string, string> {
+    if (taskMode?.orchestrator_work !== true) {
+        return {};
+    }
+    const dirtyWorkspaceBaseline = taskMode.dirty_workspace_baseline;
+    if (!dirtyWorkspaceBaseline || typeof dirtyWorkspaceBaseline !== 'object' || Array.isArray(dirtyWorkspaceBaseline)) {
+        return {};
+    }
+    const fileHashes = (dirtyWorkspaceBaseline as Record<string, unknown>).file_hashes;
+    if (!fileHashes || typeof fileHashes !== 'object' || Array.isArray(fileHashes)) {
+        return {};
+    }
+    const normalized: Record<string, string> = {};
+    for (const [filePath, hash] of Object.entries(fileHashes as Record<string, unknown>)) {
+        const normalizedPath = normalizePath(filePath);
+        const normalizedHash = typeof hash === 'string' ? hash.trim().toLowerCase() : '';
+        if (normalizedPath && normalizedHash) {
+            normalized[normalizedPath] = normalizedHash;
+        }
+    }
+    return normalized;
+}
+
+function getTaskModeClassifyChangedFiles(taskMode: Record<string, unknown> | null): string[] {
+    const plannedChangedFiles = getTaskModePlannedChangedFiles(taskMode);
+    if (taskMode?.workflow_config_work === true) {
+        return [...new Set([
+            ...plannedChangedFiles,
+            ...getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode)
+        ])].sort();
+    }
+    if (plannedChangedFiles.length > 0) {
+        return [...new Set(plannedChangedFiles)].sort();
+    }
+    return [...new Set(getTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode))].sort();
 }
 
 export function getPreflightRefreshChangedFiles(
     taskMode: Record<string, unknown> | null,
     preflight: Record<string, unknown> | null
 ): string[] {
-    const plannedChangedFiles = getTaskModeAuthorizedChangedFiles(taskMode);
+    const plannedChangedFiles = getTaskModeClassifyChangedFiles(taskMode);
     const detectionSource = String(preflight?.detection_source || '').trim().toLowerCase();
     const explicitPreflightChangedFiles = detectionSource === 'explicit_changed_files'
         ? getPreflightChangedFiles(preflight)
@@ -274,7 +304,7 @@ export function buildClassifyChangeCommand(params: {
         `--task-intent ${quoteCommandValue(getStringField(params.taskMode, 'task_summary', '<task summary>'))}`
     ];
     const changedFiles = params.changedFiles || (params.includePlannedScope
-        ? getTaskModeAuthorizedChangedFiles(params.taskMode)
+        ? getTaskModeClassifyChangedFiles(params.taskMode)
         : []);
     for (const changedFile of expandDirectoryPlaceholdersForCommand(params.repoRoot, changedFiles)) {
         parts.push(`--changed-file ${quoteCommandValue(changedFile)}`);
