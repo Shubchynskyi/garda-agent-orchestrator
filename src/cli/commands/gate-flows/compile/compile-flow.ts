@@ -12,14 +12,6 @@ import {
 } from '../../../../gate-runtime/task-events';
 import type { CommandCompactnessAudit } from '../../../../gates/task-events-summary/task-events-summary';
 import {
-    computeOptionalSkillTaskTextSha256,
-    getOptionalSkillSelectionGateViolations,
-    isOptionalSkillSelectionPolicyConfigured,
-    loadOptionalSkillSelectionHeadlinesCache,
-    readOptionalSkillSelectionTimelineEvidence,
-    readOptionalSkillSelectionPolicyConfig
-} from '../../../../runtime/optional-skill-selection';
-import {
     getCompileCommandProfile,
     getCompileCommands,
     getPreflightContext,
@@ -58,14 +50,6 @@ import {
     getPostPreflightSequenceEvidence,
     getRulePackEvidenceViolations
 } from '../../../../gates/rule-pack/rule-pack';
-import {
-    getHandshakeEvidence,
-    getHandshakeEvidenceViolations
-} from '../../../../gates/diagnostics/handshake-diagnostics';
-import {
-    getShellSmokeEvidence,
-    getShellSmokeEvidenceViolations
-} from '../../../../gates/diagnostics/shell-smoke-preflight';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
     normalizeOptionalPath,
@@ -110,6 +94,12 @@ import {
     readConfiguredFullSuiteCommandForCompileGate,
     readCurrentTaskSummary
 } from './compile-flow-shared-evidence';
+import {
+    evaluateGateFlowOptionalSkillSelection,
+    evaluateGateFlowStartupDiagnostics,
+    evaluateGateFlowTimelineReadiness,
+    resolveGateFlowTimelinePath
+} from '../support/gate-flow-runtime';
 
 export { runClassifyChangeCommand } from './compile-flow-classify';
 export type { ClassifyChangeCommandOptions } from './compile-flow-classify';
@@ -283,59 +273,42 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             getProtectedDirtyWorkspaceScopeFromPreflight(preflightContext.preflight)
         );
 
-        const timelinePath = gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`));
-        const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, resolvedTaskId, timelinePath);
-        const timelineErrors: string[] = [];
-        const timelineEventTypes = timelineEvidence.eventTypes;
-        if (!timelineEvidence.exists) {
-            timelineErrors.push(`Task timeline not found: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
-        } else if (timelineEvidence.invalidJson) {
-            timelineErrors.push(`Task timeline contains invalid JSON line: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
-        }
-        if (!exceptionMessage && timelineErrors.length > 0) {
+        const timelinePath = resolveGateFlowTimelinePath(repoRoot, resolvedTaskId);
+        const timelineReadiness = evaluateGateFlowTimelineReadiness({
+            orchestratorRoot,
+            repoRoot,
+            taskId: resolvedTaskId,
+            timelinePath,
+            requirements: [
+                { eventType: 'RULE_PACK_LOADED', recoveryInstruction: 'Run load-rule-pack before compile gate.' },
+                { eventType: 'HANDSHAKE_DIAGNOSTICS_RECORDED', recoveryInstruction: 'Run handshake-diagnostics before compile gate.' },
+                { eventType: 'SHELL_SMOKE_PREFLIGHT_RECORDED', recoveryInstruction: 'Run shell-smoke-preflight before compile gate.' }
+            ]
+        });
+        if (!exceptionMessage && timelineReadiness.violations.length > 0) {
             exitCode = EXIT_GATE_FAILURE;
-            exceptionMessage = timelineErrors.join(' ');
-        } else if (!exceptionMessage && !timelineEventTypes.has('RULE_PACK_LOADED')) {
-            exitCode = EXIT_GATE_FAILURE;
-            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before compile gate.`;
-        } else if (!exceptionMessage && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
-            exitCode = EXIT_GATE_FAILURE;
-            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before compile gate.`;
-        } else if (!exceptionMessage && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
-            exitCode = EXIT_GATE_FAILURE;
-            exceptionMessage = `Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before compile gate.`;
+            exceptionMessage = timelineReadiness.violations.join(' ');
         }
         if (!exceptionMessage) {
-            const handshakeEvidence = getHandshakeEvidence(repoRoot, resolvedTaskId, {
+            const diagnosticsViolations = evaluateGateFlowStartupDiagnostics({
+                repoRoot,
+                taskId: resolvedTaskId,
                 taskModePath: options.taskModePath || '',
                 timelinePath
             });
-            const shellSmokeEvidence = getShellSmokeEvidence(repoRoot, resolvedTaskId, { timelinePath });
-            const handshakeViolations = getHandshakeEvidenceViolations(handshakeEvidence);
-            const shellSmokeViolations = getShellSmokeEvidenceViolations(shellSmokeEvidence);
-            if (handshakeViolations.length > 0 || shellSmokeViolations.length > 0) {
+            if (diagnosticsViolations.length > 0) {
                 exitCode = EXIT_GATE_FAILURE;
-                exceptionMessage = [...handshakeViolations, ...shellSmokeViolations].join(' ');
+                exceptionMessage = diagnosticsViolations.join(' ');
             }
         }
         if (!exceptionMessage) {
-            const optionalSkillPolicyMode = isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)
-                ? readOptionalSkillSelectionPolicyConfig(orchestratorRoot).mode
-                : null;
-            const loadedHeadlinesCache = optionalSkillPolicyMode
-                ? loadOptionalSkillSelectionHeadlinesCache(orchestratorRoot, optionalSkillPolicyMode, {
-                    preferPersistedSurface: true
-                })
-                : null;
-            const expectedTaskTextSha256 = computeOptionalSkillTaskTextSha256(
-                String(readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary) || '')
-            );
-            const optionalSkillSelectionViolations = getOptionalSkillSelectionGateViolations(orchestratorRoot, resolvedTaskId, {
-                expectedPreflightPath: normalizeOptionalPath(resolvedPreflightPath),
+            const optionalSkillSelectionViolations = evaluateGateFlowOptionalSkillSelection({
+                orchestratorRoot,
+                taskId: resolvedTaskId,
+                expectedPreflightPath: normalizeOptionalPath(resolvedPreflightPath) || '',
                 expectedPreflightSha256: gateHelpers.fileSha256(resolvedPreflightPath),
-                expectedTaskTextSha256,
-                timelineEvidence,
-                loadedHeadlinesCache
+                taskSummary: String(readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary) || ''),
+                timelineEvidence: timelineReadiness.timelineEvidence
             });
             if (optionalSkillSelectionViolations.length > 0) {
                 exitCode = EXIT_GATE_FAILURE;
@@ -351,7 +324,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             || rulePackEvidence.evidence_status === 'EVIDENCE_PREFLIGHT_HASH_MISMATCH'
             || rulePackEvidence.evidence_status === 'EVIDENCE_NOT_PASS'
         );
-        if (shouldExplainPostPreflightSequence && resolvedPreflightPath && timelineErrors.length === 0) {
+        if (shouldExplainPostPreflightSequence && resolvedPreflightPath && timelineReadiness.violations.length === 0) {
             postPreflightSequenceEvidence = getPostPreflightSequenceEvidence(repoRoot, resolvedTaskId, resolvedPreflightPath, {
                 artifactPath: String(options.rulePackPath || ''),
                 taskModePath: String(options.taskModePath || '')

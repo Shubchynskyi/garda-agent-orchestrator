@@ -21,14 +21,6 @@ import {
     validatePreflightForReview,
     validateZeroDiffForReviewGate
 } from '../../../../gates/required-reviews/required-reviews-check';
-import {
-    computeOptionalSkillTaskTextSha256,
-    getOptionalSkillSelectionGateViolations,
-    isOptionalSkillSelectionPolicyConfigured,
-    loadOptionalSkillSelectionHeadlinesCache,
-    readOptionalSkillSelectionPolicyConfig,
-    readOptionalSkillSelectionTimelineEvidence
-} from '../../../../runtime/optional-skill-selection';
 import { resolveRuntimeReviewerIdentity } from '../../../../gates/review/reviewer-routing';
 import {
     detectProtectedDirtyWorkspaceDrift,
@@ -64,6 +56,11 @@ import {
     isPlainObject,
     appendMetricsIfEnabled
 } from '../compile/gate-flow-helpers';
+import {
+    evaluateGateFlowOptionalSkillSelection,
+    evaluateGateFlowTimelineReadiness,
+    resolveGateFlowTimelinePath
+} from '../support/gate-flow-runtime';
 import { resolveBudgetTokensFromForecast, resolveOutputFiltersPath } from '../compile/output-budget-filter';
 import { readTaskQueueStatus, syncTaskQueueStatus } from '../task/task-queue-sync';
 import {
@@ -414,50 +411,30 @@ export function runRequiredReviewsCheckCommand(options: RequiredReviewsCheckComm
         errors.push(...dirtyWorkspaceProtectionDrift.violations);
     }
 
-    const timelinePath = resolvedTaskId
-        ? gateHelpers.joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events', `${resolvedTaskId}.jsonl`))
-        : null;
+    const timelinePath = resolvedTaskId ? resolveGateFlowTimelinePath(repoRoot, resolvedTaskId) : null;
     if (timelinePath && resolvedTaskId) {
-        const timelineErrors: string[] = [];
-        const timelineEvidence = readOptionalSkillSelectionTimelineEvidence(orchestratorRoot, resolvedTaskId, timelinePath);
-        const optionalSkillPolicyMode = isOptionalSkillSelectionPolicyConfigured(orchestratorRoot)
-            ? readOptionalSkillSelectionPolicyConfig(orchestratorRoot).mode
-            : null;
-        const loadedHeadlinesCache = optionalSkillPolicyMode
-            ? loadOptionalSkillSelectionHeadlinesCache(orchestratorRoot, optionalSkillPolicyMode, {
-                preferPersistedSurface: true
-            })
-            : null;
-        const expectedTaskTextSha256 = computeOptionalSkillTaskTextSha256(
-            String(readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary) || '')
-        );
-        const optionalSkillSelectionViolations = getOptionalSkillSelectionGateViolations(orchestratorRoot, resolvedTaskId, {
+        const timelineReadiness = evaluateGateFlowTimelineReadiness({
+            orchestratorRoot,
+            repoRoot,
+            taskId: resolvedTaskId,
+            timelinePath,
+            requirements: [
+                { eventType: 'TASK_MODE_ENTERED', recoveryInstruction: 'Run enter-task-mode before review gate.' },
+                { eventType: 'RULE_PACK_LOADED', recoveryInstruction: 'Run load-rule-pack before review gate.' },
+                { eventType: 'HANDSHAKE_DIAGNOSTICS_RECORDED', recoveryInstruction: 'Run handshake-diagnostics before review gate.' },
+                { eventType: 'SHELL_SMOKE_PREFLIGHT_RECORDED', recoveryInstruction: 'Run shell-smoke-preflight before review gate.' }
+            ]
+        });
+        const optionalSkillSelectionViolations = evaluateGateFlowOptionalSkillSelection({
+            orchestratorRoot,
+            taskId: resolvedTaskId,
             expectedPreflightPath: validatedPreflight.preflight_path,
             expectedPreflightSha256: validatedPreflight.preflight_hash,
-            expectedTaskTextSha256,
-            timelineEvidence,
-            loadedHeadlinesCache
+            taskSummary: String(readCurrentTaskSummary(repoRoot, resolvedTaskId, taskModeEvidence.task_summary) || ''),
+            timelineEvidence: timelineReadiness.timelineEvidence
         });
         errors.push(...optionalSkillSelectionViolations);
-        const timelineEventTypes = timelineEvidence.eventTypes;
-        if (!timelineEvidence.exists) {
-            timelineErrors.push(`Task timeline not found: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
-        } else if (timelineEvidence.invalidJson) {
-            timelineErrors.push(`Task timeline contains invalid JSON line: ${gateHelpers.normalizePath(timelineEvidence.timelinePath)}`);
-        }
-        errors.push(...timelineErrors);
-        if (timelineErrors.length === 0 && !timelineEventTypes.has('TASK_MODE_ENTERED')) {
-            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing TASK_MODE_ENTERED. Run enter-task-mode before review gate.`);
-        }
-        if (timelineErrors.length === 0 && !timelineEventTypes.has('RULE_PACK_LOADED')) {
-            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing RULE_PACK_LOADED. Run load-rule-pack before review gate.`);
-        }
-        if (timelineErrors.length === 0 && !timelineEventTypes.has('HANDSHAKE_DIAGNOSTICS_RECORDED')) {
-            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing HANDSHAKE_DIAGNOSTICS_RECORDED. Run handshake-diagnostics before review gate.`);
-        }
-        if (timelineErrors.length === 0 && !timelineEventTypes.has('SHELL_SMOKE_PREFLIGHT_RECORDED')) {
-            errors.push(`Task timeline '${gateHelpers.normalizePath(timelinePath)}' is missing SHELL_SMOKE_PREFLIGHT_RECORDED. Run shell-smoke-preflight before review gate.`);
-        }
+        errors.push(...timelineReadiness.violations);
     }
 
     const zeroDiffGuard = validateZeroDiffForReviewGate(
