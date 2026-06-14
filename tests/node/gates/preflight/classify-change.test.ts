@@ -93,8 +93,8 @@ describe('gates/classify-change', () => {
             assert.equal(result.scope_category, 'docs-only');
             assert.equal(result.required_reviews.code, false);
             assert.equal(result.required_reviews.test, false);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, ['CHANGELOG.md']);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matches, [
+            assert.deepEqual(result.triggers.ordinary_doc_path_matched_files, ['CHANGELOG.md']);
+            assert.deepEqual(result.triggers.ordinary_doc_path_matches, [
                 { path: 'CHANGELOG.md', pattern: 'CHANGELOG.md' }
             ]);
         });
@@ -116,7 +116,7 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.code, false);
             assert.equal(result.required_reviews.security, true);
             assert.equal(result.required_reviews.test, false);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+            assert.deepEqual(result.triggers.ordinary_doc_path_matched_files, []);
         });
 
         it('accepts a user-configured docs/plan.md ordinary doc path without code or test review', () => {
@@ -137,7 +137,7 @@ describe('gates/classify-change', () => {
             assert.equal(result.scope_category, 'docs-only');
             assert.equal(result.required_reviews.code, false);
             assert.equal(result.required_reviews.test, false);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, ['docs/plan.md']);
+            assert.deepEqual(result.triggers.ordinary_doc_path_matched_files, ['docs/plan.md']);
         });
 
         it('suppresses test review for safe ordinary docs under test-like paths', () => {
@@ -158,7 +158,7 @@ describe('gates/classify-change', () => {
             assert.equal(result.scope_category, 'docs-only');
             assert.equal(result.triggers.test, false);
             assert.equal(result.required_reviews.test, false);
-            assert.deepEqual((result.triggers as Record<string, unknown>).test_ordinary_doc_suppressed_files, ['tests/plan.md']);
+            assert.deepEqual(result.triggers.test_ordinary_doc_suppressed_files, ['tests/plan.md']);
         });
 
         it('keeps test review for unconfigured docs under test-like paths', () => {
@@ -177,8 +177,8 @@ describe('gates/classify-change', () => {
             assert.equal(result.scope_category, 'docs-only');
             assert.equal(result.triggers.test, true);
             assert.equal(result.required_reviews.test, true);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
-            assert.deepEqual((result.triggers as Record<string, unknown>).test_ordinary_doc_suppressed_files, []);
+            assert.deepEqual(result.triggers.ordinary_doc_path_matched_files, []);
+            assert.deepEqual(result.triggers.test_ordinary_doc_suppressed_files, []);
         });
 
         it('classifies pure configured test-scope changes as test-only', () => {
@@ -304,10 +304,10 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.test, true);
             assert.equal(result.required_reviews.api, false);
             assert.equal(result.required_reviews.performance, false);
-            assert.deepEqual((result.triggers as Record<string, unknown>).api_path_changed_files, ['tests/api/routes.test.ts']);
-            assert.deepEqual((result.triggers as Record<string, unknown>).api_test_only_suppressed_files, ['tests/api/routes.test.ts']);
-            assert.deepEqual((result.triggers as Record<string, unknown>).performance_path_changed_files, ['tests/performance/latency.test.ts']);
-            assert.deepEqual((result.triggers as Record<string, unknown>).performance_test_only_suppressed_files, ['tests/performance/latency.test.ts']);
+            assert.deepEqual(result.triggers.api_path_changed_files, ['tests/api/routes.test.ts']);
+            assert.deepEqual(result.triggers.api_test_only_suppressed_files, ['tests/api/routes.test.ts']);
+            assert.deepEqual(result.triggers.performance_path_changed_files, ['tests/performance/latency.test.ts']);
+            assert.deepEqual(result.triggers.performance_test_only_suppressed_files, ['tests/performance/latency.test.ts']);
         });
 
         it('suppresses performance heuristic for large api-shaped test-only maintenance', () => {
@@ -329,8 +329,8 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.api, false);
             assert.equal(result.required_reviews.performance, false);
             assert.equal(result.required_reviews.test, true);
-            assert.deepEqual((result.triggers as Record<string, unknown>).api_test_only_suppressed_files, ['tests/api/RequestContract.test.ts']);
-            assert.equal((result.triggers as Record<string, unknown>).performance_test_only_suppressed_heuristic, true);
+            assert.deepEqual(result.triggers.api_test_only_suppressed_files, ['tests/api/RequestContract.test.ts']);
+            assert.equal(result.triggers.performance_test_only_suppressed_heuristic, true);
         });
 
         it('keeps protected control-plane documentation as docs-only without ordinary-doc trust', () => {
@@ -350,8 +350,8 @@ describe('gates/classify-change', () => {
 
             assert.equal(result.scope_category, 'docs-only');
             assert.equal(result.triggers.protected_control_plane_changed, true);
-            assert.equal((result.triggers as Record<string, unknown>).protected_control_plane_docs_only, true);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+            assert.equal(result.triggers.protected_control_plane_docs_only, true);
+            assert.deepEqual(result.triggers.ordinary_doc_path_matched_files, []);
         });
 
         it('keeps root protected agent entrypoints audit-only instead of protected docs-only', () => {
@@ -369,7 +369,7 @@ describe('gates/classify-change', () => {
 
             assert.equal(result.scope_category, 'audit-only');
             assert.equal(result.triggers.protected_control_plane_changed, true);
-            assert.equal((result.triggers as Record<string, unknown>).protected_control_plane_docs_only, false);
+            assert.equal(result.triggers.protected_control_plane_docs_only, false);
         });
 
         it('rejects sensitive review trigger paths as ordinary docs even when configured', () => {
@@ -411,7 +411,7 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.security, true);
             assert.equal(result.required_reviews.api, true);
             assert.equal(result.required_reviews.dependency, true);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, []);
+            assert.deepEqual(result.triggers.ordinary_doc_path_matched_files, []);
         });
 
         it('keeps mixed ordinary docs plus runtime source changes on the code review path', () => {
@@ -431,7 +431,7 @@ describe('gates/classify-change', () => {
 
             assert.equal(result.scope_category, 'mixed');
             assert.equal(result.required_reviews.code, true);
-            assert.deepEqual((result.triggers as Record<string, unknown>).ordinary_doc_path_matched_files, ['docs/plan.md']);
+            assert.deepEqual(result.triggers.ordinary_doc_path_matched_files, ['docs/plan.md']);
         });
 
         it('returns FULL_PATH for large backend change', () => {
@@ -488,9 +488,9 @@ describe('gates/classify-change', () => {
 
                 assert.equal(result.triggers.db, false);
                 assert.equal(result.required_reviews.db, false);
-                assert.deepEqual((result.triggers as Record<string, unknown>).db_strong_changed_files, []);
-                assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, ['src/lifecycle/contract-migrations.ts']);
-                assert.deepEqual((result.triggers as Record<string, unknown>).db_project_evidence, []);
+                assert.deepEqual(result.triggers.db_strong_changed_files, []);
+                assert.deepEqual(result.triggers.db_weak_signal_files, ['src/lifecycle/contract-migrations.ts']);
+                assert.deepEqual(result.triggers.db_project_evidence, []);
             } finally {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
             }
@@ -520,8 +520,8 @@ describe('gates/classify-change', () => {
 
                 assert.equal(result.triggers.db, true);
                 assert.equal(result.required_reviews.db, true);
-                assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, ['src/lifecycle/contract-migrations.ts']);
-                assert.ok(((result.triggers as Record<string, unknown>).db_project_evidence as string[]).includes('prisma/schema.prisma'));
+                assert.deepEqual(result.triggers.db_weak_signal_files, ['src/lifecycle/contract-migrations.ts']);
+                assert.ok((result.triggers.db_project_evidence as string[]).includes('prisma/schema.prisma'));
             } finally {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
             }
@@ -554,8 +554,8 @@ describe('gates/classify-change', () => {
 
                 assert.equal(result.triggers.db, true);
                 assert.equal(result.required_reviews.db, true);
-                assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, ['packages/api/src/UserRepository.ts']);
-                assert.ok(((result.triggers as Record<string, unknown>).db_project_evidence as string[]).includes('packages/api/package:pg'));
+                assert.deepEqual(result.triggers.db_weak_signal_files, ['packages/api/src/UserRepository.ts']);
+                assert.ok((result.triggers.db_project_evidence as string[]).includes('packages/api/package:pg'));
             } finally {
                 fs.rmSync(repoRoot, { recursive: true, force: true });
             }
@@ -578,8 +578,8 @@ describe('gates/classify-change', () => {
 
             assert.equal(result.triggers.db, true);
             assert.equal(result.required_reviews.db, true);
-            assert.deepEqual((result.triggers as Record<string, unknown>).db_strong_changed_files, ['src/lifecycle/contract-migrations.ts']);
-            assert.deepEqual((result.triggers as Record<string, unknown>).db_project_evidence, []);
+            assert.deepEqual(result.triggers.db_strong_changed_files, ['src/lifecycle/contract-migrations.ts']);
+            assert.deepEqual(result.triggers.db_project_evidence, []);
         });
 
         it('does not force hardcoded strong db paths when configured db triggers are narrowed', () => {
@@ -599,8 +599,8 @@ describe('gates/classify-change', () => {
 
             assert.equal(result.triggers.db, false);
             assert.equal(result.required_reviews.db, false);
-            assert.deepEqual((result.triggers as Record<string, unknown>).db_strong_changed_files, []);
-            assert.deepEqual((result.triggers as Record<string, unknown>).db_weak_signal_files, []);
+            assert.deepEqual(result.triggers.db_strong_changed_files, []);
+            assert.deepEqual(result.triggers.db_weak_signal_files, []);
         });
 
         it('triggers security review for auth files', () => {
@@ -836,7 +836,7 @@ describe('gates/classify-change', () => {
             });
 
             assert.equal(result.triggers.protected_control_plane_changed, true);
-            assert.equal((result.triggers as Record<string, unknown>).protected_control_plane_docs_only, false);
+            assert.equal(result.triggers.protected_control_plane_docs_only, false);
             assert.deepEqual(result.triggers.changed_protected_files, ['garda-agent-orchestrator/src/cli/main.ts']);
         });
 

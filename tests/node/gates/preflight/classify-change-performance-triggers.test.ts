@@ -62,25 +62,25 @@ describe('gates/classify-change performance triggers', () => {
         assert.equal(workspaceSnapshotCacheResult.triggers.performance, false);
         assert.equal(workspaceSnapshotCacheResult.required_reviews.performance, false);
         assert.deepEqual(
-            (workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_candidate_files,
+            workspaceSnapshotCacheResult.triggers.performance_cache_candidate_files,
             ['src/gates/workspace/workspace-snapshot-cache.ts']
         );
         assert.deepEqual(
-            (workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+            workspaceSnapshotCacheResult.triggers.performance_cache_suppressed_files,
             ['src/gates/workspace/workspace-snapshot-cache.ts']
         );
-        assert.equal((workspaceSnapshotCacheResult.triggers as Record<string, unknown>).performance_cache_intent, false);
+        assert.equal(workspaceSnapshotCacheResult.triggers.performance_cache_intent, false);
         assert.equal(protectedHashCacheResult.triggers.performance, false);
         assert.equal(protectedHashCacheResult.required_reviews.performance, false);
         assert.deepEqual(
-            (protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_candidate_files,
+            protectedHashCacheResult.triggers.performance_cache_candidate_files,
             ['src/gates/protected-control-plane/protected-hash-cache.ts']
         );
         assert.deepEqual(
-            (protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+            protectedHashCacheResult.triggers.performance_cache_suppressed_files,
             ['src/gates/protected-control-plane/protected-hash-cache.ts']
         );
-        assert.equal((protectedHashCacheResult.triggers as Record<string, unknown>).performance_cache_intent, false);
+        assert.equal(protectedHashCacheResult.triggers.performance_cache_intent, false);
     });
 
     it('keeps performance review for cache tuning intent and cache-adjacent performance paths', () => {
@@ -121,16 +121,16 @@ describe('gates/classify-change performance triggers', () => {
         assert.equal(cacheTuningResult.triggers.performance, true);
         assert.equal(cacheTuningResult.required_reviews.performance, true);
         assert.deepEqual(
-            (cacheTuningResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+            cacheTuningResult.triggers.performance_cache_suppressed_files,
             []
         );
-        assert.equal((cacheTuningResult.triggers as Record<string, unknown>).performance_cache_intent, true);
+        assert.equal(cacheTuningResult.triggers.performance_cache_intent, true);
         assert.equal(redisCacheResult.triggers.performance, true);
         assert.equal(redisCacheResult.required_reviews.performance, true);
         assert.equal(runtimeCacheResult.triggers.performance, true);
         assert.equal(runtimeCacheResult.required_reviews.performance, true);
         assert.deepEqual(
-            (runtimeCacheResult.triggers as Record<string, unknown>).performance_cache_suppressed_files,
+            runtimeCacheResult.triggers.performance_cache_suppressed_files,
             []
         );
     });

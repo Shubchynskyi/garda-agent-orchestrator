@@ -80,7 +80,7 @@ export function hasArrayEntries(value: unknown): boolean {
     return Array.isArray(value) && value.length > 0;
 }
 
-export function buildDomainReviewSurface(triggers: Record<string, unknown>): Record<string, boolean> {
+export function buildDomainReviewSurface(triggers: ClassificationResult['triggers']): Record<string, boolean> {
     return {
         db: triggers.db === true || hasArrayEntries(triggers.db_project_evidence),
         security: triggers.security === true,
@@ -97,8 +97,6 @@ export function isZeroDiffBaselineOnlyNoReviewableScope(
     plannedChangedFiles: string[],
     dirtyWorkspaceBaselineChangedFiles: string[]
 ): boolean {
-    const metrics = result.metrics as Record<string, unknown>;
-    const triggers = result.triggers as Record<string, unknown>;
     const zeroDiffGuard = result.zero_diff_guard as Record<string, unknown> | undefined;
 
     return result.detection_source === 'git_auto'
@@ -107,12 +105,12 @@ export function isZeroDiffBaselineOnlyNoReviewableScope(
         && result.changed_files.length === 0
         && plannedChangedFiles.length === 0
         && dirtyWorkspaceBaselineChangedFiles.length === 0
-        && Number(metrics.changed_files_count || 0) === 0
-        && Number(metrics.changed_lines_total || 0) === 0
+        && result.metrics.changed_files_count === 0
+        && result.metrics.changed_lines_total === 0
         && zeroDiffGuard?.zero_diff_detected === true
         && zeroDiffGuard?.status === 'BASELINE_ONLY'
         && zeroDiffGuard?.completion_requires_audited_no_op === true
-        && triggers.protected_control_plane_changed !== true
+        && result.triggers.protected_control_plane_changed !== true
         && !Object.values(domainSurface).some((value) => value === true);
 }
 
@@ -314,7 +312,7 @@ export function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
 }
 
 export function getChangedProtectedFiles(result: ClassificationResult): string[] {
-    const rawValue = (result.triggers as Record<string, unknown>).changed_protected_files;
+    const rawValue = result.triggers.changed_protected_files;
     if (!Array.isArray(rawValue)) {
         return [];
     }

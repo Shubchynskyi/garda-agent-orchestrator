@@ -8,7 +8,12 @@ import {
 import { appendMandatoryTaskEvent, assertValidTaskId } from '../../../../gate-runtime/task-events';
 import { acquireFilesystemLock, releaseFilesystemLock } from '../../../../gate-runtime/task-events-locking';
 import { buildBudgetForecast, resolveDepthEscalation, resolveRiskAwareDepth } from '../../../../gate-runtime/budget-preflight';
-import { classifyChange, getClassificationConfig, getReviewCapabilities } from '../../../../gates/preflight/classify-change';
+import {
+    classifyChange,
+    getClassificationConfig,
+    getReviewCapabilities,
+    type ClassifyChangeResult
+} from '../../../../gates/preflight/classify-change';
 import { buildGeneratedRuntimeArtifactHygieneWarnings } from '../../../../gates/shared/generated-runtime-artifacts';
 import { loadReviewExecutionPolicyConfig } from '../../../../core/review-execution-policy';
 import { resolveTaskProfileSelection } from '../../../../policy/task-profile-selection';
@@ -62,8 +67,6 @@ import {
     evaluateGateFlowTimelineReadiness,
     resolveGateFlowTimelinePath
 } from '../support/gate-flow-runtime';
-
-type ClassificationResult = ReturnType<typeof classifyChange>;
 
 function reconcileProfileGuardrailsWithRequiredReviews(
     guardrails: unknown,
@@ -161,7 +164,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
     const classificationConfig = getClassificationConfig(repoRoot);
     const reviewCapabilities = getReviewCapabilities(repoRoot);
     const reviewExecutionPolicy = loadReviewExecutionPolicyConfig(repoRoot);
-    const result: ClassificationResult & { task_id?: string } = classifyChange({
+    const result: ClassifyChangeResult = classifyChange({
         normalizedFiles: workspaceSnapshot.changed_files,
         repoRoot,
         taskIntent: String(options.taskIntent || ''),
@@ -177,10 +180,10 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         reviewCapabilities,
         reviewExecutionPolicyMode: reviewExecutionPolicy.mode
     });
-    (result.metrics as Record<string, unknown>).changed_files_sha256 = workspaceSnapshot.changed_files_sha256;
-    (result.metrics as Record<string, unknown>).scope_content_sha256 = workspaceSnapshot.scope_content_sha256;
-    (result.metrics as Record<string, unknown>).scope_sha256 = workspaceSnapshot.scope_sha256;
-    (result.metrics as Record<string, unknown>).domain_scope_fingerprints = buildDomainScopeFingerprints({
+    result.metrics.changed_files_sha256 = workspaceSnapshot.changed_files_sha256;
+    result.metrics.scope_content_sha256 = workspaceSnapshot.scope_content_sha256;
+    result.metrics.scope_sha256 = workspaceSnapshot.scope_sha256;
+    result.metrics.domain_scope_fingerprints = buildDomainScopeFingerprints({
         repoRoot,
         detectionSource: workspaceSnapshot.detection_source,
         includeUntracked: !!workspaceSnapshot.include_untracked,
@@ -190,10 +193,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         ? ((workspaceSnapshot as Record<string, unknown>).ignored_generated_runtime_files as string[])
         : [];
     if (ignoredGeneratedRuntimeFiles.length > 0) {
-        (result.metrics as Record<string, unknown>).ignored_generated_runtime_files_count = ignoredGeneratedRuntimeFiles.length;
-        (result.triggers as Record<string, unknown>).ignored_generated_runtime_files = ignoredGeneratedRuntimeFiles;
-        (result as Record<string, unknown>).workspace_hygiene_warnings =
-            buildGeneratedRuntimeArtifactHygieneWarnings(ignoredGeneratedRuntimeFiles);
+        result.metrics.ignored_generated_runtime_files_count = ignoredGeneratedRuntimeFiles.length;
+        result.triggers.ignored_generated_runtime_files = ignoredGeneratedRuntimeFiles;
+        result.workspace_hygiene_warnings = buildGeneratedRuntimeArtifactHygieneWarnings(ignoredGeneratedRuntimeFiles);
     }
 
     const protectedFilesSnapshot = gateHelpers.scanProtectedPathHashes(
@@ -205,23 +207,23 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         repoRoot,
         protectedFilesSnapshot
     );
-    (result.triggers as any).protected_control_plane_snapshot_sha256 = protectedFilesSnapshotSha256;
-    (result.triggers as any).protected_control_plane_manifest_status = protectedManifestEvidence.status;
-    (result.triggers as any).protected_control_plane_manifest_path = protectedManifestEvidence.manifest_path;
-    (result.triggers as any).protected_control_plane_manifest_changed_files = protectedManifestEvidence.changed_files;
+    result.triggers.protected_control_plane_snapshot_sha256 = protectedFilesSnapshotSha256;
+    result.triggers.protected_control_plane_manifest_status = protectedManifestEvidence.status;
+    result.triggers.protected_control_plane_manifest_path = protectedManifestEvidence.manifest_path;
+    result.triggers.protected_control_plane_manifest_changed_files = protectedManifestEvidence.changed_files;
     let protectedManifestAssessment = assessProtectedManifest({
         evidence: protectedManifestEvidence
     });
 
     const isolationConfig = loadIsolationModeConfig(repoRoot);
-    (result.triggers as any).isolation_mode_enabled = isolationConfig.enabled;
-    (result.triggers as any).isolation_mode_enforcement = isolationConfig.enforcement;
-    (result.triggers as any).isolation_mode_use_sandbox = isolationConfig.use_sandbox;
+    result.triggers.isolation_mode_enabled = isolationConfig.enabled;
+    result.triggers.isolation_mode_enforcement = isolationConfig.enforcement;
+    result.triggers.isolation_mode_use_sandbox = isolationConfig.use_sandbox;
 
     const sandboxResolution = resolveIsolatedOrchestratorRoot(repoRoot);
-    (result.triggers as any).isolation_sandbox_active = sandboxResolution.using_sandbox;
-    (result.triggers as any).isolation_sandbox_resolved_root = gateHelpers.normalizePath(sandboxResolution.resolved_root);
-    (result.triggers as any).isolation_sandbox_reason = sandboxResolution.reason;
+    result.triggers.isolation_sandbox_active = sandboxResolution.using_sandbox;
+    result.triggers.isolation_sandbox_resolved_root = gateHelpers.normalizePath(sandboxResolution.resolved_root);
+    result.triggers.isolation_sandbox_reason = sandboxResolution.reason;
 
     let isolationViolationMessage: string | null = null;
     if (isolationConfig.enabled && isolationConfig.require_manifest_match_before_task) {
@@ -230,23 +232,23 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             if (isolationConfig.enforcement === 'STRICT') {
                 isolationViolationMessage = msg;
             }
-            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+            result.triggers.isolation_mode_pre_task_warning = msg;
         } else if (protectedManifestEvidence.status === 'INVALID') {
             const msg = `Trusted control-plane manifest at '${gateHelpers.normalizePath(protectedManifestEvidence.manifest_path)}' is malformed. Re-run setup/update/reinit.`;
             if (isolationConfig.enforcement === 'STRICT') {
                 isolationViolationMessage = msg;
             }
-            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+            result.triggers.isolation_mode_pre_task_warning = msg;
         } else if (protectedManifestEvidence.status === 'DRIFT' && isolationConfig.refuse_on_preflight_drift) {
             const msg = `Control-plane isolation detected drift in ${protectedManifestEvidence.changed_files.length} file(s) before task start: ${protectedManifestEvidence.changed_files.join(', ')}. Refresh the trusted manifest or disable isolation mode.`;
             if (isolationConfig.enforcement === 'STRICT') {
                 isolationViolationMessage = msg;
             }
-            (result.triggers as any).isolation_mode_pre_task_warning = msg;
+            result.triggers.isolation_mode_pre_task_warning = msg;
         }
     }
     if (isolationViolationMessage) {
-        (result as any).isolation_mode_violation = isolationViolationMessage;
+        result.isolation_mode_violation = isolationViolationMessage;
     }
 
     let currentTaskSummary: string | null = null;
@@ -267,7 +269,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
         if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
             try {
-                const domainSurface = buildDomainReviewSurface(result.triggers as Record<string, unknown>);
+                const domainSurface = buildDomainReviewSurface(result.triggers);
                 const resolvedProfile = resolveTaskProfileSelection(
                     orchestratorRoot,
                     rawTaskProfile,
@@ -276,8 +278,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         domainSurface,
                         forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false),
                         forceCodeReview: parseBooleanOption(options.forceCodeReview, false),
-                        protectedControlPlaneChanged: (result.triggers as Record<string, unknown>).protected_control_plane_changed === true,
-                        protectedControlPlaneDocsOnly: (result.triggers as Record<string, unknown>).protected_control_plane_docs_only === true,
+                        protectedControlPlaneChanged: result.triggers.protected_control_plane_changed === true,
+                        protectedControlPlaneDocsOnly: result.triggers.protected_control_plane_docs_only === true,
                         zeroDiffBaselineOnly: isZeroDiffBaselineOnlyNoReviewableScope(
                             result,
                             domainSurface,
@@ -287,7 +289,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     }
                 );
                 effectiveTaskPolicy = resolvedProfile.effective_policy;
-                (result as Record<string, unknown>).profile_selection = resolvedProfile.selection;
+        result.profile_selection = resolvedProfile.selection;
 
                 const guardrailDecisions = new Map(
                     (effectiveTaskPolicy.guardrail_diagnostics?.decisions || []).map((decision) => [decision.review_type, decision])
@@ -295,9 +297,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 for (const [reviewType, currentValue] of Object.entries(result.required_reviews)) {
                     const guardrailDecision = guardrailDecisions.get(reviewType);
                     if (guardrailDecision?.decision === 'zero_diff_no_reviewable_scope') {
-                        (result.required_reviews as Record<string, boolean>)[reviewType] = false;
+                        result.required_reviews[reviewType] = false;
                     } else if (currentValue === true) {
-                        (result.required_reviews as Record<string, boolean>)[reviewType] = true;
+                        result.required_reviews[reviewType] = true;
                     } else if (
                         guardrailDecision?.effective_value === true
                         && (
@@ -305,14 +307,14 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                             || guardrailDecision.decision === 'profile_forced'
                         )
                     ) {
-                        (result.required_reviews as Record<string, boolean>)[reviewType] = true;
+                        result.required_reviews[reviewType] = true;
                     } else {
-                        (result.required_reviews as Record<string, boolean>)[reviewType] = false;
+                        result.required_reviews[reviewType] = false;
                     }
                 }
-                (result as Record<string, unknown>).profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
+                result.profile_guardrails = reconcileProfileGuardrailsWithRequiredReviews(
                     effectiveTaskPolicy.guardrail_diagnostics,
-                    result.required_reviews as Record<string, boolean>
+                    result.required_reviews
                 );
             } catch (error: unknown) {
                 preflightErrors.push(error instanceof Error ? error.message : String(error));
@@ -345,17 +347,17 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         trustedWorkflowConfigBaselineFiles = workflowConfigChanges.baseline_file_hashes && changedWorkflowConfigFiles.length === 0
             ? getWorkflowConfigControlPlanePaths(repoRoot)
             : [];
-        (result.triggers as any).changed_workflow_config_files = changedWorkflowConfigFiles;
-        (result.triggers as any).workflow_config_file_hashes = workflowConfigChanges.current_file_hashes;
+        result.triggers.changed_workflow_config_files = changedWorkflowConfigFiles;
+        result.triggers.workflow_config_file_hashes = workflowConfigChanges.current_file_hashes;
         if (workflowConfigChanges.scan_error) {
-            (result.triggers as any).workflow_config_workspace_scan_error = workflowConfigChanges.scan_error;
+            result.triggers.workflow_config_workspace_scan_error = workflowConfigChanges.scan_error;
         }
         const changedProtectedFiles = mergePathLists(
             subtractPathList(getChangedProtectedFiles(result), trustedWorkflowConfigBaselineFiles),
             changedWorkflowConfigFiles
         );
-        (result.triggers as any).changed_protected_files = changedProtectedFiles;
-        (result.triggers as any).protected_control_plane_changed = changedProtectedFiles.length > 0;
+        result.triggers.changed_protected_files = changedProtectedFiles;
+        result.triggers.protected_control_plane_changed = changedProtectedFiles.length > 0;
         if (preflightErrors.length === 0) {
             preflightErrors.push(...getWorkflowConfigWorkViolations({
                 changedFiles: changedWorkflowConfigFiles,
@@ -384,15 +386,15 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         }
 
         if (dirtyWorkspaceBaseline) {
-            (result.triggers as any).dirty_workspace_baseline_changed_files = dirtyWorkspaceBaseline.changed_files;
-            (result.triggers as any).dirty_workspace_baseline_changed_files_sha256 = dirtyWorkspaceBaseline.changed_files_sha256;
-            (result.triggers as any).dirty_workspace_protected_files = dirtyWorkspaceProtectedScope?.protected_files || [];
-            (result.triggers as any).dirty_workspace_protected_files_sha256 =
+            result.triggers.dirty_workspace_baseline_changed_files = dirtyWorkspaceBaseline.changed_files;
+            result.triggers.dirty_workspace_baseline_changed_files_sha256 = dirtyWorkspaceBaseline.changed_files_sha256;
+            result.triggers.dirty_workspace_protected_files = dirtyWorkspaceProtectedScope?.protected_files || [];
+            result.triggers.dirty_workspace_protected_files_sha256 =
                 dirtyWorkspaceProtectedScope?.protected_files_sha256 || null;
-            (result.triggers as any).dirty_workspace_protected_file_hashes =
+            result.triggers.dirty_workspace_protected_file_hashes =
                 dirtyWorkspaceProtectedScope?.protected_file_hashes || {};
-            (result.triggers as any).dirty_workspace_protection_status = dirtyWorkspaceProtectionDrift.status;
-            (result.triggers as any).dirty_workspace_protection_changed_files = dirtyWorkspaceProtectionDrift.changed_files;
+            result.triggers.dirty_workspace_protection_status = dirtyWorkspaceProtectionDrift.status;
+            result.triggers.dirty_workspace_protection_changed_files = dirtyWorkspaceProtectionDrift.changed_files;
         }
         const protectedManifestBaselineAllowance = evaluateProtectedManifestBaselineAllowance({
             orchestratorWork: taskModeEvidence.orchestrator_work === true,
@@ -403,7 +405,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             sourceCheckoutInheritedDrift: protectedManifestEvidence.manifest?.is_source_checkout === true
                 && gateHelpers.isOrchestratorSourceCheckout(repoRoot)
         });
-        (result.triggers as any).protected_control_plane_manifest_baseline_allowance_status =
+        result.triggers.protected_control_plane_manifest_baseline_allowance_status =
             protectedManifestBaselineAllowance.status;
         protectedManifestAssessment = assessProtectedManifest({
             evidence: protectedManifestEvidence,
@@ -495,7 +497,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         throw new Error(`Control-plane isolation (STRICT) blocked preflight: ${isolationViolationMessage}`);
     }
 
-    (result.triggers as any).protected_control_plane_manifest_assessment =
+    result.triggers.protected_control_plane_manifest_assessment =
         protectedManifestAssessment?.code || null;
 
     if (resolvedTaskId) {
@@ -562,7 +564,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             pathMode: result.mode,
             changedFilesCount: result.metrics.changed_files_count,
             changedLinesTotal: result.metrics.changed_lines_total,
-            requiredReviews: result.required_reviews as Record<string, boolean>
+            requiredReviews: result.required_reviews
         });
 
         const budgetForecast = buildBudgetForecast({
@@ -572,14 +574,14 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             pathMode: result.mode,
             changedFilesCount: result.metrics.changed_files_count,
             changedLinesTotal: result.metrics.changed_lines_total,
-            requiredReviews: result.required_reviews as Record<string, boolean>,
+            requiredReviews: result.required_reviews,
             tokenEconomyEnabled,
             tokenEconomyEnabledDepths: enabledDepths
         });
 
-        (result as any).budget_forecast = budgetForecast;
-        (result as any).depth_escalation = depthEscalation;
-        (result as any).risk_aware_depth = riskAwareDepth;
+        result.budget_forecast = budgetForecast;
+        result.depth_escalation = depthEscalation;
+        result.risk_aware_depth = riskAwareDepth;
     }
 
     const outputPath = resolveClassifyChangeOutputPath(repoRoot, resolvedTaskId || null, options.outputPath);
@@ -597,7 +599,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             : '';
         if (resolvedTaskId && optionalSkillPolicyEnabled) {
             try {
-                (result as Record<string, unknown>).optional_skill_selection = {
+                result.optional_skill_selection = {
                     artifact_path: optionalSkillPolicyMode === 'off'
                         ? null
                         : normalizeOptionalPath(path.join(orchestratorRoot, 'runtime', 'reviews', `${resolvedTaskId}-optional-skill-selection.json`)),
@@ -616,7 +618,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                             changedPaths: result.changed_files as string[]
                         }
                     );
-                    (result as Record<string, unknown>).optional_skill_selection = {
+                    result.optional_skill_selection = {
                         artifact_path: normalizeOptionalPath(optionalSkillSelectionPreview.artifactPath),
                         policy_mode: optionalSkillSelectionPreview.payload.policy_mode,
                         decision: optionalSkillSelectionPreview.payload.decision,
@@ -627,7 +629,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                 if (optionalSkillPolicyMode === 'required' || optionalSkillPolicyMode === 'strict') {
                     throw error;
                 }
-                (result as Record<string, unknown>).optional_skill_selection = {
+                result.optional_skill_selection = {
                     artifact_path: normalizeOptionalPath(path.join(orchestratorRoot, 'runtime', 'reviews', `${resolvedTaskId}-optional-skill-selection.json`)),
                     policy_mode: optionalSkillPolicyMode,
                     decision: null,
@@ -661,7 +663,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             } catch (error: unknown) {
                 if (optionalSkillPolicyMode !== 'required' && optionalSkillPolicyMode !== 'strict') {
                     optionalSkillSelection = null;
-                    (result as Record<string, unknown>).optional_skill_selection = {
+                    result.optional_skill_selection = {
                         artifact_path: normalizeOptionalPath(path.join(orchestratorRoot, 'runtime', 'reviews', `${resolvedTaskId}-optional-skill-selection.json`)),
                         policy_mode: optionalSkillPolicyMode,
                         decision: optionalSkillSelectionPreview?.payload.decision || null,
@@ -711,17 +713,17 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                     output_path: normalizeOptionalPath(outputPath),
                     changed_files_count: result.metrics.changed_files_count,
                     changed_lines_total: result.metrics.changed_lines_total,
-                    scope_sha256: (result.metrics as Record<string, unknown>).scope_sha256,
-                    scope_content_sha256: (result.metrics as Record<string, unknown>).scope_content_sha256,
+                    scope_sha256: result.metrics.scope_sha256,
+                    scope_content_sha256: result.metrics.scope_content_sha256,
                     code_changed: codeChanged,
                     required_reviews: result.required_reviews,
-                    review_execution_policy: (result as Record<string, unknown>).review_execution_policy ?? null,
-                    profile_selection: (result as Record<string, unknown>).profile_selection ?? null,
-                    profile_guardrails: (result as Record<string, unknown>).profile_guardrails ?? null,
+                    review_execution_policy: result.review_execution_policy ?? null,
+                    profile_selection: result.profile_selection ?? null,
+                    profile_guardrails: result.profile_guardrails ?? null,
                     optional_skill_selection_artifact_path: optionalSkillSelectionArtifactPath,
                     zero_diff_guard: result.zero_diff_guard,
-                    budget_forecast: (result as any).budget_forecast || null,
-                    depth_escalation: (result as any).depth_escalation || null
+                    budget_forecast: result.budget_forecast || null,
+                    depth_escalation: result.depth_escalation || null
                 }
             );
         } catch (error: unknown) {

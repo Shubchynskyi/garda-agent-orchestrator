@@ -4,6 +4,12 @@ import {
     buildGeneratedRuntimeArtifactHygieneWarnings,
     splitGeneratedRuntimeControlPlaneArtifacts
 } from '../shared/generated-runtime-artifacts';
+import type {
+    BudgetForecast,
+    DepthEscalationRecord,
+    RiskAwareDepthResult
+} from '../../gate-runtime/budget-preflight';
+import type { ReviewCapabilities } from '../../core/review-capabilities';
 import { testPathPrefix } from '../shared/helpers';
 import {
     type ClassifyChangeOptions,
@@ -26,7 +32,7 @@ import {
 import { hasRefactorIntent } from './classify-change-intent';
 import { detectPathTriggers } from './classify-change-path-detection';
 import { buildRequiredReviews } from './classify-change-required-reviews';
-import { classifyScopeCategory } from './classify-change-scope-category';
+import { classifyScopeCategory, type ScopeCategory } from './classify-change-scope-category';
 
 export type {
     ClassificationConfig,
@@ -52,7 +58,120 @@ export { classifyScopeCategory } from './classify-change-scope-category';
  * Pure-logic classification of changed files.
  * Produces the canonical classify-change output shape.
  */
-export function classifyChange(options: ClassifyChangeOptions) {
+export interface ClassifyChangeMetrics {
+    classification_config_source: string;
+    classification_config_path: string;
+    changed_files_count: number;
+    ignored_generated_runtime_files_count: number;
+    changed_lines_total: number;
+    additions_total: number;
+    deletions_total: number;
+    rename_count: number;
+    code_like_changed_count: number;
+    runtime_code_like_changed_count: number;
+    review_capabilities: Partial<ReviewCapabilities>;
+    fast_path_max_files: number;
+    fast_path_max_changed_lines: number;
+    performance_heuristic_min_lines: number;
+    changed_files_sha256?: string | null;
+    scope_content_sha256?: string | null;
+    scope_sha256?: string | null;
+    domain_scope_fingerprints?: unknown;
+}
+
+export interface ClassifyChangeTriggers {
+    runtime_changed: boolean;
+    runtime_code_changed: boolean;
+    protected_control_plane_changed: boolean;
+    protected_control_plane_docs_only: boolean;
+    changed_protected_files: string[];
+    db: boolean;
+    db_strong_changed_files: string[];
+    db_weak_signal_files: string[];
+    db_project_evidence: string[];
+    security: boolean;
+    api: boolean;
+    api_path_changed_files: string[];
+    api_test_only_suppressed_files: string[];
+    test: boolean;
+    performance: boolean;
+    infra: boolean;
+    dependency: boolean;
+    refactor: boolean;
+    refactor_intent: boolean;
+    refactor_heuristic: boolean;
+    refactor_heuristic_reasons: string[];
+    ordinary_doc_path_matches: unknown[];
+    ordinary_doc_path_matched_files: string[];
+    ordinary_doc_path_patterns: string[];
+    test_ordinary_doc_suppressed_files: string[];
+    performance_path_changed_files: string[];
+    performance_test_only_suppressed_files: string[];
+    performance_test_only_suppressed_heuristic: boolean;
+    performance_cache_candidate_files: string[];
+    performance_cache_intent: boolean;
+    performance_cache_suppressed_files: string[];
+    performance_heuristic: boolean;
+    fast_path_eligible: boolean;
+    fast_path_sensitive_match: boolean;
+    ignored_generated_runtime_files: string[];
+    protected_control_plane_snapshot_sha256?: string;
+    protected_control_plane_manifest_status?: string;
+    protected_control_plane_manifest_path?: string | null;
+    protected_control_plane_manifest_changed_files?: string[];
+    protected_control_plane_manifest_assessment?: string | null;
+    isolation_mode_enabled?: boolean;
+    isolation_mode_enforcement?: string;
+    isolation_mode_use_sandbox?: boolean;
+    isolation_sandbox_active?: boolean;
+    isolation_sandbox_resolved_root?: string;
+    isolation_sandbox_reason?: string;
+    isolation_mode_pre_task_warning?: string;
+    changed_workflow_config_files?: string[];
+    workflow_config_file_hashes?: Record<string, string | null>;
+    workflow_config_workspace_scan_error?: string;
+    dirty_workspace_baseline_changed_files?: string[];
+    dirty_workspace_baseline_changed_files_sha256?: string | null;
+    dirty_workspace_protected_files?: string[];
+    dirty_workspace_protected_files_sha256?: string | null;
+    dirty_workspace_protected_file_hashes?: Record<string, string | null>;
+    dirty_workspace_protection_status?: string;
+    dirty_workspace_protection_changed_files?: string[];
+    protected_control_plane_manifest_baseline_allowance_status?: string;
+}
+
+export interface ClassifyChangeResult {
+    detection_source: string;
+    mode: string;
+    scope_category: ScopeCategory;
+    scope_category_reasons: string[];
+    metrics: ClassifyChangeMetrics;
+    triggers: ClassifyChangeTriggers;
+    required_reviews: Record<string, boolean>;
+    review_execution_policy?: {
+        mode: string;
+        visible_summary_line: string;
+    };
+    zero_diff_guard: {
+        zero_diff_detected: boolean;
+        status: 'BASELINE_ONLY' | 'DIFF_PRESENT';
+        completion_requires_audited_no_op: boolean;
+        no_op_artifact_suffix: string | null;
+        rationale: string;
+    };
+    workspace_hygiene_warnings: string[];
+    changed_files: string[];
+    task_id?: string;
+    isolation_mode_violation?: string;
+    profile_selection?: unknown;
+    profile_guardrails?: unknown;
+    budget_forecast?: BudgetForecast;
+    depth_escalation?: DepthEscalationRecord;
+    risk_aware_depth?: RiskAwareDepthResult;
+    optional_skill_selection?: Record<string, unknown>;
+}
+
+export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeResult {
     const normalizedInputFiles = options.normalizedFiles || [];
     const generatedRuntimeSplit = splitGeneratedRuntimeControlPlaneArtifacts(normalizedInputFiles);
     const normalizedFiles = generatedRuntimeSplit.reviewableFiles;
