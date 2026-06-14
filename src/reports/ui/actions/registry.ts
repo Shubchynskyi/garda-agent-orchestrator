@@ -4,6 +4,7 @@ export * from './workspace-actions';
 export * from './task-actions';
 export * from './workflow-setting-actions';
 export * from './backup-actions';
+export * from './cleanup-settings-actions';
 
 import { buildUiBackupActionDefinitions } from './backup-actions';
 import { buildUiWorkspaceActionDefinitions } from './workspace-actions';

@@ -333,12 +333,14 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         summary: 'Remove stale runtime artifacts and inspect tiered retention policy.',
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} cleanup [--target-root PATH] [--dry-run] [--confirm] [--max-age-days N] [--runtime-retention-older-than-days N] [--runtime-retention-keep-latest-tasks N] [--max-backups N] [--max-working-plans N] [--max-aggregate-lines N] [--max-metrics-lines N]`,
-            `${PRIMARY_CLI_NAME} cleanup policy [show|edit] [--target-root PATH]`
+            `${PRIMARY_CLI_NAME} cleanup policy [show|edit] [--target-root PATH]`,
+            `${PRIMARY_CLI_NAME} cleanup task-purge --task-id "<task-id>" [--target-root PATH] [--dry-run|--confirm] [--json]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} cleanup --dry-run`,
             `${PRIMARY_CLI_NAME} cleanup policy`,
-            `${PRIMARY_CLI_NAME} cleanup policy edit`
+            `${PRIMARY_CLI_NAME} cleanup policy edit`,
+            `${PRIMARY_CLI_NAME} cleanup task-purge --task-id "T-100" --dry-run`
         ]),
         hints: Object.freeze([
             'Use dry-run first when removing runtime artifacts.',
@@ -346,6 +348,7 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             'Runtime retention tiers are active evidence, ledger history for healthy DONE tasks, compressed forensic evidence for problem tasks, and confirmed purge.',
             'Clean-success compile/full-suite raw logs may be omitted at gate time; warnings, failures, and non-clean runs retain raw output.',
             'Working-plan cleanup is limited to runtime/plans/*.md and preserves active task plans.',
+            'Task purge removes only runtime artifacts owned by the selected task id and repairs shared aggregates instead of deleting shared files wholesale.',
             'The policy subcommand is the human-facing review-artifact storage policy editor/viewer.'
         ])
     }),

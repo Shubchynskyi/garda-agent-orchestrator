@@ -779,6 +779,103 @@ describe('runCleanup', () => {
             assert.equal(backupItems.length, 3);
             assert.equal(eventItems.length, 5);
         });
+
+        it('combines task retention cleanup with shared-state repair and metrics pruning', () => {
+            const targetTask = seedHealthyDoneTaskArtifacts({
+                bundleRoot,
+                taskId: 'T-779',
+                includePlan: true,
+                includeProjectMemory: true,
+                includeCompletenessCache: true,
+                ageDays: 45
+            });
+            const retainedTask = seedHealthyDoneTaskArtifacts({
+                bundleRoot,
+                taskId: 'T-780',
+                includePlan: true,
+                includeProjectMemory: true,
+                includeCompletenessCache: true,
+                ageDays: 1
+            });
+            writeTaskQueue(tmpDir, [
+                { id: 'T-779', status: '🟩 DONE', title: 'Cleanup target' },
+                { id: 'T-780', status: '🟨 IN_PROGRESS', title: 'Active task' }
+            ]);
+
+            const reviewsIndexPath = path.join(targetTask.reviewsDir, 'reviews-index.json');
+            const allTasksPath = path.join(targetTask.eventsDir, 'all-tasks.jsonl');
+            const manualValidationDir = path.join(runtimeDir, 'manual-validation', 'T-779');
+            const reviewScratchDir = path.join(runtimeDir, 'tmp', 'reviews', 'T-779');
+            const taskPrefixedTmpLog = path.join(runtimeDir, 'tmp', 'T-779-full-suite-validation.log');
+            const metricsPath = path.join(runtimeDir, 'metrics.jsonl');
+            fs.writeFileSync(reviewsIndexPath, JSON.stringify({ version: 1, entries: [] }), 'utf8');
+            fs.writeFileSync(allTasksPath, '{"task_id":"T-779"}\n{"task_id":"T-780"}\n', 'utf8');
+            fs.mkdirSync(manualValidationDir, { recursive: true });
+            fs.mkdirSync(reviewScratchDir, { recursive: true });
+            fs.writeFileSync(path.join(manualValidationDir, 'review-evidence.json'), '{}', 'utf8');
+            fs.writeFileSync(path.join(reviewScratchDir, 'review-output.md'), 'review', 'utf8');
+            fs.writeFileSync(taskPrefixedTmpLog, 'tmp', 'utf8');
+            fs.writeFileSync(
+                metricsPath,
+                Array.from({ length: 25 }, (_, index) => JSON.stringify({ seq: index })).join('\n') + '\n',
+                'utf8'
+            );
+
+            const past = daysAgo(45);
+            for (const ownedPath of [
+                manualValidationDir,
+                path.join(manualValidationDir, 'review-evidence.json'),
+                reviewScratchDir,
+                path.join(reviewScratchDir, 'review-output.md'),
+                taskPrefixedTmpLog
+            ]) {
+                fs.utimesSync(ownedPath, past, past);
+            }
+
+            const result = runCleanup({
+                targetRoot: tmpDir,
+                bundleRoot,
+                dryRun: false,
+                retentionPolicy: { maxAgeDays: 30, maxMetricsLines: 10 }
+            });
+
+            assert.equal(result.result, 'SUCCESS');
+            for (const category of ['manual-validation', 'reviews', 'task-events', 'plans', 'project-memory', 'tmp']) {
+                assert.ok(result.removed.some((item) => item.category === category && item.taskId === 'T-779'),
+                    `runtime retention should remove ${category} for the eligible task`);
+            }
+            assert.ok(!result.removed.some((item) => item.category === 'task-ledger' && item.taskId === 'T-779'),
+                'ledger-only compaction must keep verified task ledger evidence');
+            assert.equal(fs.existsSync(targetTask.ledgerPath), true);
+            assert.equal(fs.existsSync(manualValidationDir), false);
+            assert.equal(fs.existsSync(reviewScratchDir), false);
+            assert.equal(fs.existsSync(taskPrefixedTmpLog), false);
+            assert.equal(fs.existsSync(retainedTask.timelinePath), true, 'active task timeline must remain');
+            assert.equal(fs.existsSync(path.join(retainedTask.eventsDir, 'T-780.completeness.json')), true);
+
+            assert.equal(fs.existsSync(reviewsIndexPath), false, 'review index should be invalidated after task artifact removal');
+            const updatedSummary = JSON.parse(fs.readFileSync(path.join(targetTask.eventsDir, '.timeline-summary.json'), 'utf8'));
+            assert.equal(updatedSummary.entries['T-779'], undefined);
+            assert.ok(updatedSummary.entries['T-780']);
+            const aggregateRecords = fs.readFileSync(allTasksPath, 'utf8')
+                .split('\n')
+                .filter((line) => line.trim())
+                .map((line) => JSON.parse(line) as { task_id?: string });
+            assert.equal(aggregateRecords.some((entry) => entry.task_id === 'T-779'), false);
+            assert.equal(aggregateRecords.some((entry) => entry.task_id === 'T-780'), true);
+
+            assert.deepEqual(result.metricsRetention, {
+                pruned: true,
+                lines_before: 25,
+                lines_after: 10
+            });
+            const remainingMetrics = fs.readFileSync(metricsPath, 'utf8')
+                .split('\n')
+                .filter((line) => line.trim())
+                .map((line) => JSON.parse(line) as { seq: number });
+            assert.equal(remainingMetrics.length, 10);
+            assert.equal(remainingMetrics[0].seq, 15);
+        });
     });
 
     describe('error handling', () => {

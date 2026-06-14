@@ -176,6 +176,9 @@ function createFakeDocument(): {
         'backups-settings',
         'backups-table',
         'backup-action-status',
+        'cleanup-settings-tab',
+        'cleanup-settings',
+        'cleanup-status',
         'instructions-tab',
         'actions-tab',
         'task-detail-panel'
@@ -186,10 +189,11 @@ function createFakeDocument(): {
     elements['init-settings-tab'].hidden = true;
     elements['project-memory-tab'].hidden = true;
     elements['backups-tab'].hidden = true;
+    elements['cleanup-settings-tab'].hidden = true;
     elements['instructions-tab'].hidden = true;
     elements['actions-tab'].hidden = true;
 
-    const navButtons = ['tasks-tab', 'workflow-tab', 'init-settings-tab', 'project-memory-tab', 'backups-tab', 'instructions-tab', 'actions-tab'].map((tabId, index) => {
+    const navButtons = ['tasks-tab', 'workflow-tab', 'init-settings-tab', 'project-memory-tab', 'backups-tab', 'cleanup-settings-tab', 'instructions-tab', 'actions-tab'].map((tabId, index) => {
         const button = new FakeElement(`nav-${tabId}`, index === 0 ? ['active'] : []);
         button.dataset.tab = tabId;
         return button;
@@ -212,6 +216,7 @@ function createFakeDocument(): {
                     elements['init-settings-tab'],
                     elements['project-memory-tab'],
                     elements['backups-tab'],
+                    elements['cleanup-settings-tab'],
                     elements['instructions-tab'],
                     elements['actions-tab']
                 ];
@@ -637,3 +642,102 @@ test('local UI dashboard falls back from unsupported browser locale to server in
     }
 });
 
+test('local UI cleanup settings rerender when the dashboard language changes', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0, language: 'en' });
+    try {
+        const html = await (await fetch(server.url)).text();
+        const fakeDocument = createFakeDocument();
+        const report = {
+            repo_root: repoRoot,
+            unavailable: [],
+            tasks_tab: { rows: [] },
+            workflow_config_tab: { settings: [] },
+            instructions_tab: { entries: [] }
+        };
+        const session = {
+            enabled: true,
+            state: 'active',
+            last_activity_at: '2026-05-19T00:00:00.000Z',
+            idle_minutes: 15,
+            warning_seconds: 60,
+            idle_deadline_at: '2026-05-19T00:15:00.000Z',
+            shutdown_deadline_at: null,
+            seconds_until_warning: 900,
+            seconds_until_shutdown: null,
+            stop_message: 'The local Garda UI server has stopped. Rerun `garda ui` from a terminal to launch it again.'
+        };
+        const cleanupPayload = {
+            enabled: false,
+            config_path: path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'runtime-retention.json'),
+            settings: {
+                daily_maintenance_enabled: true,
+                daily_maintenance_max_tasks_per_run: 5,
+                daily_maintenance_dry_run: true,
+                eligible_older_than_days: 14,
+                keep_latest_tasks: 10,
+                purge_require_confirm: true,
+                healthy_done_compact_after_days: 7,
+                problem_tasks_compress_after_days: 30
+            }
+        };
+        const context: Record<string, unknown> = {
+            document: fakeDocument,
+            window: {
+                prompt: () => null,
+                addEventListener: () => undefined,
+                localStorage: {
+                    getItem: () => null,
+                    setItem: () => undefined
+                }
+            },
+            setInterval: () => 1,
+            clearInterval: () => undefined,
+            fetch: async (url: string) => ({
+                ok: true,
+                status: 200,
+                json: async () => {
+                    if (url === '/api/session') {
+                        return session;
+                    }
+                    if (url === '/api/report') {
+                        return report;
+                    }
+                    if (url === '/api/actions') {
+                        return { enabled: false, switch_state: 'on', actions: [] };
+                    }
+                    if (url === '/api/settings') {
+                        return { enabled: false, settings: [] };
+                    }
+                    if (url === '/api/cleanup-settings') {
+                        return cleanupPayload;
+                    }
+                    return {};
+                }
+            })
+        };
+
+        vm.runInNewContext(extractDashboardScript(html), context);
+        await flushPromises();
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Effective policy/u);
+
+        const renderCleanupResult = context.renderCleanupResult as ((result: unknown) => void) | undefined;
+        assert.equal(typeof renderCleanupResult, 'function');
+        assert.ok(renderCleanupResult);
+        renderCleanupResult({
+            status: 'previewed',
+            action_id: 'cleanup-run',
+            command: 'garda cleanup --dry-run'
+        });
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview only/u);
+
+        fakeDocument.elements['language-select'].value = 'de';
+        await fakeDocument.elements['language-select'].dispatch('change');
+
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Wirksame Richtlinie/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Vorschau/u);
+    } finally {
+        await server.close();
+    }
+});

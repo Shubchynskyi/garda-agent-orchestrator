@@ -13,8 +13,12 @@ import {
 } from '../report-data-contract';
 import {
     buildUiActionsPayload,
+    buildUiCleanupPayload,
     buildUiSettingsPayload,
     handleUiActionRequest,
+    handleUiCleanupRunPostRequest,
+    handleUiCleanupSettingsPostRequest,
+    handleUiCleanupTaskPurgePostRequest,
     handleUiSettingRequest,
     handleUiTaskActionRequest,
     sendApiError,
@@ -431,6 +435,24 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
             });
             return;
         }
+        if (request.method === 'POST' && pathname === '/api/cleanup-settings') {
+            handleUiCleanupSettingsPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_cleanup_settings_request');
+            });
+            return;
+        }
+        if (request.method === 'POST' && pathname === '/api/cleanup-run') {
+            handleUiCleanupRunPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_cleanup_run_request');
+            });
+            return;
+        }
+        if (request.method === 'POST' && pathname === '/api/cleanup-task-purge') {
+            handleUiCleanupTaskPurgePostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_cleanup_task_purge_request');
+            });
+            return;
+        }
         const taskActionMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/actions$/u);
         if (request.method === 'POST' && taskActionMatch) {
             const taskId = decodeTaskIdSegment(taskActionMatch[1]);
@@ -474,6 +496,10 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         }
         if (pathname === '/api/settings') {
             sendJson(response, 200, buildUiSettingsPayload(resolvedRepoRoot, options.actionsEnabled));
+            return;
+        }
+        if (pathname === '/api/cleanup-settings') {
+            sendJson(response, 200, buildUiCleanupPayload(resolvedRepoRoot, options.actionsEnabled));
             return;
         }
         const detailMatch = pathname.match(/^\/api\/tasks\/([^/]+)\/detail$/u);

@@ -4,7 +4,12 @@ import {
     DEFAULT_SOURCE_OF_TRUTH,
     SOURCE_OF_TRUTH_VALUES
 } from '../../../core/constants';
-import { runCleanupWithLock, runGcWithLock, validateGcCategories } from '../../../lifecycle/cleanup';
+import {
+    runCleanupWithLock,
+    runGcWithLock,
+    runTaskRuntimePurgeWithLock,
+    validateGcCategories
+} from '../../../lifecycle/cleanup';
 import { runUninstall } from '../../../lifecycle/uninstall';
 import { runReinit } from '../../../materialization/reinit';
 import {
@@ -283,6 +288,69 @@ export function handleUninstall(commandArgv: string[], packageJson: PackageJsonL
 
 export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> | void {
     const firstArg = String(commandArgv[0] || '').trim();
+    if (firstArg === 'task-purge') {
+        const taskPurgeDefinitions = {
+            '--target-root': { key: 'targetRoot', type: 'string' },
+            '--task-id': { key: 'taskId', type: 'string' },
+            '--confirm': { key: 'confirm', type: 'boolean' },
+            '--dry-run': { key: 'dryRun', type: 'boolean' },
+            '--json': { key: 'json', type: 'boolean' }
+        };
+        const { options: rawTaskPurgeOptions } = parseOptions(commandArgv.slice(1), taskPurgeDefinitions);
+        const taskPurgeOptions = rawTaskPurgeOptions as ParsedOptionsRecord;
+
+        if (handleStandardFlags(taskPurgeOptions, packageJson)) return;
+
+        const taskId = typeof taskPurgeOptions.taskId === 'string' ? taskPurgeOptions.taskId : '';
+        if (!taskId.trim()) {
+            throw new Error('cleanup task-purge requires --task-id <task-id>.');
+        }
+
+        const { targetRoot, bundlePath } = resolveWorkspacePaths(taskPurgeOptions.targetRoot, 'cleanup task-purge');
+        const confirm = taskPurgeOptions.confirm === true && taskPurgeOptions.dryRun !== true;
+        const result = runTaskRuntimePurgeWithLock({
+            targetRoot,
+            bundleRoot: bundlePath,
+            taskId,
+            confirm
+        });
+
+        if (taskPurgeOptions.json === true) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+
+        printBanner(packageJson, 'Task runtime purge', targetRoot, {
+            versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+        });
+        if (!confirm) {
+            console.log(yellow('Dry run (default) — no files were removed. Pass --confirm to purge this task runtime.'));
+        }
+        formatKeyValueOutput(result as unknown as Record<string, unknown>, [
+            'targetRoot', 'taskId', 'dryRun', 'totalFreedBytes', 'result'
+        ]);
+        const actionItems = result.dryRun ? result.skipped : result.removed;
+        const byCategory = new Map<string, number>();
+        for (const item of actionItems) {
+            byCategory.set(item.category, (byCategory.get(item.category) || 0) + 1);
+        }
+        const action = result.dryRun ? 'Would remove' : 'Removed';
+        for (const [category, count] of byCategory) {
+            printHighlightedPair(`${action} (${category}):`, String(count), {
+                labelColor: cyan,
+                valueColor: green
+            });
+        }
+        if (result.errors.length > 0) {
+            console.log(yellow(`Errors: ${result.errors.length}`));
+            for (const err of result.errors) {
+                console.log(`  ${err.path}: ${err.message}`);
+            }
+        }
+        console.log(`Result: ${result.result}`);
+        return;
+    }
+
     if (firstArg === 'policy') {
         const policyArgv = commandArgv.slice(1);
         const policyFirstArg = String(policyArgv[0] || '').trim();
@@ -327,6 +395,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
     const cleanupDefinitions = {
         '--target-root': { key: 'targetRoot', type: 'string' },
         '--dry-run': { key: 'dryRun', type: 'boolean' },
+        '--confirm': { key: 'confirm', type: 'boolean' },
         '--max-age-days': { key: 'maxAgeDays', type: 'string' },
         '--max-backups': { key: 'maxBackups', type: 'string' },
         '--max-task-events': { key: 'maxTaskEvents', type: 'string' },
@@ -350,7 +419,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
         versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
     });
     const bundlePath = ensureBundleExists(targetRoot, 'cleanup');
-    const dryRun = options.dryRun === true;
+    const dryRun = options.dryRun === true || options.confirm !== true;
 
     const retentionOverrides: Record<string, number> = {};
     const intFields: Array<[string, string]> = [
@@ -393,7 +462,7 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
     });
 
     if (dryRun) {
-        console.log(yellow('Dry run — no files were removed.'));
+        console.log(yellow('Dry run (default) — no files were removed. Pass --confirm to delete.'));
     }
 
     formatKeyValueOutput(cleanupResult as unknown as Record<string, unknown>, [

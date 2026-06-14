@@ -652,6 +652,175 @@ test('local UI actions support preview confirmation execution and audit', async 
     }
 });
 
+test('local UI cleanup settings expose policy edits dynamic cleanup and task purge', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const executedCommands: string[] = [];
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => {
+            executedCommands.push(action.command.display);
+            return {
+                exit_code: 0,
+                signal: null,
+                stdout: 'cleanup ok',
+                stderr: ''
+            };
+        }
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const actionHeaders = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+
+        const policyResponse = await fetch(`${server.url}api/cleanup-settings`);
+        assert.equal(policyResponse.status, 200);
+        const policy = await policyResponse.json() as {
+            enabled: boolean;
+            confirmation_phrase: string;
+            settings: {
+                daily_maintenance_enabled: boolean;
+                eligible_older_than_days: number;
+                keep_latest_tasks: number;
+            };
+        };
+        assert.equal(policy.enabled, true);
+        assert.equal(policy.confirmation_phrase, 'SAVE CLEANUP SETTINGS');
+        assert.equal(policy.settings.daily_maintenance_enabled, false);
+        assert.equal(policy.settings.eligible_older_than_days, 30);
+        assert.equal(policy.settings.keep_latest_tasks, 0);
+
+        const settingsPayload = {
+            daily_maintenance_enabled: true,
+            daily_maintenance_max_tasks_per_run: '7',
+            eligible_older_than_days: '45',
+            keep_latest_tasks: '3',
+            daily_maintenance_dry_run: false
+        };
+        const settingsPreviewResponse = await fetch(`${server.url}api/cleanup-settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ mode: 'preview', settings: settingsPayload })
+        });
+        assert.equal(settingsPreviewResponse.status, 200);
+        const settingsPreview = await settingsPreviewResponse.json() as {
+            status: string;
+            command: string;
+            proposed_settings: { eligible_older_than_days: number; keep_latest_tasks: number };
+        };
+        assert.equal(settingsPreview.status, 'previewed');
+        assert.match(settingsPreview.command, /runtime-retention\.json/u);
+        assert.equal(settingsPreview.proposed_settings.eligible_older_than_days, 45);
+        assert.equal(settingsPreview.proposed_settings.keep_latest_tasks, 3);
+
+        const blockedSaveResponse = await fetch(`${server.url}api/cleanup-settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ mode: 'execute', settings: settingsPayload, confirmation: 'wrong' })
+        });
+        assert.equal(blockedSaveResponse.status, 409);
+        assert.equal((await blockedSaveResponse.json() as { status: string }).status, 'confirmation_required');
+
+        const saveResponse = await fetch(`${server.url}api/cleanup-settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ mode: 'execute', settings: settingsPayload, confirmation: 'SAVE CLEANUP SETTINGS' })
+        });
+        assert.equal(saveResponse.status, 200);
+        const runtimeRetentionPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'runtime-retention.json');
+        const savedPolicy = JSON.parse(fs.readFileSync(runtimeRetentionPath, 'utf8')) as {
+            daily_maintenance: { enabled: boolean; max_tasks_per_run: number; eligible_older_than_days: number; keep_latest_tasks: number; dry_run: boolean };
+        };
+        assert.deepEqual(savedPolicy.daily_maintenance, {
+            enabled: true,
+            max_tasks_per_run: 7,
+            eligible_older_than_days: 45,
+            keep_latest_tasks: 3,
+            dry_run: false
+        });
+
+        const runPreviewResponse = await fetch(`${server.url}api/cleanup-run`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ mode: 'preview', eligible_older_than_days: '11', keep_latest_tasks: '2' })
+        });
+        assert.equal(runPreviewResponse.status, 200);
+        const runPreview = await runPreviewResponse.json() as { status: string; command: string };
+        assert.equal(runPreview.status, 'previewed');
+        assert.match(runPreview.command, /cleanup --target-root \. --dry-run/u);
+        assert.match(runPreview.command, /--runtime-retention-older-than-days 11/u);
+        assert.match(runPreview.command, /--runtime-retention-keep-latest-tasks 2/u);
+        assert.deepEqual(executedCommands, []);
+
+        const runBlockedResponse = await fetch(`${server.url}api/cleanup-run`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                mode: 'execute',
+                eligible_older_than_days: '11',
+                keep_latest_tasks: '2',
+                confirmation: 'wrong'
+            })
+        });
+        assert.equal(runBlockedResponse.status, 409);
+        const runBlocked = await runBlockedResponse.json() as {
+            status: string;
+            confirmation_phrase: string;
+            command: string;
+        };
+        assert.equal(runBlocked.status, 'confirmation_required');
+        assert.equal(runBlocked.confirmation_phrase, 'RUN GARDA CLEANUP');
+        assert.match(runBlocked.command, /cleanup --target-root \. --confirm/u);
+        assert.deepEqual(executedCommands, []);
+
+        const runApplyResponse = await fetch(`${server.url}api/cleanup-run`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                mode: 'execute',
+                eligible_older_than_days: '11',
+                keep_latest_tasks: '2',
+                confirmation: 'RUN GARDA CLEANUP'
+            })
+        });
+        assert.equal(runApplyResponse.status, 200);
+        const runApply = await runApplyResponse.json() as { status: string; command: string; stdout: string };
+        assert.equal(runApply.status, 'executed');
+        assert.match(runApply.command, /cleanup --target-root \. --confirm/u);
+        assert.match(runApply.command, /--runtime-retention-older-than-days 11/u);
+        assert.match(runApply.command, /--runtime-retention-keep-latest-tasks 2/u);
+        assert.equal(runApply.stdout, 'cleanup ok');
+        assert.equal(executedCommands.length, 1);
+
+        const taskPurgeBlockedResponse = await fetch(`${server.url}api/cleanup-task-purge`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ mode: 'execute', task_id: 'T-100', confirmation: 'wrong' })
+        });
+        assert.equal(taskPurgeBlockedResponse.status, 409);
+        assert.equal((await taskPurgeBlockedResponse.json() as { status: string }).status, 'confirmation_required');
+
+        const taskPurgeResponse = await fetch(`${server.url}api/cleanup-task-purge`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ mode: 'execute', task_id: 'T-100', confirmation: 'PURGE TASK RUNTIME' })
+        });
+        assert.equal(taskPurgeResponse.status, 200);
+        const taskPurge = await taskPurgeResponse.json() as { status: string; command: string; stdout: string };
+        assert.equal(taskPurge.status, 'executed');
+        assert.match(taskPurge.command, /cleanup task-purge --target-root \. --task-id T-100 --confirm/u);
+        assert.equal(taskPurge.stdout, 'cleanup ok');
+        assert.equal(executedCommands.length, 2);
+    } finally {
+        await server.close();
+    }
+});
+
 test('local UI task actions support preview confirmation execution and audit', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);

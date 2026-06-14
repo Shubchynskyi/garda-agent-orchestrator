@@ -89,6 +89,7 @@ test('cleanup accepts --max-aggregate-lines and prunes aggregate task log', () =
             CLI_ENTRY,
             'cleanup',
             '--target-root', tmpDir,
+            '--confirm',
             '--max-aggregate-lines', '10'
         ], {
             cwd: NEUTRAL_CWD,
@@ -193,6 +194,7 @@ test('cleanup accepts --max-metrics-lines and reports metrics-only pruning', () 
             CLI_ENTRY,
             'cleanup',
             '--target-root', tmpDir,
+            '--confirm',
             '--max-metrics-lines', '10'
         ], {
             cwd: NEUTRAL_CWD,

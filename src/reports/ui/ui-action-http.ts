@@ -2,9 +2,15 @@ import type * as http from 'node:http';
 import {
     buildUiSettingDefinitions,
     buildUiWorkspaceAndBackupActionDefinitions,
+    buildUiCleanupSettingsPayload,
     detectUiSwitchModeState,
     formatPublicAction
 } from './actions/registry';
+import {
+    handleUiCleanupRunRequest,
+    handleUiCleanupSettingsRequest,
+    handleUiCleanupTaskPurgeRequest
+} from './actions/cleanup-settings-actions';
 import { handleUiTaskActionRequest as executeUiTaskActionRequest } from './actions/http/task-action-http';
 import { handleUiWorkspaceActionRequest } from './actions/http/workspace-action-http';
 import { handleUiWorkflowSettingRequest } from './actions/http/workflow-setting-action-http';
@@ -30,6 +36,10 @@ export function buildUiSettingsPayload(repoRoot: string, actionsEnabled: boolean
         enabled: actionsEnabled,
         settings: buildUiSettingDefinitions(repoRoot)
     };
+}
+
+export function buildUiCleanupPayload(repoRoot: string, actionsEnabled: boolean): Record<string, unknown> {
+    return buildUiCleanupSettingsPayload(repoRoot, actionsEnabled);
 }
 
 export async function handleUiActionRequest(
@@ -58,4 +68,31 @@ export async function handleUiSettingRequest(
     options: LocalUiServerRuntimeOptions
 ): Promise<void> {
     return handleUiWorkflowSettingRequest(request, response, repoRoot, options);
+}
+
+export async function handleUiCleanupSettingsPostRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    return handleUiCleanupSettingsRequest(request, response, repoRoot, options);
+}
+
+export async function handleUiCleanupRunPostRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    return handleUiCleanupRunRequest(request, response, repoRoot, options);
+}
+
+export async function handleUiCleanupTaskPurgePostRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    return handleUiCleanupTaskPurgeRequest(request, response, repoRoot, options);
 }
