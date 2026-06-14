@@ -10,7 +10,7 @@ import {
     TASK_ID_ALLOWED_PATTERN
 } from '../../core/task-ids';
 import {
-    parseTaskMdTableRow
+    parseCanonicalActiveTaskQueue
 } from '../../core/task-md-table';
 
 export interface TaskQueueEntry {
@@ -67,28 +67,21 @@ export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
 
 export function parseTaskQueueEntriesFromContent(content: string): Map<string, TaskQueueEntry> {
     const entries = new Map<string, TaskQueueEntry>();
-    for (const line of content.split('\n')) {
-        if (!line.trim().startsWith('|')) {
-            continue;
-        }
-        const cells = parseTaskMdTableRow(line);
-        const rawTaskId = cells[0]?.trimmed || '';
+    for (const row of parseCanonicalActiveTaskQueue(content).rows) {
+        const rawTaskId = row.taskId;
         if (
-            cells.length < 9
-            || cells.every((cell) => /^:?-{3,}:?$/u.test(cell.trimmed))
-            || rawTaskId.toUpperCase() === 'ID'
-            || !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)
+            !TASK_QUEUE_TASK_ID_PATTERN.test(rawTaskId)
         ) {
             continue;
         }
         const taskId = rawTaskId;
         entries.set(taskId, {
             taskId,
-            status: cells[1]?.trimmed || null,
-            area: cells[3]?.trimmed || null,
-            title: cells[4]?.trimmed || null,
-            profile: cells[7]?.trimmed || null,
-            notes: cells[8]?.trimmed || null
+            status: row.status || null,
+            area: row.area || null,
+            title: row.title || null,
+            profile: row.profile || null,
+            notes: row.notes || null
         });
     }
     return entries;

@@ -7,7 +7,7 @@ import {
     readTaskQueueStatusToken
 } from '../../core/active-task-state';
 import {
-    parseTaskMdTableRow,
+    parseCanonicalActiveTaskQueue,
     replaceTaskMdTableCell
 } from '../../core/task-md-table';
 import {
@@ -87,17 +87,12 @@ export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: strin
             let taskFound = false;
             let changed = false;
 
-            for (let index = 0; index < lines.length; index += 1) {
-                const rawLine = lines[index];
-                if (!rawLine.trim().startsWith('|')) {
-                    continue;
-                }
-                const cells = parseTaskMdTableRow(rawLine);
-                if (cells.length < 4 || cells[0].trimmed !== taskId) {
+            for (const row of parseCanonicalActiveTaskQueue(originalContent).rows) {
+                if (row.taskId !== taskId) {
                     continue;
                 }
                 taskFound = true;
-                previousStatus = readTaskQueueStatusToken(cells[1].trimmed);
+                previousStatus = readTaskQueueStatusToken(row.status);
                 if (previousStatus !== SPLIT_REQUIRED_STATUS) {
                     return {
                         outcome: 'write_failed',
@@ -109,9 +104,9 @@ export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: strin
                         status_contract: statusContract
                     };
                 }
-                const updatedStatusCell = formatTaskQueueStatusCell(cells[1].raw, 'DECOMPOSED');
-                if (updatedStatusCell !== cells[1].raw) {
-                    const updatedLine = replaceTaskMdTableCell(rawLine, 1, updatedStatusCell);
+                const updatedStatusCell = formatTaskQueueStatusCell(row.cells[1].raw, 'DECOMPOSED');
+                if (updatedStatusCell !== row.cells[1].raw) {
+                    const updatedLine = replaceTaskMdTableCell(row.rawLine, 1, updatedStatusCell);
                     if (!updatedLine) {
                         return {
                             outcome: 'write_failed',
@@ -123,7 +118,7 @@ export function syncTaskQueueStatusFromSplitRequiredToDecomposed(repoRoot: strin
                             status_contract: statusContract
                         };
                     }
-                    lines[index] = updatedLine;
+                    lines[row.lineIndex] = updatedLine;
                     changed = true;
                 }
                 break;
@@ -224,26 +219,24 @@ export function rollbackDecomposedParentStatusSync(
             const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
             const lines = originalContent.split(/\r?\n/);
             const pendingTaskIds = new Set(taskIds);
-            for (let index = 0; index < lines.length && pendingTaskIds.size > 0; index += 1) {
-                const rawLine = lines[index];
-                if (!rawLine.trim().startsWith('|')) {
-                    continue;
+            for (const row of parseCanonicalActiveTaskQueue(originalContent).rows) {
+                if (pendingTaskIds.size === 0) {
+                    break;
                 }
-                const cells = parseTaskMdTableRow(rawLine);
-                const taskId = cells[0]?.trimmed;
-                if (!taskId || !pendingTaskIds.has(taskId)) {
+                const taskId = row.taskId;
+                if (!pendingTaskIds.has(taskId)) {
                     continue;
                 }
                 const previousStatus = previousStatuses[taskId];
                 if (!previousStatus) {
                     return `Missing previous status for ${taskId}.`;
                 }
-                const updatedStatusCell = formatTaskQueueStatusCell(cells[1].raw, previousStatus);
-                const updatedLine = replaceTaskMdTableCell(rawLine, 1, updatedStatusCell);
+                const updatedStatusCell = formatTaskQueueStatusCell(row.cells[1].raw, previousStatus);
+                const updatedLine = replaceTaskMdTableCell(row.rawLine, 1, updatedStatusCell);
                 if (!updatedLine) {
                     return `Failed to replace TASK.md status cell for ${taskId}.`;
                 }
-                lines[index] = updatedLine;
+                lines[row.lineIndex] = updatedLine;
                 pendingTaskIds.delete(taskId);
             }
             if (pendingTaskIds.size > 0) {
@@ -348,16 +341,10 @@ export function syncDecomposedParentsToDone(
                 }
             }
 
-            const rowByTaskId = new Map<string, { index: number; rawLine: string; cells: ReturnType<typeof parseTaskMdTableRow> }>();
-            for (let index = 0; index < lines.length; index += 1) {
-                const rawLine = lines[index];
-                if (!rawLine.trim().startsWith('|')) {
-                    continue;
-                }
-                const cells = parseTaskMdTableRow(rawLine);
-                const taskId = cells[0]?.trimmed;
-                if (taskId && TASK_QUEUE_TASK_ID_PATTERN.test(taskId)) {
-                    rowByTaskId.set(taskId, { index, rawLine, cells });
+            const rowByTaskId = new Map<string, ReturnType<typeof parseCanonicalActiveTaskQueue>['rows'][number]>();
+            for (const row of parseCanonicalActiveTaskQueue(originalContent).rows) {
+                if (TASK_QUEUE_TASK_ID_PATTERN.test(row.taskId)) {
+                    rowByTaskId.set(row.taskId, row);
                 }
             }
 
@@ -415,7 +402,7 @@ export function syncDecomposedParentsToDone(
                         errorMessage: `Failed to replace TASK.md status cell for ${completedTaskId}.`
                     });
                 }
-                lines[row.index] = updatedLine;
+                lines[row.lineIndex] = updatedLine;
                 updatedTaskIds.push(completedTaskId);
             }
 

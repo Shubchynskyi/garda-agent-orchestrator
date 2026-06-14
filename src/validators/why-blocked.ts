@@ -2,7 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists } from '../core/filesystem';
 import { getBundleCliCommand, PRIMARY_CLI_NAME, resolveBundleName } from '../core/constants';
-import { parseTaskMdTableRow } from '../core/task-md-table';
+import { readTaskQueueStatusToken } from '../core/active-task-state';
+import { parseCanonicalActiveTaskQueue } from '../core/task-md-table';
 import { isCanonicalTaskId } from '../core/task-ids';
 import {
     getMandatoryEvents,
@@ -54,65 +55,6 @@ export interface WhyBlockedResult {
     summary_lines: string[];
 }
 
-const STATUS_TOKENS: Record<string, string> = {
-    'TODO': 'TODO',
-    '🟦': 'TODO',
-    'IN_PROGRESS': 'IN_PROGRESS',
-    '🟨': 'IN_PROGRESS',
-    'IN_REVIEW': 'IN_REVIEW',
-    '🟧': 'IN_REVIEW',
-    'DONE': 'DONE',
-    '🟩': 'DONE',
-    'BLOCKED': 'BLOCKED',
-    '🟥': 'BLOCKED'
-};
-
-function normalizeStatus(raw: string): string {
-    const trimmed = raw.trim();
-    for (const [token, normalized] of Object.entries(STATUS_TOKENS)) {
-        if (trimmed.includes(token)) {
-            return normalized;
-        }
-    }
-    return trimmed.toUpperCase();
-}
-
-function parseTaskMdRow(row: string): TaskStatus | null {
-    const cells = parseTaskMdTableRow(row);
-    if (cells.length < 9) {
-        return null;
-    }
-
-    // Skip separator rows
-    if (cells[0].trimmed.startsWith('-') || cells[0].trimmed.startsWith('=')) {
-        return null;
-    }
-
-    // Skip header rows
-    if (cells[0].trimmed.toLowerCase() === 'id') {
-        return null;
-    }
-
-    const id = cells[0].trimmed;
-    if (!isCanonicalTaskId(id)) {
-        return null;
-    }
-
-    const notes = cells.slice(8).map(function (cell) { return cell.trimmed; }).join(' | ').trim();
-
-    return {
-        id: id,
-        status: normalizeStatus(cells[1]?.trimmed || ''),
-        priority: cells[2]?.trimmed || '',
-        area: cells[3]?.trimmed || '',
-        title: cells[4]?.trimmed || '',
-        owner: cells[5]?.trimmed || '',
-        updated: cells[6]?.trimmed || '',
-        profile: cells[7]?.trimmed || '',
-        notes
-    };
-}
-
 function parseTaskMd(taskMdPath: string): TaskStatus[] {
     const tasks: TaskStatus[] = [];
 
@@ -127,35 +69,22 @@ function parseTaskMd(taskMdPath: string): TaskStatus[] {
         return tasks;
     }
 
-    const lines = content.split('\n');
-    let inTable = false;
-
-    for (const line of lines) {
-        const trimmed = line.trim();
-
-        // Detect table start by header row
-        if (trimmed.startsWith('|') && trimmed.toLowerCase().includes('| id |')) {
-            inTable = true;
+    for (const row of parseCanonicalActiveTaskQueue(content).rows) {
+        const id = row.taskId;
+        if (!isCanonicalTaskId(id)) {
             continue;
         }
-
-        // Separator row
-        if (inTable && trimmed.startsWith('|') && trimmed.includes('---')) {
-            continue;
-        }
-
-        if (inTable && trimmed.startsWith('|')) {
-            const task = parseTaskMdRow(trimmed);
-            if (task) {
-                tasks.push(task);
-            }
-            continue;
-        }
-
-        // Table ended
-        if (inTable && !trimmed.startsWith('|') && trimmed !== '') {
-            inTable = false;
-        }
+        tasks.push({
+            id: id,
+            status: readTaskQueueStatusToken(row.status) || row.status.trim().toUpperCase(),
+            priority: row.priority,
+            area: row.area,
+            title: row.title,
+            owner: row.owner,
+            updated: row.updated,
+            profile: row.profile,
+            notes: row.notes
+        });
     }
 
     return tasks;

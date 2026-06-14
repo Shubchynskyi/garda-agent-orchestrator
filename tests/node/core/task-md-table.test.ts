@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatActiveTaskQueueTable, parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../src/core/task-md-table';
+import { readTaskQueueStatusToken } from '../../../src/core/active-task-state';
+import {
+    formatActiveTaskQueueTable,
+    parseCanonicalActiveTaskQueue,
+    parseTaskMdTableRow,
+    replaceTaskMdTableCell
+} from '../../../src/core/task-md-table';
 import { buildTaskQueueStatusContract } from '../../../src/core/task-queue-status-contract';
 
 test('parseTaskMdTableRow keeps escaped pipes inside a single cell', () => {
@@ -53,6 +59,85 @@ test('formatActiveTaskQueueTable leaves non-canonical tables unchanged', () => {
     ].join('\n');
 
     assert.equal(formatActiveTaskQueueTable(content), content);
+});
+
+test('parseCanonicalActiveTaskQueue reads only the upper canonical 9-column Active Queue', () => {
+    const content = [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| T-001 | 🟦TODO | P1 | area | Active title | me | 2026-01-01 | balanced | active notes |',
+        '',
+        '## User Summary (RU)',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| T-999 | 🟥 BLOCKED | P1 | lower | Lower title | me | 2026-01-01 | balanced | not a machine row |'
+    ].join('\n');
+
+    const parsed = parseCanonicalActiveTaskQueue(content);
+
+    assert.equal(parsed.found, true);
+    assert.deepEqual(parsed.rows.map((row) => row.taskId), ['T-001']);
+    assert.equal(parsed.rows[0].status, '🟦TODO');
+    assert.equal(parsed.rows[0].title, 'Active title');
+});
+
+test('parseCanonicalActiveTaskQueue falls back to the first canonical 9-column table when Active Queue heading is absent', () => {
+    const content = [
+        '# TASK.md',
+        '',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| T-001 | TODO | P1 | area | Legacy fixture | me | 2026-01-01 | balanced | notes |',
+        ''
+    ].join('\n');
+
+    const parsed = parseCanonicalActiveTaskQueue(content);
+
+    assert.equal(parsed.found, true);
+    assert.deepEqual(parsed.rows.map((row) => row.taskId), ['T-001']);
+    assert.equal(parsed.rows[0].title, 'Legacy fixture');
+});
+
+test('parseCanonicalActiveTaskQueue does not fall back to lower human summary tables', () => {
+    const content = [
+        '# TASK.md',
+        '',
+        '## User Summary (RU)',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        '| T-999 | 🟥 BLOCKED | P1 | lower | Lower title | me | 2026-01-01 | balanced | not a machine row |'
+    ].join('\n');
+
+    const parsed = parseCanonicalActiveTaskQueue(content);
+
+    assert.equal(parsed.found, false);
+    assert.deepEqual(parsed.rows, []);
+});
+
+test('parseCanonicalActiveTaskQueue accepts legacy Assignee header as the owner column', () => {
+    const content = [
+        '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+        '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+        '| T-001 | TODO | P1 | area | Legacy assignee header | unassigned | 2026-01-01 | balanced | notes |'
+    ].join('\n');
+
+    const parsed = parseCanonicalActiveTaskQueue(content);
+
+    assert.equal(parsed.found, true);
+    assert.equal(parsed.rows[0].owner, 'unassigned');
+    assert.equal(parsed.rows[0].title, 'Legacy assignee header');
+});
+
+test('readTaskQueueStatusToken accepts canonical status and emoji prefix variants', () => {
+    assert.equal(readTaskQueueStatusToken('TODO'), 'TODO');
+    assert.equal(readTaskQueueStatusToken('🟦 TODO'), 'TODO');
+    assert.equal(readTaskQueueStatusToken('🟦TODO'), 'TODO');
+    assert.equal(readTaskQueueStatusToken('🟨'), 'IN_PROGRESS');
+    assert.equal(readTaskQueueStatusToken('🟫 SPLIT_REQUIRED'), 'SPLIT_REQUIRED');
+    assert.equal(readTaskQueueStatusToken('🟪DECOMPOSED'), 'DECOMPOSED');
 });
 
 test('buildTaskQueueStatusContract blocks agent-authored lifecycle status edits but allows non-status content', () => {

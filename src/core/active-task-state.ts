@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { assertValidTaskId } from '../gate-runtime/task-events-helpers';
+import { parseCanonicalActiveTaskQueue } from './task-md-table';
 
 const ACTIVE_TASK_RUNTIME_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -22,8 +23,14 @@ export function normalizeTaskQueueStatusCell(statusCell: string | null): string 
 export function readTaskQueueStatusToken(statusCell: string | null): string | null {
     const normalized = normalizeTaskQueueStatusCell(statusCell);
     for (const [status, marker] of Object.entries(TASK_QUEUE_STATUS_MARKERS)) {
-        if (normalized === status || normalized === `${marker} ${status}`) {
+        if (normalized === status || normalized === marker) {
             return status;
+        }
+        if (normalized.startsWith(marker)) {
+            const withoutMarker = normalized.slice(marker.length).trim();
+            if (withoutMarker === status) {
+                return status;
+            }
         }
     }
     return null;
@@ -223,27 +230,15 @@ export function resolveActiveTaskIds(targetRoot: string, bundleRoot: string, exp
     }
 
     const taskMdActiveTaskIds = new Set<string>();
-    for (const rawLine of content.split('\n')) {
-        const trimmed = rawLine.trim();
-        if (!trimmed.startsWith('|')) {
-            continue;
-        }
-        const cells = trimmed
-            .split('|')
-            .slice(1, -1)
-            .map((cell) => cell.trim());
-        if (cells.length < 2) {
-            continue;
-        }
-
+    for (const row of parseCanonicalActiveTaskQueue(content).rows) {
         let taskId: string;
         try {
-            taskId = assertValidTaskId(cells[0]);
+            taskId = assertValidTaskId(row.taskId);
         } catch {
             continue;
         }
 
-        if (isTaskQueueActiveStatus(cells[1] || '')) {
+        if (isTaskQueueActiveStatus(row.status)) {
             taskMdActiveTaskIds.add(taskId);
         }
     }

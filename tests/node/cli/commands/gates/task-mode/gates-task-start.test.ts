@@ -191,6 +191,27 @@ it('status sync reflows the canonical Active Queue table after updating status',
     fs.rmSync(repoRoot, { recursive: true, force: true });
 });
 
+it('status sync fallback ignores lower human summary tables when no canonical queue exists', () => {
+    const repoRoot = createTempRepo();
+    const taskId = 'T-LOWER-ONLY';
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '## User Summary (RU)',
+        '| Task ID | Status | Description | Notes |',
+        '|---------|--------|-------------|-------|',
+        `| ${taskId} | TODO | Lower-only row | Must not be machine-updated |`
+    ].join('\n'), 'utf8');
+
+    const result = syncTaskQueueStatusDetailed(repoRoot, taskId, 'IN_PROGRESS');
+    const updated = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+    assert.equal(result.outcome, 'task_not_found');
+    assert.ok(updated.includes(`| ${taskId} | TODO | Lower-only row | Must not be machine-updated |`));
+
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+});
+
 function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
     const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];

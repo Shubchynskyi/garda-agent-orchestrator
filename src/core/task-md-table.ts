@@ -6,8 +6,34 @@ export interface TaskMdTableCell {
 }
 
 const ACTIVE_QUEUE_HEADING = '## Active Queue';
+const LOWER_HUMAN_SUMMARY_HEADINGS = new Set([
+    '## User Summary (RU)',
+    '## Блок очереди'
+]);
+const ACTIVE_QUEUE_HEADER = ['ID', 'Status', 'Priority', 'Area', 'Title', 'Owner', 'Updated', 'Profile', 'Notes'] as const;
 const CANONICAL_ACTIVE_QUEUE_COLUMN_COUNT = 9;
 const MIN_SEPARATOR_WIDTH = 3;
+
+export interface CanonicalActiveTaskQueueRow {
+    lineIndex: number;
+    rawLine: string;
+    cells: TaskMdTableCell[];
+    taskId: string;
+    status: string;
+    priority: string;
+    area: string;
+    title: string;
+    owner: string;
+    updated: string;
+    profile: string;
+    notes: string;
+}
+
+export interface CanonicalActiveTaskQueueParseResult {
+    found: boolean;
+    rows: CanonicalActiveTaskQueueRow[];
+    unavailableReason: string | null;
+}
 
 function isEscapedPipe(row: string, index: number): boolean {
     let backslashCount = 0;
@@ -111,6 +137,108 @@ function isSeparatorCell(value: string): boolean {
     return /^:?-{3,}:?$/.test(value.trim());
 }
 
+function cellsMatchCanonicalActiveQueueHeader(cells: readonly TaskMdTableCell[]): boolean {
+    return cells.length === CANONICAL_ACTIVE_QUEUE_COLUMN_COUNT
+        && cells.every((cell, index) => {
+            if (index === 5) {
+                return cell.trimmed === 'Owner' || cell.trimmed === 'Assignee';
+            }
+            return cell.trimmed === ACTIVE_QUEUE_HEADER[index];
+        });
+}
+
+function cellsMatchCanonicalSeparator(cells: readonly TaskMdTableCell[]): boolean {
+    return cells.length === CANONICAL_ACTIVE_QUEUE_COLUMN_COUNT
+        && cells.every((cell) => isSeparatorCell(cell.trimmed));
+}
+
+function isLowerHumanSummaryHeading(line: string): boolean {
+    return LOWER_HUMAN_SUMMARY_HEADINGS.has(line.trim());
+}
+
+function findFirstCanonicalQueueTableIndexes(lines: readonly string[]): {
+    headerIndex: number;
+    separatorIndex: number;
+    rowsStartIndex: number;
+    rowsEndIndex: number;
+} | null {
+    for (let headerIndex = 0; headerIndex < lines.length - 1; headerIndex += 1) {
+        if (isLowerHumanSummaryHeading(lines[headerIndex])) {
+            return null;
+        }
+        const headerCells = parseTaskMdTableRow(lines[headerIndex]);
+        if (!cellsMatchCanonicalActiveQueueHeader(headerCells)) {
+            continue;
+        }
+        const separatorIndex = headerIndex + 1;
+        const separatorCells = parseTaskMdTableRow(lines[separatorIndex]);
+        if (!cellsMatchCanonicalSeparator(separatorCells)) {
+            continue;
+        }
+        const rowsStartIndex = separatorIndex + 1;
+        let rowsEndIndex = rowsStartIndex;
+        while (rowsEndIndex < lines.length && lines[rowsEndIndex].trim().startsWith('|')) {
+            rowsEndIndex += 1;
+        }
+        return { headerIndex, separatorIndex, rowsStartIndex, rowsEndIndex };
+    }
+    return null;
+}
+
+export function parseCanonicalActiveTaskQueue(content: string): CanonicalActiveTaskQueueParseResult {
+    const lines = content.split(/\r?\n/);
+    const range = findActiveQueueTableIndexes(lines) || findFirstCanonicalQueueTableIndexes(lines);
+    if (!range) {
+        return {
+            found: false,
+            rows: [],
+            unavailableReason: 'Canonical ## Active Queue section not found.'
+        };
+    }
+
+    const headerCells = parseTaskMdTableRow(lines[range.headerIndex]);
+    const separatorCells = parseTaskMdTableRow(lines[range.separatorIndex]);
+    if (!cellsMatchCanonicalActiveQueueHeader(headerCells) || !cellsMatchCanonicalSeparator(separatorCells)) {
+        return {
+            found: false,
+            rows: [],
+            unavailableReason: 'Canonical Active Queue 9-column table header not found.'
+        };
+    }
+
+    const rows: CanonicalActiveTaskQueueRow[] = [];
+    for (let index = range.rowsStartIndex; index < range.rowsEndIndex; index += 1) {
+        const rawLine = lines[index];
+        const cells = parseTaskMdTableRow(rawLine);
+        if (cells.length !== CANONICAL_ACTIVE_QUEUE_COLUMN_COUNT) {
+            continue;
+        }
+        if (cells[0].trimmed.toLowerCase() === 'id' || cellsMatchCanonicalSeparator(cells)) {
+            continue;
+        }
+        rows.push({
+            lineIndex: index,
+            rawLine,
+            cells,
+            taskId: cells[0].trimmed,
+            status: cells[1].trimmed,
+            priority: cells[2].trimmed,
+            area: cells[3].trimmed,
+            title: cells[4].trimmed,
+            owner: cells[5].trimmed,
+            updated: cells[6].trimmed,
+            profile: cells[7].trimmed,
+            notes: cells[8].trimmed
+        });
+    }
+
+    return {
+        found: true,
+        rows,
+        unavailableReason: null
+    };
+}
+
 function formatTaskMdTableRowValues(values: readonly string[], widths: readonly number[]): string {
     return `| ${values.map((value, index) => value.padEnd(widths[index])).join(' | ')} |`;
 }
@@ -137,9 +265,8 @@ export function formatActiveTaskQueueTable(content: string): string {
     const headerCells = parseTaskMdTableRow(lines[range.headerIndex]);
     const separatorCells = parseTaskMdTableRow(lines[range.separatorIndex]);
     if (
-        headerCells.length !== CANONICAL_ACTIVE_QUEUE_COLUMN_COUNT
-        || separatorCells.length !== CANONICAL_ACTIVE_QUEUE_COLUMN_COUNT
-        || !separatorCells.every((cell) => isSeparatorCell(cell.trimmed))
+        !cellsMatchCanonicalActiveQueueHeader(headerCells)
+        || !cellsMatchCanonicalSeparator(separatorCells)
     ) {
         return content;
     }

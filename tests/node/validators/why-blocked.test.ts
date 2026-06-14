@@ -50,6 +50,31 @@ test('getWhyBlocked returns no blocked tasks when all tasks are DONE', () => {
     }
 });
 
+test('getWhyBlocked ignores lower human summary tables that repeat task-looking rows', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            [
+                makeTaskMd(['| T-001 | 🟩 DONE | P0 | area | Title | me | 2026-01-01 | default | Notes |']).trimEnd(),
+                '',
+                '## User Summary (RU)',
+                '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                '|---|---|---|---|---|---|---|---|---|',
+                '| T-999 | 🟥 BLOCKED | P1 | lower | Lower-only task | me | 2026-01-01 | default | blocked_reason_code=LOWER_BLOCK |',
+                ''
+            ].join('\n'),
+            'utf8'
+        );
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.has_blocked_tasks, false);
+        assert.deepEqual(result.blocked_tasks, []);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('getWhyBlocked detects BLOCKED task', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-test-'));
     try {

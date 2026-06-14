@@ -2,11 +2,75 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { formatTaskQueueStatusCell, normalizeTaskQueueStatusCell, readTaskQueueStatusToken } from '../../../../core/active-task-state';
 import { buildTaskQueueStatusContract, type TaskQueueStatusContract } from '../../../../core/task-queue-status-contract';
-import { formatActiveTaskQueueTable, parseTaskMdTableRow, replaceTaskMdTableCell } from '../../../../core/task-md-table';
+import {
+    formatActiveTaskQueueTable,
+    parseCanonicalActiveTaskQueue,
+    parseTaskMdTableRow,
+    replaceTaskMdTableCell,
+    type TaskMdTableCell
+} from '../../../../core/task-md-table';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+interface TaskQueueStatusRow {
+    lineIndex: number;
+    rawLine: string;
+    cells: TaskMdTableCell[];
+    taskId: string;
+    status: string;
+}
+
+function readTaskQueueStatusRows(content: string): TaskQueueStatusRow[] {
+    const parsed = parseCanonicalActiveTaskQueue(content);
+    if (parsed.found) {
+        return parsed.rows.map((row) => ({
+            lineIndex: row.lineIndex,
+            rawLine: row.rawLine,
+            cells: row.cells,
+            taskId: row.taskId,
+            status: row.status
+        }));
+    }
+
+    const rows: TaskQueueStatusRow[] = [];
+    const lines = content.split(/\r?\n/);
+    let inFirstTable = false;
+    let sawAllowedLegacyHeading = false;
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+        const rawLine = lines[lineIndex];
+        const trimmed = rawLine.trim();
+        if (!inFirstTable && /^##\s+Tasks\s*$/iu.test(trimmed)) {
+            sawAllowedLegacyHeading = true;
+            continue;
+        }
+        if (!inFirstTable && trimmed.startsWith('## ') && !sawAllowedLegacyHeading) {
+            return rows;
+        }
+        if (!trimmed.startsWith('|')) {
+            if (inFirstTable && trimmed !== '') {
+                break;
+            }
+            continue;
+        }
+        inFirstTable = true;
+        const cells = parseTaskMdTableRow(rawLine);
+        const taskId = cells[0]?.trimmed || '';
+        const status = cells[1]?.trimmed || '';
+        if (
+            cells.length >= 2
+            && taskId
+            && taskId.toLowerCase() !== 'id'
+            && taskId.toLowerCase() !== 'task id'
+            && status
+            && readTaskQueueStatusToken(status)
+        ) {
+            rows.push({ lineIndex, rawLine, cells, taskId, status });
+        }
+    }
+    return rows;
 }
 
 export function readTaskQueueStatus(repoRoot: string, taskId: string): string | null {
@@ -15,17 +79,11 @@ export function readTaskQueueStatus(repoRoot: string, taskId: string): string | 
         return null;
     }
 
-    const lines = fs.readFileSync(taskPath, 'utf8').split('\n');
-    for (const rawLine of lines) {
-        const trimmed = rawLine.trim();
-        if (!trimmed.startsWith('|')) {
-            continue;
+    const content = fs.readFileSync(taskPath, 'utf8');
+    for (const row of readTaskQueueStatusRows(content)) {
+        if (row.taskId === taskId) {
+            return readTaskQueueStatusToken(row.status);
         }
-        const cells = parseTaskMdTableRow(rawLine);
-        if (cells.length < 2 || cells[0].trimmed !== taskId) {
-            continue;
-        }
-        return readTaskQueueStatusToken(cells[1].trimmed);
     }
 
     return null;
@@ -104,30 +162,25 @@ export function syncTaskQueueStatusDetailed(repoRoot: string, taskId: string, ne
             const originalContent = fs.readFileSync(taskPath, 'utf8');
             const newline = originalContent.includes('\r\n') ? '\r\n' : '\n';
             const lines = originalContent.split(/\r?\n/);
+            const queueRows = readTaskQueueStatusRows(originalContent);
             let changed = false;
             let taskFound = false;
             let previousStatus: string | null = null;
 
-            for (let index = 0; index < lines.length; index += 1) {
-                const rawLine = lines[index];
-                if (!rawLine.trim().startsWith('|')) {
-                    continue;
-                }
-
-                const cells = parseTaskMdTableRow(rawLine);
-                if (cells.length < 4 || cells[0].trimmed !== taskId) {
+            for (const row of queueRows) {
+                if (row.taskId !== taskId) {
                     continue;
                 }
 
                 taskFound = true;
-                previousStatus = readTaskQueueStatusToken(cells[1].trimmed);
-                const updatedStatusCell = formatTaskQueueStatusCell(cells[1].raw, normalizedNextStatus);
-                if (updatedStatusCell !== cells[1].raw) {
-                    const updatedLine = replaceTaskMdTableCell(rawLine, 1, updatedStatusCell);
+                previousStatus = readTaskQueueStatusToken(row.status);
+                const updatedStatusCell = formatTaskQueueStatusCell(row.cells[1].raw, normalizedNextStatus);
+                if (updatedStatusCell !== row.cells[1].raw) {
+                    const updatedLine = replaceTaskMdTableCell(row.rawLine, 1, updatedStatusCell);
                     if (!updatedLine) {
                         continue;
                     }
-                    lines[index] = updatedLine;
+                    lines[row.lineIndex] = updatedLine;
                     changed = true;
                 }
                 break;

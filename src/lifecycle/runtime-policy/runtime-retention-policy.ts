@@ -9,6 +9,7 @@ import {
     collectRuntimeTaskState,
     readTaskQueueStatusToken
 } from '../../core/active-task-state';
+import { parseCanonicalActiveTaskQueue } from '../../core/task-md-table';
 import {
     assertCanonicalTaskId,
     parseKnownReviewArtifactTaskId,
@@ -443,14 +444,9 @@ function classifyTaskPreview(
     if (fs.existsSync(taskPath)) {
         try {
             const content = fs.readFileSync(taskPath, 'utf8');
-            for (const rawLine of content.split(/\r?\n/)) {
-                const trimmed = rawLine.trim();
-                if (!trimmed.startsWith('|')) {
-                    continue;
-                }
-                const cells = trimmed.split('|').slice(1, -1).map((cell) => cell.trim());
-                if (cells.length >= 2 && cells[0] === taskId) {
-                    queueStatus = readTaskQueueStatusToken(cells[1] || '');
+            for (const row of parseCanonicalActiveTaskQueue(content).rows) {
+                if (row.taskId === taskId) {
+                    queueStatus = readTaskQueueStatusToken(row.status);
                     break;
                 }
             }
