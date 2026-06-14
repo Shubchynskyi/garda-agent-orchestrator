@@ -308,6 +308,32 @@ export function hasCompletedDecomposedParentAfterSplitRequiredClear(params: {
     });
 }
 
+export function hasGateOwnedDecomposedParentCompletionEvidence(params: {
+    eventsRoot: string;
+    taskId: string;
+}): boolean {
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(path.join(params.eventsRoot, `${params.taskId}.jsonl`), timelineErrors);
+    const completionEvent = [...timeline].reverse().find((event) => {
+        const details = event.details || {};
+        return event.event_type === 'DECOMPOSED_PARENT_COMPLETED'
+            && String(details.previous_status || '') === 'DECOMPOSED'
+            && String(details.new_status || '') === 'DONE'
+            && String(details.reason || '') === 'explicit_children_done';
+    });
+    if (!completionEvent) {
+        return false;
+    }
+    return timeline.some((event) => {
+        const details = event.details || {};
+        return event.sequence < completionEvent.sequence
+            && event.event_type === 'STATUS_CHANGED'
+            && String(details.previous_status || '') === 'DECOMPOSED'
+            && String(details.new_status || '') === 'DONE'
+            && String(details.reason || '') === 'decomposed_explicit_children_done';
+    });
+}
+
 export function sanitizeScopeBudgetGuardSummary(evaluation: ScopeBudgetGuardEvaluation): string {
     if (evaluation.violations.length === 0) {
         return evaluation.summary_line;

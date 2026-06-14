@@ -222,6 +222,7 @@ import {
 } from './next-step-terminal-status-routing';
 import {
     hasCompletedDecomposedParentAfterSplitRequiredClear,
+    hasGateOwnedDecomposedParentCompletionEvidence,
     hasSplitRequiredClearedEvidence,
     isSuccessfulSplitRequiredStatusSync,
     materializeSplitRequiredLatch,
@@ -1780,10 +1781,18 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
             taskId,
             latchEvidence: permanentSplitRequiredLatchEvidence
         });
+    const doneStatusHasGateOwnedDecomposedParentCompletionEvidence =
+        isTaskQueueDoneStatus(taskQueueStatus)
+        && hasGateOwnedDecomposedParentCompletionEvidence({
+            eventsRoot,
+            taskId
+        });
+    const doneStatusHasGateOwnedCompletionEvidence = doneStatusHasCompletedClearedLatchEvidence
+        || doneStatusHasGateOwnedDecomposedParentCompletionEvidence;
     if (
         !splitRequiredStatusInTaskQueue
         && !decomposedStatusHasClearedLatchEvidence
-        && !doneStatusHasCompletedClearedLatchEvidence
+        && !doneStatusHasGateOwnedCompletionEvidence
         && permanentSplitRequiredLatchEvidence?.valid
     ) {
         const restoreResult = restoreSplitRequiredParentFromPermanentLatch({
@@ -1947,7 +1956,7 @@ export function resolveNextStep(options: NextStepOptions): NextStepResult {
         const doneRoute = resolveDoneTaskQueueTerminalRoute({
             taskId,
             conflictBlockers: doneConflictBlockers,
-            allowCompletedClearedLatchEvidence: doneStatusHasCompletedClearedLatchEvidence,
+            allowCompletedClearedLatchEvidence: doneStatusHasGateOwnedCompletionEvidence,
             reopenPreviewCommand: buildCommand(
                 'Preview explicit operator reopen',
                 `${cliPrefix} gate task-reset --task-id "${taskId}" --reopen --dry-run --repo-root "."`

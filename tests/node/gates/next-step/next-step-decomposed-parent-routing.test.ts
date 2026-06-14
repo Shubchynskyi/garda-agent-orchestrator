@@ -1456,6 +1456,32 @@ describe('gates/next-step decomposed parent routing', () => {
         assert.ok(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes('| T-600 | 🟩 DONE |'));
     });
 
+    it('keeps gate-owned decomposed parent auto-DONE terminal-clean on repeated next-step calls', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-603 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Split into child tasks `T-604` through `T-605`. |',
+            '| T-604 | 🟩 DONE | P1 | workflow | Child one | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-605 | 🟩 DONE | P1 | workflow | Child two | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const firstResult = resolveNextStep({ taskId: 'T-603', repoRoot });
+        const secondResult = resolveNextStep({ taskId: 'T-603', repoRoot });
+
+        assert.equal(firstResult.status, 'DONE');
+        assert.ok(firstResult.reason.includes('transitioned completed parent task(s) to DONE: T-603'));
+        assert.equal(secondResult.status, 'DONE');
+        assert.equal(secondResult.next_gate, null);
+        assert.equal(secondResult.commands.length, 0);
+        assert.ok(secondResult.reason.includes('Treat this task as terminal'));
+        assert.doesNotMatch(secondResult.reason, /current lifecycle evidence is not terminal-clean/);
+        assert.notEqual(secondResult.next_gate, 'task-reset');
+    });
+
     it('does not treat ordinary blocked task notes as decomposed parents', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
