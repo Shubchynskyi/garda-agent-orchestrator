@@ -518,10 +518,16 @@ describe('next-step refactor contract baseline', () => {
         }, '2026-01-01T00:00:06.000Z');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
 
         assert.notEqual(result.next_gate, 'activate-optional-skill');
         assert.deepEqual(result.optional_skill_selection?.activated_skill_ids, ['node-backend']);
         assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.deepEqual(result.optional_skill_selection?.activation_commands, []);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
+        assert.doesNotMatch(text, /^OptionalSkillActivationCommands:/mu);
+        assert.doesNotMatch(result.optional_skill_selection?.task_start_instruction || '', /Run the activation command/i);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /Current-cycle activation evidence is present/i);
     });
 
     it('does not trust optional-skill activation evidence from a malformed task timeline', () => {

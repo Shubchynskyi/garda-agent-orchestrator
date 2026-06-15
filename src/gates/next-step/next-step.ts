@@ -935,6 +935,7 @@ function readStringArrayFromObjects(value: unknown, fieldName: string): string[]
 function buildOptionalSkillTaskStartInstruction(input: {
     policyMode: string | null;
     selectedSkillIds: string[];
+    pendingActivationSkillIds: string[];
     recommendedMissingPackIds: string[];
     asIsReason: string | null;
     skillCatalogPath: string | null;
@@ -945,11 +946,14 @@ function buildOptionalSkillTaskStartInstruction(input: {
     }
     if (input.selectedSkillIds.length > 0) {
         const skillList = input.selectedSkillIds.join(', ');
-        if (input.activationCommands.length > 0) {
+        if (input.pendingActivationSkillIds.length > 0 && input.activationCommands.length > 0) {
             if (input.policyMode === 'required' || input.policyMode === 'strict') {
                 return `Selected optional skill(s): ${skillList}. Run the activation command(s) before implementation so the timeline records the required chosen role/skill.`;
             }
             return `Selected advisory optional skill(s): ${skillList}. If you use the selected skill, run the activation command(s) before implementation so the timeline records that choice; otherwise continue with the normal navigator command.`;
+        }
+        if (input.pendingActivationSkillIds.length === 0) {
+            return `Selected optional skill(s): ${skillList}. Current-cycle activation evidence is present; continue with the normal navigator command.`;
         }
         return `Selected optional skill(s): ${skillList}. Rerun the navigator until classify-change materializes current-cycle selection evidence, then activate the selected skill before implementation.`;
     }
@@ -988,9 +992,6 @@ function buildOptionalSkillSelectionSummary(
     const asIsReason = String(artifactPayload?.as_is_reason || '').trim() || null;
     const visibleSummaryLine = String(preflightOptionalRecord.visible_summary_line || artifactPayload?.visible_summary_line || '').trim() || null;
     const skillCatalogPath = String(artifactPayload?.headlines_path || '').trim() || null;
-    const activationCommands = selectedSkillIds.map((skillId) => (
-        `${cliPrefix} gate activate-optional-skill --task-id ${quoteCommandValue(taskId)} --skill-id ${quoteCommandValue(skillId)} --repo-root "."`
-    ));
     const timelineEvidence = artifactPayload
         ? readOptionalSkillSelectionTimelineEvidence(
             path.join(repoRoot, resolveBundleNameForTarget(repoRoot)),
@@ -1005,6 +1006,9 @@ function buildOptionalSkillSelectionSummary(
     const pendingActivationSkillIds = decision === 'selected_installed_skills'
         ? selectedSkillIds.filter((skillId) => !activationIndex.has(skillId))
         : [];
+    const activationCommands = pendingActivationSkillIds.map((skillId) => (
+        `${cliPrefix} gate activate-optional-skill --task-id ${quoteCommandValue(taskId)} --skill-id ${quoteCommandValue(skillId)} --repo-root "."`
+    ));
     return {
         artifact_path: artifactPath || null,
         artifact_present: resolvedArtifactPath ? fs.existsSync(resolvedArtifactPath) : false,
@@ -1022,6 +1026,7 @@ function buildOptionalSkillSelectionSummary(
         task_start_instruction: buildOptionalSkillTaskStartInstruction({
             policyMode,
             selectedSkillIds,
+            pendingActivationSkillIds,
             recommendedMissingPackIds,
             asIsReason,
             skillCatalogPath,
@@ -1046,8 +1051,7 @@ function getPendingOptionalSkillActivationCommand(
     if (!pendingSkillId) {
         return null;
     }
-    const skillIndex = optionalSkillSelection.selected_skill_ids.indexOf(pendingSkillId);
-    const command = skillIndex >= 0 ? optionalSkillSelection.activation_commands[skillIndex] : null;
+    const command = optionalSkillSelection.activation_commands[0] || null;
     return command ? { skillId: pendingSkillId, command } : null;
 }
 
