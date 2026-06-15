@@ -572,6 +572,33 @@ export function findReviewGateStaleUpstreamRecovery(params: {
     return null;
 }
 
+export function findReviewGateStaleContextPrecheckRecovery(params: {
+    repoRoot: string;
+    eventsRoot: string;
+    taskId: string;
+    requiredReviewTypes: string[];
+    reviewStates: readonly ReviewArtifactState[];
+}): { state: ReviewArtifactState; reviewType: string } | null {
+    const stateByReviewType = new Map(params.reviewStates.map((state) => [state.reviewType, state]));
+    for (const reviewType of params.requiredReviewTypes) {
+        const state = stateByReviewType.get(reviewType);
+        if (
+            !state?.ready
+            || !state.contextExists
+            || state.contextCurrent
+            || !state.domainScopeCurrent
+            || state.failed
+        ) {
+            continue;
+        }
+        if (!reviewStateHasSatisfiedEvidence(params.repoRoot, params.eventsRoot, params.taskId, state)) {
+            continue;
+        }
+        return { state, reviewType };
+    }
+    return null;
+}
+
 export function findDownstreamReviewNeedingDependencyRebind(params: {
     eventsRoot: string;
     taskId: string;

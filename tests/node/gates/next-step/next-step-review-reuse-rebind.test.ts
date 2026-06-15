@@ -425,6 +425,50 @@ describe('gates/next-step review reuse rebind routing', () => {
         assert.ok(!result.commands[0].command.includes('required-reviews-check'));
     });
 
+    it('routes stale review contexts to rebind before required-reviews-check after coherent-cycle restart', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        const changedFiles = ['src/app.ts', 'tests/rebound-context.test.ts'];
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+
+        const reboundPreflightPath = writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential',
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        const reboundPreflight = JSON.parse(fs.readFileSync(reboundPreflightPath, 'utf8'));
+        writeJson(reboundPreflightPath, {
+            ...reboundPreflight,
+            coherent_cycle_rebound_marker: true
+        });
+        fx.seedPostPreflightRulePack(repoRoot, TASK_ID, reboundPreflightPath);
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.match(result.title, /Rebind stale 'code' review context before required reviews check/);
+        assert.ok(result.reason.includes('required-reviews-check'), result.reason);
+        assert.ok(result.reason.includes('known to fail'), result.reason);
+        assert.ok(result.commands[0].command.includes('--review-type "code"'));
+        assert.ok(!result.commands[0].command.includes('required-reviews-check'));
+    });
+
     it('routes review-gate stale upstream failures even when upstream context is current after a later compile', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

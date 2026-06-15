@@ -244,6 +244,47 @@ export interface ReviewGateStaleUpstreamRecoveryRouteOptions {
     };
 }
 
+export interface ReviewGateStaleContextPrecheckRecoveryRouteOptions {
+    reviewType: string;
+    scopedDiffReadiness: ReviewReuseScopedDiffReadiness;
+    reviewerReadinessChain: string;
+    reviewContextChain: string;
+    commands: {
+        buildScopedDiff: ReviewReuseRoutingCommand;
+        buildReviewContext: ReviewReuseRoutingCommand;
+    };
+}
+
+export function resolveReviewGateStaleContextPrecheckRecoveryRoute(
+    options: ReviewGateStaleContextPrecheckRecoveryRouteOptions
+): ReviewReuseRoutingRoute {
+    if (!options.scopedDiffReadiness.ready) {
+        return {
+            status: 'BLOCKED',
+            nextGate: 'build-scoped-diff',
+            title: `Prepare '${options.reviewType}' scoped diff metadata before required reviews check.`,
+            reason:
+                `${options.scopedDiffReadiness.reason} Required review '${options.reviewType}' has PASS evidence, ` +
+                'but its review-context binding is stale for the current preflight. Rebuild scoped metadata before ' +
+                're-binding that lane so required-reviews-check is not suggested when it is known to fail. ' +
+                `${options.reviewerReadinessChain} ${options.reviewContextChain}`,
+            commands: [options.commands.buildScopedDiff]
+        };
+    }
+
+    return {
+        status: 'BLOCKED',
+        nextGate: 'build-review-context',
+        title: `Rebind stale '${options.reviewType}' review context before required reviews check.`,
+        reason:
+            `Required review '${options.reviewType}' has PASS evidence, but its review-context binding is stale ` +
+            'for the current preflight. Rebuild the review context before required-reviews-check so the gate is not ' +
+            'suggested when it is known to fail on stale bindings. ' +
+            `${options.reviewerReadinessChain} ${options.reviewContextChain}`,
+        commands: [options.commands.buildReviewContext]
+    };
+}
+
 export function resolveReviewGateStaleUpstreamRecoveryRoute(
     options: ReviewGateStaleUpstreamRecoveryRouteOptions
 ): ReviewReuseRoutingRoute {

@@ -160,6 +160,7 @@ import {
 import {
     resolveDownstreamDependencyRebindRoute,
     resolveFailedReviewRemediationRoute,
+    resolveReviewGateStaleContextPrecheckRecoveryRoute,
     resolveReviewGateStaleUpstreamRecoveryRoute,
     resolveStrictSequentialUpstreamReuseRoute,
     type ReviewReuseCandidateHint
@@ -167,6 +168,7 @@ import {
 import {
     buildReviewGateChainStatusSummary,
     findDownstreamReviewNeedingDependencyRebind,
+    findReviewGateStaleContextPrecheckRecovery,
     findReviewGateStaleUpstreamRecovery,
     findStrictSequentialUpstreamNeedingCurrentCycleReuse,
     getHiddenReviewTimingTrustRemediation,
@@ -3048,6 +3050,85 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             title: staleUpstreamRecoveryRoute.title,
             reason: staleUpstreamRecoveryRoute.reason,
             commands: staleUpstreamRecoveryRoute.commands
+        });
+    }
+
+    const reviewGateStaleContextPrecheckRecovery = reviewGateAlreadyPassed
+        ? null
+        : findReviewGateStaleContextPrecheckRecovery({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            requiredReviewTypes,
+            reviewStates
+        });
+    if (reviewGateStaleContextPrecheckRecovery) {
+        const reviewType = reviewGateStaleContextPrecheckRecovery.reviewType;
+        const reviewDepth = getEffectiveDepthForPostPreflightRules(preflight, taskMode);
+        const reviewerReadinessChain = buildReviewerReadinessChainSummary(
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            reviewGateStaleContextPrecheckRecovery.state,
+            (candidateState) => reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, candidateState)
+        );
+        const reviewContextChain = buildReviewGateChainStatusSummary({
+            repoRoot,
+            eventsRoot,
+            taskId,
+            reviewType,
+            edgeId: 'compile-to-review-context',
+            reason: `current '${reviewType}' review context must be rebound before required-reviews-check`,
+            preflightPath: preflightCommandPath,
+            reviewContextPath: reviewGateStaleContextPrecheckRecovery.state.contextPath
+                ? toRepoDisplayPath(repoRoot, reviewGateStaleContextPrecheckRecovery.state.contextPath)
+                : undefined,
+            depth: reviewDepth
+        });
+        const scopedDiffMetadataPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.json`);
+        const scopedDiffOutputPath = path.join(reviewsRoot, `${taskId}-${reviewType}-scoped.diff`);
+        const scopedDiffReadiness = scopedDiffExpectedForReview({
+            preflight,
+            reviewType
+        })
+            ? getScopedDiffMetadataReadiness({
+                metadataPath: scopedDiffMetadataPath,
+                preflight,
+                preflightPath,
+                preflightSha256,
+                reviewType
+            })
+            : { ready: true, reason: 'Scoped diff metadata is not required for this review context.' };
+        const staleContextPrecheckRecoveryRoute = resolveReviewGateStaleContextPrecheckRecoveryRoute({
+            reviewType,
+            scopedDiffReadiness,
+            reviewerReadinessChain,
+            reviewContextChain,
+            commands: {
+                buildScopedDiff: buildCommand(
+                    'Build scoped diff',
+                    buildScopedDiffCommand({
+                        cliPrefix,
+                        reviewType,
+                        preflightCommandPath,
+                        outputPath: toRepoDisplayPath(repoRoot, scopedDiffOutputPath),
+                        metadataPath: toRepoDisplayPath(repoRoot, scopedDiffMetadataPath)
+                    })
+                ),
+                buildReviewContext: buildCommand(
+                    'Build review context',
+                    buildReviewContextCommand(repoRoot, cliPrefix, taskId, reviewType, reviewDepth, preflightCommandPath, taskModePath)
+                )
+            }
+        });
+        return buildResult({
+            ...resultBase,
+            status: staleContextPrecheckRecoveryRoute.status,
+            nextGate: staleContextPrecheckRecoveryRoute.nextGate,
+            title: staleContextPrecheckRecoveryRoute.title,
+            reason: staleContextPrecheckRecoveryRoute.reason,
+            commands: staleContextPrecheckRecoveryRoute.commands
         });
     }
 
