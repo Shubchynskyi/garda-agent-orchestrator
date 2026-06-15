@@ -64,7 +64,7 @@ function buildPackageJson(): string {
             'validate:embedded-bundle-parity': 'node scripts/node-foundation/build-scripts.cjs validate-release.js embedded-bundle-parity',
             'validate:clean-worktree': 'node scripts/node-foundation/build-scripts.cjs validate-release.js clean-worktree',
             'validate:release-readiness': 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness',
-            'test:release-smoke': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts tests/node/packaging/pack-smoke.test.ts',
+            'test:release-smoke': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts',
             lint: 'eslint "src/**/*.ts" "tests/node/**/*.ts" "scripts/node-foundation/**/*.ts"',
             coverage: 'c8 npm test',
             'coverage:fast': 'c8 npm run test:fast',
@@ -83,8 +83,8 @@ function buildPackageJson(): string {
             'test:lifecycle': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/lifecycle',
             'test:bin': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/bin',
             'test:packaging': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/packaging/pack-smoke.test.ts',
-            'test:sharded': 'node scripts/node-foundation/build-scripts.cjs test.js --garda-shards 2',
-            'test:full': 'node scripts/node-foundation/build-scripts.cjs test.js',
+            'test:sharded': 'node scripts/node-foundation/build-scripts.cjs test.js --garda-shards 2 tests/node/core tests/node/gate-runtime tests/node/schemas tests/node/validators tests/node/repo tests/node/reports tests/node/compat tests/node/policy tests/node/runtime tests/node/gates tests/node/cli tests/node/lifecycle tests/node/bin tests/node/materialization',
+            'test:full': 'node scripts/node-foundation/build-scripts.cjs build.js node-foundation && node scripts/node-foundation/build-scripts.cjs test.js tests/node/core tests/node/gate-runtime tests/node/schemas tests/node/validators tests/node/repo tests/node/reports tests/node/compat tests/node/policy tests/node/runtime tests/node/gates tests/node/cli tests/node/lifecycle tests/node/bin tests/node/materialization',
             'test:fast': 'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core'
         },
         c8: {
@@ -286,6 +286,7 @@ test('release readiness passes when package, CI, docs, security, and checklist c
         assert.match(output, /ReleaseNotesInput:/);
         assert.match(output, /Validation command: npm run release:preflight/);
         assert.match(output, /Short smoke: test:release-smoke exercises task id parsing/);
+        assert.match(output, /Package smoke: npm run test:packaging remains an explicit validate:release step/);
         assert.match(output, /Readiness alignment:/);
         assert.doesNotMatch(output, /Security\/audit proof:/);
     } finally {

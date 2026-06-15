@@ -326,11 +326,13 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
             releaseSmoke.includes('tests/node/validators/status.test.ts') &&
             releaseSmoke.includes('tests/node/validators/why-blocked.test.ts') &&
             releaseSmoke.includes('tests/node/validators/doctor-formatting.test.ts') &&
-            releaseSmoke.includes('tests/node/packaging/pack-smoke.test.ts') &&
+            !releaseSmoke.includes('tests/node/packaging/pack-smoke.test.ts') &&
+            validateRelease.includes('npm run test:packaging') &&
             releasePreflight === 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release',
         [
             `validate:release-readiness=${validateReadiness || 'missing'}`,
             `test:release-smoke=${releaseSmoke || 'missing'}`,
+            `validate:release=${validateRelease || 'missing'}`,
             `release:preflight=${releasePreflight || 'missing'}`
         ]
     );
@@ -450,7 +452,8 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         'Validation command: npm run release:preflight',
         'Package proof: validate:release covers clean worktree, version parity, build, embedded bundle parity, quality, pack smoke, and final clean worktree.',
         'Readiness alignment: validate:release-readiness checks package, CI runtime matrix, runtime-state docs, security-document surface, and the tracked Release 1.1.0 checklist before the full proof path.',
-        'Short smoke: test:release-smoke exercises task id parsing, task-event append integrity, next-step startup routing, status and doctor formatting, and package smoke before the full proof path.',
+        'Short smoke: test:release-smoke exercises task id parsing, task-event append integrity, next-step startup routing, and status and doctor formatting before the full proof path.',
+        'Package smoke: npm run test:packaging remains an explicit validate:release step for pack, install, and CLI invoke proof.',
         'Update/runtime alignment: CI workflow is configured for setup, update git, doctor, and uninstall smoke across Linux, Windows, and macOS.',
         'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.'
     ];

@@ -222,4 +222,4 @@ Contract coverage lives in:
 - `npm test`
 - `npm run validate:release`
 
-`TypeScript` in this repository means compiler-enforced strict typing across the runtime (`src/**`), Node test suite (`tests/node/**`), and supporting build/test scripts (`scripts/node-foundation/**`). `npm run validate:release` proves the public release path as `clean worktree -> build -> embedded bundle parity when the generated bundle is present -> test -> pack -> install/invoke -> clean worktree`.
+`TypeScript` in this repository means compiler-enforced strict typing across the runtime (`src/**`), Node test suite (`tests/node/**`), and supporting build/test scripts (`scripts/node-foundation/**`). `npm run validate:release` proves the public release path as `clean worktree -> build -> embedded bundle parity when the generated bundle is present -> regular tests/coverage -> explicit package smoke -> pack/install/invoke -> clean worktree`.

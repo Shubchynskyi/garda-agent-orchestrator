@@ -174,4 +174,4 @@ All gate events are logged to `runtime/task-events/<task-id>.jsonl` with hash-ch
 
 - `tsconfig.build.json` enforces `strict:true` for `src/**/*.ts`.
 - `tsconfig.tests.json` enforces `strict:true` for `src/**/*.ts`, `tests/node/**/*.ts`, and `scripts/node-foundation/**/*.ts`.
-- `npm run validate:release` is the explicit release proof path: `clean worktree -> build -> embedded bundle parity when present -> test -> pack -> install/invoke -> clean worktree`.
+- `npm run validate:release` is the explicit release proof path: `clean worktree -> build -> embedded bundle parity when present -> regular tests/coverage -> explicit package smoke -> pack/install/invoke -> clean worktree`.

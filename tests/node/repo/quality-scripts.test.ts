@@ -97,7 +97,7 @@ test('package quality scripts expose lint, coverage, audit, and composed release
     );
     assert.equal(
         scripts['test:release-smoke'],
-        'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts tests/node/packaging/pack-smoke.test.ts'
+        'node scripts/node-foundation/build-scripts.cjs test.js tests/node/core/task-ids.test.ts tests/node/gate-runtime/task-events-append.test.ts tests/node/gates/next-step/next-step-startup-routing.test.ts tests/node/validators/status.test.ts tests/node/validators/why-blocked.test.ts tests/node/validators/doctor-formatting.test.ts'
     );
     assert.equal(scripts['release:preflight'], 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release');
     assert.equal(scripts['archive:source'], 'node scripts/node-foundation/build-scripts.cjs archive-release.js source');
@@ -200,9 +200,14 @@ test('package.json exposes focused test shard scripts for targeted validation', 
 
     // test:packaging must exercise the compiled pack-smoke directly, not via npm test
     assert.match(scripts['test:packaging'], /pack-smoke\.test\.ts/);
+    assert.doesNotMatch(scripts.test, /tests\/node\/packaging/);
+    assert.doesNotMatch(scripts['test:node-foundation'], /tests\/node\/packaging/);
     assert.match(scripts['test:sharded'], /--garda-shards 2/);
+    assert.doesNotMatch(scripts['test:sharded'], /tests\/node\/packaging/);
     // test:full must rebuild before running to keep it self-contained
     assert.match(scripts['test:full'], /build.js node-foundation/);
+    assert.doesNotMatch(scripts['test:full'], /tests\/node\/packaging/);
+    assert.doesNotMatch(scripts['test:release-smoke'], /tests\/node\/packaging/);
 });
 
 test('package.json exposes diagnostic rerun aliases for heavy logical test domains', () => {
