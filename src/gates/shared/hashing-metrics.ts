@@ -1,11 +1,14 @@
 import * as fs from 'node:fs';
-import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import {
     BOOLEAN_FALSE_VALUES,
     BOOLEAN_TRUE_VALUES
 } from '../../core/constants';
-import { recordToxinMetricsSnapshot } from '../../runtime/toxin-metrics';
+import {
+    appendMetricJsonLines,
+    recordToxinMetricsSnapshot,
+    shouldRecordToxinMetricsSnapshot
+} from '../../runtime/toxin-metrics';
 
 export interface ToStringArrayOptions {
     trimValues?: boolean;
@@ -78,10 +81,7 @@ export function appendMetricsEvent(
 ): void {
     if (!emitMetrics || !metricsPath) return;
     const resolvedMetricsPath = String(metricsPath);
-    try {
-        fs.mkdirSync(path.dirname(resolvedMetricsPath), { recursive: true });
-        fs.appendFileSync(resolvedMetricsPath, JSON.stringify(eventObject) + '\n', 'utf8');
-    } catch {
+    if (!appendMetricJsonLines(resolvedMetricsPath, [eventObject])) {
         // metrics are best-effort
         return;
     }
@@ -89,7 +89,9 @@ export function appendMetricsEvent(
         return;
     }
     try {
-        recordToxinMetricsSnapshot(repoRoot, { metricsPath: resolvedMetricsPath });
+        if (shouldRecordToxinMetricsSnapshot(resolvedMetricsPath)) {
+            recordToxinMetricsSnapshot(repoRoot, { metricsPath: resolvedMetricsPath });
+        }
     } catch {
         // toxin metrics are best-effort
     }

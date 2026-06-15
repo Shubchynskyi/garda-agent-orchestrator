@@ -14,10 +14,12 @@ import {
     countCleanupCandidates,
     collectToxinSnapshot,
     recordToxinMetricsSnapshot,
+    shouldRecordToxinMetricsSnapshot,
     buildToxinStatusSummary,
     formatToxinSummaryLines,
     pruneMetricsFile,
     snapshotToMetricEntries,
+    appendMetricJsonLines,
     appendToxinMetrics,
     countFileLinesStreaming,
     type ToxinSnapshot,
@@ -911,9 +913,9 @@ test('pruneMetricsFile prunes to maxLines=1 correctly', () => {
     }
 });
 
-// ── recordToxinMetricsSnapshot tracked-count integration ─────────────
+// ── recordToxinMetricsSnapshot prune integration ─────────────────────
 
-test('recordToxinMetricsSnapshot uses tracked count to avoid double read', () => {
+test('recordToxinMetricsSnapshot prunes after append using current metrics file count', () => {
     const tmpDir = makeTmpDir();
     try {
         fs.writeFileSync(path.join(tmpDir, 'MANIFEST.md'), '# Manifest', 'utf8');
@@ -934,6 +936,42 @@ test('recordToxinMetricsSnapshot uses tracked count to avoid double read', () =>
         assert.equal(snapshot.metrics_file_lines, 3);
         const postLines = fs.readFileSync(metricsPath, 'utf8').split('\n').filter(Boolean);
         assert.equal(postLines.length, 6);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('shouldRecordToxinMetricsSnapshot enforces a per-metrics-file TTL', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const metricsPath = path.join(tmpDir, 'runtime', 'metrics.jsonl');
+
+        assert.equal(shouldRecordToxinMetricsSnapshot(metricsPath, { minIntervalMs: 60_000 }), true);
+        assert.equal(shouldRecordToxinMetricsSnapshot(metricsPath, { minIntervalMs: 60_000 }), false);
+        assert.equal(shouldRecordToxinMetricsSnapshot(metricsPath, { minIntervalMs: 0 }), true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('appendMetricJsonLines does not remove an active lock with an old directory timestamp', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const metricsPath = path.join(tmpDir, 'runtime', 'metrics.jsonl');
+        const lockPath = `${metricsPath}.lock`;
+        fs.mkdirSync(lockPath, { recursive: true });
+        fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+            pid: process.pid,
+            started_at_utc: new Date().toISOString()
+        }), 'utf8');
+        const oldLockTime = new Date(Date.now() - 120_000);
+        fs.utimesSync(lockPath, oldLockTime, oldLockTime);
+
+        const appended = appendMetricJsonLines(metricsPath, [{ event: 'blocked-by-active-lock' }]);
+
+        assert.equal(appended, false);
+        assert.equal(fs.existsSync(lockPath), true);
+        assert.equal(fs.existsSync(metricsPath), false);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -65,6 +65,10 @@ export interface RecordToxinMetricsSnapshotOptions extends CollectToxinSnapshotO
     maxLines?: number;
 }
 
+export interface ToxinMetricsSnapshotDueOptions {
+    minIntervalMs?: number;
+}
+
 interface RuntimeToxinScanSummary {
     diskSummaries: DiskArtifactSummary[];
     runtimeTotalBytes: number;
@@ -86,6 +90,8 @@ export const TOXIN_METRIC_TYPES: readonly ToxinMetricType[] = CONSTANT_TOXIN_MET
 
 export const DEFAULT_METRICS_MAX_LINES = 2000;
 
+export const DEFAULT_TOXIN_SNAPSHOT_MIN_INTERVAL_MS = 60 * 1000;
+
 const NOISY_ARTIFACT_THRESHOLD_BYTES = 512 * 1024; // 512 KB
 
 // Average bytes per JSONL event line for estimation (avoids full-file reads)
@@ -93,6 +99,11 @@ const ESTIMATED_BYTES_PER_EVENT_LINE = 350;
 
 // Chunk size for streaming file reads (64 KB balances syscall count vs memory)
 const STREAM_CHUNK_SIZE = 64 * 1024;
+
+const METRICS_LOCK_STALE_MS = 30 * 1000;
+const METRICS_LOCK_WAIT_MS = 1000;
+const METRICS_LOCK_RETRY_MS = 10;
+const METRICS_LOCK_OWNER_FILE = 'owner.json';
 
 const CLEANUP_CANDIDATE_SUBDIRS = new Set([
     'backups',
@@ -114,6 +125,118 @@ const RUNTIME_SUBDIRS: readonly string[] = Object.freeze([
 
 function nowUtc(): string {
     return new Date().toISOString();
+}
+
+function sleepSync(ms: number): void {
+    if (ms <= 0) return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function metricsLockPath(metricsPath: string): string {
+    return `${metricsPath}.lock`;
+}
+
+function removeDirectoryBestEffort(dirPath: string): void {
+    try {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+    } catch {
+        // best-effort
+    }
+}
+
+function isProcessAlive(pid: unknown): boolean {
+    if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
+        return false;
+    }
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (error) {
+        return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+}
+
+function readMetricsLockOwner(lockPath: string): Record<string, unknown> | null {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(lockPath, METRICS_LOCK_OWNER_FILE), 'utf8'));
+        return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+    } catch {
+        return null;
+    }
+}
+
+function isMetricsLockStale(lockPath: string): boolean {
+    try {
+        const owner = readMetricsLockOwner(lockPath);
+        if (owner && isProcessAlive(owner.pid)) {
+            return false;
+        }
+        let observedMtimeMs = fs.statSync(lockPath).mtimeMs;
+        try {
+            observedMtimeMs = Math.max(
+                observedMtimeMs,
+                fs.statSync(path.join(lockPath, METRICS_LOCK_OWNER_FILE)).mtimeMs
+            );
+        } catch {
+            // owner metadata is diagnostic; the lock directory still carries staleness.
+        }
+        return Date.now() - observedMtimeMs > METRICS_LOCK_STALE_MS;
+    } catch {
+        return false;
+    }
+}
+
+function acquireMetricsFileLock(metricsPath: string): string | null {
+    const lockPath = metricsLockPath(metricsPath);
+    const startedAt = Date.now();
+    fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+    while (Date.now() - startedAt <= METRICS_LOCK_WAIT_MS) {
+        try {
+            fs.mkdirSync(lockPath);
+            try {
+                fs.writeFileSync(path.join(lockPath, METRICS_LOCK_OWNER_FILE), JSON.stringify({
+                    pid: process.pid,
+                    started_at_utc: nowUtc()
+                }), 'utf8');
+            } catch {
+                // lock directory is the ownership primitive; owner metadata is diagnostic only
+            }
+            return lockPath;
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== 'EEXIST') {
+                return null;
+            }
+            if (isMetricsLockStale(lockPath)) {
+                removeDirectoryBestEffort(lockPath);
+                continue;
+            }
+            sleepSync(METRICS_LOCK_RETRY_MS);
+        }
+    }
+    return null;
+}
+
+function withMetricsFileLock<T>(metricsPath: string, fallback: T, callback: () => T): T {
+    const lockPath = acquireMetricsFileLock(metricsPath);
+    if (!lockPath) {
+        return fallback;
+    }
+    try {
+        return callback();
+    } finally {
+        removeDirectoryBestEffort(lockPath);
+    }
+}
+
+function writeFileAtomic(filePath: string, content: string | Buffer): void {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const tempPath = path.join(
+        path.dirname(filePath),
+        `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`
+    );
+    fs.writeFileSync(tempPath, content);
+    fs.renameSync(tempPath, filePath);
 }
 
 function dirSizeAndCount(dirPath: string): { bytes: number; count: number } {
@@ -534,7 +657,7 @@ export function formatToxinSummaryLines(summary: ToxinStatusSummary): string[] {
  * When `knownLineCount` is provided (e.g. from a prior streaming count plus
  * appended entries), the re-count is skipped entirely.
  */
-export function pruneMetricsFile(
+function pruneMetricsFileUnlocked(
     metricsPath: string,
     maxLines: number = DEFAULT_METRICS_MAX_LINES,
     knownLineCount?: number
@@ -591,7 +714,7 @@ export function pruneMetricsFile(
         if (tailSize <= 0) {
             fs.closeSync(fd);
             try {
-                fs.writeFileSync(metricsPath, '', 'utf8');
+            writeFileAtomic(metricsPath, Buffer.from('', 'utf8'));
             } catch {
                 return { pruned: false, linesBefore, linesAfter: linesBefore };
             }
@@ -603,7 +726,7 @@ export function pruneMetricsFile(
         fs.closeSync(fd);
 
         try {
-            fs.writeFileSync(metricsPath, tail);
+            writeFileAtomic(metricsPath, tail);
         } catch {
             return { pruned: false, linesBefore, linesAfter: linesBefore };
         }
@@ -612,6 +735,18 @@ export function pruneMetricsFile(
         try { fs.closeSync(fd); } catch { /* already closed or invalid */ }
         return { pruned: false, linesBefore, linesAfter: linesBefore };
     }
+}
+
+export function pruneMetricsFile(
+    metricsPath: string,
+    maxLines: number = DEFAULT_METRICS_MAX_LINES,
+    knownLineCount?: number
+): { pruned: boolean; linesBefore: number; linesAfter: number } {
+    return withMetricsFileLock(
+        metricsPath,
+        { pruned: false, linesBefore: 0, linesAfter: 0 },
+        () => pruneMetricsFileUnlocked(metricsPath, maxLines, knownLineCount)
+    );
 }
 
 // ── Toxin Snapshot as Metric Entry ───────────────────────────────────
@@ -663,15 +798,62 @@ export function snapshotToMetricEntries(snapshot: ToxinSnapshot): ToxinMetricEnt
     ];
 }
 
-export function appendToxinMetrics(metricsPath: string, entries: ToxinMetricEntry[]): void {
-    if (!metricsPath || entries.length === 0) return;
+function appendMetricLinesUnlocked(metricsPath: string, lines: string[]): boolean {
+    if (!metricsPath || lines.length === 0) return true;
     try {
         fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
-        const lines = entries.map(e => JSON.stringify(e)).join('\n') + '\n';
-        fs.appendFileSync(metricsPath, lines, 'utf8');
+        fs.appendFileSync(metricsPath, lines.join('\n') + '\n', 'utf8');
+        return true;
     } catch {
         // best-effort
+        return false;
     }
+}
+
+export function appendMetricJsonLines(metricsPath: string, entries: readonly Record<string, unknown>[]): boolean {
+    if (!metricsPath || entries.length === 0) return true;
+    const lines = entries.map(entry => JSON.stringify(entry));
+    return withMetricsFileLock(metricsPath, false, () => appendMetricLinesUnlocked(metricsPath, lines));
+}
+
+export function appendToxinMetrics(metricsPath: string, entries: ToxinMetricEntry[]): void {
+    appendMetricJsonLines(metricsPath, entries as unknown as readonly Record<string, unknown>[]);
+}
+
+function toxinSnapshotStatePath(metricsPath: string): string {
+    return `${metricsPath}.toxin-snapshot-state.json`;
+}
+
+function readLastToxinSnapshotRecordedAtMs(statePath: string): number {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8')) as Record<string, unknown>;
+        const timestamp = Date.parse(String(parsed.last_recorded_at_utc || ''));
+        return Number.isFinite(timestamp) ? timestamp : 0;
+    } catch {
+        return 0;
+    }
+}
+
+export function shouldRecordToxinMetricsSnapshot(
+    metricsPath: string,
+    options: ToxinMetricsSnapshotDueOptions = {}
+): boolean {
+    if (!metricsPath) return false;
+    const minIntervalMs = options.minIntervalMs ?? DEFAULT_TOXIN_SNAPSHOT_MIN_INTERVAL_MS;
+    if (minIntervalMs <= 0) return true;
+    return withMetricsFileLock(metricsPath, false, () => {
+        const statePath = toxinSnapshotStatePath(metricsPath);
+        const now = Date.now();
+        const previous = readLastToxinSnapshotRecordedAtMs(statePath);
+        if (previous > 0 && now - previous < minIntervalMs) {
+            return false;
+        }
+        writeFileAtomic(statePath, JSON.stringify({
+            last_recorded_at_utc: new Date(now).toISOString(),
+            min_interval_ms: minIntervalMs
+        }) + '\n');
+        return true;
+    });
 }
 
 export function recordToxinMetricsSnapshot(
@@ -681,9 +863,10 @@ export function recordToxinMetricsSnapshot(
     const resolvedPaths = resolveToxinPaths(repoRoot, options);
     const snapshot = collectToxinSnapshot(repoRoot, options);
     const entries = snapshotToMetricEntries(snapshot);
-    appendToxinMetrics(resolvedPaths.metricsPath, entries);
     const maxLines = options.maxLines ?? DEFAULT_METRICS_MAX_LINES;
-    const postAppendLineCount = snapshot.metrics_file_lines + entries.length;
-    pruneMetricsFile(resolvedPaths.metricsPath, maxLines, postAppendLineCount);
+    withMetricsFileLock(resolvedPaths.metricsPath, undefined, () => {
+        appendMetricLinesUnlocked(resolvedPaths.metricsPath, entries.map(entry => JSON.stringify(entry)));
+        pruneMetricsFileUnlocked(resolvedPaths.metricsPath, maxLines);
+    });
     return snapshot;
 }
