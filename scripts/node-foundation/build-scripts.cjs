@@ -14,6 +14,8 @@ const SCRIPT_RUNTIME_SUPPORT_FILES = Object.freeze(['build-root-lock.cjs']);
 const SCRIPTS_BUILD_FINGERPRINT_SCHEMA_VERSION = 1;
 const SCRIPTS_BUILD_FINGERPRINT_PATH = 'scripts-build-fingerprint.json';
 const SCRIPTS_BUILD_FORCE_REBUILD_ENV = 'GARDA_BUILD_SCRIPTS_FORCE_REBUILD';
+const SCRIPTS_BUILD_PROCESS_TIMEOUT_MS_ENV = 'GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS';
+const DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS = 10 * 60 * 1000;
 const INPUT_FILE_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.ts']);
 
 function appendTraceLine(tracePath, message) {
@@ -25,12 +27,42 @@ function appendTraceLine(tracePath, message) {
     fs.appendFileSync(tracePath, `${message}\n`, 'utf8');
 }
 
-function runProcess(command, args, cwd) {
+function readPositiveIntegerEnv(name, fallbackValue) {
+    const rawValue = process.env[name];
+    if (!rawValue) {
+        return fallbackValue;
+    }
+    const parsedValue = Number(rawValue);
+    if (!Number.isSafeInteger(parsedValue) || parsedValue <= 0) {
+        throw new Error(`${name} must be a positive integer.`);
+    }
+    return parsedValue;
+}
+
+function formatCommand(command, args) {
+    return [command, ...args].join(' ');
+}
+
+function runProcess(command, args, cwd, options = {}) {
+    const timeoutMs = options.timeoutMs || readPositiveIntegerEnv(
+        SCRIPTS_BUILD_PROCESS_TIMEOUT_MS_ENV,
+        DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS
+    );
     const result = childProcess.spawnSync(command, args, {
         cwd,
         stdio: 'inherit',
+        timeout: timeoutMs,
         windowsHide: true
     });
+    if (result.error && result.error.code === 'ETIMEDOUT') {
+        throw new Error(`${path.basename(command)} timed out after ${timeoutMs} ms: ${formatCommand(command, args)}`);
+    }
+    if (result.error) {
+        throw new Error(`${path.basename(command)} failed to start: ${result.error.message}`);
+    }
+    if (result.signal === 'SIGTERM') {
+        throw new Error(`${path.basename(command)} timed out or terminated after ${timeoutMs} ms: ${formatCommand(command, args)}`);
+    }
     if (result.status !== 0) {
         throw new Error(`${path.basename(command)} failed (exit ${result.status})`);
     }
@@ -223,6 +255,8 @@ if (require.main === module) {
 
 module.exports = {
     buildScriptsInputFingerprint,
+    DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS,
     getScriptsBuildReuseStatus,
-    main
+    main,
+    runProcess
 };

@@ -11,6 +11,7 @@ import {
     checkReusableBuildRoot,
     getRepoRoot,
     printReuseDiagnostic,
+    runTsc,
     type BuildInputFingerprint
 } from '../../../scripts/node-foundation/build';
 const {
@@ -33,6 +34,7 @@ const {
     releaseBuildRootLock: (lockPath: string) => void;
 };
 const buildScriptsWrapper = require('../../../scripts/node-foundation/build-scripts.cjs') as {
+    DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS: number;
     buildScriptsInputFingerprint: (repoRoot: string) => { sha256: string };
     getScriptsBuildReuseStatus: (
         repoRoot: string,
@@ -40,6 +42,7 @@ const buildScriptsWrapper = require('../../../scripts/node-foundation/build-scri
         compiledEntryPath: string,
         fingerprint: { sha256: string }
     ) => { accepted: boolean; reason: string };
+    runProcess: (command: string, args: string[], cwd: string, options?: { timeoutMs?: number }) => void;
 };
 
 function writeTextFile(filePath: string, content: string): void {
@@ -821,4 +824,48 @@ test('build-scripts wrapper reclaims orphaned lock directory without owner metad
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
+});
+
+test('build-scripts wrapper fails hung child processes with timeout diagnostics', () => {
+    assert.equal(buildScriptsWrapper.DEFAULT_SCRIPTS_BUILD_PROCESS_TIMEOUT_MS, 10 * 60 * 1000);
+
+    assert.throws(
+        () => buildScriptsWrapper.runProcess(
+            process.execPath,
+            ['-e', 'const started = Date.now(); while (Date.now() - started < 10000) {}'],
+            getRepoRoot(),
+            { timeoutMs: 100 }
+        ),
+        /node(?:\.exe)? timed out after 100 ms: .* -e /u
+    );
+});
+
+test('node-foundation build wrapper fails timed-out tsc with high-signal diagnostics', () => {
+    const repoRoot = getRepoRoot();
+    const calls: Array<{ timeoutMs: number; nodeOptions: string | undefined }> = [];
+
+    assert.throws(
+        () => runTsc(['-p', 'tsconfig.tests.json'], repoRoot, {
+            timeoutMs: 1234,
+            processRunner: (_command, _args, options) => {
+                calls.push({
+                    timeoutMs: options.timeoutMs,
+                    nodeOptions: options.env.NODE_OPTIONS
+                });
+                return {
+                    pid: 0,
+                    output: [],
+                    stdout: '',
+                    stderr: '',
+                    status: null,
+                    signal: 'SIGTERM',
+                    error: Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' }),
+                    timedOut: true
+                };
+            }
+        }),
+        /TypeScript compilation timed out after 1234 ms: .*tsc -p tsconfig\.tests\.json/u
+    );
+
+    assert.deepEqual(calls, [{ timeoutMs: 1234, nodeOptions: '' }]);
 });

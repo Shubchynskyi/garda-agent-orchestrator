@@ -17,6 +17,7 @@ const REPO_CLI_SYNC_LOCK_NAME = '.garda-cli-sync.lock';
 const BUILD_FINGERPRINT_SCHEMA_VERSION = 1 as const;
 const NODE_FOUNDATION_FORCE_REBUILD_ENV = 'GARDA_NODE_FOUNDATION_FORCE_REBUILD';
 const PUBLISH_RUNTIME_FORCE_REBUILD_ENV = 'GARDA_PUBLISH_RUNTIME_FORCE_REBUILD';
+const BUILD_TSC_TIMEOUT_MS = 10 * 60 * 1000;
 const {
     resetBuildRoot,
     withBuildRootLock
@@ -336,17 +337,87 @@ function copiedFilesFromManifest(manifest: BuildManifest | undefined): string[] 
         : [];
 }
 
-function runTsc(args: string[], repoRoot: string): void {
+interface BoundedSpawnSyncResult {
+    error?: Error;
+    signal: NodeJS.Signals | null;
+    status: number | null;
+    timedOut?: boolean;
+}
+
+type TscProcessRunner = (
+    command: string,
+    args: string[],
+    options: {
+        cwd: string;
+        stdio: 'inherit';
+        timeoutMs: number;
+        windowsHide: true;
+        env: NodeJS.ProcessEnv;
+    }
+) => BoundedSpawnSyncResult;
+
+function formatTscCommand(tscCliPath: string, args: string[]): string {
+    return [process.execPath, tscCliPath, ...args].join(' ');
+}
+
+function runBoundedSpawnSync(
+    command: string,
+    args: string[],
+    options: {
+        cwd: string;
+        stdio: 'inherit';
+        timeoutMs: number;
+        windowsHide: true;
+        env: NodeJS.ProcessEnv;
+    }
+): BoundedSpawnSyncResult {
+    const result = childProcess.spawnSync(command, args, {
+        cwd: options.cwd,
+        stdio: options.stdio,
+        timeout: options.timeoutMs,
+        windowsHide: options.windowsHide,
+        env: options.env
+    }) as BoundedSpawnSyncResult;
+    const errorCode = result.error && typeof result.error === 'object' && 'code' in result.error
+        ? String((result.error as NodeJS.ErrnoException).code || '')
+        : '';
+    result.timedOut = errorCode === 'ETIMEDOUT' || (result.signal === 'SIGTERM' && options.timeoutMs > 0);
+    return result;
+}
+
+export function runTsc(
+    args: string[],
+    repoRoot: string,
+    options?: { processRunner?: TscProcessRunner; timeoutMs?: number }
+): void {
     const tscCliPath = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
     if (!fs.existsSync(tscCliPath)) {
         throw new Error(`TypeScript CLI not found: ${tscCliPath}`);
     }
 
-    const result = childProcess.spawnSync(process.execPath, [tscCliPath, ...args], {
+    const timeoutMs = options?.timeoutMs ?? BUILD_TSC_TIMEOUT_MS;
+    const processRunner = options?.processRunner ?? runBoundedSpawnSync;
+    const result = processRunner(process.execPath, [tscCliPath, ...args], {
         cwd: repoRoot,
         stdio: 'inherit',
+        timeoutMs,
+        env: {
+            ...process.env,
+            NODE_OPTIONS: ''
+        },
         windowsHide: true
     });
+    if (result.timedOut) {
+        throw new Error(
+            `TypeScript compilation timed out after ${timeoutMs} ms: ${formatTscCommand(tscCliPath, args)}`
+        );
+    }
+    if (result.error) {
+        throw new Error(`TypeScript compilation failed to start: ${result.error.message}`);
+    }
+    if (result.signal) {
+        throw new Error(`TypeScript compilation terminated by signal ${result.signal}: ${formatTscCommand(tscCliPath, args)}`);
+    }
     if (result.status !== 0) {
         throw new Error('TypeScript compilation failed (exit ' + result.status + ')');
     }
