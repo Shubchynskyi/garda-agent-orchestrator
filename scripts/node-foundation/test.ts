@@ -14,6 +14,9 @@ const NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SH
 const NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_HEARTBEAT_MS';
 const NODE_FOUNDATION_TEST_SHARD_CONCURRENCY_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_CONCURRENCY';
 const NODE_FOUNDATION_TEST_DURATION_FILE_ENV = 'GARDA_NODE_FOUNDATION_TEST_DURATION_FILE';
+const NODE_FOUNDATION_TEST_DURATION_LOCK_TIMEOUT_MS = 30_000;
+const NODE_FOUNDATION_TEST_DURATION_LOCK_RETRY_MS = 25;
+const NODE_FOUNDATION_TEST_DURATION_LOCK_STALE_MS = 120_000;
 const NODE_FOUNDATION_AUTO_SHARD_ARG_CHAR_LIMIT = 24_000;
 const NODE_FOUNDATION_TEST_SLOWEST_REPORT_COUNT = 10;
 const DEFAULT_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS = 10 * 60 * 1000;
@@ -500,6 +503,74 @@ function readTestDurationTelemetry(telemetryPath: string): TestDurationTelemetry
     }
 }
 
+async function delay(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function acquireTestDurationTelemetryLock(telemetryPath: string): Promise<() => void> {
+    const lockPath = `${telemetryPath}.lock`;
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const startedAt = Date.now();
+    while (true) {
+        try {
+            const handle = fs.openSync(lockPath, 'wx');
+            fs.writeFileSync(handle, JSON.stringify({
+                pid: process.pid,
+                created_at_utc: new Date().toISOString()
+            }));
+            return () => {
+                try {
+                    fs.closeSync(handle);
+                } finally {
+                    try {
+                        fs.rmSync(lockPath, { force: true });
+                    } catch {
+                        // Telemetry is optional; stale lock cleanup handles leftovers.
+                    }
+                }
+            };
+        } catch (error: unknown) {
+            const code = error && typeof error === 'object'
+                ? (error as { code?: string }).code
+                : null;
+            if (code !== 'EEXIST') {
+                throw error;
+            }
+            try {
+                const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+                if (ageMs > NODE_FOUNDATION_TEST_DURATION_LOCK_STALE_MS) {
+                    fs.rmSync(lockPath, { force: true });
+                    continue;
+                }
+            } catch {
+                continue;
+            }
+            if (Date.now() - startedAt > NODE_FOUNDATION_TEST_DURATION_LOCK_TIMEOUT_MS) {
+                throw new Error(`Timed out acquiring duration telemetry lock ${lockPath}`);
+            }
+            await delay(NODE_FOUNDATION_TEST_DURATION_LOCK_RETRY_MS);
+        }
+    }
+}
+
+function writeTestDurationTelemetryAtomic(telemetryPath: string, telemetry: TestDurationTelemetry): void {
+    fs.mkdirSync(path.dirname(telemetryPath), { recursive: true });
+    const temporaryPath = path.join(
+        path.dirname(telemetryPath),
+        `${path.basename(telemetryPath)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+    );
+    try {
+        fs.writeFileSync(temporaryPath, `${JSON.stringify(telemetry, null, 2)}\n`, 'utf8');
+        fs.renameSync(temporaryPath, telemetryPath);
+    } finally {
+        try {
+            fs.rmSync(temporaryPath, { force: true });
+        } catch {
+            // Best-effort temp cleanup; the rename path already succeeded or the caller will report the write failure.
+        }
+    }
+}
+
 function compiledTestFileToTelemetryKey(buildResult: BuildResult, file: string): string {
     const relativeToBuildRoot = normalizeCliPath(path.relative(buildResult.buildRoot, file));
     if (!relativeToBuildRoot.startsWith('../') && !relativeToBuildRoot.startsWith('..\\')) {
@@ -595,46 +666,70 @@ function buildNodeFoundationTestShards(
     return shards.map((s) => s.files).filter((files) => files.length > 0);
 }
 
-function recordTestDurationTelemetry(
+async function recordTestDurationTelemetry(
     telemetryPath: string,
-    telemetry: TestDurationTelemetry,
     buildResult: BuildResult,
     results: NodeTestShardResult[]
-): void {
+): Promise<void> {
     const measurableResults = results.filter((result) => result.exitCode === 0 && result.shardFiles.length === 1);
     if (measurableResults.length === 0) {
         return;
     }
-    const updatedAt = new Date().toISOString();
-    const nextEntries = { ...telemetry.entries };
-    for (const result of measurableResults) {
-        const key = compiledTestFileToTelemetryKey(buildResult, result.shardFiles[0]);
-        const previous = nextEntries[key];
-        const previousSamples = previous ? Math.max(1, Math.trunc(previous.samples)) : 0;
-        const nextSamples = Math.min(previousSamples + 1, 20);
-        const previousWeight = Math.min(previousSamples, 19);
-        const durationMs = Math.max(1, Math.trunc(result.durationMs));
-        const averagedDuration = previous
-            ? Math.round(((previous.duration_ms * previousWeight) + durationMs) / (previousWeight + 1))
-            : durationMs;
-        nextEntries[key] = {
-            file: key,
-            duration_ms: averagedDuration,
-            samples: nextSamples,
-            updated_at_utc: updatedAt
+    let release: (() => void) | null = null;
+    try {
+        release = await acquireTestDurationTelemetryLock(telemetryPath);
+        const latestTelemetry = readTestDurationTelemetry(telemetryPath);
+        const updatedAt = new Date().toISOString();
+        const nextEntries = { ...latestTelemetry.entries };
+        for (const result of measurableResults) {
+            const key = compiledTestFileToTelemetryKey(buildResult, result.shardFiles[0]);
+            const previous = nextEntries[key];
+            const previousSamples = previous ? Math.max(1, Math.trunc(previous.samples)) : 0;
+            const nextSamples = Math.min(previousSamples + 1, 20);
+            const previousWeight = Math.min(previousSamples, 19);
+            const durationMs = Math.max(1, Math.trunc(result.durationMs));
+            const averagedDuration = previous
+                ? Math.round(((previous.duration_ms * previousWeight) + durationMs) / (previousWeight + 1))
+                : durationMs;
+            nextEntries[key] = {
+                file: key,
+                duration_ms: averagedDuration,
+                samples: nextSamples,
+                updated_at_utc: updatedAt
+            };
+        }
+        const nextTelemetry: TestDurationTelemetry = {
+            schema_version: 1,
+            updated_at_utc: updatedAt,
+            entries: Object.fromEntries(Object.entries(nextEntries).sort(([a], [b]) => a.localeCompare(b)))
         };
+        writeTestDurationTelemetryAtomic(telemetryPath, nextTelemetry);
+        console.log(formatNodeFoundationTestMarker(
+            NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY_UPDATED,
+            `${telemetryPath} entries=${Object.keys(nextTelemetry.entries).length}`
+        ));
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`NODE_FOUNDATION_TEST_DURATION_TELEMETRY_UPDATE_SKIPPED ${message}`);
+    } finally {
+        release?.();
     }
-    const nextTelemetry: TestDurationTelemetry = {
-        schema_version: 1,
-        updated_at_utc: updatedAt,
-        entries: Object.fromEntries(Object.entries(nextEntries).sort(([a], [b]) => a.localeCompare(b)))
-    };
-    fs.mkdirSync(path.dirname(telemetryPath), { recursive: true });
-    fs.writeFileSync(telemetryPath, `${JSON.stringify(nextTelemetry, null, 2)}\n`, 'utf8');
-    console.log(formatNodeFoundationTestMarker(
-        NODE_FOUNDATION_TEST_MARKERS.DURATION_TELEMETRY_UPDATED,
-        `${telemetryPath} entries=${Object.keys(nextTelemetry.entries).length}`
-    ));
+}
+
+export async function recordTestDurationTelemetryForTest(
+    telemetryPath: string,
+    buildResult: BuildResult,
+    shardFile: string,
+    durationMs: number
+): Promise<void> {
+    await recordTestDurationTelemetry(telemetryPath, buildResult, [{
+        exitCode: 0,
+        durationMs,
+        shardFiles: [shardFile],
+        shardIndex: 0,
+        shardCount: 1,
+        logPath: ''
+    }]);
 }
 
 async function runSingleNodeTestProcess(
@@ -644,8 +739,7 @@ async function runSingleNodeTestProcess(
     optionArgs: string[],
     selectedTestFiles: string[],
     requestedShardLogDir: string | null,
-    telemetryPath: string,
-    telemetry: TestDurationTelemetry
+    telemetryPath: string
 ): Promise<number> {
     const shardLogDir = resolveShardLogDir(repoRoot, buildRoot, requestedShardLogDir);
     const runtimeConfig = resolveNodeTestShardRuntimeConfig();
@@ -665,7 +759,7 @@ async function runSingleNodeTestProcess(
         runtimeConfig
     );
     diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
-    recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, [result]);
+    await recordTestDurationTelemetry(telemetryPath, buildResult, [result]);
     return result.exitCode;
 }
 
@@ -1048,7 +1142,7 @@ async function runShardedNodeTestProcesses(
             diagnoseGreenSummaryShardFailure(repoRoot, buildResult, optionArgs, result);
         }
     }
-    recordTestDurationTelemetry(telemetryPath, telemetry, buildResult, results);
+    await recordTestDurationTelemetry(telemetryPath, buildResult, results);
     return results.find((result) => result.exitCode !== 0)?.exitCode || 0;
 }
 
@@ -1084,8 +1178,7 @@ export async function runNodeFoundationTests(): Promise<number> {
             optionArgs,
             selectedTestFiles,
             requestedShardLogDir,
-            telemetryPath,
-            telemetry
+            telemetryPath
         )
         : await runShardedNodeTestProcesses(
             repoRoot,

@@ -1031,6 +1031,38 @@ test('runNodeFoundationTests refreshes compact duration telemetry from successfu
     }
 });
 
+test('duration telemetry writer preserves concurrent single-file updates', async () => {
+    const { buildResult, cleanup } = createBuildResultFixture();
+    const durationFile = path.join(buildResult.repoRoot, 'duration-telemetry.json');
+    const gateTest = path.join(buildResult.buildRoot, 'tests', 'node', 'cli', 'commands', 'gates.test.js');
+    const repoTest = path.join(buildResult.buildRoot, 'tests', 'node', 'repo', 'build-root-serialization.test.js');
+
+    try {
+        await Promise.all([
+            testModule.recordTestDurationTelemetryForTest(durationFile, buildResult, gateTest, 120),
+            testModule.recordTestDurationTelemetryForTest(durationFile, buildResult, repoTest, 240)
+        ]);
+
+        const telemetry = JSON.parse(fs.readFileSync(durationFile, 'utf8')) as {
+            entries: Record<string, { duration_ms: number; samples: number; }>;
+        };
+        assert.deepEqual(Object.keys(telemetry.entries).sort(), [
+            'tests/node/cli/commands/gates.test.ts',
+            'tests/node/repo/build-root-serialization.test.ts'
+        ]);
+        assert.equal(telemetry.entries['tests/node/cli/commands/gates.test.ts'].duration_ms, 120);
+        assert.equal(telemetry.entries['tests/node/repo/build-root-serialization.test.ts'].duration_ms, 240);
+        assert.equal(telemetry.entries['tests/node/cli/commands/gates.test.ts'].samples, 1);
+        assert.equal(fs.existsSync(`${durationFile}.lock`), false);
+        assert.equal(
+            fs.readdirSync(buildResult.repoRoot).some((fileName) => fileName.endsWith('.tmp')),
+            false
+        );
+    } finally {
+        cleanup();
+    }
+});
+
 test('runNodeFoundationTests auto-shards when the compiled test command would be too long', async () => {
     const { buildResult, cleanup } = createBuildResultFixture(260);
     const originalArgv = process.argv;
