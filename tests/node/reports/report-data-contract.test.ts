@@ -321,7 +321,8 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.init_settings_tab.init_answers_status, 'present');
     assert.equal(report.init_settings_tab.agent_init_state_status, 'present');
     assert.ok(report.init_settings_tab.init_answers.some((row) => row.id === 'SourceOfTruth' && row.value === 'Codex (AGENTS.md)' && row.file_path === 'AGENTS.md'));
-    assert.ok(!report.init_settings_tab.init_answers.some((row) => row.id === 'CollectedVia' || row.id === 'ActiveAgentFiles'));
+    assert.ok(!report.init_settings_tab.init_answers.some((row) => row.id === 'CollectedVia'));
+    assert.ok(report.init_settings_tab.init_answers.some((row) => row.id === 'ActiveAgentFiles' && row.value === 'AGENTS.md'));
     assert.ok(!report.init_settings_tab.agent_init_state.some((row) => row.id === 'UpdatedAt' || row.id.startsWith('ProjectMemory') || row.id === 'ActiveAgentFiles'));
     assert.deepEqual(report.init_settings_tab.ordinary_docs.paths, ['CHANGELOG.md']);
     assert.ok(report.init_settings_tab.commands.some((command) => command.id === 'reinit'));

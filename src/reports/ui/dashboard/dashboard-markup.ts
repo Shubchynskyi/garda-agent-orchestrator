@@ -4,22 +4,9 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <div>
 <h1 data-i18n="appTitle">\${text.appTitle}</h1>
 <div class="meta" id="meta" data-i18n="loadingWorkspaceReport">\${text.loadingWorkspaceReport}</div>
+<div class="header-notice" id="ui-notice">\${actionsEnabled ? text.noticeActionsEnabled : text.noticeActionsDisabled}</div>
 </div>
 <div class="top-controls" id="top-controls">
-<label class="language-compact"><span class="language-icon" aria-hidden="true">&#127760;</span><span class="visually-hidden" data-i18n="languageTitle">\${text.languageTitle}</span><select id="language-select" data-i18n-aria-label="languageTitle"></select></label>
-</div>
-</div>
-</header>
-<nav>
-<div class="tab-buttons">
-<button type="button" class="active" data-tab="tasks-tab" data-i18n="tasksTab">\${text.tasksTab}</button>
-<button type="button" data-tab="workflow-tab" data-i18n="workflowTab">\${text.workflowTab}</button>
-<button type="button" data-tab="init-settings-tab" data-i18n="initSettingsTab">\${text.initSettingsTab}</button>
-<button type="button" data-tab="project-memory-tab" data-i18n="projectMemoryTab">\${text.projectMemoryTab}</button>
-<button type="button" data-tab="backups-tab" data-i18n="backupsTab">\${text.backupsTab}</button>
-<button type="button" data-tab="cleanup-settings-tab" data-i18n="cleanupSettingsTab">\${text.cleanupSettingsTab}</button>
-<button type="button" data-tab="instructions-tab" data-i18n="instructionsTab">\${text.instructionsTab}</button>
-</div>
 <div class="session-compact" id="server-status-panel">
 <div class="session-status-line" id="session-summary" data-i18n="loadingServerSession">\${text.loadingServerSession}</div>
 <input id="session-countdown" type="range" min="0" max="60" value="60" disabled hidden>
@@ -28,13 +15,27 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <button type="button" id="session-shutdown" data-i18n="stopServer">\${text.stopServer}</button>
 </div>
 </div>
+<label class="language-compact"><span class="language-icon" aria-hidden="true">&#127760;</span><span class="visually-hidden" data-i18n="languageTitle">\${text.languageTitle}</span><select id="language-select" data-i18n-aria-label="languageTitle"></select></label>
+</div>
+</div>
+</header>
+<nav>
+<div class="tab-buttons">
+<button type="button" class="active" data-tab="tasks-tab" data-i18n="tasksTab">\${text.tasksTab}</button>
+<button type="button" data-tab="workflow-tab" data-setting-group="validation" data-i18n="workflowGroupValidation">\${text.workflowGroupValidation}</button>
+<button type="button" data-tab="workflow-tab" data-setting-group="review" data-i18n="workflowGroupReview">\${text.workflowGroupReview}</button>
+<button type="button" data-tab="workflow-tab" data-setting-group="scope" data-i18n="workflowGroupScope">\${text.workflowGroupScope}</button>
+<button type="button" data-tab="workflow-tab" data-setting-group="safety" data-i18n="workflowGroupSafety">\${text.workflowGroupSafety}</button>
+<button type="button" data-tab="init-settings-tab" data-i18n="initSettingsTab">\${text.initSettingsTab}</button>
+<button type="button" data-tab="project-memory-tab" data-i18n="projectMemoryTab">\${text.projectMemoryTab}</button>
+<button type="button" data-tab="backups-tab" data-i18n="backupsTab">\${text.backupsTab}</button>
+<button type="button" data-tab="cleanup-settings-tab" data-i18n="cleanupSettingsTab">\${text.cleanupSettingsTab}</button>
+<button type="button" data-tab="instructions-tab" data-i18n="instructionsTab">\${text.instructionsTab}</button>
+<button type="button" data-tab="actions-tab" data-i18n="actionsTab">\${text.actionsTab}</button>
+</div>
 </nav>
 <main>
-<section class="notice" id="ui-notice">\${actionsEnabled ? text.noticeActionsEnabled : text.noticeActionsDisabled}</section>
 <section class="warnings" id="warnings" hidden></section>
-<section class="switch-strip" id="garda-switch-panel" hidden></section>
-<section class="action-status empty" id="action-status"></section>
-<div id="actions" hidden></div>
 <section class="tab" id="tasks-tab">
 <div class="overview" id="overview"></div>
 <div class="tasks-layout">
@@ -96,5 +97,13 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <section class="panel tab" id="instructions-tab" hidden>
 <div class="panel-head"><h2 data-i18n="instructionsTab">\${text.instructionsTab}</h2></div>
 <div class="detail" id="instructions"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
+</section>
+<section class="panel tab" id="actions-tab" hidden>
+<div class="panel-head"><h2 data-i18n="actionsTab">\${text.actionsTab}</h2></div>
+<div class="detail">
+<section class="switch-strip" id="garda-switch-panel" hidden></section>
+<section class="action-status empty" id="action-status"></section>
+<div id="actions" hidden></div>
+</div>
 </section>
 </main>`;

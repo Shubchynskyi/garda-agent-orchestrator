@@ -60,8 +60,8 @@ function renderActionResult(result) {
   currentActionResult = result;
   const actionId = result.action_id || '';
   const label = localizedField(actionTextPacks, actionId, 'label', actionId || t('action'));
-  actionStatusNode.innerHTML = '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3>'
-    + '<div class="command-preview-main"><strong>' + safe(label) + '</strong><br><code>' + safe(result.command || '-') + '</code></div>'
+  actionStatusNode.innerHTML = '<section class="command-preview-panel">'
+    + '<div class="command-preview-main"><strong>' + safe(label) + '</strong></div>'
     + '<div class="command-preview-meta"><span>' + safe(t('statusColumn')) + '<code>' + safe(resultStatusText(result.status)) + '</code></span></div>'
     + (result.audit_path ? '<p><strong>' + safe(t('audit')) + ':</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')
     + outputBlock('stdout', result.stdout)
@@ -154,13 +154,13 @@ function renderActions(payload) {
     return;
   }
   if (!currentActionResult) {
-    actionStatusNode.innerHTML = '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3><p class="empty">' + safe(t('actionsPreviewHelp')) + '</p></section>';
+    actionStatusNode.innerHTML = '';
   }
   const categories = uniqueSorted(payload.actions.map(action => action.category || 'Workspace'));
   actionsNode.innerHTML = categories.map(category => {
     const actions = payload.actions.filter(action => (action.category || 'Workspace') === category);
     return '<section class="action-section"><h3>' + safe(actionCategoryLabel(category)) + '</h3><div class="action-table"><table><thead><tr><th>' + safe(t('action')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('actionEffectColumn')) + '</th><th>' + safe(t('commandColumn')) + '</th><th>' + safe(t('actionRunColumn')) + '</th></tr></thead><tbody>'
-      + actions.map(action => '<tr><td><strong>' + safe(actionLabel(action)) + '</strong></td><td class="description-cell">' + inlineText(actionDescription(action)) + '</td><td><span class="action-kind' + (action.mutates ? ' mutates' : '') + '">' + safe(actionChangeLabel(action)) + '</span></td><td class="command-cell"><code>' + safe(action.command) + '</code></td><td><div class="action-buttons"><button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="preview">' + safe(t('previewCommand')) + '</button><button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="execute">' + safe(t('run')) + '</button></div></td></tr>').join('')
+      + actions.map(action => '<tr><td><strong>' + safe(actionLabel(action)) + '</strong></td><td class="description-cell">' + inlineText(actionDescription(action)) + '</td><td><span class="action-kind' + (action.mutates ? ' mutates' : '') + '">' + safe(actionChangeLabel(action)) + '</span></td><td class="command-cell"><code>' + safe(action.command) + '</code></td><td><div class="action-buttons"><button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="execute">' + safe(t('run')) + '</button></div></td></tr>').join('')
       + '</tbody></table></div></section>';
   }).join('');
   wireActionButtons(actionsNode, payload.actions);

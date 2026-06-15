@@ -47,6 +47,7 @@ function buildInitAnswerRows(root: string, source: Record<string, unknown>): Rep
                 : source.SourceOfTruth,
             canonicalProviderFile ? toRepoRelativePath(root, path.join(root, canonicalProviderFile)) : null
         ),
+        valueRow('ActiveAgentFiles', 'Active agent files', 'Agent entrypoint files currently included in this project.', source.ActiveAgentFiles),
         valueRow('EnforceNoAutoCommit', 'No automatic commits', 'Prevents agents from committing without explicit operator approval (at least it tries).', source.EnforceNoAutoCommit),
         valueRow('ClaudeOrchestratorFullAccess', 'Claude full access mode', 'Whether Claude-oriented instructions assume full orchestrator access.', source.ClaudeOrchestratorFullAccess),
         valueRow('TokenEconomyEnabled', 'Token economy', 'Keeps generated instructions compact and avoids unnecessary context.', source.TokenEconomyEnabled),

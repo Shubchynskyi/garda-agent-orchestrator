@@ -581,7 +581,15 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
             window: {
-                prompt: () => null,
+                prompt: (message: string) => {
+                    if (message.includes('RESTORE BACKUP update-20260101-120000-000')) {
+                        return 'RESTORE BACKUP update-20260101-120000-000';
+                    }
+                    if (message.includes('APPLY GARDA SETTING')) {
+                        return 'APPLY GARDA SETTING';
+                    }
+                    return null;
+                },
                 addEventListener: () => undefined,
                 localStorage: {
                     getItem: () => null,
@@ -610,8 +618,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         if (options?.method === 'POST') {
                             return {
                                 action_id: 'backup-restore:update-20260101-120000-000',
-                                status: 'previewed',
+                                status: 'executed',
                                 command: 'node bin/garda.js rollback --snapshot-path runtime/update-rollbacks/update-20260101-120000-000 --target-root "."',
+                                stdout: 'verbose rollback output that should stay hidden in the backup status panel',
                                 audit_path: 'runtime/ui-actions/audit.jsonl'
                             };
                         }
@@ -621,10 +630,11 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         if (options?.method === 'POST') {
                             return {
                                 setting_id: 'auto-backup-enabled',
-                                status: 'previewed',
+                                status: 'executed',
                                 label: 'Auto-backup enabled',
                                 key: 'backups.auto_backup.enabled',
                                 command: 'node bin/garda.js workflow set --auto-backup-enabled true --target-root "."',
+                                stdout: 'verbose workflow output that should stay hidden in the backup status panel',
                                 current_value: false,
                                 proposed_value: true,
                                 changed_keys: ['backups.auto_backup.enabled'],
@@ -684,29 +694,33 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements['task-detail-panel'].hidden, false);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-green-summary-max-lines/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full_suite_validation\.green_summary_max_lines/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-auto-backup-enabled"/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-auto-backup-enabled"/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
         assert.equal(fakeDocument.elements.actions.innerHTML, '');
         assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /backup-restore/u);
         assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /rollback --snapshot-path/u);
         assert.match(fakeDocument.elements['backups-table'].innerHTML, /data-backup-action-id="backup-restore:update-20260101-120000-000"/u);
-        const backupPreviewButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
-            .find((button) => button.dataset.backupActionId === 'backup-restore:update-20260101-120000-000' && button.dataset.actionMode === 'preview');
-        assert.ok(backupPreviewButton);
-        await backupPreviewButton.dispatch('click');
+        const backupRestoreButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
+            .find((button) => button.dataset.backupActionId === 'backup-restore:update-20260101-120000-000' && button.dataset.actionMode === 'execute');
+        assert.ok(backupRestoreButton);
+        await backupRestoreButton.dispatch('click');
         await flushPromises();
-        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /rollback --snapshot-path/u);
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, />OK</u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /rollback --snapshot-path/u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /verbose rollback output/u);
         assert.match(fakeDocument.elements['backups-settings'].innerHTML, /data-setting-id="auto-backup-enabled"/u);
         assert.match(fakeDocument.elements['backups-settings'].innerHTML, /data-setting-control-scope="backups"/u);
         assert.match(fakeDocument.elements['backups-settings'].innerHTML, /id="setting-input-backups-auto-backup-enabled"/u);
         assert.doesNotMatch(fakeDocument.elements['backups-settings'].innerHTML, /id="setting-input-workflow-auto-backup-enabled"/u);
         assert.doesNotMatch(fakeDocument.elements['backups-settings'].innerHTML, /id="setting-input-auto-backup-enabled"/u);
-        const backupSettingPreviewButton = fakeDocument.elements['backups-settings'].querySelectorAll('button[data-setting-id]')
-            .find((button) => button.dataset.settingId === 'auto-backup-enabled' && button.dataset.settingMode === 'preview');
-        assert.ok(backupSettingPreviewButton);
-        await backupSettingPreviewButton.dispatch('click');
+        const backupSettingSaveButton = fakeDocument.elements['backups-settings'].querySelectorAll('button[data-setting-id]')
+            .find((button) => button.dataset.settingId === 'auto-backup-enabled' && button.dataset.settingMode === 'execute');
+        assert.ok(backupSettingSaveButton);
+        await backupSettingSaveButton.dispatch('click');
         await flushPromises();
-        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /workflow set --auto-backup-enabled/u);
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, />OK</u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /workflow set --auto-backup-enabled/u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /verbose workflow output/u);
         assert.doesNotMatch(fakeDocument.elements['setting-status'].innerHTML, /workflow set --auto-backup-enabled/u);
         assert.match(fakeDocument.elements['garda-switch-panel'].innerHTML, /Switch action is hidden/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-on"/u);
@@ -740,7 +754,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.ok(taskActionButton);
         await taskActionButton.dispatch('click');
         await flushPromises();
-        assert.match(fakeDocument.elements['task-action-status'].innerHTML, /node bin\/garda\.js task T-100 stats/u);
+        assert.match(fakeDocument.elements['task-action-status'].innerHTML, /Dry-run only/u);
+        assert.match(fakeDocument.elements['task-action-status'].innerHTML, /runtime\/ui-actions\/audit\.jsonl/u);
+        assert.doesNotMatch(fakeDocument.elements['task-action-status'].innerHTML, /node bin\/garda\.js task T-100 stats/u);
 
         fakeDocument.elements['language-select'].value = 'ru';
         await fakeDocument.elements['language-select'].dispatch('change');

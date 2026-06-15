@@ -657,13 +657,13 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
             action_id: 'cleanup-run',
             command: 'garda cleanup --dry-run'
         });
-        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview only/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Dry-run only/u);
 
         fakeDocument.elements['language-select'].value = 'de';
         await fakeDocument.elements['language-select'].dispatch('change');
 
         assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Wirksame Richtlinie/u);
-        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Vorschau/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Dry-run/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }

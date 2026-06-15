@@ -11,9 +11,8 @@ export const UI_DASHBOARD_CLIENT_WORKFLOW = `function renderWorkflow(report) {
 }
 function renderSettingResultMarkup(result) {
   const label = localizedField(settingTextPacks, result.setting_id, 'label', result.label || result.key || result.setting_id || t('setting'));
-  return '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3>'
-    + '<p class="empty">' + safe(t('workflowCommandPreviewHelp')) + '</p>'
-    + '<div class="command-preview-main"><strong>' + safe(label) + '</strong><br><code>' + safe(result.command || '-') + '</code></div>'
+  return '<section class="command-preview-panel">'
+    + '<div class="command-preview-main"><strong>' + safe(label) + '</strong></div>'
     + '<div class="command-preview-meta">'
     + '<span>' + safe(t('statusColumn')) + '<code>' + safe(resultStatusText(result.status)) + '</code></span>'
     + '<span>' + safe(t('current')) + '<code>' + safe(JSON.stringify(result.current_value)) + '</code></span>'
@@ -52,6 +51,9 @@ async function submitSetting(settingId, mode, value, confirmation, resultRendere
   }
 }
 function settingInputValue(setting) {
+  if (setting && setting.id === 'compile-gate-command' && String(setting.current_value || '') === '__COMPILE_GATE_COMMAND_UNCONFIGURED__') {
+    return '';
+  }
   if (Array.isArray(setting.current_value)) {
     return setting.current_value.join(',');
   }
@@ -111,6 +113,17 @@ function settingGroupLabel(groupId) {
   if (groupId === 'memory') return t('workflowGroupMemory');
   return t('workflowGroupSafety');
 }
+function settingCurrentDisplay(setting) {
+  if (setting && setting.id === 'compile-gate-command' && String(setting.current_value || '') === '__COMPILE_GATE_COMMAND_UNCONFIGURED__') {
+    return localizedField(
+      settingTextPacks,
+      'compile-gate-command-fallback',
+      'description',
+      'Not set in workflow-config; compile-gate uses the command from 40-commands.md.'
+    );
+  }
+  return isDurationMsSetting(setting) ? formatDurationMs(setting.current_value) : JSON.stringify(setting.current_value);
+}
 function renderSettingRow(setting, disabled, controlScope) {
   const label = localizedField(settingTextPacks, setting.id, 'label', setting.label);
   const description = localizedField(settingTextPacks, setting.id, 'description', setting.description);
@@ -120,9 +133,9 @@ function renderSettingRow(setting, disabled, controlScope) {
   return '<tr>'
     + '<td><div class="setting-title"><strong>' + safe(label) + '</strong><code>(' + safe(setting.key) + ')</code><span class="setting-parameter"><code>' + safe(setting.flag) + '</code></span></div></td>'
     + '<td class="description-cell">' + inlineText(description) + dependencyNote + '</td>'
-    + '<td><code class="current-value">' + safe(isDurationMsSetting(setting) ? formatDurationMs(setting.current_value) : JSON.stringify(setting.current_value)) + '</code></td>'
+    + '<td><code class="current-value">' + safe(settingCurrentDisplay(setting)) + '</code></td>'
     + '<td>' + renderSettingOptions(setting) + '</td>'
-    + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled, controlScope) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="preview"' + (disabled ? ' disabled' : '') + '>' + safe(t('previewCommand')) + '</button><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'
+    + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled, controlScope) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'
     + '</tr>';
 }
 function renderSettingsEditor(payload) {
@@ -136,27 +149,20 @@ function renderSettingsEditor(payload) {
   const disabledNotice = disabled
     ? '<p class="empty">' + safe(t('settingEditsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('settingEditsDisabledTail')) + '</p>'
     : '<p class="empty">' + safe(t('guardedEditorHelp')) + '</p>';
-  const groupOrder = ['validation', 'review', 'scope', 'memory', 'safety'];
+  const groupOrder = ['validation', 'review', 'scope', 'safety'];
   const availableGroups = groupOrder.filter(groupId => settings.some(setting => settingGroupId(setting) === groupId));
   if (!availableGroups.includes(currentWorkflowSettingGroup)) {
     currentWorkflowSettingGroup = availableGroups[0] || 'validation';
   }
   if (!currentSettingResult) {
-    settingStatusNode.innerHTML = '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3><p class="empty">' + safe(t('workflowCommandPreviewHelp')) + '</p></section>';
+    settingStatusNode.innerHTML = '';
   }
   settingsEditorNode.innerHTML = '<h3>' + safe(t('guardedEditor')) + '</h3>' + disabledNotice
-    + '<div class="workflow-setting-tabs" role="tablist">' + availableGroups.map(groupId => '<button type="button" data-setting-group="' + safe(groupId) + '" class="' + (groupId === currentWorkflowSettingGroup ? 'active' : '') + '">' + safe(settingGroupLabel(groupId)) + '</button>').join('') + '</div>'
-    + availableGroups.map(groupId => {
-      const groupSettings = settings.filter(setting => settingGroupId(setting) === groupId);
-      if (groupSettings.length === 0) return '';
-      return '<section class="workflow-group workflow-setting-group" data-setting-group-panel="' + safe(groupId) + '"' + (groupId === currentWorkflowSettingGroup ? '' : ' hidden') + '><h3>' + safe(settingGroupLabel(groupId)) + '</h3><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled, 'workflow')).join('') + '</tbody></table></div></section>';
-    }).join('');
-  for (const button of settingsEditorNode.querySelectorAll('button[data-setting-group]')) {
-    button.addEventListener('click', () => {
-      currentWorkflowSettingGroup = button.dataset.settingGroup;
-      renderSettingsEditor(currentSettingsPayload);
-    });
-  }
+    + (() => {
+      const groupSettings = settings.filter(setting => settingGroupId(setting) === currentWorkflowSettingGroup);
+      if (groupSettings.length === 0) return '<p class="empty">' + safe(t('noWorkflowSettings')) + '</p>';
+      return '<section class="workflow-group workflow-setting-group"><h3>' + safe(settingGroupLabel(currentWorkflowSettingGroup)) + '</h3><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled, 'workflow')).join('') + '</tbody></table></div></section>';
+    })();
   for (const button of settingsEditorNode.querySelectorAll('button[data-setting-id]')) {
     button.addEventListener('click', () => {
       const setting = settings.find(item => item.id === button.dataset.settingId);
@@ -176,6 +182,9 @@ function renderSettingsEditor(payload) {
 async function refreshSettingsPayload() {
   const response = await fetch('/api/settings');
   renderSettingsEditor(await response.json());
+  if (currentReport) {
+    renderProjectMemory(currentReport);
+  }
 }
 function settingSubmitValue(setting, fallbackInput, controlScope) {
   if (isDurationMsSetting(setting)) {

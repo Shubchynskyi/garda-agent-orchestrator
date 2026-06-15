@@ -75,8 +75,8 @@ async function runTaskAction(taskId, actionId, mode, confirmation) {
   if (!node) {
     return;
   }
-  node.innerHTML = '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3>'
-    + '<div class="command-preview-main"><strong>' + safe(result.task_id || taskId) + '</strong><br><code>' + safe(result.command || '-') + '</code></div>'
+  node.innerHTML = '<section class="command-preview-panel">'
+    + '<div class="command-preview-main"><strong>' + safe(result.task_id || taskId) + '</strong></div>'
     + '<div class="command-preview-meta"><span>' + safe(t('statusColumn')) + '<code>' + safe(resultStatusText(result.status)) + '</code></span></div>'
     + (result.unavailable_reason ? '<p class="task-action-unavailable">' + safe(result.unavailable_reason) + '</p>' : '')
     + (result.audit_path ? '<p><strong>' + safe(t('audit')) + ':</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')

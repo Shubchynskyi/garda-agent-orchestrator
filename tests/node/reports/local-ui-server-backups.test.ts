@@ -313,7 +313,7 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /Workflow Config/u);
         assert.match(html, /Backups/u);
         assert.match(html, /Instructions/u);
-        assert.doesNotMatch(html, /data-tab="actions-tab"/u);
+        assert.match(html, /data-tab="actions-tab"/u);
         assert.match(html, /class="language-icon"/u);
         assert.match(html, /id="language-select"[^>]*data-i18n-aria-label="languageTitle"/u);
         assert.match(html, /visually-hidden[^>]*data-i18n="languageTitle"/u);
@@ -328,9 +328,9 @@ test('local UI server serves read-only dashboard controls', async () => {
         assert.match(html, /api\/session/u);
         assert.match(html, /\.tab-buttons \{[^}]*flex-wrap: wrap/u);
         assert.match(html, /\.tab-buttons button\.active \{[^}]*background: var\(--ok\)/u);
-        assert.match(html, /\.language-compact \.visually-hidden \{[^}]*position: static/u);
-        assert.match(html, /\.session-action-row button \{[^}]*flex: 0 1 138px/u);
-        assert.match(html, /\.tab-buttons button \{[^}]*white-space: normal/u);
+        assert.match(html, /\.language-compact \.visually-hidden \{[^}]*position: absolute/u);
+        assert.match(html, /\.session-action-row \{[^}]*display: grid/u);
+        assert.match(html, /\.tab-buttons button \{[^}]*white-space: nowrap/u);
         assert.match(html, /\.session-compact \{[^}]*flex-direction: column/u);
         assert.match(html, /\.session-status-line/u);
         assert.match(html, /\.setting-buttons button, \.action-buttons button, \.switch-buttons button, #tasks button\[data-task-id\] \{[^}]*width: 138px/u);

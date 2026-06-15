@@ -1,6 +1,12 @@
 /** Browser-side dashboard script fragment (bootstrap). */
 export const UI_DASHBOARD_CLIENT_BOOTSTRAP = `for (const tabButton of document.querySelectorAll('nav button[data-tab]')) {
   tabButton.addEventListener('click', () => {
+    if (tabButton.dataset.settingGroup) {
+      currentWorkflowSettingGroup = tabButton.dataset.settingGroup;
+      if (currentSettingsPayload) {
+        renderSettingsEditor(currentSettingsPayload);
+      }
+    }
     for (const button of document.querySelectorAll('nav button[data-tab]')) {
       button.classList.toggle('active', button === tabButton);
     }
