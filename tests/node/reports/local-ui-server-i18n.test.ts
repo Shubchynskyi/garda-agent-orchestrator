@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
 import * as vm from 'node:vm';
@@ -11,6 +10,10 @@ import {
     DEFAULT_UI_HOST,
     startLocalUiServer
 } from '../../../src/reports/ui';
+import {
+    cleanupLocalUiTestResources,
+    makeLocalUiTempRepo
+} from './local-ui-test-helpers';
 
 type FakeListener = () => void | Promise<void>;
 
@@ -244,9 +247,7 @@ async function flushPromises(): Promise<void> {
     await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function makeTempRepo(): string {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-local-ui-server-'));
-}
+const makeTempRepo = makeLocalUiTempRepo;
 
 function writeRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -384,7 +385,7 @@ test('local UI server applies initial language option to rendered dashboard', as
         assert.match(html, /Загрузка сессии сервера/u);
         assert.equal(server.language, 'ru');
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -467,7 +468,7 @@ test('local UI dashboard restores persisted browser language on page load', asyn
         assert.match(fakeDocument.elements.overview.innerHTML, /Активные/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -552,7 +553,7 @@ test('local UI dashboard prefers case-insensitive regional browser language befo
 
         assert.equal(fakeDocument.elements['language-select'].value, 'pt-BR');
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -638,7 +639,7 @@ test('local UI dashboard falls back from unsupported browser locale to server in
         assert.equal(fakeDocument.elements['language-select'].value, 'de');
         assert.match(fakeDocument.elements.overview.innerHTML, /Aktiv/u);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -738,6 +739,6 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Wirksame Richtlinie/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Vorschau/u);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });

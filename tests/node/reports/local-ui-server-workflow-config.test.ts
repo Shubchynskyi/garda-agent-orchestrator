@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
 import * as vm from 'node:vm';
@@ -11,6 +10,10 @@ import {
     DEFAULT_UI_HOST,
     startLocalUiServer
 } from '../../../src/reports/ui';
+import {
+    cleanupLocalUiTestResources,
+    makeLocalUiTempRepo
+} from './local-ui-test-helpers';
 
 type FakeListener = () => void | Promise<void>;
 
@@ -239,9 +242,7 @@ async function flushPromises(): Promise<void> {
     await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function makeTempRepo(): string {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-local-ui-server-'));
-}
+const makeTempRepo = makeLocalUiTempRepo;
 
 function writeRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -512,7 +513,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.match(auditLines[auditLines.length - 1], /"action_id":"setting:full-suite-green-summary-max-lines"/u);
         assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -572,7 +573,7 @@ test('local UI settings reject cross-origin missing-token and non-json posts', a
         assert.equal(nonJson.status, 403);
         assert.equal((await nonJson.json() as { code: string }).code, 'action_boundary_rejected');
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 

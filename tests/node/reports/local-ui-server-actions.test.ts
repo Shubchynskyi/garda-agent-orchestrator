@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
 import * as vm from 'node:vm';
@@ -11,6 +10,10 @@ import {
     DEFAULT_UI_HOST,
     startLocalUiServer
 } from '../../../src/reports/ui';
+import {
+    cleanupLocalUiTestResources,
+    makeLocalUiTempRepo
+} from './local-ui-test-helpers';
 
 type FakeListener = () => void | Promise<void>;
 
@@ -239,9 +242,7 @@ async function flushPromises(): Promise<void> {
     await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function makeTempRepo(): string {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-local-ui-server-'));
-}
+const makeTempRepo = makeLocalUiTempRepo;
 
 function writeRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -390,14 +391,14 @@ test('local UI server returns JSON errors for API method and route failures', as
             code: 'not_found'
         });
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
 test('local UI server exposes server-owned idle session state and activity reset', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
-        const server = await startLocalUiServer({
+    const server = await startLocalUiServer({
             repoRoot,
             port: 0,
             idleMinutes: 0.01,
@@ -446,7 +447,7 @@ test('local UI server exposes server-owned idle session state and activity reset
         assert.equal(activity.state, 'active');
         assert.equal(activity.seconds_until_shutdown, null);
     } finally {
-        await server.close().catch(() => undefined);
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -479,7 +480,7 @@ test('local UI session posts require the page token and localhost boundary', asy
         assert.equal(crossOrigin.status, 403);
         assert.equal((await crossOrigin.json() as { code: string }).code, 'session_boundary_rejected');
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -487,22 +488,26 @@ test('local UI manual session shutdown closes the foreground server', async () =
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
     const server = await startLocalUiServer({ repoRoot, port: 0 });
-    const actionToken = extractActionToken(await (await fetch(server.url)).text());
-    const closePromise = new Promise<void>((resolve) => server.server.once('close', resolve));
-    const response = await fetch(`${server.url}api/session/shutdown`, {
-        method: 'POST',
-        headers: {
-            'content-type': 'application/json',
-            'origin': server.url.slice(0, -1),
-            'x-garda-action-token': actionToken
-        },
-        body: JSON.stringify({})
-    });
-    assert.equal(response.status, 200);
-    const payload = await response.json() as { state: string; stop_message: string };
-    assert.equal(payload.state, 'stopping');
-    assert.match(payload.stop_message, /Rerun `garda ui`/u);
-    await closePromise;
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const closePromise = new Promise<void>((resolve) => server.server.once('close', resolve));
+        const response = await fetch(`${server.url}api/session/shutdown`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': server.url.slice(0, -1),
+                'x-garda-action-token': actionToken
+            },
+            body: JSON.stringify({})
+        });
+        assert.equal(response.status, 200);
+        const payload = await response.json() as { state: string; stop_message: string };
+        assert.equal(payload.state, 'stopping');
+        assert.match(payload.stop_message, /Rerun `garda ui`/u);
+        await closePromise;
+    } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
 });
 
 test('local UI idle expiry closes the server without browser heartbeat', async () => {
@@ -514,11 +519,15 @@ test('local UI idle expiry closes the server without browser heartbeat', async (
         idleMinutes: 0.001,
         idleWarningSeconds: 0.001
     });
-    const closePromise = new Promise<void>((resolve) => server.server.once('close', resolve));
-    await Promise.race([
-        closePromise,
-        new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error('server did not close after idle expiry')), 1500))
-    ]);
+    try {
+        const closePromise = new Promise<void>((resolve) => server.server.once('close', resolve));
+        await Promise.race([
+            closePromise,
+            new Promise<void>((_resolve, reject) => setTimeout(() => reject(new Error('server did not close after idle expiry')), 1500))
+        ]);
+    } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
 });
 
 test('local UI actions are disabled unless explicitly enabled', async () => {
@@ -564,7 +573,7 @@ test('local UI actions are disabled unless explicitly enabled', async () => {
         assert.equal(taskRunResponse.status, 403);
         assert.equal((await taskRunResponse.json() as { code: string }).code, 'actions_disabled');
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -649,7 +658,7 @@ test('local UI actions support preview confirmation execution and audit', async 
         assert.match(auditLines[1], /"status":"confirmation_required"/u);
         assert.match(auditLines[2], /"status":"executed"/u);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -699,7 +708,7 @@ test('local UI action timeout result returns deterministic HTTP and audit fields
         assert.match(auditLines[auditLines.length - 1], /"timed_out":true/u);
         assert.match(auditLines[auditLines.length - 1], /"timeout_ms":120000/u);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -868,7 +877,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         assert.equal(taskPurge.stdout, 'cleanup ok');
         assert.equal(executedCommands.length, 2);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -1003,7 +1012,7 @@ test('local UI task actions support preview confirmation execution and audit', a
         });
         assert.equal(unknownTaskResponse.status, 404);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -1059,6 +1068,6 @@ test('local UI actions reject cross-origin missing-token and non-json posts', as
         assert.equal(nonJson.status, 403);
         assert.equal((await nonJson.json() as { code: string }).code, 'action_boundary_rejected');
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });

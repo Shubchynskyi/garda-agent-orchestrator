@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
 import * as vm from 'node:vm';
@@ -11,6 +10,10 @@ import {
     DEFAULT_UI_HOST,
     startLocalUiServer
 } from '../../../src/reports/ui';
+import {
+    cleanupLocalUiTestResources,
+    makeLocalUiTempRepo
+} from './local-ui-test-helpers';
 
 type FakeListener = () => void | Promise<void>;
 
@@ -239,9 +242,7 @@ async function flushPromises(): Promise<void> {
     await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function makeTempRepo(): string {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-local-ui-server-'));
-}
+const makeTempRepo = makeLocalUiTempRepo;
 
 function writeRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -404,7 +405,7 @@ test('local UI server exposes report and lazy task detail endpoints', async () =
         assert.ok('audit' in detail);
         assert.ok(Array.isArray(detail.artifact_links));
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -787,7 +788,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /сервер недоступен|server is unavailable/u);
         assert.equal(fakeDocument.elements['session-countdown'].value, '0');
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -800,7 +801,7 @@ test('local UI server rejects invalid or unknown task detail requests', async ()
         assert.equal((await fetch(`${server.url}api/tasks/%E0%A4%A/detail`)).status, 400);
         assert.equal((await fetch(`${server.url}api/tasks/T-999/detail`)).status, 404);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -818,7 +819,7 @@ test('local UI server refreshes cached task snapshot after TASK.md changes', asy
         assert.equal((await fetch(`${server.url}api/tasks/T-100/detail`)).status, 404);
         assert.equal((await fetch(`${server.url}api/tasks/T-101/detail`)).status, 200);
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 

@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
 import * as vm from 'node:vm';
@@ -11,6 +10,11 @@ import {
     DEFAULT_UI_HOST,
     startLocalUiServer
 } from '../../../src/reports/ui';
+import {
+    cleanupLocalUiTestResources,
+    makeLocalUiTempRepo,
+    removeLocalUiTempRepo
+} from './local-ui-test-helpers';
 
 type FakeListener = () => void | Promise<void>;
 
@@ -239,9 +243,7 @@ async function flushPromises(): Promise<void> {
     await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
-function makeTempRepo(): string {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-local-ui-server-'));
-}
+const makeTempRepo = makeLocalUiTempRepo;
 
 function writeRepo(repoRoot: string): void {
     fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
@@ -400,8 +402,7 @@ test('local UI server skips busy ports in the default local range', async () => 
         assert.equal(server.host, DEFAULT_UI_HOST);
         assert.equal(server.port, nextPort);
     } finally {
-        await server.close();
-        await closeNetServer(reserved);
+        await cleanupLocalUiTestResources({ repoRoot, server, netServers: [reserved] });
     }
 });
 
@@ -420,7 +421,7 @@ test('local UI server skips browser-unsafe ports in configured local ranges', as
         assert.equal(response.status, 200);
         await response.text();
     } finally {
-        await server.close();
+        await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
 
@@ -441,7 +442,7 @@ test('local UI server close drains unconsumed fetch response sockets', async () 
         );
     } finally {
         response.destroy();
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        removeLocalUiTempRepo(repoRoot);
     }
 });
 
@@ -476,12 +477,12 @@ test('local UI server falls back to a safe range when port 0 repeatedly binds un
             assert.equal(response.status, 200);
             await response.text();
         } finally {
-            await server.close();
+            await cleanupLocalUiTestResources({ repoRoot, server });
         }
         assert.equal(unsafeDynamicBinds, 25);
     } finally {
         http.Server.prototype.address = originalAddress;
-        await closeNetServer(reserved);
+        await cleanupLocalUiTestResources({ repoRoot, netServers: [reserved] });
     }
 });
 
@@ -489,18 +490,26 @@ test('local UI server rejects browser-unsafe explicit ports', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
 
-    await assert.rejects(
-        () => startLocalUiServer({ repoRoot, port: 6000 }),
-        /not browser-safe/
-    );
+    try {
+        await assert.rejects(
+            () => startLocalUiServer({ repoRoot, port: 6000 }),
+            /not browser-safe/
+        );
+    } finally {
+        removeLocalUiTempRepo(repoRoot);
+    }
 });
 
 test('local UI server refuses non-localhost binding', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
 
-    await assert.rejects(
-        () => startLocalUiServer({ repoRoot, host: '0.0.0.0', port: 0 }),
-        /only supports binding to 127\.0\.0\.1/
-    );
+    try {
+        await assert.rejects(
+            () => startLocalUiServer({ repoRoot, host: '0.0.0.0', port: 0 }),
+            /only supports binding to 127\.0\.0\.1/
+        );
+    } finally {
+        removeLocalUiTempRepo(repoRoot);
+    }
 });
