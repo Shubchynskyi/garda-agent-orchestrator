@@ -170,7 +170,8 @@ export function buildOrchestratorWorkRestartCommand(
     cliPrefix: string,
     taskId: string,
     taskMode: Record<string, unknown> | null,
-    additionalPlannedChangedFiles: string[] = []
+    additionalPlannedChangedFiles: string[] = [],
+    includeWorkflowConfigWork = false
 ): string {
     const parts = [
         `${cliPrefix} gate enter-task-mode`,
@@ -189,6 +190,9 @@ export function buildOrchestratorWorkRestartCommand(
         parts.push(`--routed-to ${quoteCommandValue(routedTo)}`);
     }
     parts.push('--orchestrator-work');
+    if (includeWorkflowConfigWork) {
+        parts.push('--workflow-config-work');
+    }
     parts.push(...buildProtectedOperatorConfirmationCommandParts());
     const plannedChangedFiles = Array.isArray(taskMode?.planned_changed_files)
         ? taskMode.planned_changed_files.map((entry) => normalizePath(entry)).filter(Boolean)

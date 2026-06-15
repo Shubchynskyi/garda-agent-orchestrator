@@ -154,7 +154,6 @@ describe('gates/next-step', () => {
 
     it('routes zero-diff no-review closeout to audited no-op before required reviews check', () => {
         const repoRoot = makeTempRepo();
-        initGitRepo(repoRoot);
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
             full_suite_validation: {
                 enabled: true,
@@ -165,6 +164,7 @@ describe('gates/next-step', () => {
                 mode: 'strict_sequential'
             }
         });
+        initGitRepo(repoRoot);
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;

@@ -1498,6 +1498,131 @@ describe('gates/next-step startup routing', () => {
         assert.ok(result.commands[0].command.includes('--stage "TASK_ENTRY"'));
     });
 
+    it('routes protected source changes to task-mode restart before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+            'utf8'
+        );
+        const protectedPath = path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts');
+        fs.mkdirSync(path.dirname(protectedPath), { recursive: true });
+        fs.writeFileSync(protectedPath, 'export const protectedBaseline = true;\n', 'utf8');
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        initGitRepo(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(protectedPath, 'export const protectedChange = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /protected orchestrator control-plane files before classify-change/);
+        assert.match(result.reason, /--orchestrator-work/);
+        assert.ok(command.includes('gate enter-task-mode'));
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--planned-changed-file "src/gates/next-step/next-step.ts"'));
+        assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('routes stale preflight with new protected source changes to task-mode restart before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+            'utf8'
+        );
+        const protectedPath = path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts');
+        fs.mkdirSync(path.dirname(protectedPath), { recursive: true });
+        fs.writeFileSync(protectedPath, 'export const protectedBaseline = true;\n', 'utf8');
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        initGitRepo(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+        fs.appendFileSync(protectedPath, 'export const protectedStalePreflightChange = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /protected orchestrator control-plane files before classify-change/);
+        assert.ok(command.includes('gate enter-task-mode'));
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--planned-changed-file "src/gates/next-step/next-step.ts"'));
+        assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('routes workflow-config changes to workflow-config task-mode restart before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+            'utf8'
+        );
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        initGitRepo(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        workflowConfig.full_suite_validation.command = 'npm run test:sharded';
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.match(result.reason, /protected orchestrator control-plane files before classify-change/);
+        assert.match(result.reason, /--orchestrator-work --workflow-config-work/);
+        assert.ok(command.includes('gate enter-task-mode'));
+        assert.ok(command.includes('--orchestrator-work'));
+        assert.ok(command.includes('--workflow-config-work'));
+        assert.ok(command.includes('--operator-confirmed yes'));
+        assert.ok(command.includes('--planned-changed-file "garda-agent-orchestrator/live/config/workflow-config.json"'));
+        assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('continues to classify ordinary source changes before preflight', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedTaskModeOnly(repoRoot, TASK_ID);
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const ordinaryChange = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'classify-change', result.reason);
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.equal(result.commands[0].command.includes('--orchestrator-work'), false);
+    });
+
     it('routes restarted task-mode cycles through fresh startup gates before reusing old preflight', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);

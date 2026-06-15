@@ -53,9 +53,12 @@ import type {
 } from '../review/review-trust-summary';
 import {
     fileSha256,
+    getProtectedControlPlaneRoots,
+    isWorkflowConfigControlPlanePath,
     joinOrchestratorPath,
     normalizePath,
-    resolvePathInsideRepo
+    resolvePathInsideRepo,
+    testPathPrefix
 } from '../shared/helpers';
 import {
     collectKnownNonBlockingSignals,
@@ -898,6 +901,33 @@ function preflightTouchesProtectedControlPlane(preflight: Record<string, unknown
     return Array.isArray(triggers.changed_protected_files) && triggers.changed_protected_files.length > 0;
 }
 
+function readCurrentProtectedScopeBeforePreflight(repoRoot: string): {
+    changedFiles: string[];
+    protectedFiles: string[];
+    workflowConfigFiles: string[];
+} | null {
+    const currentSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, true);
+    if (!currentSnapshot) {
+        return null;
+    }
+    const changedFiles = [...new Set(
+        currentSnapshot.changed_files.map((entry) => normalizePath(entry)).filter(Boolean)
+    )].sort();
+    if (changedFiles.length === 0) {
+        return null;
+    }
+    const protectedRoots = getProtectedControlPlaneRoots(repoRoot);
+    const protectedFiles = changedFiles.filter((entry) => testPathPrefix(entry, protectedRoots));
+    if (protectedFiles.length === 0) {
+        return null;
+    }
+    return {
+        changedFiles,
+        protectedFiles,
+        workflowConfigFiles: protectedFiles.filter((entry) => isWorkflowConfigControlPlanePath(entry))
+    };
+}
+
 function getOrdinaryDocReviewSkips(preflight: Record<string, unknown> | null): { path: string; pattern: string }[] {
     const triggers = getPreflightTriggers(preflight);
     const matches = Array.isArray(triggers.ordinary_doc_path_matches)
@@ -1689,6 +1719,59 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         warnings: [] as string[],
         sourceRuntimeStaleness
     };
+    const currentProtectedScope = readCurrentProtectedScopeBeforePreflight(repoRoot);
+    const currentProtectedScopeNeedsTaskModeRestart = currentProtectedScope
+        && (
+            taskMode?.orchestrator_work !== true
+            || (currentProtectedScope.workflowConfigFiles.length > 0 && taskMode?.workflow_config_work !== true)
+        );
+    const buildCurrentProtectedScopeTaskModeRestartRoute = () => {
+        if (!currentProtectedScope || !currentProtectedScopeNeedsTaskModeRestart) {
+            return null;
+        }
+        const protectedScopeList = currentProtectedScope.protectedFiles.join(', ');
+        const missingFlagLabel = currentProtectedScope.workflowConfigFiles.length > 0 && taskMode?.workflow_config_work !== true
+            ? '--orchestrator-work --workflow-config-work'
+            : '--orchestrator-work';
+        if (isGardaSelfGuardDenyAgentEntry(repoRoot)) {
+            return buildResult({
+                ...resultBase,
+                status: 'BLOCKED',
+                nextGate: 'operator-maintenance',
+                title: 'Garda self-guard blocks agent-owned protected control-plane work.',
+                reason:
+                    `The current workspace already contains protected Garda control-plane files before classify-change: ${protectedScopeList}. ` +
+                    formatGardaSelfGuardProtectedControlPlaneGuidance(),
+                commands: [
+                    buildCommand('Operator policy change', buildGardaSelfGuardPolicyChangeCommand(cliPrefix))
+                ]
+            });
+        }
+        return buildResult({
+            ...resultBase,
+            status: 'BLOCKED',
+            nextGate: 'enter-task-mode',
+            title: 'Restart task mode for protected scope before classify.',
+            reason:
+                `The current workspace already contains protected orchestrator control-plane files before classify-change: ${protectedScopeList}. ` +
+                `Task-mode evidence must declare ${missingFlagLabel} before protected scope is classified; fresh operator approval is required.`,
+            commands: [
+                buildCommand(
+                    currentProtectedScope.workflowConfigFiles.length > 0
+                        ? 'Restart task mode with workflow-config work'
+                        : 'Restart task mode with orchestrator work',
+                    buildOrchestratorWorkRestartCommand(
+                        repoRoot,
+                        cliPrefix,
+                        taskId,
+                        taskMode,
+                        currentProtectedScope.changedFiles,
+                        currentProtectedScope.workflowConfigFiles.length > 0
+                    )
+                )
+            ]
+        });
+    };
 
     if (taskIdCaseMismatch) {
         return buildResult({
@@ -1925,6 +2008,11 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             return strictDecompositionBlock;
         }
 
+        const currentProtectedScopeRoute = buildCurrentProtectedScopeTaskModeRestartRoute();
+        if (currentProtectedScopeRoute) {
+            return currentProtectedScopeRoute;
+        }
+
         const classifyCommand = buildClassifyChangeCommand({
             repoRoot,
             cliPrefix,
@@ -1987,6 +2075,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         taskModePath
     );
     const reviewGateAlreadyPassed = isGatePassed(summary, 'required-reviews-check');
+    const currentProtectedScopeRoute = buildCurrentProtectedScopeTaskModeRestartRoute();
+    if (currentProtectedScopeRoute) {
+        return currentProtectedScopeRoute;
+    }
 
     const preGuardRoute = resolveNextStepPreGuardRoute({
         preflightCycleReadiness,
