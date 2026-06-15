@@ -3,6 +3,7 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach } from 'node:test';
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 
 interface ClosableLocalUiServer {
     close: () => Promise<void>;
@@ -30,6 +31,74 @@ export function makeLocalUiTempRepo(): string {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-local-ui-server-'));
     localUiTempRepos.add(repoRoot);
     return repoRoot;
+}
+
+export function writeLocalUiRepoFixture(repoRoot: string): void {
+    writeLocalUiTaskQueue(repoRoot, 'T-100', 'Build UI');
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify(buildDefaultWorkflowConfig(), null, 2));
+    const runtimeRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime');
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+    fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
+        AssistantLanguage: 'Russian',
+        AssistantBrevity: 'detailed',
+        SourceOfTruth: 'Codex',
+        EnforceNoAutoCommit: 'true',
+        ClaudeOrchestratorFullAccess: 'true',
+        TokenEconomyEnabled: 'true',
+        ProviderMinimalism: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE',
+        ActiveAgentFiles: 'AGENTS.md'
+    }, null, 2));
+    fs.writeFileSync(path.join(runtimeRoot, 'agent-init-state.json'), JSON.stringify({
+        Version: 1,
+        UpdatedAt: '2026-05-17T00:00:00.000Z',
+        OrchestratorVersion: '1.1.0',
+        AssistantLanguage: 'Russian',
+        SourceOfTruth: 'Codex',
+        AssistantLanguageConfirmed: true,
+        ActiveAgentFilesConfirmed: true,
+        ProjectRulesUpdated: true,
+        SkillsPromptCompleted: true,
+        OrdinaryDocPathsConfirmed: true,
+        OrdinaryDocPaths: [],
+        VerificationPassed: true,
+        ManifestValidationPassed: true,
+        ActiveAgentFiles: ['AGENTS.md'],
+        LastSeededFullSuiteCommand: 'npm test',
+        ProjectMemoryInitialized: true,
+        ProjectMemoryValidated: true,
+        ProjectMemoryMode: 'strict',
+        ProjectMemoryDir: 'live/docs/project-memory',
+        ProjectMemoryReadFirst: ['live/docs/project-memory/README.md', 'live/docs/project-memory/compact.md'],
+        ProjectMemorySummaryRule: 'live/docs/agent-rules/15-project-memory.md',
+        ProjectMemoryBootstrapReport: 'runtime/project-memory/bootstrap-report.json',
+        ProjectMemoryWarnings: []
+    }, null, 2));
+    const memoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
+    fs.mkdirSync(memoryRoot, { recursive: true });
+    for (const fileName of ['README.md', 'compact.md', 'context.md', 'stack.md', 'architecture.md', 'module-map.md', 'commands.md', 'conventions.md', 'decisions.md', 'risks.md']) {
+        fs.writeFileSync(path.join(memoryRoot, fileName), `# ${fileName}\n\nMemory for ${fileName}.\n`);
+    }
+}
+
+export function writeLocalUiTaskQueue(repoRoot: string, taskId: string, title: string): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        `| ${taskId} | TODO | P2 | ui/report | ${title} | gpt-5.4 | 2026-05-17 | balanced | Uses lazy details |`
+    ].join('\n'));
+}
+
+export function setLocalUiTaskResetEnabled(repoRoot: string, enabled: boolean): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    parsed.task_reset.enabled = enabled;
+    fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2));
 }
 
 export function removeLocalUiTempRepo(repoRoot: string | null | undefined): void {
