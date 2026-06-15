@@ -4,9 +4,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { isTaskOwnedReviewTempPath } from '../../../../../../src/cli/commands/gates-artifacts';
+import { isTaskOwnedReviewTempPath } from '../../../../../../src/cli/commands/gates/gates-artifacts';
 
-describe('cli/commands/gates-artifacts', () => {
+describe('cli/commands/gates/gates-artifacts', () => {
     it('accepts regular task-owned runtime reviewer scratch paths', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-temp-owned-'));
         try {

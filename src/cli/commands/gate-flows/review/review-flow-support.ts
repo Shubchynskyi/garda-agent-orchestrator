@@ -19,13 +19,13 @@ import {
 import {
     resolveDefaultReviewsPath,
     resolveReviewContextPath
-} from '../../gates-artifacts';
+} from '../../gates/gates-artifacts';
 import {
     toReviewCompactionAuditSummary
-} from '../../gates-formatter';
+} from '../../gates/gates-formatter';
 import {
     expandValueList
-} from '../../gates-parser';
+} from '../../gates/gates-parser';
 import { requireResolvedPath } from '../../shared-command-utils';
 import {
     getErrorMessage,

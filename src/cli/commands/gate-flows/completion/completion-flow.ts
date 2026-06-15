@@ -23,13 +23,13 @@ import {
     cleanupTerminalReviewTempOutputs,
     resolvePathForWrite,
     type TerminalLogCleanupResult
-} from '../../gates-artifacts';
+} from '../../gates/gates-artifacts';
 import {
     toCommandPolicyAuditSummary
-} from '../../gates-formatter';
+} from '../../gates/gates-formatter';
 import {
     parseJsonOption
-} from '../../gates-parser';
+} from '../../gates/gates-parser';
 import { requireResolvedPath } from '../../shared-command-utils';
 import {
     resolveOrchestratorRoot,

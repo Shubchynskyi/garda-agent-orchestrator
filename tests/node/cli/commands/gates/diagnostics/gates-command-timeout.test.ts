@@ -28,7 +28,7 @@ import {
 import {
     runCliMainWithHandling
 } from '../../../../../../src/cli/main';
-import { formatCompileOutputEntry } from '../../../../../../src/cli/commands/gates-formatter';
+import { formatCompileOutputEntry } from '../../../../../../src/cli/commands/gates/gates-formatter';
 import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';

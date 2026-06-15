@@ -28,7 +28,7 @@ import {
 import {
     runCliMainWithHandling
 } from '../../../../../../src/cli/main';
-import { formatCompileOutputEntry } from '../../../../../../src/cli/commands/gates-formatter';
+import { formatCompileOutputEntry } from '../../../../../../src/cli/commands/gates/gates-formatter';
 import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
@@ -1280,10 +1280,10 @@ describe('cli/commands/gates', () => {
             fs.writeFileSync(testReviewOutputPath, [
             '# Review',
             '',
-            'Validated `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates-artifacts.ts`, and `src/gates/completion.ts`, confirming that downstream review validation now follows the recorded custom code review-context path through materialization, review-gate verification, and completion-gate consumption.',
+            'Validated `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates/gates-artifacts.ts`, and `src/gates/completion.ts`, confirming that downstream review validation now follows the recorded custom code review-context path through materialization, review-gate verification, and completion-gate consumption.',
             '',
             '## Validation Notes',
-            'Reviewed `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates-artifacts.ts`, and `src/gates/completion.ts` for downstream validation through the recorded custom code review-context path.',
+            'Reviewed `src/cli/commands/gate-review-handlers.ts`, `src/cli/commands/gates/gates-artifacts.ts`, and `src/gates/completion.ts` for downstream validation through the recorded custom code review-context path.',
             '',
             '## Findings by Severity',
             'none',

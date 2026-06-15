@@ -26,12 +26,12 @@ import {
     resolveDefaultMetricsPath,
     resolvePathForWrite,
     writeJsonArtifact
-} from '../../gates-artifacts';
+} from '../../gates/gates-artifacts';
 import {
     expandValueList,
     normalizeRulePackStage,
     parseBooleanOption
-} from '../../gates-parser';
+} from '../../gates/gates-parser';
 import { requireResolvedPath } from '../../shared-command-utils';
 import {
     appendMetricsIfEnabled,

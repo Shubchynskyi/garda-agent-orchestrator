@@ -6,7 +6,7 @@ import {
     buildTaskHistoryLedger,
     resolveTaskHistoryLedgerPath
 } from '../../gate-runtime/task-history-ledger';
-import { cleanupTerminalReviewTempOutputs } from '../../cli/commands/gates-artifacts';
+import { cleanupTerminalReviewTempOutputs } from '../../cli/commands/gates/gates-artifacts';
 import { runDailyRetentionMaintenance } from '../../lifecycle/daily-retention-maintenance';
 import { updateEvidenceArtifactState } from './task-audit-summary-collectors';
 import { formatFinalCloseoutMarkdown, formatFinalUserReport } from './task-audit-summary-renderers';

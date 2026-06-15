@@ -49,6 +49,14 @@ If a file is moved behind a new directory, keep a facade or compatibility
 re-export at the old import path until the affected source and test imports are
 updated in the same child task.
 
+Internal-only source helper paths are not public compatibility contracts by
+default. For example, `src/cli/commands/gates-*.ts` helper modules may move to
+`src/cli/commands/gates/**` and the old root files may be deleted when the same
+child task migrates all in-repository source imports, tests, and documentation
+path hints to the canonical owner path. The preserved contract is CLI/gate
+behavior, output, exit codes, artifact schemas, and documented public entrypoints,
+not arbitrary historical source file locations.
+
 ## Move Order
 
 Use this order so each child task has a bounded blast radius:
@@ -86,7 +94,8 @@ final audit.
   materialized workspace behavior.
 - Avoid `utils`, `misc`, or `common` directories unless the owner domain is
   specific and stable.
-- Prefer small compatibility facades over broad import rewrites when public
-  consumers are uncertain.
+- Prefer small compatibility facades over broad import rewrites only when public
+  consumers are uncertain. For proven internal helper paths, migrate consumers
+  and delete the old file instead of keeping dead facades.
 - Keep generated output directories (`dist/**`, `.node-build/**`, `coverage/**`)
   out of refactor scope; they are validation artifacts, not source ownership.

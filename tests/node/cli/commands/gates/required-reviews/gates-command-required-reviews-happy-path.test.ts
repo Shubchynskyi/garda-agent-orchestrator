@@ -28,7 +28,7 @@ import {
 import {
     runCliMainWithHandling
 } from '../../../../../../src/cli/main';
-import { formatCompileOutputEntry } from '../../../../../../src/cli/commands/gates-formatter';
+import { formatCompileOutputEntry } from '../../../../../../src/cli/commands/gates/gates-formatter';
 import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
@@ -1147,10 +1147,10 @@ describe('gates command required reviews', () => {
             fs.writeFileSync(reviewOutputPath, [
             '# Review',
             '',
-            'Validated `src/cli/commands/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts`, confirming that review gates now resolve the canonical review-context artifact deterministically and ignore stale legacy default siblings.',
+            'Validated `src/cli/commands/gates/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts`, confirming that review gates now resolve the canonical review-context artifact deterministically and ignore stale legacy default siblings.',
             '',
             '## Validation Notes',
-            'Reviewed `src/cli/commands/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts` for canonical review-context resolution and stale legacy sibling rejection.',
+            'Reviewed `src/cli/commands/gates/gates-artifacts.ts`, `src/gates/completion.ts`, and `src/gates/required-reviews-check.ts` for canonical review-context resolution and stale legacy sibling rejection.',
             '',
             '## Findings by Severity',
             'none',

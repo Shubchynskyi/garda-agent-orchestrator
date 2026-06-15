@@ -67,7 +67,7 @@ import type {
 import { REVIEW_CONTRACTS } from '../../../../gates/required-reviews/required-reviews-check';
 import {
     cleanupReviewTempSourceArtifact
-} from '../../gates-artifacts';
+} from '../../gates/gates-artifacts';
 import {
     normalizePathValue,
     parseOptions

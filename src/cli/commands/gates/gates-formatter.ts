@@ -1,6 +1,6 @@
 import * as os from 'node:os';
-import * as gateHelpers from '../../gates/shared/helpers';
-import { redactSecretText } from '../../core/redaction';
+import * as gateHelpers from '../../../gates/shared/helpers';
+import { redactSecretText } from '../../../core/redaction';
 
 export interface OutputTelemetrySummary extends Record<string, unknown> {
     filter_mode: string;

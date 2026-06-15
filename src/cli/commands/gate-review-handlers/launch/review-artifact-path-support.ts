@@ -9,7 +9,7 @@ import {
 } from '../../../../gates/review/review-scratch-paths';
 import {
     isTaskOwnedReviewTempPath
-} from '../../gates-artifacts';
+} from '../../gates/gates-artifacts';
 
 export interface ResolvedCanonicalReviewPaths {
     preflightPath: string;

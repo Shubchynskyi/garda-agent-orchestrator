@@ -1,5 +1,5 @@
-import type { RulePackStageLabel } from '../../gates/rule-pack/rule-pack';
-import * as gateHelpers from '../../gates/shared/helpers';
+import type { RulePackStageLabel } from '../../../gates/rule-pack/rule-pack';
+import * as gateHelpers from '../../../gates/shared/helpers';
 
 export interface ExpandValueListOptions {
     splitDelimiters?: boolean;

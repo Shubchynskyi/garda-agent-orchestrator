@@ -60,15 +60,15 @@ import {
     resolvePreflightPath,
     writeCompileEvidence,
     writeTextArtifact
-} from '../../gates-artifacts';
+} from '../../gates/gates-artifacts';
 import {
     type OutputTelemetrySummary
-} from '../../gates-formatter';
+} from '../../gates/gates-formatter';
 import {
     expandValueList,
     parseBooleanOption,
     parseIntOption
-} from '../../gates-parser';
+} from '../../gates/gates-parser';
 import { requireResolvedPath } from '../../shared-command-utils';
 import {
     getErrorMessage,

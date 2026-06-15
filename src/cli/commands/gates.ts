@@ -79,4 +79,4 @@ export {
     executeCommandAsync,
     resolveExecutablePath,
     splitCommandLine
-} from './gates-subprocess';
+} from './gates/gates-subprocess';

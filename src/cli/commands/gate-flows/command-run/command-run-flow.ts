@@ -8,7 +8,7 @@ import {
 } from '../../../../gate-runtime/token-telemetry';
 import { EXIT_GATE_FAILURE, EXIT_SUCCESS } from '../../../exit-codes';
 import * as gateHelpers from '../../../../gates/shared/helpers';
-import { executeCommandAsync, splitCommandLine } from '../../gates-subprocess';
+import { executeCommandAsync, splitCommandLine } from '../../gates/gates-subprocess';
 
 const ALLOWED_COMMAND_SOURCES = ['node-test', 'targeted-test', 'typecheck', 'validation'] as const;
 const DEFAULT_TIMEOUT_MS = 120_000;

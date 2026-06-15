@@ -2,16 +2,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
     EXIT_GENERAL_FAILURE
-} from '../exit-codes';
+} from '../../exit-codes';
 import {
     buildWindowsBatchCommandLine,
     spawnShellCommand,
     spawnStreamed,
     spawnSyncWithTimeout,
     type SpawnedProcessInfo
-} from '../../core/subprocess';
-import { assertDependentValidationChainReady } from '../../core/dependent-validation-chains';
-import { redactSecretText } from '../../core/redaction';
+} from '../../../core/subprocess';
+import { assertDependentValidationChainReady } from '../../../core/dependent-validation-chains';
+import { redactSecretText } from '../../../core/redaction';
 
 export const DEFAULT_SUBPROCESS_TIMEOUT_MS = 600_000;
 

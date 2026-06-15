@@ -23,11 +23,11 @@ import {
 } from '../../../../gate-runtime/output-filters';
 import {
     executeCommandAsync
-} from '../../gates-subprocess';
+} from '../../gates/gates-subprocess';
 import {
     formatCompileOutputEntry,
     type OutputTelemetrySummary
-} from '../../gates-formatter';
+} from '../../gates/gates-formatter';
 
 type CompileCommandProfile = ReturnType<typeof getCompileCommandProfile>;
 

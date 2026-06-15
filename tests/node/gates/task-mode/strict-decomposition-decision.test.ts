@@ -9,7 +9,7 @@ import {
     getStrictDecompositionDecisionEvidence,
     resolveStrictDecompositionDecisionArtifactPath
 } from '../../../../src/gates/task-mode/strict-decomposition-decision';
-import { writeJsonArtifact } from '../../../../src/cli/commands/gates-artifacts';
+import { writeJsonArtifact } from '../../../../src/cli/commands/gates/gates-artifacts';
 
 describe('gates/strict-decomposition-decision', () => {
     it('builds split-required evidence with strict parent-derived children', () => {

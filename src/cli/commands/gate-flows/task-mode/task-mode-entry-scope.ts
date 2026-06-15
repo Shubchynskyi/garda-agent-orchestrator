@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { getWorkflowConfigControlPlanePaths } from '../../../../gates/workflow-config/workflow-config-work';
 import * as gateHelpers from '../../../../gates/shared/helpers';
-import { expandValueList } from '../../gates-parser';
+import { expandValueList } from '../../gates/gates-parser';
 
 export interface TaskModeEntryScope {
     plannedChangedFiles: string[];
