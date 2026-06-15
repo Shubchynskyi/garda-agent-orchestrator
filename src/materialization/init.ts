@@ -182,6 +182,13 @@ interface BuildUsageOptions {
     fullSuiteValidationEnabled: boolean;
 }
 
+export const USAGE_CONTRACT_MARKERS = {
+    executeTasks: '<!-- garda:usage-contract:execute-tasks -->',
+    profilesAndConfig: '<!-- garda:usage-contract:profiles-and-config -->',
+    fullSuiteValidation: '<!-- garda:usage-contract:full-suite-validation -->',
+    indexingNote: '<!-- garda:usage-contract:indexing-note -->'
+} as const;
+
 export function runInit(options: RunInitOptions) {
     const {
         targetRoot,
@@ -847,6 +854,7 @@ function buildUsageLines(opts: BuildUsageOptions): string[] {
         'Path: `garda-agent-orchestrator/live/USAGE.md`', '',
         `Language: ${lang}`,
         `Default response brevity: ${brevity}`, '',
+        USAGE_CONTRACT_MARKERS.executeTasks,
         '## Execute Tasks',
         'Start by selecting a row from root `TASK.md` and tell the agent:',
         `- ${buildTaskStartNavigatorPrompt()}`,
@@ -854,6 +862,7 @@ function buildUsageLines(opts: BuildUsageOptions): string[] {
         `- ${buildSetupStartBannerSentence()}`,
         '- `next-step` owns the executable gate order. Static gate lists are policy context, not commands to guess by hand.',
         '- When independent review is required, launch a fresh sub-agent using your provider/internal tools and record the review only through Garda review gates.', '',
+        USAGE_CONTRACT_MARKERS.profilesAndConfig,
         '## Profiles And Config',
         '- Active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json`; the root `TASK.md` `Profile` column may override it per task, while `default` inherits the workspace active profile.',
         '- Inspect profiles with `node garda-agent-orchestrator/bin/garda.js profile current --target-root "."` or `profile list`; switch with `profile use <name>`; create a user profile with `profile create <name> ...`.',
@@ -861,9 +870,11 @@ function buildUsageLines(opts: BuildUsageOptions): string[] {
         '- Optional review capabilities live in `garda-agent-orchestrator/live/config/review-capabilities.json`; inspect or change them with `node garda-agent-orchestrator/bin/garda.js review-capabilities list|enable|disable ... --target-root "."`.',
         '- Scope budget, review-cycle guard, task-reset availability, and project-memory maintenance are workflow settings. Change them only through `node garda-agent-orchestrator/bin/garda.js workflow set ... --target-root "."`.',
         '- Ordinary document path exceptions live in `garda-agent-orchestrator/live/config/paths.json` as `ordinary_doc_paths`; they are auditable planning/changelog doc exceptions, not a global ignore list.', '',
+        USAGE_CONTRACT_MARKERS.fullSuiteValidation,
         '## Full-Suite Validation',
         fullSuiteLine,
         '- Full-suite out-of-scope handling is configured in `workflow-config.json`; do not change it to bypass a failing gate.', '',
+        USAGE_CONTRACT_MARKERS.indexingNote,
         '## Indexing Note',
         '- Where the host supports indexing controls, exclude `garda-agent-orchestrator/` from application-code, stack-detection, and IDE/AI semantic indexing. Keep explicit Garda rule/config/skill paths and `bin/garda.js` readable to agents.',
         '- Do not infer the project stack or commands from the orchestrator bundle; inspect the host repository outside `garda-agent-orchestrator/` for application evidence.', '',

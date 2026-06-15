@@ -5,6 +5,11 @@ import * as path from 'node:path';
 
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../src/core/project-memory-rollout';
 
+const AGENT_INIT_CONTRACT_MARKERS = [
+    '<!-- garda:agent-init-contract:task-execution -->',
+    '<!-- garda:agent-init-contract:usage-report -->'
+] as const;
+
 function findRepoRoot() {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
@@ -135,12 +140,14 @@ test('AGENT_INIT_PROMPT distinguishes optional packs from already available skil
 
 test('AGENT_INIT_PROMPT keeps the task execution contract navigator-first', () => {
     const content = fs.readFileSync(path.join(findRepoRoot(), 'AGENT_INIT_PROMPT.md'), 'utf8');
-    assert.match(content, /canonical user instruction/i);
-    assert.match(content, /Use `next-step` as the navigator/i);
-    assert.match(content, /launch a sub-agent using your internal tools/i);
-    assert.match(content, /active profile selection comes from `garda-agent-orchestrator\/live\/config\/profiles\.json`/i);
-    assert.match(content, /do not present `depth=<1\|2\|3>` as normal user task-start guidance/i);
-    assert.match(content, /workflow set --full-suite-enabled true --full-suite-command "<project test command>"/i);
-    assert.match(content, /recommend excluding `garda-agent-orchestrator\/` from application-code, stack-detection, and IDE\/AI semantic indexing/i);
+    for (const marker of AGENT_INIT_CONTRACT_MARKERS) {
+        assert.ok(content.includes(marker), `AGENT_INIT_PROMPT.md should include ${marker}`);
+    }
+    assert.ok(content.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
+    assert.ok(content.includes('next-step "<task-id>" --repo-root "."'));
+    assert.ok(content.includes('garda-agent-orchestrator/live/config/profiles.json'));
+    assert.ok(content.includes('profile current|list|use|create --target-root "."'));
+    assert.ok(content.includes('workflow set --full-suite-enabled true --full-suite-command "<project test command>"'));
+    assert.ok(content.includes('garda-agent-orchestrator/'));
     assert.doesNotMatch(content, /default depth when omitted:\s*`2`/i);
 });

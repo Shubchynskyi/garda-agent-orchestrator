@@ -170,6 +170,7 @@ node garda-agent-orchestrator/bin/garda.js agent-init --target-root "." --init-a
 This command is mandatory. It reruns answer-dependent install materialization, runs `verify`, runs manifest validation, and writes `garda-agent-orchestrator/runtime/agent-init-state.json`.
 If the command fails, fix the reported issue and rerun it until it prints PASS.
 10. Confirm task execution contract is navigator-first and profile/config driven:
+   <!-- garda:agent-init-contract:task-execution -->
    - canonical user instruction: ``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``
    - active profile selection comes from `garda-agent-orchestrator/live/config/profiles.json` and the `TASK.md` `Profile` column; inspect, switch, or create profiles through `node garda-agent-orchestrator/bin/garda.js profile ... --target-root "."`
    - do not present `depth=<1|2|3>` as normal user task-start guidance; depth remains internal gate/profile evidence unless a debug or recovery command explicitly needs it
@@ -231,6 +232,7 @@ If the command fails, fix the reported issue and rerun it until it prints PASS.
 - Result of each command (PASS or FAIL with key lines).
 - Files created or updated.
 - `Usage Instructions` section for the user in `<assistant-language>`, with exact next commands for:
+  <!-- garda:agent-init-contract:usage-report -->
   - executing a task (``Execute task <task-id> from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.``);
   - running `node garda-agent-orchestrator/bin/garda.js next-step "<task-id>" --repo-root "."` before the first gate, after every suggested command, and after any gate failure.
   - using the current active profile through `garda-agent-orchestrator/live/config/profiles.json`, the `TASK.md` `Profile` column, and `node garda-agent-orchestrator/bin/garda.js profile current|list|use|create --target-root "."`;

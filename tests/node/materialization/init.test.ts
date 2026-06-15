@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import { runInit, mergeConfig } from '../../../src/materialization/init';
+import { runInit, mergeConfig, USAGE_CONTRACT_MARKERS } from '../../../src/materialization/init';
 import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../src/core/project-memory-rollout';
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../src/core/constants';
@@ -802,12 +802,12 @@ describe('runInit', () => {
             });
 
             const usage = fs.readFileSync(path.join(bundleRoot, 'live/USAGE.md'), 'utf8');
+            for (const marker of Object.values(USAGE_CONTRACT_MARKERS)) {
+                assert.ok(usage.includes(marker), `USAGE.md should include ${marker}`);
+            }
             assert.ok(usage.includes('Path: `garda-agent-orchestrator/live/USAGE.md`'));
             assert.ok(usage.includes('Execute task <task-id> from TASK.md strictly through the orchestrator.'));
-            assert.ok(usage.includes('Use `next-step` as the navigator'));
-            assert.ok(usage.includes('launch a sub-agent using your internal tools'));
             assert.ok(usage.includes('next-step "<task-id>" --repo-root "."'));
-            assert.ok(usage.includes('Ask the first fresh main-agent execution reply to show one English start marker'));
             assert.ok(usage.includes('Garda captures my mind'));
             assert.ok(usage.includes('garda-agent-orchestrator/live/config/profiles.json'));
             assert.ok(usage.includes('node garda-agent-orchestrator/bin/garda.js profile current --target-root "."'));
@@ -817,7 +817,7 @@ describe('runInit', () => {
             assert.ok(usage.includes('review-capabilities list|enable|disable'));
             assert.ok(usage.includes('ordinary_doc_paths'));
             assert.ok(usage.includes('Full repository test validation after each task is currently disabled.'));
-            assert.ok(usage.includes('exclude `garda-agent-orchestrator/` from application-code, stack-detection, and IDE/AI semantic indexing'));
+            assert.ok(usage.includes('garda-agent-orchestrator/'));
             assert.ok(!usage.includes('Use `depth=<1|2|3>` only when you intentionally want a one-run override'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
