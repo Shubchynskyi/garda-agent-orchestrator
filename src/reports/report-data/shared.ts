@@ -13,8 +13,20 @@ export function toRepoRelativePath(repoRoot: string, filePath: string): string {
     return toPosix(resolved);
 }
 
-export function valueRow(id: string, label: string, description: string, value: unknown): ReportValueRow {
-    return { id, label, description, value: value ?? null };
+export function valueRow(
+    id: string,
+    label: string,
+    description: string,
+    value: unknown,
+    filePath?: string | null
+): ReportValueRow {
+    return {
+        id,
+        label,
+        description,
+        value: value ?? null,
+        ...(filePath ? { file_path: filePath } : {})
+    };
 }
 
 export function pickRows(source: Record<string, unknown>, rows: Array<[string, string, string]>): ReportValueRow[] {

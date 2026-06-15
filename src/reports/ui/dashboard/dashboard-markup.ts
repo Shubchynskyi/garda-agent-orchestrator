@@ -19,7 +19,6 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <button type="button" data-tab="backups-tab" data-i18n="backupsTab">\${text.backupsTab}</button>
 <button type="button" data-tab="cleanup-settings-tab" data-i18n="cleanupSettingsTab">\${text.cleanupSettingsTab}</button>
 <button type="button" data-tab="instructions-tab" data-i18n="instructionsTab">\${text.instructionsTab}</button>
-<button type="button" data-tab="actions-tab" data-i18n="actionsTab">\${text.actionsTab}</button>
 </div>
 <div class="session-compact" id="server-status-panel">
 <div class="session-status-line" id="session-summary" data-i18n="loadingServerSession">\${text.loadingServerSession}</div>
@@ -34,6 +33,8 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <section class="notice" id="ui-notice">\${actionsEnabled ? text.noticeActionsEnabled : text.noticeActionsDisabled}</section>
 <section class="warnings" id="warnings" hidden></section>
 <section class="switch-strip" id="garda-switch-panel" hidden></section>
+<section class="action-status empty" id="action-status"></section>
+<div id="actions" hidden></div>
 <section class="tab" id="tasks-tab">
 <div class="overview" id="overview"></div>
 <div class="tasks-layout">
@@ -95,15 +96,5 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <section class="panel tab" id="instructions-tab" hidden>
 <div class="panel-head"><h2 data-i18n="instructionsTab">\${text.instructionsTab}</h2></div>
 <div class="detail" id="instructions"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
-</section>
-<section class="panel tab" id="actions-tab" hidden>
-<div class="panel-head"><h2 data-i18n="actionsTab">\${text.actionsTab}</h2></div>
-<div class="detail">
-<div class="actions-top-grid">
-<p class="empty" data-i18n="actionsIntro">\${text.actionsIntro}</p>
-<div id="action-status" class="action-status empty"></div>
-</div>
-<div id="actions"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
-</div>
 </section>
 </main>`;

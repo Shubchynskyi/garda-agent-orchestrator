@@ -30,12 +30,12 @@ export function buildInstructionEntries(): ReportInstructionEntry[] {
         {
             id: 'init-settings',
             title: 'Init settings',
-            body: 'The Init settings tab shows the current initialization answers, the hard agent-init checkpoints, and the two commands normally used to re-materialize generated files or complete agent onboarding.'
+            body: 'The Init settings tab shows current initialization answers, hard agent-init checkpoints, ordinary document controls, and the prompt handoff used to complete agent onboarding.'
         },
         {
             id: 'project-memory',
             title: 'Project memory',
-            body: 'The Project memory tab shows the current maintenance mode, agent-init memory state, read-first files, and the contents of the durable project-memory files.'
+            body: 'The Project memory tab shows the current maintenance mode and durable project-memory files. Open each file on demand instead of loading full contents into the dashboard.'
         },
         {
             id: 'backups',
@@ -45,7 +45,7 @@ export function buildInstructionEntries(): ReportInstructionEntry[] {
         {
             id: 'workspace-actions',
             title: 'Workspace actions',
-            body: 'The Actions tab is for fixed workspace commands such as status, doctor, HTML report generation, and runtime cleanup. Task-specific commands are shown in the selected task details; backup restore commands are shown only in the Backups tab.'
+            body: 'Workspace actions are shown in their domain tabs: task commands in the selected task detail, backup restore commands in Backups, cleanup controls in Cleanup settings, and Garda switch controls in the top status strip.'
         }
     ];
 }

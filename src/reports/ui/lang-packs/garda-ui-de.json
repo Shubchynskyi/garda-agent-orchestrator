@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "Laufzeitdiagnose",
     "noRuntimeDiagnostics": "Keine Laufzeitdiagnose gemeldet.",
     "taskActionsTitle": "Aufgabenbefehle",
-    "taskActionsHelp": "Hier werden aufgabenspezifische Befehle angezeigt, sodass sich die Registerkarte „Aktionen“ weiterhin auf die Wartung des Arbeitsbereichs konzentriert.",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "Nächster Lebenszyklusschritt",
     "taskCommandStats": "Aufgabenstatistiken",
     "taskCommandEvents": "Aufgabenereignisse",
@@ -267,7 +267,14 @@
     "artifacts": "Artefakte",
     "existingArtifacts": "Vorhandene Artefakte",
     "missingArtifacts": "Fehlende Artefakte",
-    "artifactPath": "Artefaktpfad"
+    "artifactPath": "Artefaktpfad",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -340,5 +347,6 @@
       "label": "risks.md",
       "description": "Bekannte Risiken, fragile Pfade, Sicherheitshinweise und Kompatibilitätsgrenzen."
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

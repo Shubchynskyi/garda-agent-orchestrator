@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "Çalışma zamanı teşhisi",
     "noRuntimeDiagnostics": "Hiçbir çalışma zamanı tanılaması bildirilmedi.",
     "taskActionsTitle": "Görev komutları",
-    "taskActionsHelp": "Göreve özgü komutlar burada gösterilir, böylece Eylemler sekmesi çalışma alanı bakımına odaklanmış kalır.",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "Sonraki yaşam döngüsü adımı",
     "taskCommandStats": "Görev istatistikleri",
     "taskCommandEvents": "Görev etkinlikleri",
@@ -267,7 +267,14 @@
     "artifacts": "eserler",
     "existingArtifacts": "Mevcut eserler",
     "missingArtifacts": "Eksik eserler",
-    "artifactPath": "Artefakt yolu"
+    "artifactPath": "Artefakt yolu",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -340,5 +347,6 @@
       "label": "risks.md",
       "description": "Bilinen riskler, kırılgan yollar, güvenlik notları ve uyumluluk kısıtları."
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

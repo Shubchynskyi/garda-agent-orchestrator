@@ -144,7 +144,7 @@ function assertActionBoundary(
         sendApiError(response, 403, 'UI cleanup actions are disabled. Restart with --actions to enable guarded cleanup controls.', 'actions_disabled');
         return false;
     }
-    if (!isValidActionRequestBoundary(request, options.actionToken)) {
+    if (!isValidActionRequestBoundary(request, options)) {
         sendApiError(response, 403, 'UI cleanup request failed origin, token, or content-type validation.', 'action_boundary_rejected');
         return false;
     }

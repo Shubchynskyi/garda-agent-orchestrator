@@ -42,6 +42,15 @@ function writeWorkflowConfig(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
+function writePathsConfig(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+        ordinary_doc_paths: ['CHANGELOG.md']
+    }, null, 2));
+    fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+}
+
 function writeProfilesConfig(repoRoot: string): void {
     const profilesPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json');
     fs.mkdirSync(path.dirname(profilesPath), { recursive: true });
@@ -159,6 +168,8 @@ function writeFullSuiteArtifact(repoRoot: string, options: {
 }
 
 function writeInitAndProjectMemory(repoRoot: string): void {
+    writePathsConfig(repoRoot);
+    fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# Agent instructions\n', 'utf8');
     const runtimeRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime');
     fs.mkdirSync(runtimeRoot, { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({
@@ -309,9 +320,17 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.workflow_config_tab.status, 'present');
     assert.equal(report.init_settings_tab.init_answers_status, 'present');
     assert.equal(report.init_settings_tab.agent_init_state_status, 'present');
+    assert.ok(report.init_settings_tab.init_answers.some((row) => row.id === 'SourceOfTruth' && row.value === 'Codex (AGENTS.md)' && row.file_path === 'AGENTS.md'));
+    assert.ok(!report.init_settings_tab.init_answers.some((row) => row.id === 'CollectedVia' || row.id === 'ActiveAgentFiles'));
+    assert.ok(!report.init_settings_tab.agent_init_state.some((row) => row.id === 'UpdatedAt' || row.id.startsWith('ProjectMemory') || row.id === 'ActiveAgentFiles'));
+    assert.deepEqual(report.init_settings_tab.ordinary_docs.paths, ['CHANGELOG.md']);
     assert.ok(report.init_settings_tab.commands.some((command) => command.id === 'reinit'));
+    assert.ok(report.init_settings_tab.commands.some((command) => command.id === 'agent-init' && command.command.includes('AGENT_INIT_PROMPT.md')));
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-mode' && row.value === 'update'));
-    assert.ok(report.project_memory_tab.files.some((file) => file.path.endsWith('project-memory/compact.md') && file.content?.includes('Memory for compact.md')));
+    assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-initialized' && row.value === true));
+    assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-validated' && row.value === true));
+    assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-read-first' && Array.isArray(row.value) && row.value.includes('live/docs/project-memory/README.md')));
+    assert.ok(report.project_memory_tab.files.some((file) => file.path.endsWith('project-memory/compact.md') && file.exists && file.size_bytes !== null));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Task execution'));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Review execution modes'));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Backups'));

@@ -1,3 +1,10 @@
+import * as path from 'node:path';
+
+export interface StaticHtmlRenderContext {
+    repoRoot: string;
+    outputPath: string;
+}
+
 export function escapeHtml(value: unknown): string {
     return String(value ?? '')
         .replace(/&/g, '&amp;')
@@ -30,6 +37,20 @@ export function formatDuration(seconds: number | null | undefined): string {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m ${remainingSeconds}s`;
+}
+
+export function toStaticRepoFileHref(context: StaticHtmlRenderContext, repoPath: string): string | null {
+    const repoRoot = path.resolve(context.repoRoot);
+    const outputDir = path.dirname(path.resolve(context.outputPath));
+    const requestedPath = path.isAbsolute(repoPath)
+        ? path.resolve(repoPath)
+        : path.resolve(repoRoot, repoPath);
+    const relativeToRepo = path.relative(repoRoot, requestedPath);
+    if (relativeToRepo.startsWith('..') || path.isAbsolute(relativeToRepo)) {
+        return null;
+    }
+    const relativeToReport = path.relative(outputDir, requestedPath).split(path.sep).join('/');
+    return encodeURI(relativeToReport || '.');
 }
 
 export function renderUnavailableList(

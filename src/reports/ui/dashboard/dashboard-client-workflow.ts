@@ -9,10 +9,9 @@ export const UI_DASHBOARD_CLIENT_WORKFLOW = `function renderWorkflow(report) {
   }
   workflowNode.innerHTML = '<p class="workflow-state">' + safe(workflowStatusText(tab ? tab.status : 'missing')) + '</p>';
 }
-function renderSettingResult(result) {
-  currentSettingResult = result;
+function renderSettingResultMarkup(result) {
   const label = localizedField(settingTextPacks, result.setting_id, 'label', result.label || result.key || result.setting_id || t('setting'));
-  settingStatusNode.innerHTML = '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3>'
+  return '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3>'
     + '<p class="empty">' + safe(t('workflowCommandPreviewHelp')) + '</p>'
     + '<div class="command-preview-main"><strong>' + safe(label) + '</strong><br><code>' + safe(result.command || '-') + '</code></div>'
     + '<div class="command-preview-meta">'
@@ -26,14 +25,22 @@ function renderSettingResult(result) {
     + outputBlock('stderr', result.stderr)
     + '</section>';
 }
-async function submitSetting(settingId, mode, value, confirmation) {
+function renderSettingResult(result) {
+  currentSettingResult = result;
+  settingStatusNode.innerHTML = renderSettingResultMarkup(result);
+}
+async function submitSetting(settingId, mode, value, confirmation, resultRenderer) {
   const response = await fetch('/api/settings', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
     body: JSON.stringify({ setting_id: settingId, mode, value, confirmation })
   });
   const result = await response.json();
-  renderSettingResult(result);
+  if (typeof resultRenderer === 'function') {
+    resultRenderer(result);
+  } else {
+    renderSettingResult(result);
+  }
   if (result && result.status === 'executed') {
     await refreshSettingsPayload();
     if (currentReport) {
@@ -66,10 +73,13 @@ function renderSettingOptions(setting) {
   }
   return '<div class="option-list">' + setting.options.map(option => '<div class="option-item"><strong>' + safe(localizedOption(settingTextPacks, setting.id, option, 'label', option.label)) + ' <code>' + safe(option.value) + '</code></strong><span>' + inlineText(localizedOption(settingTextPacks, setting.id, option, 'description', option.description)) + '</span></div>').join('') + '</div>';
 }
-function renderSettingControl(setting, disabled) {
+function settingControlId(settingId, controlScope) {
+  return 'setting-input-' + (controlScope || 'workflow') + '-' + settingId;
+}
+function renderSettingControl(setting, disabled, controlScope) {
   const inputValue = settingInputValue(setting);
   const disabledAttr = disabled ? ' disabled' : '';
-  const controlId = 'setting-input-' + safe(setting.id);
+  const controlId = safe(settingControlId(setting.id, controlScope));
   if (isDurationMsSetting(setting)) {
     const parts = durationPartsFromMs(setting.current_value);
     return '<div class="duration-control" data-setting-id="' + safe(setting.id) + '"><label>' + safe(t('minutesLabel')) + '<input id="' + controlId + '-minutes" type="number" min="0" value="' + safe(parts.minutes) + '"' + disabledAttr + '></label><label>' + safe(t('secondsLabel')) + '<input id="' + controlId + '-seconds" type="number" min="0" max="59" value="' + safe(parts.seconds) + '"' + disabledAttr + '></label></div><span class="duration-help">' + safe(t('durationStoredAsMs')) + '</span>';
@@ -101,7 +111,7 @@ function settingGroupLabel(groupId) {
   if (groupId === 'memory') return t('workflowGroupMemory');
   return t('workflowGroupSafety');
 }
-function renderSettingRow(setting, disabled) {
+function renderSettingRow(setting, disabled, controlScope) {
   const label = localizedField(settingTextPacks, setting.id, 'label', setting.label);
   const description = localizedField(settingTextPacks, setting.id, 'description', setting.description);
   const dependencyNote = setting.id === 'review-cycle-auto-split-enabled'
@@ -112,7 +122,7 @@ function renderSettingRow(setting, disabled) {
     + '<td class="description-cell">' + inlineText(description) + dependencyNote + '</td>'
     + '<td><code class="current-value">' + safe(isDurationMsSetting(setting) ? formatDurationMs(setting.current_value) : JSON.stringify(setting.current_value)) + '</code></td>'
     + '<td>' + renderSettingOptions(setting) + '</td>'
-    + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-mode="preview"' + (disabled ? ' disabled' : '') + '>' + safe(t('previewCommand')) + '</button><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'
+    + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled, controlScope) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="preview"' + (disabled ? ' disabled' : '') + '>' + safe(t('previewCommand')) + '</button><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'
     + '</tr>';
 }
 function renderSettingsEditor(payload) {
@@ -127,27 +137,39 @@ function renderSettingsEditor(payload) {
     ? '<p class="empty">' + safe(t('settingEditsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('settingEditsDisabledTail')) + '</p>'
     : '<p class="empty">' + safe(t('guardedEditorHelp')) + '</p>';
   const groupOrder = ['validation', 'review', 'scope', 'memory', 'safety'];
+  const availableGroups = groupOrder.filter(groupId => settings.some(setting => settingGroupId(setting) === groupId));
+  if (!availableGroups.includes(currentWorkflowSettingGroup)) {
+    currentWorkflowSettingGroup = availableGroups[0] || 'validation';
+  }
   if (!currentSettingResult) {
     settingStatusNode.innerHTML = '<section class="command-preview-panel"><h3>' + safe(t('workflowCommandPreview')) + '</h3><p class="empty">' + safe(t('workflowCommandPreviewHelp')) + '</p></section>';
   }
   settingsEditorNode.innerHTML = '<h3>' + safe(t('guardedEditor')) + '</h3>' + disabledNotice
-    + groupOrder.map(groupId => {
+    + '<div class="workflow-setting-tabs" role="tablist">' + availableGroups.map(groupId => '<button type="button" data-setting-group="' + safe(groupId) + '" class="' + (groupId === currentWorkflowSettingGroup ? 'active' : '') + '">' + safe(settingGroupLabel(groupId)) + '</button>').join('') + '</div>'
+    + availableGroups.map(groupId => {
       const groupSettings = settings.filter(setting => settingGroupId(setting) === groupId);
       if (groupSettings.length === 0) return '';
-      return '<section class="workflow-group"><h3>' + safe(settingGroupLabel(groupId)) + '</h3><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled)).join('') + '</tbody></table></div></section>';
+      return '<section class="workflow-group workflow-setting-group" data-setting-group-panel="' + safe(groupId) + '"' + (groupId === currentWorkflowSettingGroup ? '' : ' hidden') + '><h3>' + safe(settingGroupLabel(groupId)) + '</h3><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled, 'workflow')).join('') + '</tbody></table></div></section>';
     }).join('');
+  for (const button of settingsEditorNode.querySelectorAll('button[data-setting-group]')) {
+    button.addEventListener('click', () => {
+      currentWorkflowSettingGroup = button.dataset.settingGroup;
+      renderSettingsEditor(currentSettingsPayload);
+    });
+  }
   for (const button of settingsEditorNode.querySelectorAll('button[data-setting-id]')) {
     button.addEventListener('click', () => {
       const setting = settings.find(item => item.id === button.dataset.settingId);
       const mode = button.dataset.settingMode;
-      const input = document.getElementById('setting-input-' + button.dataset.settingId);
+      const controlScope = button.dataset.settingControlScope || 'workflow';
+      const input = document.getElementById(settingControlId(button.dataset.settingId, controlScope));
       const confirmation = mode === 'execute' && setting
         ? window.prompt(t('typeToApplySetting') + ' "' + setting.confirmation_phrase + '" ' + t('typeToApplySettingTail'))
         : null;
       if (mode === 'execute' && confirmation === null) {
         return;
       }
-      submitSetting(button.dataset.settingId, mode, settingSubmitValue(setting, input), confirmation);
+      submitSetting(button.dataset.settingId, mode, settingSubmitValue(setting, input, controlScope), confirmation);
     });
   }
 }
@@ -155,10 +177,11 @@ async function refreshSettingsPayload() {
   const response = await fetch('/api/settings');
   renderSettingsEditor(await response.json());
 }
-function settingSubmitValue(setting, fallbackInput) {
+function settingSubmitValue(setting, fallbackInput, controlScope) {
   if (isDurationMsSetting(setting)) {
-    const minutesInput = document.getElementById('setting-input-' + setting.id + '-minutes');
-    const secondsInput = document.getElementById('setting-input-' + setting.id + '-seconds');
+    const baseControlId = settingControlId(setting.id, controlScope || 'workflow');
+    const minutesInput = document.getElementById(baseControlId + '-minutes');
+    const secondsInput = document.getElementById(baseControlId + '-seconds');
     const minutes = Math.max(0, Math.trunc(Number(minutesInput ? minutesInput.value : 0) || 0));
     const seconds = Math.max(0, Math.min(59, Math.trunc(Number(secondsInput ? secondsInput.value : 0) || 0)));
     return String((minutes * 60 + seconds) * 1000);

@@ -13,10 +13,8 @@ function renderProjectMemory(report) {
     + (files.length === 0 ? '<p class="empty">' + safe(t('noProjectMemoryFiles')) + '</p>' : '<div class="memory-table"><table><thead><tr><th>' + safe(t('fileColumn')) + '</th><th>' + safe(t('purposeColumn')) + '</th><th>' + safe(t('sizeColumn')) + '</th><th>' + safe(t('openColumn')) + '</th></tr></thead><tbody>'
       + files.map(file => {
         const localized = localizedMemoryFile(file);
-        return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(file.path) + '</code></td><td class="description-cell">' + safe(localized.description) + '</td><td><code>' + safe(file.size_bytes === null ? '-' : file.size_bytes) + '</code></td><td>' + (file.exists ? '<a href="#memory-' + safe(file.id) + '">' + safe(t('openMemoryFile')) + '</a>' : '<span class="empty">' + safe(t('missing')) + '</span>') + '</td></tr>';
+        return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(file.path) + '</code></td><td class="description-cell">' + safe(localized.description) + '</td><td><code>' + safe(file.size_bytes === null ? '-' : file.size_bytes) + '</code></td><td>' + (file.exists ? '<a href="' + fileViewerHref(file.path) + '" target="_blank" rel="noopener">' + safe(t('openMemoryFile')) + '</a>' : '<span class="empty">' + safe(t('missing')) + '</span>') + '</td></tr>';
       }).join('') + '</tbody></table></div>')
-    + '</section><section class="memory-file-content">'
-    + files.filter(file => file.exists).map(file => '<h3 id="memory-' + safe(file.id) + '">' + safe(file.path) + '</h3><pre>' + safe(file.content || '') + '</pre>').join('')
     + '</section>';
 }
 `;

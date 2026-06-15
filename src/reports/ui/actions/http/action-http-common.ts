@@ -15,6 +15,7 @@ export interface LocalUiServerRuntimeOptions {
     actionsEnabled: boolean;
     actionRunner: UiActionRunner;
     actionToken: string;
+    trustedOriginHost: string;
 }
 
 export interface UiActionRequest {
@@ -75,21 +76,24 @@ function getRequestOrigin(request: http.IncomingMessage): string | null {
     return typeof origin === 'string' && origin ? origin : null;
 }
 
-function getExpectedOrigin(request: http.IncomingMessage): string | null {
-    const host = request.headers.host;
-    if (Array.isArray(host) || typeof host !== 'string' || !host) {
+function getExpectedOrigin(request: http.IncomingMessage, options: Pick<LocalUiServerRuntimeOptions, 'trustedOriginHost'>): string | null {
+    const localPort = request.socket.localPort;
+    if (typeof localPort !== 'number' || !Number.isInteger(localPort) || localPort < 0 || localPort > 65535) {
         return null;
     }
-    return `http://${host}`;
+    return `http://${options.trustedOriginHost}:${localPort}`;
 }
 
-export function isValidActionRequestBoundary(request: http.IncomingMessage, actionToken: string): boolean {
-    const expectedOrigin = getExpectedOrigin(request);
+export function isValidActionRequestBoundary(
+    request: http.IncomingMessage,
+    options: Pick<LocalUiServerRuntimeOptions, 'actionToken' | 'trustedOriginHost'>
+): boolean {
+    const expectedOrigin = getExpectedOrigin(request, options);
     const actualOrigin = getRequestOrigin(request);
     const token = request.headers['x-garda-action-token'];
     return expectedOrigin !== null
         && actualOrigin === expectedOrigin
-        && token === actionToken
+        && token === options.actionToken
         && isJsonRequest(request);
 }
 

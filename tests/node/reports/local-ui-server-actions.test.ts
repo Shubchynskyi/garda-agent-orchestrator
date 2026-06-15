@@ -74,7 +74,7 @@ class FakeElement {
     }
 
     async dispatch(eventName: string): Promise<void> {
-        for (const listener of this.listeners.get(eventName) || []) {
+        for (const listener of [...(this.listeners.get(eventName) || [])]) {
             await listener();
         }
     }
@@ -298,6 +298,46 @@ function closeNetServer(server: net.Server): Promise<void> {
     });
 }
 
+function postJsonWithHostHeader(options: {
+    port: number;
+    path: string;
+    hostHeader: string;
+    origin: string;
+    actionToken: string;
+    body: unknown;
+}): Promise<{ statusCode: number; payload: { code?: string } }> {
+    const body = JSON.stringify(options.body);
+    return new Promise((resolve, reject) => {
+        const request = http.request({
+            host: DEFAULT_UI_HOST,
+            port: options.port,
+            path: options.path,
+            method: 'POST',
+            headers: {
+                host: options.hostHeader,
+                origin: options.origin,
+                'content-type': 'application/json',
+                'content-length': Buffer.byteLength(body),
+                'x-garda-action-token': options.actionToken
+            }
+        }, (response) => {
+            let raw = '';
+            response.setEncoding('utf8');
+            response.on('data', (chunk) => {
+                raw += chunk;
+            });
+            response.on('end', () => {
+                resolve({
+                    statusCode: response.statusCode || 0,
+                    payload: raw ? JSON.parse(raw) as { code?: string } : {}
+                });
+            });
+        });
+        request.on('error', reject);
+        request.end(body);
+    });
+}
+
 test('local UI server returns JSON errors for API method and route failures', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
@@ -407,6 +447,17 @@ test('local UI session posts require the page token and localhost boundary', asy
         });
         assert.equal(crossOrigin.status, 403);
         assert.equal((await crossOrigin.json() as { code: string }).code, 'session_boundary_rejected');
+
+        const spoofedHost = await postJsonWithHostHeader({
+            port: server.port,
+            path: '/api/session/activity',
+            hostHeader: `evil.test:${server.port}`,
+            origin: `http://evil.test:${server.port}`,
+            actionToken,
+            body: {}
+        });
+        assert.equal(spoofedHost.statusCode, 403);
+        assert.equal(spoofedHost.payload.code, 'session_boundary_rejected');
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }
@@ -474,7 +525,7 @@ test('local UI actions are disabled unless explicitly enabled', async () => {
         const runResponse = await fetch(`${server.url}api/actions`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ action_id: 'status', mode: 'preview' })
+            body: JSON.stringify({ action_id: 'garda-off', mode: 'preview' })
         });
         assert.equal(runResponse.status, 403);
         assert.equal((await runResponse.json() as { code: string }).code, 'actions_disabled');
@@ -505,7 +556,7 @@ test('local UI actions are disabled unless explicitly enabled', async () => {
     }
 });
 
-test('local UI actions support preview confirmation execution and audit', async () => {
+test('local UI switch actions support preview confirmation execution and audit', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
     const executedCommands: string[] = [];
@@ -534,18 +585,16 @@ test('local UI actions support preview confirmation execution and audit', async 
         assert.equal(listResponse.status, 200);
         const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; category: string; command: string; timeout_ms: number }> };
         assert.equal(list.enabled, true);
-        assert.ok(list.actions.some((action) => action.id === 'html-report'));
         assert.ok(list.actions.some((action) => action.id === 'garda-on' && action.category === 'Garda switch'));
         assert.ok(list.actions.some((action) => action.id === 'garda-off' && action.category === 'Garda switch'));
-        assert.ok(list.actions.some((action) => action.id === 'cleanup-preview' && action.category === 'Maintenance'));
-        assert.ok(list.actions.some((action) => action.id === 'cleanup-apply' && action.category === 'Maintenance'));
+        assert.ok(list.actions.every((action) => !['status', 'doctor', 'html-report', 'cleanup-preview', 'cleanup-apply'].includes(action.id)));
         assert.ok(list.actions.every((action) => action.command.includes('bin/garda.js')));
         assert.ok(list.actions.every((action) => Number.isInteger(action.timeout_ms) && action.timeout_ms > 0));
 
         const previewResponse = await fetch(`${server.url}api/actions`, {
             method: 'POST',
             headers: actionHeaders,
-            body: JSON.stringify({ action_id: 'html-report', mode: 'preview' })
+            body: JSON.stringify({ action_id: 'garda-off', mode: 'preview' })
         });
         assert.equal(previewResponse.status, 200);
         const preview = await previewResponse.json() as {
@@ -555,15 +604,15 @@ test('local UI actions support preview confirmation execution and audit', async 
             confirmation_phrase: string;
         };
         assert.equal(preview.status, 'previewed');
-        assert.match(preview.command, /html --target-root/u);
+        assert.match(preview.command, /off --target-root/u);
         assert.equal(preview.requires_confirmation, true);
-        assert.equal(preview.confirmation_phrase, 'RUN GARDA HTML');
+        assert.equal(preview.confirmation_phrase, 'TURN GARDA OFF');
         assert.deepEqual(executedCommands, []);
 
         const blockedResponse = await fetch(`${server.url}api/actions`, {
             method: 'POST',
             headers: actionHeaders,
-            body: JSON.stringify({ action_id: 'html-report', mode: 'execute', confirmation: 'wrong' })
+            body: JSON.stringify({ action_id: 'garda-off', mode: 'execute', confirmation: 'wrong' })
         });
         assert.equal(blockedResponse.status, 409);
         assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
@@ -572,7 +621,7 @@ test('local UI actions support preview confirmation execution and audit', async 
         const executeResponse = await fetch(`${server.url}api/actions`, {
             method: 'POST',
             headers: actionHeaders,
-            body: JSON.stringify({ action_id: 'html-report', mode: 'execute', confirmation: 'RUN GARDA HTML' })
+            body: JSON.stringify({ action_id: 'garda-off', mode: 'execute', confirmation: 'TURN GARDA OFF' })
         });
         assert.equal(executeResponse.status, 200);
         const execute = await executeResponse.json() as { status: string; stdout: string; audit_path: string };
@@ -590,7 +639,7 @@ test('local UI actions support preview confirmation execution and audit', async 
     }
 });
 
-test('local UI action timeout result returns deterministic HTTP and audit fields', async () => {
+test('local UI visible action timeout result returns deterministic HTTP and audit fields', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
     const server = await startLocalUiServer({
@@ -615,7 +664,7 @@ test('local UI action timeout result returns deterministic HTTP and audit fields
                 'origin': server.url.slice(0, -1),
                 'x-garda-action-token': actionToken
             },
-            body: JSON.stringify({ action_id: 'doctor', mode: 'execute' })
+            body: JSON.stringify({ action_id: 'garda-off', mode: 'execute', confirmation: 'TURN GARDA OFF' })
         });
 
         assert.equal(response.status, 504);
@@ -628,13 +677,13 @@ test('local UI action timeout result returns deterministic HTTP and audit fields
         };
         assert.equal(payload.status, 'executed');
         assert.equal(payload.timed_out, true);
-        assert.equal(payload.timeout_ms, 120000);
+        assert.equal(payload.timeout_ms, 60000);
         assert.match(payload.stderr, /timed out/u);
 
         const auditLines = fs.readFileSync(payload.audit_path, 'utf8').trim().split(/\r?\n/u);
-        assert.match(auditLines[auditLines.length - 1], /"action_id":"doctor"/u);
+        assert.match(auditLines[auditLines.length - 1], /"action_id":"garda-off"/u);
         assert.match(auditLines[auditLines.length - 1], /"timed_out":true/u);
-        assert.match(auditLines[auditLines.length - 1], /"timeout_ms":120000/u);
+        assert.match(auditLines[auditLines.length - 1], /"timeout_ms":60000/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }
@@ -960,7 +1009,7 @@ test('local UI actions reject cross-origin missing-token and non-json posts', as
     });
     try {
         const actionToken = extractActionToken(await (await fetch(server.url)).text());
-        const body = JSON.stringify({ action_id: 'status', mode: 'execute' });
+        const body = JSON.stringify({ action_id: 'garda-off', mode: 'execute' });
         const missingToken = await fetch(`${server.url}api/actions`, {
             method: 'POST',
             headers: {
@@ -983,6 +1032,17 @@ test('local UI actions reject cross-origin missing-token and non-json posts', as
         });
         assert.equal(crossOrigin.status, 403);
         assert.equal((await crossOrigin.json() as { code: string }).code, 'action_boundary_rejected');
+
+        const spoofedHost = await postJsonWithHostHeader({
+            port: server.port,
+            path: '/api/actions',
+            hostHeader: `evil.test:${server.port}`,
+            origin: `http://evil.test:${server.port}`,
+            actionToken,
+            body: { action_id: 'garda-off', mode: 'preview' }
+        });
+        assert.equal(spoofedHost.statusCode, 403);
+        assert.equal(spoofedHost.payload.code, 'action_boundary_rejected');
 
         const nonJson = await fetch(`${server.url}api/actions`, {
             method: 'POST',

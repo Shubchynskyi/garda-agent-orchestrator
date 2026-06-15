@@ -19,7 +19,7 @@ export async function handleUiWorkspaceActionRequest(
         sendApiError(response, 403, 'UI actions are disabled. Restart with --actions to enable allow-listed commands.', 'actions_disabled');
         return;
     }
-    if (!isValidActionRequestBoundary(request, options.actionToken)) {
+    if (!isValidActionRequestBoundary(request, options)) {
         sendApiError(response, 403, 'UI action request failed origin, token, or content-type validation.', 'action_boundary_rejected');
         return;
     }

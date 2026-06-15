@@ -1,7 +1,17 @@
-import { escapeHtml } from './common';
+import { escapeHtml, toStaticRepoFileHref, type StaticHtmlRenderContext } from './common';
 import type { ReportCommandInfo, ReportValueRow } from '../report-data-contract';
 
-export function renderValueTable(rows: ReportValueRow[]): string {
+function renderFileLink(row: ReportValueRow, context: StaticHtmlRenderContext): string {
+    if (!row.file_path) {
+        return '';
+    }
+    const href = toStaticRepoFileHref(context, row.file_path);
+    return href
+        ? `<br><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Open</a>`
+        : '';
+}
+
+export function renderValueTable(rows: ReportValueRow[], context: StaticHtmlRenderContext): string {
     if (rows.length === 0) {
         return '<p class="meta">No rows.</p>';
     }
@@ -14,7 +24,7 @@ export function renderValueTable(rows: ReportValueRow[]): string {
             (row) => [
                 '<tr>',
                 `<td><strong>${escapeHtml(row.label)}</strong><br><code>${escapeHtml(row.id)}</code></td>`,
-                `<td><code>${escapeHtml(JSON.stringify(row.value))}</code></td>`,
+                `<td><code>${escapeHtml(JSON.stringify(row.value))}</code>${renderFileLink(row, context)}</td>`,
                 `<td>${escapeHtml(row.description)}</td>`,
                 '</tr>'
             ].join('')

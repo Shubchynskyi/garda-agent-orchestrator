@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "Diagnostics d'exécution",
     "noRuntimeDiagnostics": "Aucun diagnostic d'exécution signalé.",
     "taskActionsTitle": "Commandes de tâches",
-    "taskActionsHelp": "Les commandes spécifiques aux tâches sont affichées ici afin que l'onglet Actions reste concentré sur la maintenance de l'espace de travail.",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "Prochaine étape du cycle de vie",
     "taskCommandStats": "Statistiques des tâches",
     "taskCommandEvents": "Événements de tâches",
@@ -267,7 +267,14 @@
     "artifacts": "Artefacts",
     "existingArtifacts": "Artefacts existants",
     "missingArtifacts": "Artefacts manquants",
-    "artifactPath": "Chemin de l’artefact"
+    "artifactPath": "Chemin de l’artefact",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -340,5 +347,6 @@
       "label": "risks.md",
       "description": "Risques connus, chemins fragiles, notes de sécurité et contraintes de compatibilité."
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

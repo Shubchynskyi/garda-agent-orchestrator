@@ -34,10 +34,25 @@ function writeWorkflowConfig(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(buildDefaultWorkflowConfig(), null, 2));
 }
 
+function writeInitAnswers(repoRoot: string): void {
+    fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# Agent instructions\n');
+    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
+    fs.mkdirSync(path.dirname(initAnswersPath), { recursive: true });
+    fs.writeFileSync(initAnswersPath, JSON.stringify({ SourceOfTruth: 'Codex' }, null, 2));
+}
+
+function writeProjectMemoryReadme(repoRoot: string): void {
+    const memoryPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'README.md');
+    fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
+    fs.writeFileSync(memoryPath, '# Project memory\n');
+}
+
 test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data', () => {
     const repoRoot = makeTempRepo();
     writeTaskMd(repoRoot);
     writeWorkflowConfig(repoRoot);
+    writeInitAnswers(repoRoot);
+    writeProjectMemoryReadme(repoRoot);
 
     const report = buildReportDataContract({ repoRoot, generatedAtUtc: '2026-05-16T00:00:00.000Z' });
     report.tasks_tab.rows[0].detail.artifact_links = [{
@@ -80,6 +95,9 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('Build &lt;HTML&gt; report'));
     assert.ok(html.includes('toArtifactHref(item.path)'));
     assert.ok(html.includes('<a href="'));
+    assert.ok(html.includes('href="../../../AGENTS.md"'));
+    assert.ok(html.includes('href="../../live/docs/project-memory/README.md"'));
+    assert.ok(!html.includes('href="AGENTS.md"'));
     assert.ok(html.includes('C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-compile-output.log'));
     assert.ok(html.includes('Full-suite Validation'));
     assert.ok(html.includes('T-100-full-suite-validation.json'));

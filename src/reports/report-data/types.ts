@@ -157,6 +157,7 @@ export interface ReportValueRow {
     label: string;
     description: string;
     value: unknown;
+    file_path?: string | null;
 }
 
 export interface ReportCommandInfo {
@@ -166,6 +167,13 @@ export interface ReportCommandInfo {
     command: string;
 }
 
+export interface ReportOrdinaryDocsInfo {
+    config_path: string;
+    status: 'present' | 'missing' | 'invalid';
+    paths: string[];
+    unavailable: ReportDataUnavailableEntry[];
+}
+
 export interface ReportInitSettingsTab {
     init_answers_path: string;
     init_answers_status: 'present' | 'missing' | 'invalid';
@@ -173,6 +181,7 @@ export interface ReportInitSettingsTab {
     agent_init_state_path: string;
     agent_init_state_status: 'present' | 'missing' | 'invalid';
     agent_init_state: ReportValueRow[];
+    ordinary_docs: ReportOrdinaryDocsInfo;
     commands: ReportCommandInfo[];
     unavailable: ReportDataUnavailableEntry[];
 }
@@ -184,7 +193,6 @@ export interface ReportProjectMemoryFile {
     purpose: string;
     read_role: 'read_first' | 'focused';
     size_bytes: number | null;
-    content: string | null;
 }
 
 export interface ReportProjectMemoryTab {

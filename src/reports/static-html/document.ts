@@ -1,5 +1,5 @@
 import type { ReportDataContract } from '../report-data-contract';
-import { escapeHtml, escapeJsonForScript } from './common';
+import { escapeHtml, escapeJsonForScript, type StaticHtmlRenderContext } from './common';
 import { renderBackupsPanel } from './backups-tab';
 import { renderInitSettingsPanel } from './init-settings-tab';
 import { renderInstructionsPanel } from './instructions-tab';
@@ -23,7 +23,7 @@ function renderTabButtons(): string {
     ].join('')).join('');
 }
 
-export function renderStaticHtmlDocument(report: ReportDataContract): string {
+export function renderStaticHtmlDocument(report: ReportDataContract, context: StaticHtmlRenderContext): string {
     const rows = report.tasks_tab.rows;
     return `<!doctype html>
 <html lang="en">
@@ -51,8 +51,8 @@ ${renderTabButtons()}
 <main>
 ${renderTasksPanel(rows)}
 ${renderWorkflowPanel(report.workflow_config_tab)}
-${renderInitSettingsPanel(report.init_settings_tab)}
-${renderProjectMemoryPanel(report.project_memory_tab)}
+${renderInitSettingsPanel(report.init_settings_tab, context)}
+${renderProjectMemoryPanel(report.project_memory_tab, context)}
 ${renderBackupsPanel(report.backups_tab)}
 ${renderInstructionsPanel(report)}
 </main>

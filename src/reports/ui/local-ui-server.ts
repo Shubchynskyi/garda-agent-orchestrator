@@ -1,9 +1,15 @@
 import * as http from 'node:http';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { URL } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { isCanonicalTaskId } from '../../core/task-ids';
+import {
+    ORDINARY_DOC_PATHS_CONFIG_KEY,
+    normalizeOrdinaryDocPathPattern
+} from '../../core/ordinary-doc-paths';
+import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
 import {
     buildReportDataContract,
     buildReportSnapshotFingerprint,
@@ -30,6 +36,7 @@ import {
     type UiActionRunner,
     type UiActionRunnerResult
 } from './ui-action-registry';
+import { appendUiActionAudit } from './actions/action-common';
 import { renderLocalUiHtml } from './ui-dashboard-html';
 import {
     DEFAULT_LOCAL_UI_LANGUAGE,
@@ -131,6 +138,7 @@ const BROWSER_UNSAFE_PORTS = new Set<number>([
     6697,
     10080
 ]);
+const ORDINARY_DOCS_CONFIRMATION_PHRASE = 'APPLY ORDINARY DOCS';
 
 export interface StartLocalUiServerOptions {
     repoRoot: string;
@@ -208,6 +216,45 @@ function sendText(response: http.ServerResponse, statusCode: number, body: strin
     response.end(body);
 }
 
+function sendFileText(response: http.ServerResponse, body: string): void {
+    response.writeHead(200, {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'no-store'
+    });
+    response.end(body);
+}
+
+function resolveSafeRepoFile(repoRoot: string, requestedPath: unknown): string {
+    if (typeof requestedPath !== 'string' || !requestedPath.trim()) {
+        throw new Error('File path is required.');
+    }
+    const normalized = requestedPath.trim().replace(/\\/g, '/').replace(/^\.\/+/u, '');
+    if (path.isAbsolute(normalized) || normalized.split('/').includes('..')) {
+        throw new Error('File path must be a relative repository path.');
+    }
+    const root = path.resolve(repoRoot);
+    const resolved = path.resolve(root, normalized);
+    const relative = path.relative(root, resolved);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('File path escapes the repository root.');
+    }
+    const lstat = fs.lstatSync(resolved);
+    if (lstat.isSymbolicLink()) {
+        throw new Error('File path must not be a symbolic link.');
+    }
+    const realRoot = fs.realpathSync(root);
+    const realResolved = fs.realpathSync(resolved);
+    const realRelative = path.relative(realRoot, realResolved);
+    if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+        throw new Error('File path escapes the repository root.');
+    }
+    const stat = fs.statSync(realResolved);
+    if (!stat.isFile()) {
+        throw new Error('File path does not point to a file.');
+    }
+    return realResolved;
+}
+
 function buildReport(repoRoot: string): ReportDataContract {
     return buildReportDataContract({
         repoRoot,
@@ -224,6 +271,155 @@ function getCachedReport(repoRoot: string, cache: ReportSnapshotCache): ReportDa
     cache.fingerprint = fingerprint;
     cache.report = report;
     return report;
+}
+
+function getPathsConfigPath(repoRoot: string): string {
+    return joinOrchestratorPath(path.resolve(repoRoot), path.join('live', 'config', 'paths.json'));
+}
+
+function readPathsConfig(pathsConfigPath: string): Record<string, unknown> {
+    const parsed = JSON.parse(fs.readFileSync(pathsConfigPath, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('paths.json root must be an object.');
+    }
+    return parsed as Record<string, unknown>;
+}
+
+function normalizeExistingOrdinaryDocPaths(config: Record<string, unknown>): string[] {
+    const rawPaths = config[ORDINARY_DOC_PATHS_CONFIG_KEY];
+    return Array.isArray(rawPaths)
+        ? rawPaths
+            .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+            .map((entry) => normalizeOrdinaryDocPathPattern(entry, `paths.${ORDINARY_DOC_PATHS_CONFIG_KEY}`))
+        : [];
+}
+
+function assertLiteralExistingOrdinaryDoc(repoRoot: string, normalizedPath: string): void {
+    if (/[*?]/u.test(normalizedPath)) {
+        throw new Error('Add one concrete document path, not a glob pattern.');
+    }
+    resolveSafeRepoFile(repoRoot, normalizedPath);
+}
+
+function writeOrdinaryDocPaths(pathsConfigPath: string, config: Record<string, unknown>, paths: string[]): void {
+    fs.writeFileSync(pathsConfigPath, `${JSON.stringify({
+        ...config,
+        [ORDINARY_DOC_PATHS_CONFIG_KEY]: paths
+    }, null, 2)}\n`, 'utf8');
+}
+
+async function handleOrdinaryDocsPostRequest(
+    request: http.IncomingMessage,
+    response: http.ServerResponse,
+    repoRoot: string,
+    options: LocalUiServerRuntimeOptions
+): Promise<void> {
+    if (!options.actionsEnabled) {
+        sendApiError(response, 403, 'Ordinary document edits are disabled. Restart with --actions to enable guarded edits.', 'ordinary_docs_disabled');
+        return;
+    }
+    try {
+        assertUiPostBoundary(request, options.actionToken);
+    } catch (error: unknown) {
+        sendApiError(response, 403, error instanceof Error ? error.message : String(error), 'ordinary_docs_boundary_rejected');
+        return;
+    }
+    const payload = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let raw = '';
+        request.setEncoding('utf8');
+        request.on('data', (chunk) => {
+            raw += chunk;
+            if (raw.length > 8192) {
+                reject(new Error('Request body is too large.'));
+                request.destroy();
+            }
+        });
+        request.on('error', reject);
+        request.on('end', () => {
+            try {
+                const parsed = raw.trim() ? JSON.parse(raw) as unknown : {};
+                resolve(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {});
+            } catch {
+                reject(new Error('Request body must be valid JSON.'));
+            }
+        });
+    });
+    const operation = payload.operation === 'remove' ? 'remove' : 'add';
+    const mode = payload.mode === 'execute' ? 'execute' : 'preview';
+    const normalizedPath = normalizeOrdinaryDocPathPattern(payload.path, `paths.${ORDINARY_DOC_PATHS_CONFIG_KEY}`);
+    if (operation === 'add') {
+        assertLiteralExistingOrdinaryDoc(repoRoot, normalizedPath);
+    }
+    const pathsConfigPath = getPathsConfigPath(repoRoot);
+    const config = readPathsConfig(pathsConfigPath);
+    const currentPaths = normalizeExistingOrdinaryDocPaths(config);
+    const normalizedKey = normalizedPath.toLowerCase();
+    const proposedPaths = operation === 'add'
+        ? currentPaths.some((entry) => entry.toLowerCase() === normalizedKey) ? currentPaths : [...currentPaths, normalizedPath]
+        : currentPaths.filter((entry) => entry.toLowerCase() !== normalizedKey);
+    const command = `${operation} ${normalizedPath} in ${toPosix(path.relative(path.resolve(repoRoot), pathsConfigPath)) || pathsConfigPath}`;
+    if (mode === 'preview') {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: `ordinary-docs:${operation}`,
+            mode,
+            status: 'previewed',
+            command
+        });
+        sendJson(response, 200, {
+            operation,
+            path: normalizedPath,
+            mode,
+            status: 'previewed',
+            current_paths: currentPaths,
+            proposed_paths: proposedPaths,
+            command,
+            requires_confirmation: true,
+            confirmation_phrase: ORDINARY_DOCS_CONFIRMATION_PHRASE,
+            audit_path: auditPath
+        });
+        return;
+    }
+    if (payload.confirmation !== ORDINARY_DOCS_CONFIRMATION_PHRASE) {
+        const auditPath = appendUiActionAudit(repoRoot, {
+            timestamp_utc: new Date().toISOString(),
+            action_id: `ordinary-docs:${operation}`,
+            mode,
+            status: 'confirmation_required',
+            command
+        });
+        sendJson(response, 409, {
+            operation,
+            path: normalizedPath,
+            mode,
+            status: 'confirmation_required',
+            current_paths: currentPaths,
+            proposed_paths: proposedPaths,
+            command,
+            requires_confirmation: true,
+            confirmation_phrase: ORDINARY_DOCS_CONFIRMATION_PHRASE,
+            audit_path: auditPath
+        });
+        return;
+    }
+    writeOrdinaryDocPaths(pathsConfigPath, config, proposedPaths);
+    const auditPath = appendUiActionAudit(repoRoot, {
+        timestamp_utc: new Date().toISOString(),
+        action_id: `ordinary-docs:${operation}`,
+        mode,
+        status: 'executed',
+        command
+    });
+    sendJson(response, 200, {
+        operation,
+        path: normalizedPath,
+        mode,
+        status: 'executed',
+        current_paths: currentPaths,
+        proposed_paths: proposedPaths,
+        command,
+        audit_path: auditPath
+    });
 }
 
 function findTask(report: ReportDataContract, taskId: string): boolean {
@@ -359,16 +555,59 @@ function buildLocalUiSessionController(options: {
     };
 }
 
+function headerValue(value: string | string[] | undefined): string {
+    return Array.isArray(value) ? value[0] || '' : value || '';
+}
+
+function expectedLocalUiOrigin(request: http.IncomingMessage): string | null {
+    const localPort = request.socket.localPort;
+    if (typeof localPort !== 'number' || !Number.isInteger(localPort) || localPort < 0 || localPort > 65535) {
+        return null;
+    }
+    return `http://${DEFAULT_UI_HOST}:${localPort}`;
+}
+
 function assertUiPostBoundary(request: http.IncomingMessage, actionToken: string): void {
-    const contentType = String(request.headers['content-type'] || '').toLowerCase();
-    const origin = String(request.headers.origin || '');
-    const host = String(request.headers.host || '');
-    const token = String(request.headers['x-garda-action-token'] || '');
-    if (!contentType.startsWith('application/json') || token !== actionToken) {
+    const contentType = headerValue(request.headers['content-type']).toLowerCase().split(';', 1)[0].trim();
+    const origin = headerValue(request.headers.origin);
+    const token = headerValue(request.headers['x-garda-action-token']);
+    const expectedOrigin = expectedLocalUiOrigin(request);
+    if (contentType !== 'application/json' || token !== actionToken) {
         throw new Error('Session request rejected by local UI boundary.');
     }
-    if (!host.startsWith(`${DEFAULT_UI_HOST}:`) || (origin && origin !== `http://${host}`)) {
+    if (expectedOrigin === null || origin !== expectedOrigin) {
         throw new Error('Session request rejected by local UI boundary.');
+    }
+}
+
+function headerOriginMatches(value: string, expectedOrigin: string): boolean {
+    try {
+        return new URL(value).origin === expectedOrigin;
+    } catch {
+        return false;
+    }
+}
+
+function assertUiFileBoundary(
+    request: http.IncomingMessage,
+    parsedUrl: URL,
+    actionToken: string
+): void {
+    const expectedOrigin = expectedLocalUiOrigin(request);
+    const token = parsedUrl.searchParams.get('action_token') || '';
+    const origin = headerValue(request.headers.origin);
+    const referer = headerValue(request.headers.referer);
+    if (expectedOrigin === null || token !== actionToken) {
+        throw new Error('File request rejected by local UI boundary.');
+    }
+    if (origin && origin !== expectedOrigin) {
+        throw new Error('File request rejected by local UI boundary.');
+    }
+    if (referer && !headerOriginMatches(referer, expectedOrigin)) {
+        throw new Error('File request rejected by local UI boundary.');
+    }
+    if (!origin && !referer) {
+        throw new Error('File request rejected by local UI boundary.');
     }
 }
 
@@ -382,7 +621,8 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
     const options: LocalUiServerRuntimeOptions = {
         actionsEnabled: runtimeOptions?.actionsEnabled === true,
         actionRunner: runtimeOptions?.actionRunner || runUiActionCommand,
-        actionToken: crypto.randomBytes(32).toString('hex')
+        actionToken: crypto.randomBytes(32).toString('hex'),
+        trustedOriginHost: DEFAULT_UI_HOST
     };
     const reportCache: ReportSnapshotCache = {
         fingerprint: null,
@@ -435,6 +675,12 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
             });
             return;
         }
+        if (request.method === 'POST' && pathname === '/api/ordinary-docs') {
+            handleOrdinaryDocsPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
+                sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_ordinary_docs_request');
+            });
+            return;
+        }
         if (request.method === 'POST' && pathname === '/api/cleanup-settings') {
             handleUiCleanupSettingsPostRequest(request, response, resolvedRepoRoot, options).catch((error: unknown) => {
                 sendApiError(response, 400, error instanceof Error ? error.message : String(error), 'invalid_cleanup_settings_request');
@@ -480,6 +726,21 @@ export function createLocalUiServer(repoRoot: string, runtimeOptions?: Partial<L
         }
         if (pathname === '/') {
             sendHtml(response, renderLocalUiHtml(options.actionsEnabled, options.actionToken, language));
+            return;
+        }
+        if (pathname === '/files') {
+            try {
+                assertUiFileBoundary(request, parsedUrl, options.actionToken);
+            } catch (error: unknown) {
+                sendText(response, 403, error instanceof Error ? error.message : String(error));
+                return;
+            }
+            try {
+                const filePath = resolveSafeRepoFile(resolvedRepoRoot, parsedUrl.searchParams.get('path'));
+                sendFileText(response, fs.readFileSync(filePath, 'utf8'));
+            } catch (error: unknown) {
+                sendText(response, 404, error instanceof Error ? error.message : String(error));
+            }
             return;
         }
         if (pathname === '/api/session') {

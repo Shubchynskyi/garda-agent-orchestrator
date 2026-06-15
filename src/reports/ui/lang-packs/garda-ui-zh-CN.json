@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "运行时诊断",
     "noRuntimeDiagnostics": "没有报告运行时诊断。",
     "taskActionsTitle": "任务命令",
-    "taskActionsHelp": "此处显示特定于任务的命令，以便“操作”选项卡始终专注于工作区维护。",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "生命周期的下一个步骤",
     "taskCommandStats": "任务统计",
     "taskCommandEvents": "任务事件",
@@ -267,7 +267,14 @@
     "artifacts": "文物",
     "existingArtifacts": "现有文物",
     "missingArtifacts": "遗失的文物",
-    "artifactPath": "工件路径"
+    "artifactPath": "工件路径",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -340,5 +347,6 @@
       "label": "risks.md",
       "description": "已知风险、脆弱路径、安全说明和兼容性限制。"
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

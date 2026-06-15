@@ -183,6 +183,9 @@ function applyLanguage() {
   if (currentBackupActionResult) {
     renderBackupActionResult(currentBackupActionResult);
   }
+  if (typeof currentBackupSettingResult !== 'undefined' && currentBackupSettingResult) {
+    renderBackupSettingResult(currentBackupSettingResult);
+  }
   if (currentCleanupPayload) {
     renderCleanupSettings(currentCleanupPayload);
   }

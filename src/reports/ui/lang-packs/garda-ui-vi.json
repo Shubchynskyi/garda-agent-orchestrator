@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "Chẩn đoán thời gian chạy",
     "noRuntimeDiagnostics": "Không có chẩn đoán thời gian chạy nào được báo cáo.",
     "taskActionsTitle": "Lệnh tác vụ",
-    "taskActionsHelp": "Các lệnh dành riêng cho nhiệm vụ được hiển thị ở đây để tab Hành động luôn tập trung vào việc bảo trì không gian làm việc.",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "Bước vòng đời tiếp theo",
     "taskCommandStats": "Thống kê nhiệm vụ",
     "taskCommandEvents": "Sự kiện nhiệm vụ",
@@ -267,7 +267,14 @@
     "artifacts": "Hiện vật",
     "existingArtifacts": "Hiện vật hiện có",
     "missingArtifacts": "Hiện vật bị thiếu",
-    "artifactPath": "Đường dẫn artefact"
+    "artifactPath": "Đường dẫn artefact",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -310,5 +317,6 @@
       "label": "risks.md",
       "description": "Rủi ro đã biết, đường dẫn mong manh, ghi chú bảo mật và ràng buộc tương thích."
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

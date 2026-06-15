@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "रनटाइम डायग्नोस्टिक्स",
     "noRuntimeDiagnostics": "कोई रनटाइम डायग्नोस्टिक्स रिपोर्ट नहीं किया गया.",
     "taskActionsTitle": "कार्य आदेश",
-    "taskActionsHelp": "कार्य-विशिष्ट आदेश यहां दिखाए गए हैं ताकि क्रियाएँ टैब कार्यस्थान रखरखाव पर केंद्रित रहे।",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "अगला जीवनचक्र चरण",
     "taskCommandStats": "कार्य आँकड़े",
     "taskCommandEvents": "कार्य घटनाएँ",
@@ -267,7 +267,14 @@
     "artifacts": "कलाकृतियों",
     "existingArtifacts": "मौजूदा कलाकृतियाँ",
     "missingArtifacts": "गायब कलाकृतियाँ",
-    "artifactPath": "आर्टिफैक्ट पथ"
+    "artifactPath": "आर्टिफैक्ट पथ",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -310,5 +317,6 @@
       "label": "risks.md",
       "description": "ज्ञात जोखिम, नाज़ुक पथ, सुरक्षा नोट्स और अनुकूलता सीमाएँ।"
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

@@ -74,7 +74,7 @@ class FakeElement {
     }
 
     async dispatch(eventName: string): Promise<void> {
-        for (const listener of this.listeners.get(eventName) || []) {
+        for (const listener of [...(this.listeners.get(eventName) || [])]) {
             await listener();
         }
     }
@@ -546,6 +546,20 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     min: 1,
                     max: 200,
                     confirmation_phrase: 'APPLY GARDA SETTING'
+                },
+                {
+                    id: 'auto-backup-enabled',
+                    key: 'backups.auto_backup.enabled',
+                    label: 'Auto-backup enabled',
+                    description: 'Enable automatic update backups',
+                    current_value: false,
+                    value_type: 'boolean',
+                    options: [
+                        { value: 'true', label: 'true', description: 'Enable backups' },
+                        { value: 'false', label: 'false', description: 'Disable backups' }
+                    ],
+                    flag: '--auto-backup-enabled',
+                    confirmation_phrase: 'APPLY GARDA SETTING'
                 }
             ]
         };
@@ -604,6 +618,19 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         return actions;
                     }
                     if (url === '/api/settings') {
+                        if (options?.method === 'POST') {
+                            return {
+                                setting_id: 'auto-backup-enabled',
+                                status: 'previewed',
+                                label: 'Auto-backup enabled',
+                                key: 'backups.auto_backup.enabled',
+                                command: 'node bin/garda.js workflow set --auto-backup-enabled true --target-root "."',
+                                current_value: false,
+                                proposed_value: true,
+                                changed_keys: ['backups.auto_backup.enabled'],
+                                audit_path: 'runtime/ui-actions/audit.jsonl'
+                            };
+                        }
                         return settings;
                     }
                     if (url === '/api/tasks/T-100/actions') {
@@ -657,8 +684,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements['task-detail-panel'].hidden, false);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-green-summary-max-lines/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full_suite_validation\.green_summary_max_lines/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-auto-backup-enabled"/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
-        assert.match(fakeDocument.elements.actions.innerHTML, /node bin\/garda\.js status/u);
+        assert.equal(fakeDocument.elements.actions.innerHTML, '');
         assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /backup-restore/u);
         assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /rollback --snapshot-path/u);
         assert.match(fakeDocument.elements['backups-table'].innerHTML, /data-backup-action-id="backup-restore:update-20260101-120000-000"/u);
@@ -668,6 +696,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await backupPreviewButton.dispatch('click');
         await flushPromises();
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /rollback --snapshot-path/u);
+        assert.match(fakeDocument.elements['backups-settings'].innerHTML, /data-setting-id="auto-backup-enabled"/u);
+        assert.match(fakeDocument.elements['backups-settings'].innerHTML, /data-setting-control-scope="backups"/u);
+        assert.match(fakeDocument.elements['backups-settings'].innerHTML, /id="setting-input-backups-auto-backup-enabled"/u);
+        assert.doesNotMatch(fakeDocument.elements['backups-settings'].innerHTML, /id="setting-input-workflow-auto-backup-enabled"/u);
+        assert.doesNotMatch(fakeDocument.elements['backups-settings'].innerHTML, /id="setting-input-auto-backup-enabled"/u);
+        const backupSettingPreviewButton = fakeDocument.elements['backups-settings'].querySelectorAll('button[data-setting-id]')
+            .find((button) => button.dataset.settingId === 'auto-backup-enabled' && button.dataset.settingMode === 'preview');
+        assert.ok(backupSettingPreviewButton);
+        await backupSettingPreviewButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /workflow set --auto-backup-enabled/u);
+        assert.doesNotMatch(fakeDocument.elements['setting-status'].innerHTML, /workflow set --auto-backup-enabled/u);
         assert.match(fakeDocument.elements['garda-switch-panel'].innerHTML, /Switch action is hidden/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-on"/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-off"/u);

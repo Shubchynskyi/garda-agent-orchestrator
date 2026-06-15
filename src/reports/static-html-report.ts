@@ -64,8 +64,12 @@ function pruneSnapshots(snapshotPath: string, retention: number | null | undefin
     return deletedPaths;
 }
 
-export function renderStaticHtmlReport(report: ReportDataContract): string {
-    return renderStaticHtmlDocument(report);
+export function renderStaticHtmlReport(report: ReportDataContract, outputPath?: string | null): string {
+    const resolvedOutputPath = path.resolve(outputPath || resolveDefaultOutputPath(report.repo_root));
+    return renderStaticHtmlDocument(report, {
+        repoRoot: report.repo_root,
+        outputPath: resolvedOutputPath
+    });
 }
 
 function resolveMaxDetailedTasks(value: number | null | undefined): number {
@@ -82,7 +86,7 @@ export function buildStaticHtmlReport(options: BuildStaticHtmlReportOptions): St
         maxDetailedTasks
     });
     const outputPath = path.resolve(options.outputPath || resolveDefaultOutputPath(repoRoot));
-    const html = renderStaticHtmlReport(report);
+    const html = renderStaticHtmlReport(report, outputPath);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, html, 'utf8');
     const snapshotPath = options.snapshot === true

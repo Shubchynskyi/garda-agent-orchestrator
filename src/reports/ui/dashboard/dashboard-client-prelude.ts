@@ -67,6 +67,7 @@ let currentActionResult = null;
 let currentSettingsPayload = null;
 let currentSettingResult = null;
 let currentTaskDetail = null;
+let currentWorkflowSettingGroup = 'validation';
 let selectedTaskId = null;
 let lastActivityPingAt = 0;
 let sessionPollTimer = null;

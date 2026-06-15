@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "রানটাইম ডায়াগনস্টিকস",
     "noRuntimeDiagnostics": "কোনো রানটাইম ডায়াগনস্টিক রিপোর্ট করা হয়নি।",
     "taskActionsTitle": "টাস্ক কমান্ড",
-    "taskActionsHelp": "টাস্ক-নির্দিষ্ট কমান্ডগুলি এখানে দেখানো হয়েছে যাতে অ্যাকশন ট্যাবটি ওয়ার্কস্পেস রক্ষণাবেক্ষণের উপর ফোকাস থাকে।",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "পরবর্তী জীবনচক্র ধাপ",
     "taskCommandStats": "টাস্ক পরিসংখ্যান",
     "taskCommandEvents": "টাস্ক ইভেন্ট",
@@ -267,7 +267,14 @@
     "artifacts": "শিল্পকর্ম",
     "existingArtifacts": "বিদ্যমান নিদর্শন",
     "missingArtifacts": "নিখোঁজ নিদর্শন",
-    "artifactPath": "আর্টিফ্যাক্টের পথ"
+    "artifactPath": "আর্টিফ্যাক্টের পথ",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -310,5 +317,6 @@
       "label": "risks.md",
       "description": "পরিচিত ঝুঁকি, ভঙ্গুর পাথ, নিরাপত্তা নোট এবং সামঞ্জস্য সীমা।"
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

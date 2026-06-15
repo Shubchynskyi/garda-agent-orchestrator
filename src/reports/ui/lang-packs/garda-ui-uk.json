@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "Діагностика виконання",
     "noRuntimeDiagnostics": "Немає повідомлень про діагностику під час виконання.",
     "taskActionsTitle": "Команди завдань",
-    "taskActionsHelp": "Тут показано команди для певних завдань, тому вкладка «Дії» зосереджена на обслуговуванні робочої області.",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "Наступний крок життєвого циклу",
     "taskCommandStats": "Статистика завдань",
     "taskCommandEvents": "Події завдань",
@@ -267,7 +267,14 @@
     "artifacts": "Артефакти",
     "existingArtifacts": "Наявні артефакти",
     "missingArtifacts": "Відсутні артефакти",
-    "artifactPath": "Шлях артефакту"
+    "artifactPath": "Шлях артефакту",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_SETTING_TEXT": {
     "auto-backup-enabled": {
@@ -283,12 +290,7 @@
       "description": "Скільки останніх backups залишати після створення планового backup."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {
-    "CollectedVia": {
-      "label": "Джерело init answers",
-      "description": "Показує походження init answers: `AGENT_INIT_PROMPT.md`, `CLI_INTERACTIVE` або `CLI_NONINTERACTIVE`."
-    }
-  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
   "LOCAL_UI_INSTRUCTION_TEXT": {
     "backups": {
       "title": "Резервні копії",
@@ -296,7 +298,7 @@
     },
     "workspace-actions": {
       "title": "Дії workspace",
-      "body": "Вкладка дій містить фіксовані workspace-команди: status, doctor, генерацію HTML-звіту, runtime cleanup і перемикання Garda. Команди конкретної задачі знаходяться в деталях задачі; команди відновлення резервних копій знаходяться лише у вкладці резервних копій."
+      "body": "Workspace actions are shown in their domain tabs: task commands in the selected task detail, backup restore commands in Backups, cleanup controls in Cleanup settings, and Garda switch controls in the top status strip."
     }
   },
   "LOCAL_UI_ACTION_TEXT": {

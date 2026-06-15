@@ -35,7 +35,7 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
     }));
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
     const initSettingsTab = buildInitSettingsTab(repoRoot);
-    const projectMemoryTab = buildProjectMemoryTab(repoRoot, workflowConfigTab, initSettingsTab);
+    const projectMemoryTab = buildProjectMemoryTab(repoRoot, workflowConfigTab);
     const backupsTab = buildBackupsTab(repoRoot);
     const unavailable = [
         ...queue.unavailable,

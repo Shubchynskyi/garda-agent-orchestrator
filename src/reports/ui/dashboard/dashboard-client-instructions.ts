@@ -28,7 +28,8 @@ function instructionLinks(id) {
     links.push(['workflow-tab', t('workflowTab')]);
   }
   if (id === 'workspace-actions') {
-    links.push(['actions-tab', t('actionsTab')]);
+    links.push(['backups-tab', t('backupsTab')]);
+    links.push(['cleanup-settings-tab', t('cleanupSettingsTab')]);
   }
   if (id === 'init-settings') {
     links.push(['init-settings-tab', t('initSettingsTab')]);

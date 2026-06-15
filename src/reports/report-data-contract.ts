@@ -16,6 +16,7 @@ export type {
     ReportInstructionEntry,
     ReportValueRow,
     ReportCommandInfo,
+    ReportOrdinaryDocsInfo,
     ReportInitSettingsTab,
     ReportProjectMemoryFile,
     ReportProjectMemoryTab,

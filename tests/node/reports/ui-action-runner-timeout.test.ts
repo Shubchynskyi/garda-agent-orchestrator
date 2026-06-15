@@ -4,9 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-    UI_ACTION_CLEANUP_TIMEOUT_MS,
-    UI_ACTION_HTML_REPORT_TIMEOUT_MS,
-    UI_ACTION_INSPECTION_TIMEOUT_MS,
+    UI_ACTION_DEFAULT_TIMEOUT_MS,
     formatUiActionTimeoutMessage,
     runUiActionCommand
 } from '../../../src/reports/ui/actions/action-common';
@@ -66,16 +64,14 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
     }
 });
 
-test('workspace UI actions declare per-action timeout budgets', () => {
+test('workspace UI actions only expose visible switch controls with default timeout budgets', () => {
     const repoRoot = makeTmpDir();
     try {
-        const actions = new Map(buildUiWorkspaceActionDefinitions(repoRoot).map((action) => [action.id, action.timeout_ms]));
+        const actions = buildUiWorkspaceActionDefinitions(repoRoot);
+        const actionIds = actions.map((action) => action.id).sort();
 
-        assert.equal(actions.get('status'), UI_ACTION_INSPECTION_TIMEOUT_MS);
-        assert.equal(actions.get('doctor'), UI_ACTION_INSPECTION_TIMEOUT_MS);
-        assert.equal(actions.get('html-report'), UI_ACTION_HTML_REPORT_TIMEOUT_MS);
-        assert.equal(actions.get('cleanup-preview'), UI_ACTION_CLEANUP_TIMEOUT_MS);
-        assert.equal(actions.get('cleanup-apply'), UI_ACTION_CLEANUP_TIMEOUT_MS);
+        assert.deepEqual(actionIds, ['garda-off', 'garda-on']);
+        assert.ok(actions.every((action) => action.timeout_ms === UI_ACTION_DEFAULT_TIMEOUT_MS));
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }

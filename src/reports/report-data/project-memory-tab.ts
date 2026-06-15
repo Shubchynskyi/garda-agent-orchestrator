@@ -5,19 +5,21 @@ import {
     PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH
 } from '../../core/project-memory';
 import { joinOrchestratorPath } from '../../gates/shared/helpers';
-import { toRepoRelativePath, valueRow } from './shared';
+import { readJsonObjectForReport, toRepoRelativePath, valueRow } from './shared';
 import type {
     ReportDataUnavailableEntry,
-    ReportInitSettingsTab,
     ReportProjectMemoryFile,
     ReportProjectMemoryTab,
     ReportValueRow,
     ReportWorkflowConfigTab
 } from './types';
 
-function buildProjectMemoryStatusRows(workflowTab: ReportWorkflowConfigTab, initTab: ReportInitSettingsTab): ReportValueRow[] {
+function buildProjectMemoryStatusRows(
+    workflowTab: ReportWorkflowConfigTab,
+    agentInitState: Record<string, unknown>
+): ReportValueRow[] {
     const settingValue = (key: string): unknown => workflowTab.settings.find((setting) => setting.key === key)?.value;
-    const stateValue = (id: string): unknown => initTab.agent_init_state.find((row) => row.id === id)?.value;
+    const stateValue = (id: string): unknown => agentInitState[id];
     return [
         valueRow('memory-enabled', 'Memory maintenance enabled', 'Whether workflow closeout checks durable project memory.', settingValue('project_memory_maintenance.enabled')),
         valueRow('memory-mode', 'Memory maintenance mode', 'Current workflow mode: off, check, update, or strict.', settingValue('project_memory_maintenance.mode')),
@@ -35,12 +37,13 @@ function buildProjectMemoryStatusRows(workflowTab: ReportWorkflowConfigTab, init
 
 export function buildProjectMemoryTab(
     repoRoot: string,
-    workflowTab: ReportWorkflowConfigTab,
-    initTab: ReportInitSettingsTab
+    workflowTab: ReportWorkflowConfigTab
 ): ReportProjectMemoryTab {
     const root = path.resolve(repoRoot);
     const memoryDir = joinOrchestratorPath(root, PROJECT_MEMORY_LIVE_DIRECTORY_RELATIVE_PATH);
+    const agentInitStatePath = joinOrchestratorPath(root, path.join('runtime', 'agent-init-state.json'));
     const unavailable: ReportDataUnavailableEntry[] = [];
+    const agentState = readJsonObjectForReport(root, agentInitStatePath, 'project-memory:agent-init-state', unavailable);
     const files = PROJECT_MEMORY_FILE_DEFINITIONS.map((definition): ReportProjectMemoryFile => {
         const filePath = path.join(memoryDir, definition.fileName);
         const exists = fs.existsSync(filePath) && fs.statSync(filePath).isFile();
@@ -56,12 +59,11 @@ export function buildProjectMemoryTab(
             exists,
             purpose: definition.purpose,
             read_role: definition.readRole,
-            size_bytes: exists ? fs.statSync(filePath).size : null,
-            content: exists ? fs.readFileSync(filePath, 'utf8') : null
+            size_bytes: exists ? fs.statSync(filePath).size : null
         };
     });
     return {
-        status: buildProjectMemoryStatusRows(workflowTab, initTab),
+        status: buildProjectMemoryStatusRows(workflowTab, agentState.value),
         files,
         unavailable
     };

@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "تشخيص وقت التشغيل",
     "noRuntimeDiagnostics": "لم يتم الإبلاغ عن أي تشخيصات لوقت التشغيل.",
     "taskActionsTitle": "أوامر المهمة",
-    "taskActionsHelp": "يتم عرض الأوامر الخاصة بالمهمة هنا بحيث تظل علامة التبويب \"الإجراءات\" مركزة على صيانة مساحة العمل.",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "الخطوة التالية في دورة الحياة",
     "taskCommandStats": "إحصائيات المهمة",
     "taskCommandEvents": "أحداث المهمة",
@@ -267,7 +267,14 @@
     "artifacts": "التحف",
     "existingArtifacts": "التحف الموجودة",
     "missingArtifacts": "التحف المفقودة",
-    "artifactPath": "مسار الأثر"
+    "artifactPath": "مسار الأثر",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -310,5 +317,6 @@
       "label": "risks.md",
       "description": "مخاطر معروفة ومسارات هشة وملاحظات أمنية وقيود التوافق."
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }

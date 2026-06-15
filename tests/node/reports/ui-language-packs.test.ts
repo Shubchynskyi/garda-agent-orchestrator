@@ -50,8 +50,11 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.match(getLocalUiText('ru').backupsTabIntro, /конфигурации рабочего процесса/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['auto-backup-enabled'].description || '', /ежедневному обслуживанию/u);
     assert.match(LOCAL_UI_SETTING_TEXT.uk['auto-backup-enabled'].description || '', /daily maintenance/u);
-    assert.match(LOCAL_UI_INIT_SETTING_TEXT.ru['CollectedVia'].description || '', /CLI_NONINTERACTIVE/u);
-    assert.match(LOCAL_UI_INIT_SETTING_TEXT.uk['CollectedVia'].description || '', /CLI_NONINTERACTIVE/u);
+    assert.equal(LOCAL_UI_INIT_SETTING_TEXT.ru['CollectedVia'], undefined);
+    assert.equal(LOCAL_UI_INIT_SETTING_TEXT.uk['CollectedVia'], undefined);
+    assert.equal(LOCAL_UI_INIT_SETTING_TEXT.ru['UpdatedAt'], undefined);
+    assert.match(LOCAL_UI_INIT_SETTING_TEXT.ru['EnforceNoAutoCommit'].description || '', /во всяком случае пытается/u);
+    assert.match(getLocalUiText('ru').ordinaryDocsHelp, /не триггерят лишние виды ревью/u);
     assert.equal(getLocalUiText('uk').tasksTab, 'Задачі');
     assert.equal(getLocalUiText('uk').initSettingsTab, 'Параметри ініціалізації');
     assert.equal(getLocalUiText('uk').workflowTab, 'Конфігурація робочого процесу');

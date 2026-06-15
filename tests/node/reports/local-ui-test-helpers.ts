@@ -35,9 +35,15 @@ export function makeLocalUiTempRepo(): string {
 
 export function writeLocalUiRepoFixture(repoRoot: string): void {
     writeLocalUiTaskQueue(repoRoot, 'T-100', 'Build UI');
+    fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# Agent instructions\n', 'utf8');
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(buildDefaultWorkflowConfig(), null, 2));
+    const pathsConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json');
+    fs.writeFileSync(pathsConfigPath, JSON.stringify({
+        ordinary_doc_paths: ['CHANGELOG.md']
+    }, null, 2));
+    fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
     const runtimeRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime');
     fs.mkdirSync(runtimeRoot, { recursive: true });
     fs.writeFileSync(path.join(runtimeRoot, 'init-answers.json'), JSON.stringify({

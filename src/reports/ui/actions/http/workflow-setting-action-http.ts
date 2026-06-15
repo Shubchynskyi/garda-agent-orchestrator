@@ -64,7 +64,7 @@ export async function handleUiWorkflowSettingRequest(
         sendApiError(response, 403, 'UI setting edits are disabled. Restart with --actions to enable guarded workflow commands.', 'settings_disabled');
         return;
     }
-    if (!isValidActionRequestBoundary(request, options.actionToken)) {
+    if (!isValidActionRequestBoundary(request, options)) {
         sendApiError(response, 403, 'UI setting request failed origin, token, or content-type validation.', 'action_boundary_rejected');
         return;
     }

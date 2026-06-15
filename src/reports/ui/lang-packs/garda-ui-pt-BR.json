@@ -104,7 +104,7 @@
     "runtimeDiagnosticsTitle": "Diagnóstico de tempo de execução",
     "noRuntimeDiagnostics": "Nenhum diagnóstico de tempo de execução relatado.",
     "taskActionsTitle": "Comandos de tarefa",
-    "taskActionsHelp": "Comandos específicos de tarefas são mostrados aqui para que a guia Ações permaneça focada na manutenção do espaço de trabalho.",
+    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
     "taskCommandNextStep": "Próxima etapa do ciclo de vida",
     "taskCommandStats": "Estatísticas de tarefas",
     "taskCommandEvents": "Eventos de tarefa",
@@ -267,7 +267,14 @@
     "artifacts": "Artefatos",
     "existingArtifacts": "Artefatos existentes",
     "missingArtifacts": "Artefatos ausentes",
-    "artifactPath": "Caminho do artefato"
+    "artifactPath": "Caminho do artefato",
+    "ordinaryDocsTitle": "Ordinary documents",
+    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
+    "ordinaryDocsPath": "Document path",
+    "ordinaryDocsEmpty": "No ordinary document paths configured.",
+    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
+    "addOrdinaryDoc": "Add document",
+    "removeOrdinaryDoc": "Remove"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -340,5 +347,6 @@
       "label": "risks.md",
       "description": "Riscos conhecidos, caminhos frágeis, notas de segurança e restrições de compatibilidade."
     }
-  }
+  },
+  "LOCAL_UI_INIT_SETTING_TEXT": {}
 }
