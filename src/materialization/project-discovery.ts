@@ -21,6 +21,7 @@ interface StackEvidence {
 export interface ProjectDiscovery {
     source: string;
     fileCount: number;
+    diagnostics: string[];
     detectedStacks: string[];
     stackEvidence: StackEvidence[];
     topLevelDirectories: string[];
@@ -35,7 +36,7 @@ export interface ProjectDiscovery {
 
 const _BASE_EXCLUDED_PATH_FRAGMENTS = Object.freeze([
     '/.git/', '/node_modules/', '/.next/', '/dist/', '/build/',
-    '/target/', '/bin/', '/obj/'
+    '/target/', '/bin/', '/obj/', '/runtime/'
 ]);
 
 export function getExcludedPathFragments(): readonly string[] {
@@ -55,10 +56,38 @@ export const STACK_SIGNALS: readonly StackSignal[] = Object.freeze([
     { name: 'Containerization', pattern: /(^|\/)Dockerfile(\..+)?$|(^|\/)docker-compose(\.[^/]+)?\.ya?ml$/ }
 ]);
 
-const _STATIC_EXCLUDED_TOP_LEVEL_DIRS = ['.git', 'node_modules', 'dist', 'build', 'target', 'bin', 'obj'];
+const _STATIC_EXCLUDED_TOP_LEVEL_DIRS = ['.git', 'node_modules', 'dist', 'build', 'target', 'bin', 'obj', 'runtime'];
+
+const DEFAULT_FALLBACK_SCAN_MAX_FILES = 10000;
+const DEFAULT_FALLBACK_SCAN_MAX_DIRECTORIES = 2000;
+const DEFAULT_FALLBACK_SCAN_MAX_ELAPSED_MS = 5000;
+
+export interface ProjectDiscoveryOptions {
+    fallbackScanMaxFiles?: number;
+    fallbackScanMaxDirectories?: number;
+    fallbackScanMaxElapsedMs?: number;
+}
+
+interface FallbackScanResult {
+    files: string[];
+    diagnostics: string[];
+}
 
 export function getExcludedTopLevelDirs(): Set<string> {
     return new Set([resolveBundleName(), ..._STATIC_EXCLUDED_TOP_LEVEL_DIRS]);
+}
+
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+    return Number.isInteger(value) && Number(value) > 0 ? Number(value) : fallback;
+}
+
+function isExcludedDiscoveryRelativePath(relativePath: string): boolean {
+    const normalized = normalizeRelativePath(relativePath);
+    if (!normalized) {
+        return false;
+    }
+    const wrapped = `/${normalized}/`;
+    return getExcludedPathFragments().some((fragment) => wrapped.includes(fragment));
 }
 
 function readRootPackageJsonSafe(targetRoot: string): Record<string, unknown> | null {
@@ -297,9 +326,10 @@ export function resolveSuggestedFullSuiteValidationCommand(
     return null;
 }
 
-export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
+export function getProjectDiscovery(targetRoot: string, options: ProjectDiscoveryOptions = {}): ProjectDiscovery {
     let relativeFiles: string[] = [];
     let discoverySource = 'filesystem_scan';
+    const diagnostics: string[] = [];
 
     try {
         const gitDir = path.join(targetRoot, '.git');
@@ -318,23 +348,23 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
                 const untrackedFiles = (untracked.stdout || '').split('\n').filter((l: string) => l.trim());
                 relativeFiles = [...new Set([...trackedFiles, ...untrackedFiles])].sort();
                 discoverySource = 'git_index_and_worktree';
+            } else {
+                diagnostics.push('Git discovery failed; using bounded filesystem fallback scan.');
             }
         }
     } catch {
-        // Fall through to filesystem scan
+        diagnostics.push('Git discovery failed; using bounded filesystem fallback scan.');
     }
 
     if (relativeFiles.length === 0) {
-        relativeFiles = collectFilesRecursive(targetRoot, targetRoot);
+        const scanResult = collectFilesRecursive(targetRoot, targetRoot, options);
+        relativeFiles = scanResult.files;
+        diagnostics.push(...scanResult.diagnostics);
     }
 
     const filteredFiles: string[] = relativeFiles
         .map((f: string) => normalizeRelativePath(f))
-        .filter((f: string) => {
-            if (!f) return false;
-            const wrapped = `/${f}/`;
-            return !getExcludedPathFragments().some((frag) => wrapped.includes(frag));
-        });
+        .filter((f: string) => f && !isExcludedDiscoveryRelativePath(f));
     const uniqueFiles: string[] = [...new Set(filteredFiles)].sort();
 
     const detectedStacks: string[] = [];
@@ -389,6 +419,7 @@ export function getProjectDiscovery(targetRoot: string): ProjectDiscovery {
     return {
         source: discoverySource,
         fileCount: uniqueFiles.length,
+        diagnostics: [...new Set(diagnostics)].sort(),
         detectedStacks: [...new Set(detectedStacks)].sort(),
         stackEvidence,
         topLevelDirectories: [...new Set(topLevelDirectories)].sort(),
@@ -436,26 +467,71 @@ export function collectRuntimePathHints(relativeFiles: string[]): string[] {
     return hints;
 }
 
-function collectFilesRecursive(rootPath: string, basePath: string): string[] {
+function collectFilesRecursive(
+    rootPath: string,
+    basePath: string,
+    options: ProjectDiscoveryOptions = {}
+): FallbackScanResult {
     const results: string[] = [];
+    const diagnostics: string[] = [];
     const stack: string[] = [rootPath];
+    const maxFiles = normalizePositiveInteger(options.fallbackScanMaxFiles, DEFAULT_FALLBACK_SCAN_MAX_FILES);
+    const maxDirectories = normalizePositiveInteger(options.fallbackScanMaxDirectories, DEFAULT_FALLBACK_SCAN_MAX_DIRECTORIES);
+    const maxElapsedMs = normalizePositiveInteger(options.fallbackScanMaxElapsedMs, DEFAULT_FALLBACK_SCAN_MAX_ELAPSED_MS);
+    const startedAt = Date.now();
+    let scannedDirectories = 0;
+    let stoppedReason: string | null = null;
+
     while (stack.length > 0) {
+        if (results.length >= maxFiles) {
+            stoppedReason = `file budget reached (${maxFiles})`;
+            break;
+        }
+        if (scannedDirectories >= maxDirectories) {
+            stoppedReason = `directory budget reached (${maxDirectories})`;
+            break;
+        }
+        if (Date.now() - startedAt > maxElapsedMs) {
+            stoppedReason = `elapsed budget reached (${maxElapsedMs} ms)`;
+            break;
+        }
+
         const current = stack.pop()!;
+        const currentRelative = path.relative(basePath, current).replace(/\\/g, '/');
+        if (currentRelative && isExcludedDiscoveryRelativePath(currentRelative)) {
+            continue;
+        }
+        scannedDirectories += 1;
+
         try {
             const entries = fs.readdirSync(current, { withFileTypes: true });
             for (const entry of entries) {
                 const fullPath = path.join(current, entry.name);
                 if (entry.isDirectory()) {
+                    const relativeDir = path.relative(basePath, fullPath).replace(/\\/g, '/');
+                    if (isExcludedDiscoveryRelativePath(relativeDir)) {
+                        continue;
+                    }
                     stack.push(fullPath);
                 } else if (entry.isFile()) {
                     results.push(path.relative(basePath, fullPath).replace(/\\/g, '/'));
+                    if (results.length >= maxFiles) {
+                        stoppedReason = `file budget reached (${maxFiles})`;
+                        break;
+                    }
                 }
             }
         } catch {
             // Ignore unreadable dirs
         }
     }
-    return results;
+
+    if (stoppedReason) {
+        diagnostics.push(
+            `Filesystem fallback scan stopped early: ${stoppedReason}; partial project discovery results were used.`
+        );
+    }
+    return { files: results, diagnostics };
 }
 
 export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestampIso: string): string[] {
@@ -482,6 +558,13 @@ export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestam
     } else {
         for (const dir of discovery.topLevelDirectories) {
             lines.push(`- ${tick}${dir}/${tick}`);
+        }
+    }
+
+    if (Array.isArray(discovery.diagnostics) && discovery.diagnostics.length > 0) {
+        lines.push('', '## Discovery Diagnostics');
+        for (const diagnostic of discovery.diagnostics) {
+            lines.push(`- ${diagnostic}`);
         }
     }
 

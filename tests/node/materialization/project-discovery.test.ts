@@ -96,6 +96,54 @@ describe('getProjectDiscovery', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }
     });
+
+    it('skips excluded roots before fallback recursion budgets are consumed', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-budget-excl-'));
+        try {
+            fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'src', 'main.ts'), '');
+            fs.mkdirSync(path.join(tmpDir, 'node_modules', 'pkg', 'nested'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'node_modules', 'pkg', 'nested', 'package.json'), '{}');
+            fs.mkdirSync(path.join(tmpDir, 'runtime', 'reviews'), { recursive: true });
+            fs.writeFileSync(path.join(tmpDir, 'runtime', 'reviews', 'artifact.json'), '{}');
+
+            const result = getProjectDiscovery(tmpDir, {
+                fallbackScanMaxDirectories: 2,
+                fallbackScanMaxFiles: 10,
+                fallbackScanMaxElapsedMs: 1000
+            });
+
+            assert.ok(result.relativeFiles.includes('src/main.ts'));
+            assert.ok(!result.relativeFiles.some((filePath) => filePath.startsWith('node_modules/')));
+            assert.ok(!result.relativeFiles.some((filePath) => filePath.startsWith('runtime/')));
+            assert.equal(result.diagnostics.length, 0);
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('reports partial fallback diagnostics when filesystem scan budget is reached', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-budget-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'a.txt'), '');
+            fs.writeFileSync(path.join(tmpDir, 'b.txt'), '');
+            fs.writeFileSync(path.join(tmpDir, 'c.txt'), '');
+
+            const result = getProjectDiscovery(tmpDir, {
+                fallbackScanMaxFiles: 2,
+                fallbackScanMaxDirectories: 10,
+                fallbackScanMaxElapsedMs: 1000
+            });
+
+            assert.equal(result.fileCount, 2);
+            assert.ok(result.diagnostics.some((message) => message.includes('Filesystem fallback scan stopped early: file budget reached (2)')));
+            const lines = buildProjectDiscoveryLines(result, '2025-01-01T00:00:00Z').join('\n');
+            assert.ok(lines.includes('## Discovery Diagnostics'));
+            assert.ok(lines.includes('partial project discovery results were used'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
 });
 
 describe('resolveSuggestedFullSuiteValidationCommand', () => {
