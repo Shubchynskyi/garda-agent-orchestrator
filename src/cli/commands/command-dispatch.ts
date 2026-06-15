@@ -6,16 +6,19 @@ import {
 import { assertOfflinePolicy } from '../../policy/offline-mode';
 import { EXIT_VALIDATION_FAILURE } from '../exit-codes';
 import {
-    buildCommandHelpText,
-    buildHelpText,
     buildParityBlockedCommandText,
-    buildParityWarningCommandText,
-    isKnownCommandHelpName
+    buildParityWarningCommandText
 } from './cli-format-output';
-import { buildGateCommandOverviewText, buildGateHelpText } from './gate-command-help';
 import { isFailedValidationResult } from './shared-command-utils';
 import { PackageJsonLike, printHelp } from './cli-helpers';
-import * as path from 'node:path';
+import {
+    buildParityHelpText,
+    isHelpOnlyRequest,
+    isMissingDeployedBundleOnlyParityBlock,
+    printCommandHelpIfRequested,
+    printHelpCommand
+} from './dispatch/help-routing';
+import { resolveCommandParityPolicy } from './dispatch/parity-policy';
 
 export interface DispatchCliCommandOptions {
     commandName: string;
@@ -26,215 +29,6 @@ export interface DispatchCliCommandOptions {
         offline: boolean;
         forceNetwork: boolean;
     };
-}
-
-type ParityPolicyMode = 'block' | 'warn' | 'skip';
-
-interface CommandParityPolicy {
-    mode: ParityPolicyMode;
-    root: string;
-    reason: string;
-}
-
-const LOCAL_BUNDLE_REFRESH_COMMANDS = new Set(['setup', 'bootstrap', 'install', 'init', 'reinit']);
-
-function readPathFlag(commandArgv: string[], flag: string): string | null {
-    for (let index = 0; index < commandArgv.length; index++) {
-        const arg = commandArgv[index];
-        if (arg === flag) {
-            return typeof commandArgv[index + 1] === 'string' ? commandArgv[index + 1] : null;
-        }
-        if (arg.startsWith(`${flag}=`)) {
-            return arg.slice(flag.length + 1);
-        }
-    }
-    return null;
-}
-
-function resolveTargetOrBundleParityRoot(commandArgv: string[]): string {
-    const explicitBundleRoot = readPathFlag(commandArgv, '--bundle-root');
-    if (explicitBundleRoot) {
-        return path.dirname(path.resolve(explicitBundleRoot));
-    }
-    const explicitTargetRoot = readPathFlag(commandArgv, '--target-root');
-    const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
-    return explicitTargetRoot ? path.resolve(explicitTargetRoot) : explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
-}
-
-function hasFlag(commandArgv: string[], flag: string): boolean {
-    return commandArgv.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
-}
-
-function resolveRepoParityRoot(commandArgv: string[]): string {
-    const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root');
-    return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
-}
-
-function resolveNavigatorParityRoot(commandArgv: string[]): string {
-    const explicitRepoRoot = readPathFlag(commandArgv, '--repo-root') || readPathFlag(commandArgv, '--target-root');
-    return explicitRepoRoot ? path.resolve(explicitRepoRoot) : '.';
-}
-
-function isUpdateGitCheckOnly(commandArgv: string[]): boolean {
-    return String(commandArgv[0] || '').trim().toLowerCase() === 'git' && hasFlag(commandArgv, '--check-only');
-}
-
-function hasRemoteSourceOverride(commandArgv: string[]): boolean {
-    return hasFlag(commandArgv, '--repo-url') || hasFlag(commandArgv, '--branch');
-}
-
-function isTrustedLocalBundleRefreshCommand(commandName: string, commandArgv: string[]): boolean {
-    return LOCAL_BUNDLE_REFRESH_COMMANDS.has(commandName) && !hasRemoteSourceOverride(commandArgv);
-}
-
-function buildLocalBundleRefreshParityReason(commandName: string): string {
-    return `${commandName} refreshes the deployed bundle from the current trusted source checkout, ` +
-        'so stale source parity is surfaced without blocking the documented repair path.';
-}
-
-function isRepairInspect(commandArgv: string[]): boolean {
-    const firstArg = String(commandArgv[0] || '').trim().toLowerCase();
-    return !firstArg || firstArg.startsWith('-') || firstArg === 'help' || firstArg === 'inspect';
-}
-
-function isGcDryRun(commandArgv: string[]): boolean {
-    return !hasFlag(commandArgv, '--confirm') || hasFlag(commandArgv, '--dry-run');
-}
-
-function buildParityPolicy(mode: ParityPolicyMode, root: string, reason: string): CommandParityPolicy {
-    return { mode, root, reason };
-}
-
-function resolveCommandParityPolicy(commandName: string, commandArgv: string[]): CommandParityPolicy {
-    if (commandName === 'gate') {
-        return buildParityPolicy('block', resolveRepoParityRoot(commandArgv), 'gate commands mutate lifecycle evidence and must use a fresh deployed bundle.');
-    }
-    if (commandName === 'next-step') {
-        return buildParityPolicy('block', resolveNavigatorParityRoot(commandArgv), 'next-step is the lifecycle navigator and must not route from stale source or bundle code.');
-    }
-    if (['setup', 'bootstrap', 'install', 'init', 'reinit', 'update', 'rollback', 'uninstall'].includes(commandName)) {
-        if (isTrustedLocalBundleRefreshCommand(commandName, commandArgv)) {
-            return buildParityPolicy(
-                'warn',
-                resolveTargetOrBundleParityRoot(commandArgv),
-                buildLocalBundleRefreshParityReason(commandName)
-            );
-        }
-        if (commandName === 'update' && isUpdateGitCheckOnly(commandArgv)) {
-            return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'update git --check-only is read-only, so stale source parity is surfaced without blocking.');
-        }
-        return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'mutating lifecycle commands must not run against a stale source checkout or deployed bundle.');
-    }
-    if (commandName === 'check-update') {
-        const mode: ParityPolicyMode = hasFlag(commandArgv, '--apply') ? 'block' : 'warn';
-        const reason = mode === 'block'
-            ? 'check-update --apply mutates the workspace and must not run with stale source parity.'
-            : 'check-update is read-only without --apply, so stale source parity is surfaced without blocking.';
-        return buildParityPolicy(mode, resolveTargetOrBundleParityRoot(commandArgv), reason);
-    }
-    if (commandName === 'cleanup') {
-        const mode: ParityPolicyMode = hasFlag(commandArgv, '--dry-run') ? 'warn' : 'block';
-        const reason = mode === 'block'
-            ? 'cleanup removes runtime artifacts unless --dry-run is passed and must not run with stale source parity.'
-            : 'cleanup --dry-run is read-only, so stale source parity is surfaced without blocking.';
-        return buildParityPolicy(mode, resolveTargetOrBundleParityRoot(commandArgv), reason);
-    }
-    if (commandName === 'gc' || commandName === 'clean') {
-        const mode: ParityPolicyMode = isGcDryRun(commandArgv) ? 'warn' : 'block';
-        const reason = mode === 'block'
-            ? `${commandName} --confirm removes runtime artifacts and must not run with stale source parity.`
-            : `${commandName} is dry-run by default, so stale source parity is surfaced without blocking.`;
-        return buildParityPolicy(mode, resolveTargetOrBundleParityRoot(commandArgv), reason);
-    }
-    if (commandName === 'repair') {
-        if (isRepairInspect(commandArgv)) {
-            return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'repair inspect is read-only, so stale source parity is surfaced without blocking.');
-        }
-        if (!hasFlag(commandArgv, '--confirm')) {
-            return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'repair mutation subcommands are dry-run by default, so stale source parity is surfaced without blocking unless --confirm is passed.');
-        }
-        return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'confirmed repair mutation paths must not run with stale source parity.');
-    }
-    if (['agent-init', 'skills', 'review-capabilities', 'templates', 'profile', 'workflow', 'html', 'ui', 'on', 'off'].includes(commandName)) {
-        return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'workspace configuration and workspace-selection commands require source/bundle parity before execution.');
-    }
-    if (['status', 'doctor', 'debug', 'stats', 'task', 'preprompt', 'verify', 'diff-managed'].includes(commandName)) {
-        return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'read-only workspace inspection commands surface stale source parity without blocking.');
-    }
-    return buildParityPolicy('skip', '.', 'command has no workspace source/bundle parity policy.');
-}
-
-function isHelpFlag(argument: string): boolean {
-    return argument === '--help' || argument === '-h';
-}
-
-function isHelpSubcommand(commandArgv: string[]): boolean {
-    return String(commandArgv[0] || '').trim().toLowerCase() === 'help';
-}
-
-function hasHelpFlag(commandArgv: string[]): boolean {
-    return commandArgv.some((argument) => isHelpFlag(argument));
-}
-
-function isHelpOnlyRequest(commandArgv: string[]): boolean {
-    return isHelpSubcommand(commandArgv) || hasHelpFlag(commandArgv);
-}
-
-function isMissingDeployedBundleOnlyParityBlock(violations: readonly string[]): boolean {
-    return violations.length > 0
-        && violations.every((violation) => violation.startsWith('Bundle invariant violation: '))
-        && violations.some((violation) => /^Bundle invariant violation: Bundle directory '[^']+' is missing\.$/.test(violation));
-}
-
-function printHelpCommand(commandArgv: string[], packageJson: PackageJsonLike): boolean {
-    const commandHelpName = String(commandArgv[0] || '').trim();
-    if (!commandHelpName) {
-        printHelp(packageJson);
-        return true;
-    }
-    if (commandHelpName === 'gate') {
-        const gateName = String(commandArgv[1] || '').trim();
-        console.log(gateName ? buildGateHelpText(gateName) : buildGateCommandOverviewText());
-        return true;
-    }
-    if (isKnownCommandHelpName(commandHelpName)) {
-        console.log(buildCommandHelpText(commandHelpName));
-        return true;
-    }
-    return false;
-}
-
-function printCommandHelpIfRequested(commandName: string, commandArgv: string[]): boolean {
-    if (commandName === 'gate' && isHelpSubcommand(commandArgv)) {
-        const gateName = String(commandArgv[1] || '').trim();
-        console.log(gateName ? buildGateHelpText(gateName) : buildGateCommandOverviewText());
-        return true;
-    }
-    if (isKnownCommandHelpName(commandName) && (isHelpSubcommand(commandArgv) || hasHelpFlag(commandArgv))) {
-        console.log(buildCommandHelpText(commandName));
-        return true;
-    }
-    return false;
-}
-
-function buildParityHelpText(commandName: string, commandArgv: string[], packageJson: PackageJsonLike, parityRoot: string): string {
-    if (commandName === 'gate' || commandName === 'next-step') {
-        const gateName = commandName === 'next-step'
-            ? 'next-step'
-            : String(commandArgv[0] || '').trim();
-        if (!gateName || gateName.startsWith('-')) {
-            return buildGateCommandOverviewText(parityRoot);
-        }
-        try {
-            return buildGateHelpText(gateName, parityRoot);
-        } catch {
-            return buildGateCommandOverviewText(parityRoot);
-        }
-    }
-    if (isKnownCommandHelpName(commandName)) {
-        return buildCommandHelpText(commandName);
-    }
-    return buildHelpText(packageJson);
 }
 
 export async function dispatchCliCommand(options: DispatchCliCommandOptions): Promise<void> {
