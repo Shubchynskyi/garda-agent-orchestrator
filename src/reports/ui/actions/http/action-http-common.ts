@@ -3,7 +3,11 @@ import { BACKUP_RESTORE_ACTION_ID_PREFIX } from '../backup-actions';
 import {
     appendUiActionAudit,
     findAction,
-    formatPublicAction
+    formatPublicAction,
+    normalizeUiActionRunnerResult,
+    uiActionExecutionAuditFields,
+    uiActionExecutionPayload,
+    uiActionHttpStatus
 } from '../action-common';
 import type { UiActionDefinition, UiActionMode, UiActionRunner } from '../types';
 
@@ -210,25 +214,21 @@ export async function processUiActionRequest(
 
     try {
         const effectiveAction = resolveActionForMode(action, mode);
-        const result = await options.actionRunner(effectiveAction, repoRoot);
+        const result = normalizeUiActionRunnerResult(effectiveAction, await options.actionRunner(effectiveAction, repoRoot));
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: new Date().toISOString(),
             action_id: auditActionId,
             mode,
             status: 'executed',
             command: effectiveAction.command.display,
-            exit_code: result.exit_code,
-            signal: result.signal
+            ...uiActionExecutionAuditFields(result)
         });
-        sendJson(response, result.exit_code === 0 ? 200 : 500, {
+        sendJson(response, uiActionHttpStatus(result), {
             action_id: action.id,
             mode,
             status: 'executed',
             command: effectiveAction.command.display,
-            exit_code: result.exit_code,
-            signal: result.signal,
-            stdout: result.stdout,
-            stderr: result.stderr,
+            ...uiActionExecutionPayload(result),
             audit_path: auditPath,
             ...responseExtras
         });

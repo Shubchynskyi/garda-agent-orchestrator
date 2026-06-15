@@ -595,7 +595,7 @@ test('local UI actions support preview confirmation execution and audit', async 
         };
         const listResponse = await fetch(`${server.url}api/actions`);
         assert.equal(listResponse.status, 200);
-        const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; category: string; command: string }> };
+        const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; category: string; command: string; timeout_ms: number }> };
         assert.equal(list.enabled, true);
         assert.ok(list.actions.some((action) => action.id === 'html-report'));
         assert.ok(list.actions.some((action) => action.id === 'garda-on' && action.category === 'Garda switch'));
@@ -603,6 +603,7 @@ test('local UI actions support preview confirmation execution and audit', async 
         assert.ok(list.actions.some((action) => action.id === 'cleanup-preview' && action.category === 'Maintenance'));
         assert.ok(list.actions.some((action) => action.id === 'cleanup-apply' && action.category === 'Maintenance'));
         assert.ok(list.actions.every((action) => action.command.includes('bin/garda.js')));
+        assert.ok(list.actions.every((action) => Number.isInteger(action.timeout_ms) && action.timeout_ms > 0));
 
         const previewResponse = await fetch(`${server.url}api/actions`, {
             method: 'POST',
@@ -647,6 +648,56 @@ test('local UI actions support preview confirmation execution and audit', async 
         assert.match(auditLines[0], /"status":"previewed"/u);
         assert.match(auditLines[1], /"status":"confirmation_required"/u);
         assert.match(auditLines[2], /"status":"executed"/u);
+    } finally {
+        await server.close();
+    }
+});
+
+test('local UI action timeout result returns deterministic HTTP and audit fields', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => ({
+            exit_code: 1,
+            signal: null,
+            stdout: '',
+            stderr: 'Process timed out after action budget.',
+            timed_out: true,
+            timeout_ms: action.timeout_ms
+        })
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const response = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'origin': server.url.slice(0, -1),
+                'x-garda-action-token': actionToken
+            },
+            body: JSON.stringify({ action_id: 'doctor', mode: 'execute' })
+        });
+
+        assert.equal(response.status, 504);
+        const payload = await response.json() as {
+            status: string;
+            timed_out: boolean;
+            timeout_ms: number;
+            stderr: string;
+            audit_path: string;
+        };
+        assert.equal(payload.status, 'executed');
+        assert.equal(payload.timed_out, true);
+        assert.equal(payload.timeout_ms, 120000);
+        assert.match(payload.stderr, /timed out/u);
+
+        const auditLines = fs.readFileSync(payload.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.match(auditLines[auditLines.length - 1], /"action_id":"doctor"/u);
+        assert.match(auditLines[auditLines.length - 1], /"timed_out":true/u);
+        assert.match(auditLines[auditLines.length - 1], /"timeout_ms":120000/u);
     } finally {
         await server.close();
     }

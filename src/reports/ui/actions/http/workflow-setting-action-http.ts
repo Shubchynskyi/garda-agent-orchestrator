@@ -1,5 +1,11 @@
 import type * as http from 'node:http';
-import { appendUiActionAudit } from '../action-common';
+import {
+    appendUiActionAudit,
+    normalizeUiActionRunnerResult,
+    uiActionExecutionAuditFields,
+    uiActionExecutionPayload,
+    uiActionHttpStatus
+} from '../action-common';
 import {
     buildUiSettingAction,
     buildUiSettingDefinitions,
@@ -110,21 +116,17 @@ export async function handleUiWorkflowSettingRequest(
         return;
     }
     try {
-        const result = await options.actionRunner(action, repoRoot);
+        const result = normalizeUiActionRunnerResult(action, await options.actionRunner(action, repoRoot));
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: timestampUtc,
             action_id: action.id,
             mode,
             status: 'executed',
             command: action.command.display,
-            exit_code: result.exit_code,
-            signal: result.signal
+            ...uiActionExecutionAuditFields(result)
         });
-        sendJson(response, result.exit_code === 0 ? 200 : 500, buildSettingResponsePayload(setting, value, mode, 'executed', action.command.display, {
-            exit_code: result.exit_code,
-            signal: result.signal,
-            stdout: result.stdout,
-            stderr: result.stderr,
+        sendJson(response, uiActionHttpStatus(result), buildSettingResponsePayload(setting, value, mode, 'executed', action.command.display, {
+            ...uiActionExecutionPayload(result),
             audit_path: auditPath
         }));
     } catch (error) {

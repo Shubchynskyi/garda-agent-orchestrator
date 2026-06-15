@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as childProcess from 'node:child_process';
 import { resolveBundleNameForTarget } from '../../../core/constants';
+import { spawnStreamed } from '../../../core/subprocess';
 import type {
     UiActionAuditRecord,
     UiActionCommand,
@@ -37,7 +37,16 @@ export interface UiActionBuildOptions {
     confirmationPhrase?: string;
     enabled?: boolean;
     unavailableReason?: string;
+    timeoutMs?: number;
 }
+
+export const UI_ACTION_DEFAULT_TIMEOUT_MS = 60_000;
+export const UI_ACTION_INSPECTION_TIMEOUT_MS = 120_000;
+export const UI_ACTION_HTML_REPORT_TIMEOUT_MS = 180_000;
+export const UI_ACTION_CLEANUP_TIMEOUT_MS = 180_000;
+export const UI_ACTION_ROLLBACK_TIMEOUT_MS = 300_000;
+export const UI_ACTION_HARD_KILL_GRACE_MS = 3_000;
+export const UI_ACTION_WINDOWS_CLEANUP_METHOD = 'taskkill /T /F';
 
 export function buildUiActionDefinition(
     repoRoot: string,
@@ -61,6 +70,7 @@ export function buildUiActionDefinition(
             : null,
         requires_confirmation: Boolean(options.confirmationPhrase),
         confirmation_phrase: options.confirmationPhrase || null,
+        timeout_ms: options.timeoutMs ?? UI_ACTION_DEFAULT_TIMEOUT_MS,
         command: {
             executable: process.execPath,
             args: [cliPath, ...args],
@@ -135,39 +145,76 @@ function buildUiActionEnv(): NodeJS.ProcessEnv {
     return env;
 }
 
-export function runUiActionCommand(action: UiActionDefinition, repoRoot: string): Promise<UiActionRunnerResult> {
-    return new Promise((resolve, reject) => {
-        const child = childProcess.spawn(action.command.executable, action.command.args, {
-            cwd: repoRoot,
-            env: buildUiActionEnv(),
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'pipe']
-        });
-        let stdout = '';
-        let stderr = '';
-        const timeout = setTimeout(() => {
-            child.kill();
-        }, 60000);
-        child.stdout?.on('data', (chunk) => {
-            stdout = capOutput(stdout + String(chunk));
-        });
-        child.stderr?.on('data', (chunk) => {
-            stderr = capOutput(stderr + String(chunk));
-        });
-        child.once('error', (error) => {
-            clearTimeout(timeout);
-            reject(error);
-        });
-        child.once('close', (exitCode, signal) => {
-            clearTimeout(timeout);
-            resolve({
-                exit_code: exitCode,
-                signal,
-                stdout,
-                stderr
-            });
-        });
+export function normalizeUiActionTimeoutMs(action: UiActionDefinition): number {
+    return Number.isFinite(action.timeout_ms) && action.timeout_ms > 0
+        ? Math.trunc(action.timeout_ms)
+        : UI_ACTION_DEFAULT_TIMEOUT_MS;
+}
+
+export function normalizeUiActionRunnerResult(action: UiActionDefinition, result: UiActionRunnerResult): UiActionRunnerResult {
+    return {
+        exit_code: result.exit_code,
+        signal: result.signal,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        timed_out: result.timed_out === true,
+        timeout_ms: result.timeout_ms ?? normalizeUiActionTimeoutMs(action)
+    };
+}
+
+export function formatUiActionTimeoutMessage(timeoutMs: number): string {
+    if (process.platform === 'win32') {
+        return `Process timed out after ${timeoutMs} ms; subprocess tree cleanup requested via ${UI_ACTION_WINDOWS_CLEANUP_METHOD}.`;
+    }
+    return `Process timed out after ${timeoutMs} ms; subprocess tree cleanup requested with hard-kill grace ${UI_ACTION_HARD_KILL_GRACE_MS} ms.`;
+}
+
+export function uiActionHttpStatus(result: UiActionRunnerResult): number {
+    if (result.timed_out === true) {
+        return 504;
+    }
+    return result.exit_code === 0 ? 200 : 500;
+}
+
+export function uiActionExecutionPayload(result: UiActionRunnerResult): Record<string, unknown> {
+    return {
+        exit_code: result.exit_code,
+        signal: result.signal,
+        timed_out: result.timed_out === true,
+        timeout_ms: result.timeout_ms,
+        stdout: result.stdout,
+        stderr: result.stderr
+    };
+}
+
+export function uiActionExecutionAuditFields(result: UiActionRunnerResult): Pick<UiActionAuditRecord, 'exit_code' | 'signal' | 'timed_out' | 'timeout_ms'> {
+    return {
+        exit_code: result.exit_code,
+        signal: result.signal,
+        timed_out: result.timed_out === true,
+        timeout_ms: result.timeout_ms
+    };
+}
+
+export async function runUiActionCommand(action: UiActionDefinition, repoRoot: string): Promise<UiActionRunnerResult> {
+    const timeoutMs = normalizeUiActionTimeoutMs(action);
+    const result = await spawnStreamed(action.command.executable, action.command.args, {
+        cwd: repoRoot,
+        env: buildUiActionEnv(),
+        envMode: 'replace',
+        timeoutMs,
+        maxBuffer: 512000
     });
+    return {
+        exit_code: result.exitCode,
+        signal: null,
+        stdout: capOutput(result.stdout),
+        stderr: result.timedOut
+            ? capOutput(`${result.stderr}${result.stderr ? '\n' : ''}${formatUiActionTimeoutMessage(timeoutMs)}`)
+            : capOutput(result.stderr),
+        timed_out: result.timedOut,
+        timeout_ms: timeoutMs
+    };
 }
 
 function getUiActionAuditPath(repoRoot: string): string {
@@ -199,6 +246,7 @@ export function formatPublicAction(action: UiActionDefinition): Record<string, u
         unavailable_reason: action.unavailable_reason,
         requires_confirmation: action.requires_confirmation,
         confirmation_phrase: action.confirmation_phrase,
+        timeout_ms: action.timeout_ms,
         command: action.command.display
     };
 }

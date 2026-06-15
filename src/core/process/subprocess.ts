@@ -12,6 +12,7 @@ export interface SpawnStreamedOptions {
     timeoutMs?: number;
     signal?: AbortSignal;
     env?: Record<string, string | undefined>;
+    envMode?: 'merge' | 'replace';
     onSpawn?: (child: SpawnedProcessInfo) => void;
     onStdout?: (chunk: string) => void;
     onStderr?: (chunk: string) => void;
@@ -328,7 +329,7 @@ export function spawnStreamed(command: string, args: string[], options?: SpawnSt
             detached: process.platform !== 'win32'
         };
         if (opts.env) {
-            spawnOpts.env = { ...process.env, ...opts.env };
+            spawnOpts.env = opts.envMode === 'replace' ? opts.env : { ...process.env, ...opts.env };
         }
 
         const child: ChildProcess = childProcess.spawn(command, args, spawnOpts);

@@ -16,6 +16,7 @@ export interface UiActionDefinition {
     unavailable_reason: string | null;
     requires_confirmation: boolean;
     confirmation_phrase: string | null;
+    timeout_ms: number;
     command: UiActionCommand;
 }
 
@@ -41,6 +42,8 @@ export interface UiActionRunnerResult {
     signal: string | null;
     stdout: string;
     stderr: string;
+    timed_out?: boolean;
+    timeout_ms?: number;
 }
 
 export type UiActionRunner = (action: UiActionDefinition, repoRoot: string) => Promise<UiActionRunnerResult>;
@@ -53,6 +56,8 @@ export interface UiActionAuditRecord {
     command: string;
     exit_code?: number | null;
     signal?: string | null;
+    timed_out?: boolean;
+    timeout_ms?: number;
     error?: string;
 }
 

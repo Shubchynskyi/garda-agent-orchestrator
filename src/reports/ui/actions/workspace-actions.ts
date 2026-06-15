@@ -1,4 +1,9 @@
-import { buildUiActionDefinition } from './action-common';
+import {
+    UI_ACTION_CLEANUP_TIMEOUT_MS,
+    UI_ACTION_HTML_REPORT_TIMEOUT_MS,
+    UI_ACTION_INSPECTION_TIMEOUT_MS,
+    buildUiActionDefinition
+} from './action-common';
 import type { UiActionDefinition } from './types';
 
 export function buildUiWorkspaceActionDefinitions(repoRoot: string): UiActionDefinition[] {
@@ -27,7 +32,8 @@ export function buildUiWorkspaceActionDefinitions(repoRoot: string): UiActionDef
             'Inspection',
             'Status',
             'Run the existing Garda status command for this workspace.',
-            ['status', '--target-root', repoRoot]
+            ['status', '--target-root', repoRoot],
+            { timeoutMs: UI_ACTION_INSPECTION_TIMEOUT_MS }
         ),
         buildUiActionDefinition(
             repoRoot,
@@ -35,7 +41,8 @@ export function buildUiWorkspaceActionDefinitions(repoRoot: string): UiActionDef
             'Inspection',
             'Doctor',
             'Run Garda workspace diagnostics, including init answers, manifests, generated files, locks, and bundle health. This is read-only unless explicit cleanup flags are added elsewhere.',
-            ['doctor', '--target-root', repoRoot]
+            ['doctor', '--target-root', repoRoot],
+            { timeoutMs: UI_ACTION_INSPECTION_TIMEOUT_MS }
         ),
         buildUiActionDefinition(
             repoRoot,
@@ -44,7 +51,7 @@ export function buildUiWorkspaceActionDefinitions(repoRoot: string): UiActionDef
             'Generate HTML Report',
             'Run the existing Garda html command with lazy task details.',
             ['html', '--target-root', repoRoot, '--max-detailed-tasks', '0'],
-            { mutates: true, confirmationPhrase: 'RUN GARDA HTML' }
+            { mutates: true, confirmationPhrase: 'RUN GARDA HTML', timeoutMs: UI_ACTION_HTML_REPORT_TIMEOUT_MS }
         ),
         buildUiActionDefinition(
             repoRoot,
@@ -52,7 +59,8 @@ export function buildUiWorkspaceActionDefinitions(repoRoot: string): UiActionDef
             'Maintenance',
             'Preview Runtime Cleanup',
             'Dry-run runtime cleanup. Shows candidate task events, reviews, reports, backups, rollbacks, metrics, and working plans that match retention limits. Nothing is deleted.',
-            ['cleanup', '--target-root', repoRoot, '--dry-run']
+            ['cleanup', '--target-root', repoRoot, '--dry-run'],
+            { timeoutMs: UI_ACTION_CLEANUP_TIMEOUT_MS }
         ),
         buildUiActionDefinition(
             repoRoot,
@@ -61,7 +69,7 @@ export function buildUiWorkspaceActionDefinitions(repoRoot: string): UiActionDef
             'Apply Runtime Cleanup',
             'Applies the same retention cleanup shown by preview. Risk: old runtime evidence can be removed or compressed, so review the preview first and do not run while another task is active.',
             ['cleanup', '--target-root', repoRoot, '--confirm'],
-            { mutates: true, confirmationPhrase: 'RUN GARDA CLEANUP' }
+            { mutates: true, confirmationPhrase: 'RUN GARDA CLEANUP', timeoutMs: UI_ACTION_CLEANUP_TIMEOUT_MS }
         )
     ];
 }

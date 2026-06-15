@@ -4,7 +4,7 @@ import {
     type WorkflowSettingOption,
     type WorkflowSettingValueType
 } from '../../workflow-setting-metadata';
-import { buildUiActionCommand } from './action-common';
+import { UI_ACTION_DEFAULT_TIMEOUT_MS, buildUiActionCommand } from './action-common';
 import type { ParsedUiSettingValue, UiActionDefinition, UiSettingDefinition } from './types';
 
 const UI_SETTING_CONFIRMATION_PHRASE = 'APPLY GARDA SETTING';
@@ -153,6 +153,7 @@ export function buildUiSettingAction(
         unavailable_reason: null,
         requires_confirmation: true,
         confirmation_phrase: setting.confirmation_phrase,
+        timeout_ms: UI_ACTION_DEFAULT_TIMEOUT_MS,
         command: buildUiSettingCommand(repoRoot, setting, commandValue, timestampUtc)
     };
 }

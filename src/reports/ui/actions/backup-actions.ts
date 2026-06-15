@@ -1,5 +1,5 @@
 import { listBackups } from '../../../lifecycle/backups';
-import { buildUiActionDefinition } from './action-common';
+import { UI_ACTION_ROLLBACK_TIMEOUT_MS, buildUiActionDefinition } from './action-common';
 import type { UiActionDefinition } from './types';
 
 export const BACKUP_RESTORE_ACTION_ID_PREFIX = 'backup-restore:';
@@ -39,6 +39,7 @@ export function buildUiBackupActionDefinitions(repoRoot: string): UiActionDefini
                 mutates: true,
                 confirmationPhrase: buildBackupRestoreConfirmationPhrase(backup.id),
                 enabled: restorable,
+                timeoutMs: UI_ACTION_ROLLBACK_TIMEOUT_MS,
                 unavailableReason: backup.healthMessage
                     ? `Backup is not restorable (${backup.health}): ${backup.healthMessage}`
                     : `Backup is not restorable (${backup.health}).`

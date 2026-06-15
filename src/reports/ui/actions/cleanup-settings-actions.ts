@@ -10,10 +10,15 @@ import {
     type RuntimeRetentionPolicyDocument
 } from '../../../lifecycle/runtime-retention-policy';
 import {
+    UI_ACTION_CLEANUP_TIMEOUT_MS,
     appendUiActionAudit,
     buildUiActionCommand,
+    normalizeUiActionRunnerResult,
     quoteCommandPart,
-    resolveBundleRoot
+    resolveBundleRoot,
+    uiActionExecutionAuditFields,
+    uiActionExecutionPayload,
+    uiActionHttpStatus
 } from './action-common';
 import type { UiActionDefinition, UiActionMode } from './types';
 import {
@@ -282,6 +287,7 @@ export async function handleUiCleanupRunRequest(
         unavailable_reason: null,
         requires_confirmation: mode === 'execute',
         confirmation_phrase: mode === 'execute' ? CLEANUP_APPLY_CONFIRMATION : null,
+        timeout_ms: UI_ACTION_CLEANUP_TIMEOUT_MS,
         command
     };
 
@@ -323,25 +329,21 @@ export async function handleUiCleanupRunRequest(
         return;
     }
 
-    const result = await options.actionRunner(action, repoRoot);
+    const result = normalizeUiActionRunnerResult(action, await options.actionRunner(action, repoRoot));
     const auditPath = appendUiActionAudit(repoRoot, {
         timestamp_utc: new Date().toISOString(),
         action_id: 'cleanup-apply-custom',
         mode,
         status: 'executed',
         command: command.display,
-        exit_code: result.exit_code,
-        signal: result.signal
+        ...uiActionExecutionAuditFields(result)
     });
-    sendJson(response, result.exit_code === 0 ? 200 : 500, {
+    sendJson(response, uiActionHttpStatus(result), {
         action_id: action.id,
         mode,
         status: 'executed',
         command: command.display,
-        exit_code: result.exit_code,
-        signal: result.signal,
-        stdout: result.stdout,
-        stderr: result.stderr,
+        ...uiActionExecutionPayload(result),
         audit_path: auditPath
     });
 }
@@ -408,28 +410,25 @@ export async function handleUiCleanupTaskPurgeRequest(
         unavailable_reason: null,
         requires_confirmation: true,
         confirmation_phrase: TASK_PURGE_CONFIRMATION,
+        timeout_ms: UI_ACTION_CLEANUP_TIMEOUT_MS,
         command
     };
-    const result = await options.actionRunner(action, repoRoot);
+    const result = normalizeUiActionRunnerResult(action, await options.actionRunner(action, repoRoot));
     const auditPath = appendUiActionAudit(repoRoot, {
         timestamp_utc: new Date().toISOString(),
         action_id: 'cleanup-task-purge',
         mode,
         status: 'executed',
         command: command.display,
-        exit_code: result.exit_code,
-        signal: result.signal
+        ...uiActionExecutionAuditFields(result)
     });
-    sendJson(response, result.exit_code === 0 ? 200 : 500, {
+    sendJson(response, uiActionHttpStatus(result), {
         action_id: 'cleanup-task-purge',
         mode,
         status: 'executed',
         command: command.display,
         task_id: taskId,
-        exit_code: result.exit_code,
-        signal: result.signal,
-        stdout: result.stdout,
-        stderr: result.stderr,
+        ...uiActionExecutionPayload(result),
         audit_path: auditPath
     });
 }
