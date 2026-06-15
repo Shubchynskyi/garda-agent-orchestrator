@@ -11,6 +11,9 @@ import { withReviewArtifactReadBarrier } from '../../../../gate-runtime/review-a
 import { getWorkspaceSnapshot } from '../../../../gates/compile/compile-gate';
 import * as gateHelpers from '../../../../gates/shared/helpers';
 import {
+    buildCompileEvidenceDocsOnlyExtensionReadinessFromEvidence
+} from '../../../../gates/scope/docs-only-delta-readiness';
+import {
     REVIEW_CONTRACTS
 } from '../../../../gates/required-reviews/required-reviews-check';
 import {
@@ -106,6 +109,24 @@ export interface CompileScopeDriftResult {
     evidence_changed_files_sha256: string | null;
     evidence_changed_lines_total: number | null;
     violations: string[];
+}
+
+function readCurrentPreflightObject(repoRoot: string, preflightPathValue: string): Record<string, unknown> | null {
+    let resolvedPreflightPath: string | null = null;
+    try {
+        resolvedPreflightPath = gateHelpers.resolvePathInsideRepo(preflightPathValue, repoRoot);
+    } catch {
+        return null;
+    }
+    if (!resolvedPreflightPath || !gateHelpers.isPathRealpathInsideRoot(resolvedPreflightPath, repoRoot)) {
+        return null;
+    }
+    try {
+        const parsedPreflight = JSON.parse(fs.readFileSync(resolvedPreflightPath, 'utf8'));
+        return isPlainObject(parsedPreflight) ? parsedPreflight : null;
+    } catch {
+        return null;
+    }
 }
 
 export function testReviewArtifacts(
@@ -326,8 +347,14 @@ export function getCompileGateEvidence(
         return result;
     }
     if ((result.evidence_preflight_hash || '').trim().toLowerCase() !== String(preflightHashValue || '').trim().toLowerCase()) {
-        result.status = 'EVIDENCE_PREFLIGHT_HASH_MISMATCH';
-        return result;
+        const currentPreflight = readCurrentPreflightObject(repoRoot, preflightPathValue);
+        const docsOnlyExtensionReadiness = currentPreflight
+            ? buildCompileEvidenceDocsOnlyExtensionReadinessFromEvidence(repoRoot, evidenceObject, currentPreflight)
+            : null;
+        if (!docsOnlyExtensionReadiness) {
+            result.status = 'EVIDENCE_PREFLIGHT_HASH_MISMATCH';
+            return result;
+        }
     }
     if (result.evidence_preflight_path) {
         const expectedPreflightPath = gateHelpers.normalizePath(preflightPathValue);

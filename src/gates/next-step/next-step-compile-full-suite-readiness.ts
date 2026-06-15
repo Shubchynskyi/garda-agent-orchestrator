@@ -30,7 +30,7 @@ import {
     getDocImpactDeclaredDocsUpdated,
     readCurrentGitWorkspaceSnapshot,
     stringSha256
-} from './next-step-docs-delta-readiness';
+} from '../scope/docs-only-delta-readiness';
 
 export {
     buildCompileEvidenceDocsOnlyExtensionReadiness,
@@ -39,7 +39,7 @@ export {
     getDocImpactDeclaredDocsUpdated,
     readCurrentGitWorkspaceSnapshot,
     stringSha256
-} from './next-step-docs-delta-readiness';
+} from '../scope/docs-only-delta-readiness';
 
 export interface CompileReadiness {
     ready: boolean;

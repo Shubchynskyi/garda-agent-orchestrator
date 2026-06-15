@@ -9,7 +9,7 @@ import {
 import {
     buildDomainScopeFingerprints,
     normalizeDomainScopeFingerprints
-} from '../scope/domain-scope-fingerprints';
+} from './domain-scope-fingerprints';
 import {
     normalizePath
 } from '../shared/helpers';
@@ -20,20 +20,38 @@ import {
     getWorkspaceSnapshotCached,
     type WorkspaceSnapshot
 } from '../workspace/workspace-snapshot-cache';
-import type {
-    PreflightWorkspaceReadiness
-} from './next-step-compile-full-suite-readiness';
+
+export interface DocsOnlyDeltaReadiness {
+    ready: boolean;
+    reason: string;
+    currentChangedFiles?: string[];
+    acceptedDocsOnlyDeltaFiles?: string[];
+    acceptedCloseoutOnlyDeltaFiles?: string[];
+    awaitingMaterializedPlannedScope?: boolean;
+}
 
 export function buildCompileEvidenceDocsOnlyExtensionReadiness(
     repoRoot: string,
     reviewsRoot: string,
     taskId: string,
     currentPreflight: Record<string, unknown>
-): PreflightWorkspaceReadiness | null {
+): DocsOnlyDeltaReadiness | null {
     const compileEvidence = safeReadJson(path.join(reviewsRoot, `${taskId}-compile-gate.json`));
     if (!isPlainRecord(compileEvidence)) {
         return null;
     }
+    return buildCompileEvidenceDocsOnlyExtensionReadinessFromEvidence(
+        repoRoot,
+        compileEvidence,
+        currentPreflight
+    );
+}
+
+export function buildCompileEvidenceDocsOnlyExtensionReadinessFromEvidence(
+    repoRoot: string,
+    compileEvidence: Record<string, unknown>,
+    currentPreflight: Record<string, unknown>
+): DocsOnlyDeltaReadiness | null {
     const evidenceStatus = String(compileEvidence.status || '').trim().toUpperCase();
     const evidenceOutcome = String(compileEvidence.outcome || '').trim().toUpperCase();
     if (evidenceStatus !== 'PASSED' || evidenceOutcome !== 'PASS') {
@@ -117,7 +135,7 @@ export function buildDocsOnlyDeltaReadiness(
     expectedScopeContentSha256: string,
     declaredDocsUpdated: string[],
     expectedDomainScopeFingerprints: ReturnType<typeof normalizeDomainScopeFingerprints>
-): PreflightWorkspaceReadiness | null {
+): DocsOnlyDeltaReadiness | null {
     if (!isReviewScopeDetectionSourceSupportedForDocImpactExemption(detectionSource)) {
         return null;
     }

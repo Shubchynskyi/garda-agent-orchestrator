@@ -245,7 +245,7 @@ import {
 } from './next-step-doc-closeout-readiness';
 import {
     readCurrentGitWorkspaceSnapshot
-} from './next-step-docs-delta-readiness';
+} from '../scope/docs-only-delta-readiness';
 import {
     buildClassifyChangeCommand,
     buildCompileGateCommand,
