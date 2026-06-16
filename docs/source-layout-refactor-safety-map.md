@@ -95,6 +95,11 @@ The current one-line compatibility re-exports fall into two classes:
   `src/materialization/init/**` or `src/materialization/install/**` when the
   root file keeps the public `runInit`/`runInstall` entrypoints and generated
   materialization output remains unchanged.
+- Core task-queue namespace: `src/core/active-task-state.ts` is a public
+  compatibility facade for task status parsing and runtime active-task
+  discovery. The implementation lives under `src/core/task-queue/**`; new
+  same-domain task-queue implementation code may import that owner path, while
+  cross-domain consumers and tests can keep the stable root import.
 
 If a file is moved behind a new directory, keep a facade or compatibility
 re-export at the old import path until the affected source and test imports are
