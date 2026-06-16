@@ -89,6 +89,12 @@ The current one-line compatibility re-exports fall into two classes:
   across update, setup, uninstall, cleanup, and rollback flows. They must not be
   moved behind a narrower owner directory until the affected cross-flow call
   sites are migrated in the same task and old public imports remain compatible.
+- Materialization root contract: `src/materialization/init.ts` and
+  `src/materialization/install.ts` remain public facades for setup, update, and
+  lifecycle callers. Phase-owned implementation code may move under
+  `src/materialization/init/**` or `src/materialization/install/**` when the
+  root file keeps the public `runInit`/`runInstall` entrypoints and generated
+  materialization output remains unchanged.
 
 If a file is moved behind a new directory, keep a facade or compatibility
 re-export at the old import path until the affected source and test imports are
