@@ -11,12 +11,12 @@ The current crowded source areas are:
 
 | Area | Current shape | Safe refactor direction |
 |---|---:|---|
-| `src/cli/commands` | 64 top-level files, plus existing `gate-flows/**` and `gate-review-handlers/**` families | Group durable command families under owner directories and keep public command facades stable. |
-| `src/gate-runtime` | 46 top-level files | Group by evidence IO, timeline summaries, review artifacts/indexes, locks, and retention/runtime indexes. |
-| `src/lifecycle` | 37 top-level files | Group by update/apply, rollback, cleanup/removal, locks, retention policy, and update-source checks. |
-| `src/validators` | 24 top-level files | Group by doctor/status/workspace/verify diagnostics only where imports can stay stable. |
-| `src/materialization` | 18 top-level files with large init/install flows | Split scenario phases behind existing init/install facades before introducing directories. |
-| `src/core` | 28 top-level primitives | Split only clearly separable helpers; do not create a generic bucket for unrelated primitives. |
+| `src/cli/commands` | 60 top-level files, plus owner directories such as `gate-flows/**`, `gate-review-handlers/**`, `workflow/**`, `profile/**`, `stats/**`, `workspace/**`, and `preprompt/**` | Group durable command families under owner directories and keep public command facades stable. |
+| `src/gate-runtime` | 46 top-level files, plus `review/**` and `timeline/**` owner directories | Group by evidence IO, timeline summaries, review artifacts/indexes, locks, and retention/runtime indexes. |
+| `src/lifecycle` | 37 top-level files, plus owner directories such as `agent-init/**`, `cleanup/**`, `lock/**`, `runtime-policy/**`, and `update/**` | Group by update/apply, rollback, cleanup/removal, locks, retention policy, and update-source checks. |
+| `src/validators` | 24 top-level files, plus owner directories such as `doctor/**`, `status/**`, and `workspace-layout/**` | Group by doctor/status/workspace/verify diagnostics only where imports can stay stable. |
+| `src/materialization` | 19 top-level files with init/install facades plus `install/**` phase helpers | Split scenario phases behind existing init/install facades before introducing directories. |
+| `src/core` | 29 top-level primitives plus `task-queue/**` owner internals | Split only clearly separable helpers; do not create a generic bucket for unrelated primitives. |
 
 `src/gates/next-step/next-step.ts` remains a separate facade-extraction track and
 is not part of this layout block except for tiny import fixes caused by a moved
@@ -100,6 +100,11 @@ The current one-line compatibility re-exports fall into two classes:
   discovery. The implementation lives under `src/core/task-queue/**`; new
   same-domain task-queue implementation code may import that owner path, while
   cross-domain consumers and tests can keep the stable root import.
+- Validator workspace-layout namespace: `src/validators/workspace-layout.ts`
+  remains the public validator compatibility surface for workspace layout and
+  bundle/runtime checks. Focused source-runtime staleness helpers live under
+  `src/validators/workspace-layout/**`; same-domain validator implementation
+  may import those helpers directly when it is not preserving a public path.
 
 If a file is moved behind a new directory, keep a facade or compatibility
 re-export at the old import path until the affected source and test imports are
@@ -135,7 +140,7 @@ the current public contract.
 | Standalone CLI command splits | Command-specific tests for profile, stats, setup, update, repair, workspace maintenance, and dispatch. |
 | Gate runtime layout | `tests/node/gate-runtime/**`, review artifact/reuse tests, timeline/status tests. |
 | Lifecycle layout | `tests/node/lifecycle/**`, update/check-update tests, cleanup tests, protected-manifest tests. |
-| Validators/materialization/core | `tests/node/validators/**`, `tests/node/materialization/**`, `tests/node/core/**`, plus affected provider/materialization tests. |
+| Validators/materialization/core | `tests/node/validators/**`, `tests/node/materialization/**`, `tests/node/core/**`, plus affected provider/materialization tests. For source-layout-only facade moves, keep the nearest domain tests path-targetable and rely on compile/full-suite gates for broad import compatibility. |
 
 Every child task must still finish through the normal orchestrator gates:
 compile, required reviews, doc-impact, full-suite when enabled, completion, and
