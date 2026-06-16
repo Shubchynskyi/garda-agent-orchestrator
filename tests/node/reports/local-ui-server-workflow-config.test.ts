@@ -336,6 +336,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(list.enabled, true);
         assert.ok(list.settings.some((setting) => setting.id === 'compile-gate-command'));
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
+        assert.ok(list.settings.some((setting) => setting.id === 'project-memory-max-compact-summary-chars'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
         const scopeProfiles = list.settings.find((setting) => setting.id === 'scope-budget-profiles');
         assert.ok(scopeProfiles);
@@ -389,6 +390,24 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         });
         assert.equal(invalidResponse.status, 400);
         assert.equal((await invalidResponse.json() as { code: string }).code, 'invalid_setting_value');
+
+        const memoryLimitPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'project-memory-max-compact-summary-chars', mode: 'preview', value: 20000 })
+        });
+        assert.equal(memoryLimitPreviewResponse.status, 200);
+        const memoryLimitPreview = await memoryLimitPreviewResponse.json() as {
+            key: string;
+            proposed_value: number;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(memoryLimitPreview.key, 'project_memory_maintenance.max_compact_summary_chars');
+        assert.equal(memoryLimitPreview.proposed_value, 20000);
+        assert.deepEqual(memoryLimitPreview.changed_keys, ['project_memory_maintenance.max_compact_summary_chars']);
+        assert.match(memoryLimitPreview.command, /workflow set --project-memory-max-compact-summary-chars 20000/u);
+        assert.doesNotMatch(memoryLimitPreview.command, /workflow-config\.json/u);
 
         const previewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',

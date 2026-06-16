@@ -21,6 +21,19 @@ export function renderProjectMemoryPanel(tab: ReportProjectMemoryTab, context: S
     const filesMarkup = tab.files.length === 0
         ? '<p class="meta">No project memory files recorded.</p>'
         : tab.files.map((file) => renderMemoryFile(file, context)).join('');
+    const settingsMarkup = tab.settings.length === 0
+        ? '<p class="meta">No project-memory workflow settings recorded.</p>'
+        : [
+            '<table><thead><tr><th>Setting</th><th>Current value</th><th>Change command</th></tr></thead><tbody>',
+            tab.settings.map((setting) => [
+                '<tr>',
+                `<td><strong>${escapeHtml(setting.label)}</strong><br><code>${escapeHtml(setting.key)}</code></td>`,
+                `<td><code>${escapeHtml(JSON.stringify(setting.value))}</code></td>`,
+                `<td><code>${escapeHtml(setting.command)}</code></td>`,
+                '</tr>'
+            ].join('')).join(''),
+            '</tbody></table>'
+        ].join('');
     return [
         '<section class="panel" id="tab-project-memory" role="tabpanel">',
         '<div class="stack">',
@@ -28,6 +41,8 @@ export function renderProjectMemoryPanel(tab: ReportProjectMemoryTab, context: S
         '<h2>Project Memory</h2>',
         '<h3>Status</h3>',
         renderValueTable(tab.status, context),
+        '<h3 style="margin-top: 14px;">Limits and workflow settings</h3>',
+        settingsMarkup,
         '<h3 style="margin-top: 14px;">Files</h3>',
         filesMarkup,
         renderUnavailableList(tab.unavailable),

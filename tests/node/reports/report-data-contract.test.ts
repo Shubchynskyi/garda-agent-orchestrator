@@ -278,6 +278,11 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(excludedReviewTypes.options.some((option) => option.value === 'test'));
     assert.ok(excludedReviewTypes.options.some((option) => option.value === 'performance' && option.description.includes('disabled')));
     assert.match(excludedReviewTypes.command, /--review-cycle-excluded-review-types <comma-separated: /u);
+    const projectMemoryCompactLimit = tab.settings.find((setting) => setting.key === 'project_memory_maintenance.max_compact_summary_chars');
+    assert.ok(projectMemoryCompactLimit);
+    assert.equal(projectMemoryCompactLimit.value_type, 'integer');
+    assert.equal(projectMemoryCompactLimit.flag, '--project-memory-max-compact-summary-chars');
+    assert.match(projectMemoryCompactLimit.command, /garda workflow set --project-memory-max-compact-summary-chars <number>/);
 });
 
 test('buildWorkflowConfigTab preserves unknown legacy enum-list values with diagnostics', () => {
@@ -328,9 +333,15 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.ok(report.init_settings_tab.commands.some((command) => command.id === 'reinit'));
     assert.ok(report.init_settings_tab.commands.some((command) => command.id === 'agent-init' && command.command.includes('AGENT_INIT_PROMPT.md')));
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-mode' && row.value === 'update'));
+    assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-max-compact-summary-chars' && row.value === 12000));
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-initialized' && row.value === true));
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-validated' && row.value === true));
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-read-first' && Array.isArray(row.value) && row.value.includes('live/docs/project-memory/README.md')));
+    assert.ok(report.project_memory_tab.settings.some((setting) => (
+        setting.key === 'project_memory_maintenance.max_compact_summary_chars'
+        && setting.flag === '--project-memory-max-compact-summary-chars'
+        && setting.value === 12000
+    )));
     assert.ok(report.project_memory_tab.files.some((file) => file.path.endsWith('project-memory/compact.md') && file.exists && file.size_bytes !== null));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Task execution'));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Review execution modes'));

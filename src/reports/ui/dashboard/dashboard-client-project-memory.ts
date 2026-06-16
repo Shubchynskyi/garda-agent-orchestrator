@@ -6,15 +6,22 @@ export const UI_DASHBOARD_CLIENT_PROJECT_MEMORY = `function localizedMemoryFile(
   };
 }
 function renderProjectMemorySettings() {
-  const payload = currentSettingsPayload;
-  if (!payload || !payload.settings) {
+  const tab = currentReport && currentReport.project_memory_tab ? currentReport.project_memory_tab : {};
+  const reportSettings = (tab.settings || []).map(setting => Object.assign({}, setting, {
+    current_value: setting.current_value === undefined ? setting.value : setting.current_value,
+    confirmation_phrase: setting.confirmation_phrase || 'APPLY GARDA SETTING'
+  }));
+  const actionSettings = currentSettingsPayload && currentSettingsPayload.settings
+    ? currentSettingsPayload.settings.filter(setting => settingGroupId(setting) === 'memory')
+    : [];
+  const settings = actionSettings.length > 0 ? actionSettings : reportSettings;
+  if (settings.length === 0 && !currentSettingsPayload) {
     return '<section class="memory-section"><h3>' + safe(t('workflowGroupMemory')) + '</h3><p class="empty">' + safe(t('loading')) + '</p></section>';
   }
-  const settings = payload.settings.filter(setting => settingGroupId(setting) === 'memory');
   if (settings.length === 0) {
     return '<section class="memory-section"><h3>' + safe(t('workflowGroupMemory')) + '</h3><p class="empty">' + safe(t('noWorkflowSettings')) + '</p></section>';
   }
-  const disabled = !payload.enabled;
+  const disabled = !currentSettingsPayload || !currentSettingsPayload.enabled;
   const disabledNotice = disabled
     ? '<p class="empty">' + safe(t('settingEditsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('settingEditsDisabledTail')) + '</p>'
     : '<p class="empty">' + safe(t('guardedEditorHelp')) + '</p>';

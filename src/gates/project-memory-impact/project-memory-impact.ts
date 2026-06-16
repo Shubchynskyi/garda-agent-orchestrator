@@ -151,7 +151,7 @@ export function getProjectMemoryImpactLifecycleEvidence(input: {
                 ? 'CURRENT'
                 : 'INVALID';
     const compactRefreshed = actual.update_evidence.status === 'NOT_REQUIRED'
-        ? false
+        ? null
         : readUpdateEvidence(runtime.updateArtifactPath)?.compact_refreshed ?? null;
     const lifecycleCompactStatus = resolveLifecycleCompactStatus({
         compactStatus: actual.compact.status,

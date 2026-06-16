@@ -430,7 +430,7 @@ describe('assessProjectMemoryImpact', () => {
             assert.equal(evidence.evidence_status, 'CURRENT');
             assert.equal(evidence.status, 'NO_UPDATE_NEEDED');
             assert.equal(evidence.compact_status, 'OVERFLOW_NON_BLOCKING_NO_UPDATE');
-            assert.equal(evidence.compact_refreshed, false);
+            assert.equal(evidence.compact_refreshed, null);
             assert.ok(evidence.visible_summary_line.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
             assert.ok(evidence.visible_summary_line.includes('compact_refreshed=not_required'));
             assert.equal(evidence.visible_summary_line.includes('compact=OVERFLOW; compact_refreshed=false'), false);
@@ -466,7 +466,7 @@ describe('assessProjectMemoryImpact', () => {
             assert.equal(evidence.evidence_status, 'CURRENT');
             assert.equal(evidence.status, 'NO_UPDATE_NEEDED');
             assert.equal(evidence.update_needed, false);
-            assert.equal(evidence.compact_refreshed, false);
+            assert.equal(evidence.compact_refreshed, null);
             assert.equal(evidence.violations.length, 0);
         });
     });

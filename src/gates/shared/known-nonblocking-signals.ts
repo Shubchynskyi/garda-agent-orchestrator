@@ -97,8 +97,14 @@ export function formatKnownNonBlockingSignals(signals: readonly KnownNonBlocking
     if (signals.length === 0) {
         return null;
     }
-    const entries = signals
-        .map((signal) => `${signal.id}(action_required=${signal.action_required})`)
-        .join('; ');
-    return `KnownNonBlockingSignals: ${entries}`;
+    return `Known non-blocking notes: ${formatKnownNonBlockingSignalSummaries(signals)}`;
+}
+
+export function formatKnownNonBlockingSignalSummaries(signals: readonly KnownNonBlockingSignal[]): string | null {
+    if (signals.length === 0) {
+        return null;
+    }
+    return signals
+        .map((signal) => signal.summary)
+        .join(' ');
 }

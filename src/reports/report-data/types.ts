@@ -129,6 +129,7 @@ export interface ReportWorkflowSetting {
     value: unknown;
     value_type: WorkflowSettingValueType;
     options: WorkflowSettingOption[];
+    flag: string;
     command: string;
     description: string;
     editable: boolean;
@@ -197,6 +198,7 @@ export interface ReportProjectMemoryFile {
 
 export interface ReportProjectMemoryTab {
     status: ReportValueRow[];
+    settings: ReportWorkflowSetting[];
     files: ReportProjectMemoryFile[];
     unavailable: ReportDataUnavailableEntry[];
 }

@@ -189,6 +189,7 @@ function buildWorkflowSetting(repoRoot: string, config: WorkflowConfigData, rawC
         value,
         value_type: definition.value_type,
         options,
+        flag: definition.flag,
         command: buildWorkflowCommand(definition.flag, definition.value_type, options),
         description: definition.description,
         editable: definition.editable !== false,

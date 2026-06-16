@@ -186,16 +186,19 @@ describe('gates/task-audit-summary', () => {
             assert.ok(rendered.includes('Project memory: enabled; mode=check'));
             assert.ok(rendered.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
             assert.ok(rendered.includes('compact_refreshed=not_required'));
-            assert.ok(rendered.includes('KnownNonBlockingSignals: project_memory_no_update_compact_overflow_accepted(action_required=false)'));
+            assert.ok(rendered.includes('Known non-blocking notes: Project memory compact overflow is non-blocking because this task does not require a memory update.'));
+            assert.equal(rendered.includes('KnownNonBlockingSignals:'), false);
             assert.equal(rendered.includes('compact=OVERFLOW; compact_refreshed=false'), false);
             const finalMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
             assert.ok(finalMarkdown.includes('Project memory: enabled; mode=check'));
             assert.ok(finalMarkdown.includes('compact=OVERFLOW_NON_BLOCKING_NO_UPDATE'));
             assert.ok(finalMarkdown.includes('compact_refreshed=not_required'));
-            assert.ok(finalMarkdown.includes('KnownNonBlockingSignals: project_memory_no_update_compact_overflow_accepted(action_required=false)'));
+            assert.ok(finalMarkdown.includes('Known non-blocking notes: Project memory compact overflow is non-blocking because this task does not require a memory update.'));
+            assert.equal(finalMarkdown.includes('KnownNonBlockingSignals:'), false);
             const finalUserReport = formatFinalUserReport(result.final_closeout);
-            assert.ok(finalUserReport.includes('Known Non-Blocking Signals:'));
-            assert.ok(finalUserReport.includes('project_memory_no_update_compact_overflow_accepted(action_required=false)'));
+            assert.ok(finalUserReport.includes('Advisory Notes:'));
+            assert.ok(finalUserReport.includes('Project memory compact overflow is non-blocking because this task does not require a memory update.'));
+            assert.equal(finalUserReport.includes('project_memory_no_update_compact_overflow_accepted'), false);
         });
 
         it('does not block final closeout on historical project-memory events after maintenance is disabled', () => {

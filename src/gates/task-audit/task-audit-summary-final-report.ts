@@ -5,7 +5,7 @@ import {
     type ReviewTimingAuditEntry
 } from './task-audit-summary-renderer-common';
 import {
-    formatKnownNonBlockingSignals
+    formatKnownNonBlockingSignalSummaries
 } from '../shared/known-nonblocking-signals';
 
 function formatDurationMsAsMinutesSeconds(durationMs: number | null | undefined): string {
@@ -144,9 +144,9 @@ export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
     lines.push('');
     lines.push('Review Timing Warning:');
     lines.push(buildReviewTimingWarning(closeout, reviewIntegrityAttestation));
-    const knownNonBlockingSignalsLine = formatKnownNonBlockingSignals(closeout.known_non_blocking_signals || []);
+    const advisoryNotes = formatKnownNonBlockingSignalSummaries(closeout.known_non_blocking_signals || []);
     lines.push('');
-    lines.push('Known Non-Blocking Signals:');
-    lines.push(knownNonBlockingSignalsLine || 'none');
+    lines.push('Advisory Notes:');
+    lines.push(advisoryNotes || 'none');
     return lines.join('\n');
 }

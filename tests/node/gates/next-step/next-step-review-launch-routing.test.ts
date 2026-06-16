@@ -1690,7 +1690,8 @@ describe('gates/next-step', () => {
             signal.id === 'reviewer_provider_owned_placeholder_values'
             && signal.action_required === false
         )));
-        assert.ok(formatNextStepText(result).includes('KnownNonBlockingSignals: reviewer_provider_owned_placeholder_values(action_required=false)'));
+        assert.ok(formatNextStepText(result).includes('Known non-blocking notes: Provider-owned reviewer launch placeholders are external values'));
+        assert.equal(formatNextStepText(result).includes('KnownNonBlockingSignals:'), false);
         const normalizedCommand = result.commands[0].command.replace(/\\/g, '/');
         assert.ok(normalizedCommand.includes(`--launch-input-artifact-path "${launchInputArtifactPath.replace(/\\/g, '/')}"`));
         assert.ok(result.commands[0].command.includes(`--launch-input-sha256 "${fileSha256(launchInputArtifactPath)}"`));

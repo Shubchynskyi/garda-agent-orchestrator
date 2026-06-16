@@ -276,7 +276,9 @@ describe('gates/next-step', () => {
 
         assert.ok(formatNextStepText(result).includes('compact=UPDATED_OVERFLOW_NOT_REFRESHED'));
 
-        assert.ok(formatNextStepText(result).includes('KnownNonBlockingSignals: project_memory_updated_compact_overflow_accepted(action_required=false)'));
+        assert.ok(formatNextStepText(result).includes('Known non-blocking notes: Project memory compact overflow is accepted because current update evidence is valid'));
+
+        assert.equal(formatNextStepText(result).includes('KnownNonBlockingSignals:'), false);
 
     });
 
