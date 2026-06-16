@@ -74,6 +74,21 @@ The current one-line compatibility re-exports fall into two classes:
   and `token-telemetry.ts` remain root-owned source modules until a focused
   task gives them a durable owner directory and keeps existing public imports
   compatible.
+- Lifecycle root contract: `src/lifecycle/update.ts`,
+  `src/lifecycle/rollback.ts`, `src/lifecycle/check-update.ts`,
+  `src/lifecycle/common.ts`, and `src/lifecycle/contract-migrations.ts` are
+  public compatibility entrypoints for CLI commands, lifecycle tests, and
+  materialized-update paths. New same-domain lifecycle implementation imports
+  should prefer canonical owner paths such as `src/lifecycle/update/**`,
+  `src/lifecycle/cleanup/**`, `src/lifecycle/lock/**`,
+  `src/lifecycle/runtime-policy/**`, and
+  `src/lifecycle/agent-init/**` when the root file is only a facade.
+- Lifecycle real root modules: `src/lifecycle/agent-init.ts`,
+  `src/lifecycle/generic-utils.ts`, and `src/lifecycle/lifecycle-common.ts`
+  remain root-owned implementation modules for now because they are shared
+  across update, setup, uninstall, cleanup, and rollback flows. They must not be
+  moved behind a narrower owner directory until the affected cross-flow call
+  sites are migrated in the same task and old public imports remain compatible.
 
 If a file is moved behind a new directory, keep a facade or compatibility
 re-export at the old import path until the affected source and test imports are

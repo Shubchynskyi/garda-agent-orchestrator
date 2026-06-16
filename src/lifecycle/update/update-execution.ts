@@ -19,7 +19,7 @@ import {
 } from '../../core/project-memory-rollout';
 import { restoreRollbackSnapshot } from '../common';
 import { getLiveVersionPayload, type ResolvedUpdateSources } from './update-source';
-import { readPreservableCompileGateCommandFromFile } from '../contract-migrations';
+import { readPreservableCompileGateCommandFromFile } from '../agent-init/contract-migrations';
 
 export interface InstallRunnerOptions {
     targetRoot: string;
