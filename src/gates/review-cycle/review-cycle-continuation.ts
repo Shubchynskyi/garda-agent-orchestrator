@@ -58,6 +58,17 @@ export interface ReviewCycleContinuationAssessment {
     remaining_failed_non_test_reviews: number | null;
 }
 
+export interface ReviewCycleContinuationApprovalEventState {
+    exists: boolean;
+    sequence: number | null;
+    artifact_sha256: string | null;
+}
+
+export interface ReviewCycleContinuationReviewPhase {
+    required_review_types: string[];
+    pending_required_review_types: string[];
+}
+
 const EXPIRING_EVENT_TYPES = new Set([
     'TASK_DONE',
     'TASK_BLOCKED',
@@ -65,6 +76,7 @@ const EXPIRING_EVENT_TYPES = new Set([
     'TASK_DISCARDED',
     'COHERENT_CYCLE_RESTARTED',
     'REVIEW_CYCLE_RESTARTED',
+    'PREFLIGHT_CLASSIFIED',
     'COMPLETION_GATE_PASSED'
 ]);
 
@@ -230,12 +242,46 @@ function normalizeArtifact(payload: Record<string, unknown>): ReviewCycleContinu
     return artifact;
 }
 
+export function findReviewCycleContinuationApprovalInCurrentAttempt(params: {
+    eventsRoot: string;
+    taskId: string;
+}): ReviewCycleContinuationApprovalEventState {
+    const timelineErrors: string[] = [];
+    const timeline = collectOrderedTimelineEvents(path.join(params.eventsRoot, `${params.taskId}.jsonl`), timelineErrors);
+    let latestTaskModeSequence = 0;
+    for (const event of timeline) {
+        if (event.event_type === 'TASK_MODE_ENTERED') {
+            latestTaskModeSequence = event.sequence;
+        }
+    }
+    const approvalEvent = [...timeline].reverse().find((event) => {
+        return event.sequence > latestTaskModeSequence
+            && event.event_type === REVIEW_CYCLE_CONTINUATION_EVENT;
+    });
+    if (!approvalEvent) {
+        return {
+            exists: false,
+            sequence: null,
+            artifact_sha256: null
+        };
+    }
+    const details = approvalEvent.details || {};
+    return {
+        exists: true,
+        sequence: approvalEvent.sequence,
+        artifact_sha256: typeof details.artifact_sha256 === 'string'
+            ? details.artifact_sha256
+            : null
+    };
+}
+
 export function assessReviewCycleContinuationEvidence(params: {
     repoRoot: string;
     reviewsRoot: string;
     eventsRoot: string;
     taskId: string;
     evaluation: ReviewCycleGuardEvaluation;
+    reviewPhase?: ReviewCycleContinuationReviewPhase;
 }): ReviewCycleContinuationAssessment {
     const artifactPath = resolveReviewCycleContinuationArtifactPath(params.repoRoot, params.taskId);
     if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
@@ -330,7 +376,50 @@ export function assessReviewCycleContinuationEvidence(params: {
             remaining_failed_non_test_reviews: 0
         };
     }
-    if (currentTotal >= allowedTotal || currentFailed >= allowedFailed) {
+    if (currentFailed >= allowedFailed) {
+        return {
+            status: 'EXPIRED',
+            reason:
+                `review-cycle continuation expired after a failed non-test review cycle: ` +
+                `failed_non_test_reviews=${currentFailed}/${allowedFailed}`,
+            artifact_path: normalizedArtifactPath,
+            artifact_sha256: artifactSha256,
+            artifact,
+            remaining_total_non_test_review_attempts: Math.max(0, allowedTotal - currentTotal),
+            remaining_failed_non_test_reviews: 0
+        };
+    }
+    const pendingRequiredReviewTypes = params.reviewPhase?.pending_required_review_types
+        .map((reviewType) => reviewType.trim().toLowerCase())
+        .filter(Boolean) || [];
+    const requiredReviewTypes = params.reviewPhase?.required_review_types
+        .map((reviewType) => reviewType.trim().toLowerCase())
+        .filter(Boolean) || [];
+    if (params.reviewPhase && requiredReviewTypes.length > 0) {
+        if (pendingRequiredReviewTypes.length > 0) {
+            return {
+                status: 'ACTIVE',
+                reason:
+                    'one-shot review-cycle continuation is active for the current required review phase: ' +
+                    `pending_required_reviews=${pendingRequiredReviewTypes.join(',')}`,
+                artifact_path: normalizedArtifactPath,
+                artifact_sha256: artifactSha256,
+                artifact,
+                remaining_total_non_test_review_attempts: Math.max(0, allowedTotal - currentTotal),
+                remaining_failed_non_test_reviews: Math.max(0, allowedFailed - currentFailed)
+            };
+        }
+        return {
+            status: 'ACTIVE',
+            reason: 'one-shot review-cycle continuation completed the required review phase; closeout may continue',
+            artifact_path: normalizedArtifactPath,
+            artifact_sha256: artifactSha256,
+            artifact,
+            remaining_total_non_test_review_attempts: 0,
+            remaining_failed_non_test_reviews: 0
+        };
+    }
+    if (currentTotal >= allowedTotal) {
         return {
             status: 'EXPIRED',
             reason:

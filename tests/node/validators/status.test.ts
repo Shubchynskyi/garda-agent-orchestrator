@@ -22,6 +22,10 @@ function writeStatusFixtureFile(filePath: string, content: string) {
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
+function cleanupStatusTempDir(tmpDir: string): void {
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+}
+
 function makeCompliantEntrypoint(name: string): string {
     return [
         MANAGED_START,
@@ -207,7 +211,7 @@ test('resolveInitAnswersPath resolves relative path inside root', () => {
         assert.ok(resolved.includes('runtime'));
         assert.ok(resolved.includes('init-answers.json'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -219,7 +223,7 @@ test('resolveInitAnswersPath throws for path escaping root', () => {
             /must resolve inside TargetRoot/
         );
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -245,7 +249,7 @@ test('getStatusSnapshot does not read init answers from outside target root', ()
         assert.equal(snapshot.sourceOfTruth, null);
     } finally {
         try { fs.rmSync(outsidePath, { force: true }); } catch { /* best-effort */ }
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -263,7 +267,7 @@ test('getStatusSnapshot returns not-installed state for empty directory', () => 
         assert.equal(snapshot.readyForTasks, false);
         assert.ok(snapshot.recommendedNextCommand.includes('setup'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -278,7 +282,7 @@ test('getStatusSnapshot detects bundle-present state', () => {
         assert.equal(snapshot.initAnswersPresent, false);
         assert.ok(snapshot.recommendedNextCommand.includes('setup'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -313,7 +317,7 @@ test('getStatusSnapshot reads init answers when present', () => {
         assert.equal(snapshot.canonicalEntrypoint, 'CLAUDE.md');
         assert.equal(snapshot.collectedVia, 'CLI_INTERACTIVE');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -363,7 +367,7 @@ test('getStatusSnapshot prefers confirmed agent-init language while still exposi
         assert.match(snapshot.mandatoryFullSuitePerformance || '', /mode=standard/);
         assert.equal(snapshot.latestUpdateNotice, '1.2.3');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -452,7 +456,7 @@ test('buildAgentInitOutput renders compact report labels in English while preser
         assert.ok(output.includes('OrdinaryDocPathsNeedsConfirmation: False'));
         assert.ok(output.includes('OrdinaryDocPathsEdit: Edit garda-agent-orchestrator/live/config/paths.json field ordinary_doc_paths.'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -472,7 +476,7 @@ test('getStatusSnapshot captures init answers error for invalid JSON', () => {
         assert.equal(snapshot.initAnswersPresent, true);
         assert.ok(snapshot.initAnswersError !== null);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -487,7 +491,7 @@ test('getStatusSnapshot keeps CLI-collected setup in agent handoff state even wh
         assert.equal(snapshot.agentInitializationPendingReason, 'AGENT_HANDOFF_REQUIRED');
         assert.ok(snapshot.recommendedNextCommand.includes('AGENT_INIT_PROMPT.md'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -515,7 +519,7 @@ test('getStatusSnapshot marks workspace ready only after AGENT_INIT_PROMPT initi
         assert.equal(snapshot.agentInitializationPendingReason, null);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -548,7 +552,7 @@ test('getStatusSnapshot recommends the first executable task from TASK.md active
         assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-722 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -579,7 +583,7 @@ test('getStatusSnapshot recommends an in-progress task before a later todo task'
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-722-F1 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
         assert.ok(!snapshot.recommendedNextCommand.includes('T-723'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -610,7 +614,7 @@ test('getStatusSnapshot ignores T-001 outside the active queue ID column', () =>
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-722 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
         assert.ok(!snapshot.recommendedNextCommand.includes('T-001'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -642,7 +646,7 @@ test('getStatusSnapshot does not default to T-001 when active queue has no execu
         assert.equal(snapshot.recommendedNextCommand, 'No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.');
         assert.ok(!snapshot.recommendedNextCommand.includes('T-001'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -670,7 +674,7 @@ test('getStatusSnapshot does not default to T-001 when active queue table is emp
         assert.equal(snapshot.recommendedNextCommand, 'No executable tasks found in TASK.md Active Queue; add or reopen a task before starting task execution.');
         assert.ok(!snapshot.recommendedNextCommand.includes('T-001'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -701,7 +705,7 @@ test('getStatusSnapshot blocks ready while ordinary document paths are unconfirm
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('Confirm ordinary document paths'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -733,7 +737,7 @@ test('getStatusSnapshot blocks ready while optional specialist skills prompt is 
         assert.ok(output.includes('optional specialist-skills yes/no question'));
         assert.ok(output.includes('user decline is allowed'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -765,7 +769,7 @@ test('getStatusSnapshot blocks ready while project memory is not initialized', (
         assert.ok(output.includes('Initialize or refresh Garda project memory'));
         assert.ok(output.includes('ProjectMemoryInitRefreshPrompt: Initialize or refresh Garda project memory.'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -802,7 +806,7 @@ test('getStatusSnapshot keeps malformed agent-init state distinct from project-m
         assert.ok(output.includes('AgentInitStateStatus: INVALID'));
         assert.ok(!output.includes('ProjectMemoryInitRefreshPrompt:'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -834,7 +838,7 @@ test('getStatusSnapshot blocks ready while project memory is not validated', () 
         assert.ok(output.includes('Initialize or refresh Garda project memory'));
         assert.ok(output.includes('ProjectMemoryInitRefreshPrompt: Initialize or refresh Garda project memory.'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -867,7 +871,7 @@ test('getStatusSnapshot omits project-memory init prompt after memory is validat
         assert.ok(!output.includes('ProjectMemoryInitRefreshPrompt:'));
         assert.ok(!output.includes('Initialize or refresh Garda project memory'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -894,7 +898,7 @@ test('getStatusSnapshot recommends profile depth in next command when profile is
         const snapshot = getStatusSnapshot(tmpDir);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -920,7 +924,7 @@ test('getStatusSnapshot flags stale agent-init state when active agent files no 
         assert.equal(snapshot.readyForTasks, false);
         assert.equal(snapshot.agentInitializationPendingReason, 'AGENT_STATE_STALE');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -952,7 +956,7 @@ test('getStatusSnapshot summarizes toxin metrics without creating metrics.jsonl'
         assert.ok(snapshot.toxinMetricsSummary!.runtime_total_bytes > 0);
         assert.equal(fs.existsSync(metricsPath), false);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -980,7 +984,7 @@ test('getStatusSnapshot reads toxin metrics from the resolved legacy bundle runt
         assert.equal(snapshot.toxinMetricsSummary!.metrics_file_lines, 11);
         assert.ok(snapshot.toxinMetricsSummary!.runtime_total_bytes > 0);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -995,7 +999,7 @@ test('formatStatusSnapshot produces expected text markers', () => {
         assert.ok(output.includes('Installed'));
         assert.ok(output.includes('RecommendedNextCommand'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1020,7 +1024,7 @@ test('formatStatusSnapshot prints mandatory full-suite performance guidance when
         assert.ok(output.includes('MandatoryFullSuiteCommand: npm run test:sharded'));
         assert.ok(output.includes('MandatoryFullSuitePerformance: mode=optimized_sharded; optimized=true; boundary=mandatory_full_suite_not_smoke_or_fast; optimized_command="npm run test:sharded"; fallback_command="npm test"'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1034,7 +1038,7 @@ test('formatStatusSnapshot includes explicit next stage for CLI-collected setup'
         assert.ok(output.includes('Next stage: Launch your agent with AGENT_INIT_PROMPT.md'));
         assert.ok(output.includes('RecommendedNextCommand: Give your agent'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1046,7 +1050,7 @@ test('formatStatusSnapshot accepts custom heading', () => {
         assert.ok(output.includes('CUSTOM_HEADING'));
         assert.ok(!output.includes('GARDA_STATUS'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1096,7 +1100,7 @@ test('getStatusSnapshot warns about incomplete task timelines', () => {
         assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('Repair: resume T-001 with node bin/garda.js next-step "T-001" --repo-root "."')));
         assert.ok(output.includes('TaskTimelines: 0/1 complete'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1129,7 +1133,7 @@ test('formatStatusSnapshot shows invalid timeline warnings even when no canonica
         assert.ok(output.includes('TaskTimelines: 0/0 complete'));
         assert.ok(output.includes('Warning: INVALID timeline file: --help.jsonl'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1178,7 +1182,7 @@ test('getStatusSnapshot distinguishes active blocked incomplete timelines from a
             && warning.includes('Repair: resume T-021 with node bin/garda.js next-step "T-021" --repo-root "."')
         ));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1236,7 +1240,7 @@ test('getStatusSnapshot classifies invalid legacy and integrity-failed task time
         assert.ok(snapshot.timelineWarnings.some((warning) => warning.includes('INTEGRITY_FAILED timeline: T-012.jsonl')));
         assert.equal(snapshot.timelineWarnings.filter((warning) => warning.includes('Repair:')).length, 3);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1270,7 +1274,7 @@ test('getStatusSnapshot reports compliance drift when entrypoint lacks router re
         assert.ok(output.includes('Provider control compliance'));
         assert.ok(output.includes('Drift'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1298,7 +1302,7 @@ test('formatStatusSnapshot includes compliance pass badge when compliant', () =>
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('[x] Provider control compliance'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1331,7 +1335,7 @@ test('getStatusSnapshot surfaces protected-manifest MATCH when trusted manifest 
         assert.ok(output.includes('Protected manifest (MATCH)'));
         assert.ok(output.includes('[x] Protected manifest'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1361,7 +1365,7 @@ test('getStatusSnapshot surfaces protected-manifest MISSING when no trusted mani
         const output = formatStatusSnapshot(snapshot);
         assert.ok(output.includes('Protected manifest (MISSING)'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1419,7 +1423,7 @@ test('getStatusSnapshot surfaces protected-manifest DRIFT and blocks readyForTas
         assert.ok(output.includes('Drift:'));
         assert.ok(output.includes('Fix: Run setup/update/reinit'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1481,7 +1485,7 @@ test('getStatusSnapshot treats source-checkout protected-manifest DRIFT as infor
         assert.ok(inheritedDriftOutput.includes('inherited from prior committed control-plane work'));
         assert.ok(inheritedDriftOutput.includes('should not force --orchestrator-work solely for this inherited clean-worktree drift'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 
@@ -1521,7 +1525,7 @@ test('getStatusSnapshot surfaces protected-manifest INVALID and blocks readyForT
         assert.ok(output.includes('malformed'));
         assert.ok(output.includes('Fix: Run setup/update/reinit'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupStatusTempDir(tmpDir);
     }
 });
 

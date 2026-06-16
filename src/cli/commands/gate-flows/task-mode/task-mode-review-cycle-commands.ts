@@ -12,6 +12,7 @@ import {
 import {
     REVIEW_CYCLE_CONTINUATION_EVENT,
     buildReviewCycleContinuationArtifact,
+    findReviewCycleContinuationApprovalInCurrentAttempt,
     normalizeReviewCycleContinuationDecision,
     resolveReviewCycleContinuationArtifactPath
 } from '../../../../gates/review-cycle/review-cycle-continuation';
@@ -141,6 +142,25 @@ export function runRecordReviewCycleContinuationCommand(
         '--max-failed-non-test-reviews'
     );
     const excludedReviewTypes = parseExcludedReviewTypes(options.excludedReviewTypes);
+
+    const existingApproval = findReviewCycleContinuationApprovalInCurrentAttempt({
+        eventsRoot: path.join(orchestratorRoot, 'runtime', 'task-events'),
+        taskId
+    });
+    if (existingApproval.exists) {
+        return {
+            outputLines: [
+                'REVIEW_CYCLE_CONTINUATION_REJECTED',
+                `TaskId: ${taskId}`,
+                `Decision: ${decision}`,
+                'Reason: one-shot review-cycle continuation was already recorded for the current task attempt.',
+                `ExistingApprovalSequence: ${existingApproval.sequence ?? 'unknown'}`,
+                `ExistingArtifactSha256: ${existingApproval.artifact_sha256 || 'unknown'}`,
+                'NextAction: split/decompose the task or choose an explicit terminal/operator decision.'
+            ],
+            exitCode: EXIT_GATE_FAILURE
+        };
+    }
 
     const artifactPath = resolveReviewCycleContinuationArtifactPath(repoRoot, taskId, String(options.artifactPath || ''));
     const artifact = buildReviewCycleContinuationArtifact({

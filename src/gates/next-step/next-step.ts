@@ -2253,12 +2253,20 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
     if (reviewCycleGuardEvaluation?.should_block) {
+        const pendingRequiredReviewTypes = requiredReviewTypes.filter((reviewType) => {
+            const state = reviewStates.find((candidate) => candidate.reviewType === reviewType);
+            return !state || !reviewStateHasSatisfiedEvidence(repoRoot, eventsRoot, taskId, state);
+        });
         const continuationEvidence = assessReviewCycleContinuationEvidence({
             repoRoot,
             reviewsRoot,
             eventsRoot,
             taskId,
-            evaluation: reviewCycleGuardEvaluation
+            evaluation: reviewCycleGuardEvaluation,
+            reviewPhase: {
+                required_review_types: requiredReviewTypes,
+                pending_required_review_types: pendingRequiredReviewTypes
+            }
         });
         if (continuationEvidence.status === 'ACTIVE') {
             resultBase.warnings.push(
@@ -2280,7 +2288,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                 reviewCycleGuardEvaluation,
                 latestFailedReviewCycleAttempt
             );
+            const continuationAlreadyRecorded = continuationEvidence.status !== 'MISSING';
+            if (continuationAlreadyRecorded) {
+                reviewCycleBlock.choices = reviewCycleBlock.choices.filter((choice) => choice !== 'allow_one_more_cycle');
+                reviewCycleBlock.operator_choice_guidance = reviewCycleBlock.operator_choice_guidance
+                    .filter((guidance) => !guidance.startsWith('allow_one_more_cycle:'));
+            }
             const autoSplitEnabled = reviewCycleBlock.auto_split_enabled;
+            const continuationDecisionGuidance = continuationAlreadyRecorded
+                ? 'A one-shot continuation was already recorded for this task attempt; do not offer or accept another one. Continue by splitting/decomposing the task or choosing an explicit terminal/operator decision.'
+                : 'The configured workflow guard blocks additional compile, review, or full-suite continuation until operator decision. allow_one_more_cycle records task-scoped one-shot runtime evidence only; raise_limits is a permanent repo-local workflow-config change through workflow set.';
             let splitRequiredLatch: SplitRequiredLatchResult | null = null;
             if (autoSplitEnabled) {
                 splitRequiredLatch = materializeSplitRequiredLatch({
@@ -2335,14 +2352,16 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                     `excluded_review_types=${formatNextStepInlineList(reviewCycleGuardEvaluation.excluded_review_types)}. ` +
                     (autoSplitEnabled
                         ? `The gate moved this parent task to SPLIT_REQUIRED and materialized latch evidence at ${formatNextStepInlineValue(toRepoDisplayPath(repoRoot, splitRequiredLatch?.artifact_path || ''))}. Follow the auto-split prompt artifact and create linked child tasks before continuing child work.`
-                        : 'The configured workflow guard blocks additional compile, review, or full-suite continuation until operator decision. allow_one_more_cycle records task-scoped one-shot runtime evidence only; raise_limits is a permanent repo-local workflow-config change through workflow set.'),
+                        : continuationDecisionGuidance),
                 commands: autoSplitEnabled
                     ? []
                     : [
-                        buildCommand(
-                            'Record one-shot review-cycle continuation',
-                            buildReviewCycleContinuationCommand(cliPrefix, taskId, reviewCycleGuardEvaluation)
-                        ),
+                        ...(continuationAlreadyRecorded
+                            ? []
+                            : [buildCommand(
+                                'Record one-shot review-cycle continuation',
+                                buildReviewCycleContinuationCommand(cliPrefix, taskId, reviewCycleGuardEvaluation)
+                            )]),
                         buildCommand(
                             'Record review-cycle split decision',
                             buildReviewCycleSplitDecisionCommand(repoRoot, cliPrefix, taskId, reviewCycleGuardEvaluation, preflightPath)

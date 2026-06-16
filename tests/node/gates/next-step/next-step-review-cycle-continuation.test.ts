@@ -13,8 +13,12 @@ import { getWorkspaceSnapshot } from './next-step-test-support';
 import { buildEventIntegrityHash } from './next-step-test-support';
 import {
     REVIEW_CYCLE_CONTINUATION_EVENT,
+    assessReviewCycleContinuationEvidence,
     buildReviewCycleContinuationArtifact
 } from '../../../../src/gates/review-cycle/review-cycle-continuation';
+import {
+    runRecordReviewCycleContinuationCommand
+} from '../../../../src/cli/commands/gates';
 
 const TASK_ID = 'T-NEXT-1';
 const ALL_REVIEW_FLAGS = Object.freeze({
@@ -72,7 +76,7 @@ describe('gates/next-step review cycle continuation', () => {
         assert.equal(fs.readFileSync(configPath, 'utf8'), beforeConfig);
     });
 
-    it('blocks attempted reuse after the one-shot continuation count is consumed', () => {
+    it('does not offer a second one-shot continuation after the first one expires', () => {
         const repoRoot = makeTempRepo();
         const workflowConfig = buildDefaultWorkflowConfig();
         workflowConfig.full_suite_validation.enabled = false;
@@ -93,10 +97,9 @@ describe('gates/next-step review cycle continuation', () => {
             baselineFailedNonTestReviewCount: 0,
             maxTotalNonTestReviews: 2
         });
-        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
-            review_type: 'code',
-            reviewer_identity: 'agent:code-one-shot-reuse-extra-0',
-            review_context_sha256: sha256Text('code-one-shot-reuse-extra-0')
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`)),
+            reason: 'scope changed after one-shot continuation approval'
         });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -104,8 +107,99 @@ describe('gates/next-step review cycle continuation', () => {
 
         assert.equal(result.next_gate, 'review-cycle-attempt-guard');
         assert.ok(text.includes('Review cycle one-shot continuation expired'));
-        assert.ok(text.includes('already used'));
-        assert.equal(result.commands[0]?.label, 'Record one-shot review-cycle continuation');
+        assert.ok(text.includes('expired after PREFLIGHT_CLASSIFIED'));
+        assert.equal(result.commands.some((command) => command.label === 'Record one-shot review-cycle continuation'), false);
+        assert.equal(result.commands[0]?.label, 'Record review-cycle split decision');
+        assert.equal(result.review_cycle_block?.choices.includes('allow_one_more_cycle'), false);
+        assert.ok(text.includes('A one-shot continuation was already recorded for this task attempt'));
+    });
+
+    it('rejects a second direct one-shot continuation command in the same task attempt', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const firstResult = runRecordReviewCycleContinuationCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            decision: 'allow_one_more_cycle',
+            reason: 'Operator approved one continuation for the current attempt.',
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2,
+            maxFailedNonTestReviews: 15,
+            excludedReviewTypes: ['test'],
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+        assert.equal(firstResult.exitCode, 0);
+        const artifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-cycle-continuation.json`);
+        const firstArtifactSha256 = fileSha256(artifactPath);
+
+        const secondResult = runRecordReviewCycleContinuationCommand({
+            repoRoot,
+            taskId: TASK_ID,
+            decision: 'allow_one_more_cycle',
+            reason: 'Operator tried to approve a second continuation for the same attempt.',
+            baselineTotalNonTestReviewCount: 4,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2,
+            maxFailedNonTestReviews: 15,
+            excludedReviewTypes: ['test'],
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString()
+        });
+
+        assert.equal(secondResult.exitCode, 3);
+        assert.equal(fileSha256(artifactPath), firstArtifactSha256);
+        assert.ok(secondResult.outputLines.includes('REVIEW_CYCLE_CONTINUATION_REJECTED'));
+        assert.ok(
+            secondResult.outputLines.some((line) => line.includes('already recorded for the current task attempt'))
+        );
+    });
+
+    it('expires phase-based one-shot continuation after a failed non-test review cycle', () => {
+        const repoRoot = makeTempRepo();
+        seedStartedTask(repoRoot, TASK_ID);
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 2,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2,
+            maxFailedNonTestReviews: 1
+        });
+
+        const assessment = assessReviewCycleContinuationEvidence({
+            repoRoot,
+            reviewsRoot: reviewsRoot(repoRoot),
+            eventsRoot: eventsRoot(repoRoot),
+            taskId: TASK_ID,
+            evaluation: {
+                active: true,
+                action: 'BLOCK_FOR_OPERATOR_DECISION',
+                auto_split_enabled: true,
+                max_failed_non_test_reviews: 1,
+                max_total_non_test_reviews: 2,
+                total_non_test_review_count: 3,
+                failed_non_test_review_count: 1,
+                counts_by_review_type: {},
+                excluded_review_types: ['test'],
+                violations: [
+                    {
+                        metric: 'failed_non_test_review_count',
+                        actual: 1,
+                        limit: 1
+                    }
+                ],
+                should_block: true,
+                summary_line: 'Review cycle guard blocked after failed non-test review.'
+            },
+            reviewPhase: {
+                required_review_types: ['code', 'security', 'refactor', 'api', 'test'],
+                pending_required_review_types: ['api', 'test']
+            }
+        });
+
+        assert.equal(assessment.status, 'EXPIRED');
+        assert.ok(assessment.reason.includes('failed non-test review cycle'));
     });
 });
 

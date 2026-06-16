@@ -101,6 +101,138 @@ describe('gates/next-step review cycle guard split', () => {
         assert.ok(text.includes('does not edit workflow-config.json'));
     });
 
+    it('uses one-shot continuation before auto-split while the current sequential review phase is pending', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'strict_sequential' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        workflowConfig.review_cycle_guard.auto_split_enabled = true;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            {
+                ...ALL_REVIEW_FLAGS,
+                code: true,
+                security: true,
+                refactor: true,
+                api: true,
+                performance: true,
+                test: true
+            },
+            { reviewPolicyMode: 'strict_sequential' }
+        );
+        seedCompilePass(repoRoot, TASK_ID, preflightPath);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.status, 'SPLIT_REQUIRED');
+        assert.notEqual(result.next_gate, 'split-required-latch');
+        assert.equal(result.review_cycle_block, null);
+        assert.ok(text.includes('Review cycle one-shot continuation active'));
+        assert.ok(text.includes('pending_required_reviews='));
+        assert.ok(text.includes('api'));
+        assert.ok(text.includes('performance'));
+        assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+        assert.equal(result.review.next_review_type, 'api');
+    });
+
+    it('consumes one-shot continuation after the current sequential review phase completes', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'strict_sequential' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        workflowConfig.review_cycle_guard.auto_split_enabled = true;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writePreflight(
+            repoRoot,
+            TASK_ID,
+            {
+                ...ALL_REVIEW_FLAGS,
+                code: true,
+                security: true,
+                refactor: true,
+                test: true
+            },
+            { reviewPolicyMode: 'strict_sequential' }
+        );
+        seedCompilePass(repoRoot, TASK_ID, preflightPath);
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 3,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+        writeReviewEvidence(repoRoot, TASK_ID, 'test');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.status, 'SPLIT_REQUIRED');
+        assert.notEqual(result.next_gate, 'split-required-latch');
+        assert.notEqual(result.next_gate, 'review-cycle-attempt-guard');
+        assert.equal(result.review_cycle_block, null);
+        assert.equal(result.review.next_review_type, null);
+        assert.ok(text.includes('completed the required review phase'));
+        assert.equal(text.includes('allow_one_more_cycle'), false);
+        assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+    });
+
+    it('expires one-shot continuation after a failed non-test review even with pending review lanes', () => {
+        const repoRoot = makeTempRepo();
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'strict_sequential' };
+        workflowConfig.review_cycle_guard.max_total_non_test_reviews = 2;
+        workflowConfig.review_cycle_guard.max_failed_non_test_reviews = 1;
+        workflowConfig.review_cycle_guard.auto_split_enabled = true;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true,
+            security: true,
+            refactor: true,
+            api: true,
+            test: true
+        }, {
+            reviewPolicyMode: 'strict_sequential'
+        });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        writeReviewCycleContinuation(repoRoot, TASK_ID, {
+            baselineTotalNonTestReviewCount: 2,
+            baselineFailedNonTestReviewCount: 0,
+            maxTotalNonTestReviews: 2,
+            maxFailedNonTestReviews: 1
+        });
+        writeReviewEvidence(repoRoot, TASK_ID, 'refactor', { verdict: 'fail' });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'implementation');
+        assert.equal(result.review_cycle_block?.choices.includes('allow_one_more_cycle') ?? false, false);
+    });
+
     it('offers an explicit manual split gate when review-cycle blocks with auto split disabled', () => {
         const repoRoot = makeTempRepo();
         const workflowConfig = buildDefaultWorkflowConfig();
@@ -411,4 +543,3 @@ describe('gates/next-step review cycle guard split', () => {
     });
 
 });
-
