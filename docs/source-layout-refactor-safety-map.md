@@ -59,6 +59,21 @@ The current one-line compatibility re-exports fall into two classes:
   `src/materialization/project-memory-*`. New same-domain implementation code
   should import the canonical subdirectory path directly while old public/test
   imports stay supported through the facade.
+- Gate-runtime root contract: `src/gate-runtime/review-*`,
+  `src/gate-runtime/review-context*`, `src/gate-runtime/review-artifacts.ts`,
+  `src/gate-runtime/reviews-index.ts`, `src/gate-runtime/scoped-diff.ts`,
+  `src/gate-runtime/lifecycle-event-*`, `src/gate-runtime/lifecycle-events.ts`,
+  `src/gate-runtime/task-events*.ts`, `src/gate-runtime/task-history-ledger.ts`,
+  and `src/gate-runtime/timeline-*` are public compatibility paths when tests,
+  gate code, or external consumers import them. New same-domain gateway barrels
+  should prefer the canonical `src/gate-runtime/review/**` and
+  `src/gate-runtime/timeline/**` owner paths when the root file is only a
+  facade.
+- Gate-runtime real root modules: `hash.ts`, `output-filters.ts`,
+  `output-log-retention.ts`, `output-compaction-reporting.ts`, `text-utils.ts`,
+  and `token-telemetry.ts` remain root-owned source modules until a focused
+  task gives them a durable owner directory and keeps existing public imports
+  compatible.
 
 If a file is moved behind a new directory, keep a facade or compatibility
 re-export at the old import path until the affected source and test imports are
