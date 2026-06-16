@@ -45,6 +45,21 @@ Keep these imports stable unless a child task explicitly changes the public API:
   `src/core/provider-registry.ts`, `src/core/subprocess.ts`, and
   `src/core/dependent-validation-chains.ts`.
 
+## Facade Classification
+
+The current one-line compatibility re-exports fall into two classes:
+
+- Public/stable facades: package-facing barrels, command and gate dispatch
+  surfaces, validator entrypoints, core primitives listed above, lifecycle
+  update/rollback/check-update entrypoints, and runtime review/timeline roots
+  that are imported by tests or cross-domain callers.
+- Internal compatibility facades: root files that only preserve pre-split
+  paths for helpers now owned by a focused subdirectory, such as
+  `src/validators/doctor-*`, `src/validators/status-*`, and
+  `src/materialization/project-memory-*`. New same-domain implementation code
+  should import the canonical subdirectory path directly while old public/test
+  imports stay supported through the facade.
+
 If a file is moved behind a new directory, keep a facade or compatibility
 re-export at the old import path until the affected source and test imports are
 updated in the same child task.

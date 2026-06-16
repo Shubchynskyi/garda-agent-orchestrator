@@ -25,7 +25,7 @@ import {
 } from '../runtime/toxin-metrics';
 import { assessProtectedManifest } from './protected-manifest-assessment';
 import { readTaskQueueStatusMap } from './task-status-map';
-import { buildRecommendedNextCommand } from './status-recommendations';
+import { buildRecommendedNextCommand } from './status/status-recommendations';
 import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-suite-validation';
 import type {
     AgentInitializationPendingReason,
@@ -37,14 +37,14 @@ import type {
     LiveVersionState,
     StatusSnapshot,
     TimelineSummary
-} from './status-types';
+} from './status/status-types';
 
-export type { StatusSnapshot } from './status-types';
+export type { StatusSnapshot } from './status/status-types';
 export {
     formatStatusSnapshot,
     formatStatusSnapshotCompact,
     formatStatusSnapshotJson
-} from './status-rendering';
+} from './status/status-rendering';
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);

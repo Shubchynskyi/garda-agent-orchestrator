@@ -56,13 +56,13 @@ import {
     generateProjectMemorySummary
 } from './rule-materialization';
 import { getNodeBundleCliCommand, getNodeHumanCommitCommand, getNodeInteractiveUpdateCommand, getNodeNonInteractiveUpdateCommand } from './command-constants';
-import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory-migration';
+import { migrateContextRulesToProjectMemory, buildMigrationReportLines } from './project-memory/project-memory-migration';
 import {
     seedProjectMemoryFromTemplate,
     validateSeededProjectMemory,
     writeProjectMemoryBootstrapReport,
     type ProjectMemoryBootstrapReport
-} from './project-memory-builder';
+} from './project-memory/project-memory-builder';
 import { withLifecycleOperationLock } from '../lifecycle/common';
 export { mergeConfig } from '../core/config-merge';
 

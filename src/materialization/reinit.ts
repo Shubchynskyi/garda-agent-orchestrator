@@ -22,7 +22,7 @@ import {
     seedProjectMemoryFromTemplate,
     validateSeededProjectMemory,
     writeProjectMemoryBootstrapReport
-} from './project-memory-builder';
+} from './project-memory/project-memory-builder';
 
 interface ReinitOptions {
     targetRoot: string;

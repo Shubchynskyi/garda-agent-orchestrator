@@ -21,8 +21,8 @@ import {
     listRollbackSnapshotPaths,
     getRollbackSnapshotsRoot
 } from '../lifecycle/rollback';
-import { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor-runtime';
-import { checkProfileHealth, type ProfileHealthEvidence } from './doctor-profile';
+import { checkRuntimeMismatch, type RuntimeMismatchEvidence } from './doctor/doctor-runtime';
+import { checkProfileHealth, type ProfileHealthEvidence } from './doctor/doctor-profile';
 import {
     collectLockHealth,
     type TaskEventLockScanResult,
@@ -30,17 +30,17 @@ import {
     type ReviewArtifactLockScanResult,
     type ReviewArtifactLockCleanupResult,
     type CompletionGateFinalizationLockScanResult
-} from './doctor-lock-health';
+} from './doctor/doctor-lock-health';
 import {
     checkPermissions,
     type PermissionCheckEvidence
-} from './doctor-permissions';
+} from './doctor/doctor-permissions';
 import {
     collectManifestEvidence
-} from './doctor-manifest';
+} from './doctor/doctor-manifest';
 import {
     collectComplianceEvidence
-} from './doctor-compliance';
+} from './doctor/doctor-compliance';
 import type { ProtectedControlPlaneManifestEvidence } from '../gates/shared/helpers';
 import type { ProviderComplianceResult } from './provider-compliance';
 import type { NestedBundleDuplicationResult } from './workspace-layout';
@@ -55,26 +55,26 @@ import {
 import { readTaskQueueStatusMap } from './task-status-map';
 
 // Re-export extracted collectors for backward compatibility
-export { checkRuntimeMismatch, nodeVersionSatisfiesRange, type RuntimeMismatchEvidence } from './doctor-runtime';
-export { checkProfileHealth, type ProfileHealthEvidence } from './doctor-profile';
+export { checkRuntimeMismatch, nodeVersionSatisfiesRange, type RuntimeMismatchEvidence } from './doctor/doctor-runtime';
+export { checkProfileHealth, type ProfileHealthEvidence } from './doctor/doctor-profile';
 export {
     collectLockHealth,
     type LockHealthEvidence,
     type LockHealthOptions
-} from './doctor-lock-health';
+} from './doctor/doctor-lock-health';
 export {
     checkPermissions,
     type PermissionCheckEvidence,
     type PermissionCheckEntry
-} from './doctor-permissions';
+} from './doctor/doctor-permissions';
 export {
     collectManifestEvidence,
     type ManifestEvidence
-} from './doctor-manifest';
+} from './doctor/doctor-manifest';
 export {
     collectComplianceEvidence,
     type ComplianceEvidence
-} from './doctor-compliance';
+} from './doctor/doctor-compliance';
 
 interface DoctorOptions {
     targetRoot: string;
@@ -366,4 +366,4 @@ export {
     formatDoctorResult,
     formatDoctorResultCompact,
     formatDoctorResultJson
-} from './doctor-formatting';
+} from './doctor/doctor-formatting';
