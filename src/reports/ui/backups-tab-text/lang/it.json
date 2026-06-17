@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Elenca snapshot rollback dall’inventario backup. Il ripristino protetto e le modifiche auto-backup richiedono `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Elenco backup"
+  },
+  "empty": {
+    "label": "Nessun backup nell’elenco."
+  },
+  "snapshots_root": {
+    "label": "Radice snapshot"
+  },
+  "root_present": {
+    "label": "presente"
+  },
+  "root_missing": {
+    "label": "assente"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Creato"
+  },
+  "size_column": {
+    "label": "Dimensione"
+  },
+  "reason_column": {
+    "label": "Motivo"
+  },
+  "status_column": {
+    "label": "Stato"
+  },
+  "restore_column": {
+    "label": "Ripristina"
+  },
+  "reason_update": {
+    "label": "aggiornamento"
+  },
+  "reason_scheduled": {
+    "label": "pianificato"
+  },
+  "health_available": {
+    "label": "Disponibile"
+  },
+  "health_missing_records": {
+    "label": "Record mancanti"
+  },
+  "health_invalid_records": {
+    "label": "Record non validi"
+  },
+  "actions_disabled": {
+    "label": "Le azioni controllate sono disabilitate."
+  },
+  "restore_unavailable": {
+    "label": "Ripristino non disponibile per questo backup."
+  },
+  "restore_backup": {
+    "label": "Ripristina backup"
+  },
+  "auto_backup_title": {
+    "label": "Backup automatico"
+  },
+  "auto_backup_help": {
+    "description": "I backup automatici pianificati usano impostazioni workflow verificate. Il salvataggio richiede conferma."
+  },
+  "auto_enabled": {
+    "label": "Abilitato"
+  },
+  "auto_interval_days": {
+    "label": "Intervallo (giorni)"
+  },
+  "auto_keep_latest": {
+    "label": "Mantieni ultimi"
+  },
+  "restore_preview_help": {
+    "description": "Scegli un backup da ripristinare tramite l'azione di rollback protetta."
+  }
+}

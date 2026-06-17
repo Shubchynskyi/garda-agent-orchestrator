@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Obsługa pamięci włączona",
+    "description": "Czy workflow sprawdza trwałą pamięć projektu przy closeout."
+  },
+  "memory-mode": {
+    "label": "Tryb obsługi pamięci",
+    "description": "Bieżący tryb workflow: off, check, update lub strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Uruchamiane przed finalnym closeout",
+    "description": "Czy project-memory gate uruchamia się przed zakończeniem."
+  },
+  "memory-require-approval": {
+    "label": "Wymaga zgody na zapis",
+    "description": "Czy zapis plików project-memory wymaga zgody użytkownika."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Limit rozmiaru kompaktowego podsumowania",
+    "description": "Maksymalny rozmiar wygenerowanego kompaktowego podsumowania pamięci projektu, w znakach."
+  },
+  "memory-read-strategy": {
+    "label": "Strategia czytania",
+    "description": "Jak agenci powinni czytać pamięć projektu na początku zadania."
+  },
+  "memory-impact-retention-days": {
+    "label": "Przechowywanie artefaktów wpływu",
+    "description": "Ile dni przechowywane są artefakty wpływu project-memory."
+  },
+  "memory-initialized": {
+    "label": "Zainicjowano w agent init",
+    "description": "Czy agent-init odnotował inicjalizację pamięci projektu."
+  },
+  "memory-validated": {
+    "label": "Zweryfikowano w agent init",
+    "description": "Czy agent-init odnotował pomyślną walidację pamięci projektu."
+  },
+  "memory-dir": {
+    "label": "Katalog pamięci",
+    "description": "Katalog zawierający pliki trwałej pamięci należące do użytkownika."
+  },
+  "memory-read-first": {
+    "label": "Pliki do odczytu w pierwszej kolejności",
+    "description": "Pliki, które agenci powinni odczytać przed ukierunkowanymi plikami pamięci."
+  },
+  "memory-summary-rule": {
+    "label": "Wygenerowana reguła podsumowania",
+    "description": "Wygenerowany plik reguły podsumowujący pamięć projektu do startu agenta."
+  },
+  "memory-bootstrap-report": {
+    "label": "Raport bootstrap",
+    "description": "Raport runtime z bootstrapu lub walidacji pamięci projektu."
+  }
+}

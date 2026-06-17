@@ -154,7 +154,6 @@ function createFakeDocument(): {
         'workflow',
         'workflow-config-path',
         'settings-editor',
-        'setting-status',
         'init-settings',
         'project-memory',
         'instructions',
@@ -748,12 +747,12 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         const settingsPreview = await settingsPreviewResponse.json() as {
             status: string;
             command: string;
-            proposed_settings: { eligible_older_than_days: number; keep_latest_tasks: number };
+            proposed_settings: { daily_maintenance: { eligible_older_than_days: number; keep_latest_tasks: number } };
         };
         assert.equal(settingsPreview.status, 'previewed');
         assert.match(settingsPreview.command, /runtime-retention\.json/u);
-        assert.equal(settingsPreview.proposed_settings.eligible_older_than_days, 45);
-        assert.equal(settingsPreview.proposed_settings.keep_latest_tasks, 3);
+        assert.equal(settingsPreview.proposed_settings.daily_maintenance.eligible_older_than_days, 45);
+        assert.equal(settingsPreview.proposed_settings.daily_maintenance.keep_latest_tasks, 3);
 
         const blockedSaveResponse = await fetch(`${server.url}api/cleanup-settings`, {
             method: 'POST',

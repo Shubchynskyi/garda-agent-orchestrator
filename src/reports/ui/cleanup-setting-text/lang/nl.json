@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Retentiebeleid voor runtime in `runtime-retention.json`: drempels voor geplande onderhoudstaken, compactieregels en beschermde handmatige opschoningsacties."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Dagelijks onderhoud",
+    "description": "Schakelt gepland dagelijks onderhoud in of uit. Wanneer ingeschakeld kan de orchestrator volgens schema een beperkte batch geschikte taken verwerken zonder handmatige tussenkomst."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Maximaal aantal taken per onderhoudsrun",
+    "description": "Bovengrens voor hoeveel geschikte taken het dagelijkse onderhoud in één run verwerkt. Beperkt de impact als drempels verkeerd zijn geconfigureerd."
+  },
+  "eligible_older_than_days": {
+    "label": "Minimale taakleeftijd (dagen)",
+    "description": "Een taak moet minstens zo oud zijn voordat onderhoud of handmatige opschoning de runtime-artefacten ervan mag aanraken. Actieve en recentere taken blijven beschermd."
+  },
+  "keep_latest_tasks": {
+    "label": "Nieuwste taken behouden (aantal)",
+    "description": "Behoud altijd minstens zoveel van de meest recente taken, ook als ze ouder zijn dan de leeftijdsdrempel. Stel 0 in om alleen op leeftijd en bescherming van actieve taken te vertrouwen."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run voor dagelijks onderhoud",
+    "description": "Wanneer de waarde true is, somt het geplande dagelijkse onderhoud alleen kandidaten op en schrijft het audituitvoer; artefacten worden niet verwijderd of gecomprimeerd. Gebruik true tijdens het afstellen van drempels en zet daarna false om toe te passen."
+  },
+  "purge_require_confirm": {
+    "label": "Bevestiging voor purge vereist",
+    "description": "Wanneer de waarde true is, vereisen destructieve purge- en cleanup-opdrachten een expliciet getypte bevestigingszin voordat de server ze uitvoert."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Gezonde DONE comprimeren na (dagen)",
+    "description": "Na zoveel dagen mogen succesvol voltooide taken (DONE) worden gecompacteerd tot alleen ledger-geschiedenis zodra het ledger-bewijs is geverifieerd."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Probleemtaken comprimeren na (dagen)",
+    "description": "Na zoveel dagen mogen zware forensische artefacten van mislukte of vastgelopen taken worden gecomprimeerd, terwijl herstelbare leesbare bewijzen behouden blijven."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Handmatige runtime-opruiming",
+    "description": "Voert `garda cleanup` één keer uit met de waarden voor leeftijd en nieuwste-behouden uit de regels hierboven. Voorbeeld toont alleen kandidaten; Toepassen verwijdert of comprimeert volgens het beleid en vereist bevestiging."
+  },
+  "task_purge": {
+    "label": "Taak-purge",
+    "description": "Verwijdert runtime-artefacten die eigendom zijn van één taak-ID en herstelt gedeelde indexen. Verwijdert geen volledige gedeelde bestanden; bescherming van actieve taken blijft op de server van kracht."
+  },
+  "task_id": {
+    "label": "Taak-ID"
+  },
+  "purge_task_button": {
+    "label": "Taak purgen"
+  },
+  "run_preview": {
+    "label": "Voorbeeld"
+  },
+  "value_true": {
+    "label": "true — ingeschakeld"
+  },
+  "value_false": {
+    "label": "false — uitgeschakeld"
+  }
+}

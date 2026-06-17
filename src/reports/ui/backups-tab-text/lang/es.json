@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Lista instantáneas rollback del inventario de copias. La restauración protegida y los cambios de auto-backup requieren `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Lista de copias"
+  },
+  "empty": {
+    "label": "No hay copias en la lista."
+  },
+  "snapshots_root": {
+    "label": "Raíz de instantáneas"
+  },
+  "root_present": {
+    "label": "presente"
+  },
+  "root_missing": {
+    "label": "ausente"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Creado"
+  },
+  "size_column": {
+    "label": "Tamaño"
+  },
+  "reason_column": {
+    "label": "Motivo"
+  },
+  "status_column": {
+    "label": "Estado"
+  },
+  "restore_column": {
+    "label": "Restaurar"
+  },
+  "reason_update": {
+    "label": "actualización"
+  },
+  "reason_scheduled": {
+    "label": "programado"
+  },
+  "health_available": {
+    "label": "Disponible"
+  },
+  "health_missing_records": {
+    "label": "Registros ausentes"
+  },
+  "health_invalid_records": {
+    "label": "Registros no válidos"
+  },
+  "actions_disabled": {
+    "label": "Las acciones controladas están deshabilitadas."
+  },
+  "restore_unavailable": {
+    "label": "Restauración no disponible para esta copia."
+  },
+  "restore_backup": {
+    "label": "Restaurar copia"
+  },
+  "auto_backup_title": {
+    "label": "Copia automática"
+  },
+  "auto_backup_help": {
+    "description": "Las copias automáticas programadas usan ajustes de workflow auditados. Guardar requiere confirmación."
+  },
+  "auto_enabled": {
+    "label": "Activado"
+  },
+  "auto_interval_days": {
+    "label": "Intervalo (días)"
+  },
+  "auto_keep_latest": {
+    "label": "Conservar últimas"
+  },
+  "restore_preview_help": {
+    "description": "Elige una copia para restaurarla mediante la acción de rollback protegida."
+  }
+}

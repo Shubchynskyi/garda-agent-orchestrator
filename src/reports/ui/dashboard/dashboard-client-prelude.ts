@@ -1,9 +1,12 @@
 import {
     LOCAL_UI_ACTION_CATEGORY_TEXT,
     LOCAL_UI_ACTION_TEXT,
+    LOCAL_UI_BACKUPS_TAB_TEXT,
+    LOCAL_UI_CLEANUP_SETTING_TEXT,
     LOCAL_UI_INIT_SETTING_TEXT,
     LOCAL_UI_INSTRUCTION_TEXT,
     LOCAL_UI_LANGUAGES,
+    LOCAL_UI_PROJECT_MEMORY_STATUS_TEXT,
     LOCAL_UI_PROJECT_MEMORY_TEXT,
     LOCAL_UI_SETTING_TEXT,
     LOCAL_UI_TEXT,
@@ -23,6 +26,9 @@ export function buildDashboardClientPrelude(options: DashboardClientPreludeOptio
 const settingTextPacks = ${JSON.stringify(LOCAL_UI_SETTING_TEXT)};
 const actionTextPacks = ${JSON.stringify(LOCAL_UI_ACTION_TEXT)};
 const initSettingTextPacks = ${JSON.stringify(LOCAL_UI_INIT_SETTING_TEXT)};
+const cleanupSettingTextPacks = ${JSON.stringify(LOCAL_UI_CLEANUP_SETTING_TEXT)};
+const backupsTabTextPacks = ${JSON.stringify(LOCAL_UI_BACKUPS_TAB_TEXT)};
+const projectMemoryStatusTextPacks = ${JSON.stringify(LOCAL_UI_PROJECT_MEMORY_STATUS_TEXT)};
 const projectMemoryTextPacks = ${JSON.stringify(LOCAL_UI_PROJECT_MEMORY_TEXT)};
 const actionCategoryTextPacks = ${JSON.stringify(LOCAL_UI_ACTION_CATEGORY_TEXT)};
 const instructionTextPacks = ${JSON.stringify(LOCAL_UI_INSTRUCTION_TEXT)};
@@ -30,15 +36,20 @@ const languageMetadata = ${JSON.stringify(LOCAL_UI_LANGUAGES)};
 const fallbackLanguage = 'en';
 const initialLanguage = ${JSON.stringify(initialLanguage)};
 const tasksNode = document.getElementById('tasks');
+const tasksConfigPathNode = document.getElementById('tasks-config-path');
 const detailNode = document.getElementById('detail');
 const metaNode = document.getElementById('meta');
 const warningsNode = document.getElementById('warnings');
 const overviewNode = document.getElementById('overview');
 const gardaSwitchNode = document.getElementById('garda-switch-panel');
 const workflowNode = document.getElementById('workflow');
+const workflowPanelTitleNode = document.getElementById('workflow-panel-title');
 const workflowConfigPathNode = document.getElementById('workflow-config-path');
+const initSettingsConfigPathNode = document.getElementById('init-settings-config-path');
+const projectMemoryConfigPathNode = document.getElementById('project-memory-config-path');
+const backupsConfigPathNode = document.getElementById('backups-config-path');
+const cleanupConfigPathNode = document.getElementById('cleanup-config-path');
 const settingsEditorNode = document.getElementById('settings-editor');
-const settingStatusNode = document.getElementById('setting-status');
 const instructionsNode = document.getElementById('instructions');
 const initSettingsNode = document.getElementById('init-settings');
 const projectMemoryNode = document.getElementById('project-memory');
@@ -65,7 +76,6 @@ let currentSession = null;
 let currentActionsPayload = null;
 let currentActionResult = null;
 let currentSettingsPayload = null;
-let currentSettingResult = null;
 let currentMemorySettingResult = null;
 let currentTaskDetail = null;
 let currentWorkflowSettingGroup = 'validation';

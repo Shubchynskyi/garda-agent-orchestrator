@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Lệnh compile-gate",
+    "description": "Lệnh mà compile-gate chạy để kiểm tra biên dịch, build và type-check. Khi chưa được cấu hình trong workflow-config, compile-gate sẽ thất bại theo cơ chế đóng an toàn cho đến khi có lệnh riêng của dự án."
+  },
+  "compile-gate-command-fallback": {
+    "description": "Chưa được đặt trong workflow-config; compile-gate thất bại theo cơ chế đóng an toàn cho đến khi có lệnh riêng của dự án."
+  },
+  "full-suite-enabled": {
+    "label": "Xác thực full-suite bắt buộc",
+    "description": "Xác định liệu lệnh kiểm thử full-suite đã cấu hình có phải là phần bắt buộc trong vòng đời tác vụ hay không.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Lệnh full-suite đã cấu hình là bắt buộc trong vòng đời tác vụ."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Cổng full-suite được bỏ qua trừ khi một luồng workflow khác yêu cầu."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Lệnh full-suite",
+    "description": "Lệnh mà cổng full-suite chạy khi xác thực full-suite bắt buộc được bật."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Thời gian chờ full-suite",
+    "description": "Thời gian chạy tối đa của lệnh full-suite, tính bằng mili giây."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Độ dài tóm tắt thành công full-suite",
+    "description": "Số dòng đầu ra full-suite thành công được giữ trong bằng chứng tác vụ gọn."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Độ dài khối đầu ra lỗi",
+    "description": "Số dòng full-suite thất bại được giữ trong mỗi khối lỗi gọn."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Xử lý lỗi ngoài phạm vi",
+    "description": "Workflow sẽ làm gì khi đầu ra full-suite cho thấy lỗi nằm ngoài phạm vi tác vụ hiện tại.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Ghi nhận và chặn",
+        "description": "Ghi nhận lỗi ngoài phạm vi và dừng workflow cho đến khi được xử lý."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Ghi nhận và cảnh báo",
+        "description": "Ghi nhận lỗi ngoài phạm vi nhưng cho phép workflow tiếp tục với cảnh báo."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Vị trí full-suite",
+    "description": "Cổng full-suite bắt buộc chạy ở đâu trong vòng đời tác vụ.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "Sau biên dịch, trước review",
+        "description": "Chạy full-suite sau khi biên dịch thành công và trước khi bắt đầu công việc review."
+      },
+      "before_test_review": {
+        "label": "Trước review kiểm thử",
+        "description": "Chạy full-suite ngay trước khi lane review kiểm thử cần bằng chứng."
+      },
+      "before_completion": {
+        "label": "Trước khi hoàn tất",
+        "description": "Hoãn full-suite đến bước hoàn tất cuối cùng."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Chế độ thực thi review",
+    "description": "Kiểm soát việc các lane review bắt buộc chạy song song, chờ code review hay chạy tuần tự.",
+    "options": {
+      "parallel_all": {
+        "label": "Tất cả song song",
+        "description": "Mọi loại review có thể được chuẩn bị độc lập; không có phụ thuộc khởi chạy upstream."
+      },
+      "test_after_code": {
+        "label": "Test sau code",
+        "description": "Chỉ test chờ code PASS của chu kỳ hiện tại; các loại review khác vẫn độc lập."
+      },
+      "code_first_optional": {
+        "label": "Code trước cho tùy chọn",
+        "description": "API, performance, infra và dependency chờ code PASS; test vẫn ở downstream của mọi review upstream bắt buộc."
+      },
+      "strict_sequential": {
+        "label": "Tuần tự nghiêm ngặt",
+        "description": "Mọi review bắt buộc tuân theo thứ tự chuẩn lần lượt trong chu kỳ hiện tại."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Bảo vệ ngân sách phạm vi",
+    "description": "Cảnh báo hoặc chặn khi tác vụ quá lớn so với ngân sách profile đã cấu hình.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Kiểm tra ngân sách phạm vi cảnh báo hoặc chặn khi tác vụ vượt ngân sách profile."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Giới hạn ngân sách phạm vi không được áp dụng khi đánh giá kích thước tác vụ."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Hành động ngân sách phạm vi",
+    "description": "Điều gì xảy ra khi vượt ngân sách phạm vi.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Chặn để tách",
+        "description": "Dừng công việc quá lớn và yêu cầu operator hoặc agent tách nhỏ."
+      },
+      "WARN_ONLY": {
+        "label": "Chỉ cảnh báo",
+        "description": "Hiển thị cảnh báo phạm vi nhưng không dừng bước vòng đời tiếp theo."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Profile ngân sách phạm vi",
+    "description": "Profile tác vụ mà bảo vệ ngân sách phạm vi áp dụng. Giá trị legacy không xác định được hiển thị rõ ràng thay vì bị loại bỏ im lặng."
+  },
+  "scope-budget-max-files": {
+    "label": "Giới hạn file ngân sách phạm vi",
+    "description": "Số file thay đổi tối đa trước khi bảo vệ ngân sách phạm vi phản ứng."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Giới hạn dòng thay đổi",
+    "description": "Số dòng thay đổi tối đa trước khi bảo vệ ngân sách phạm vi phản ứng."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Giới hạn lane review",
+    "description": "Số lane review bắt buộc tối đa trước khi bảo vệ ngân sách phạm vi phản ứng."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Dự báo token review",
+    "description": "Ngân sách token review ước tính tối đa trước khi bảo vệ ngân sách phạm vi phản ứng."
+  },
+  "review-cycle-enabled": {
+    "label": "Bảo vệ chu kỳ review",
+    "description": "Phát hiện vòng lặp review non-test lặp lại trước khi tiêu tốn quá nhiều công việc.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Vòng lặp review non-test lặp lại được phát hiện trước khi closeout tiếp tục."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Áp lực review-cycle không được kiểm tra bởi bảo vệ này."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Hành động chu kỳ review",
+    "description": "Điều gì xảy ra khi các lần thử review lặp lại vượt giới hạn đã cấu hình.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Chặn chờ quyết định operator",
+        "description": "Dừng vòng lặp review lặp lại cho đến khi operator chọn đường phục hồi."
+      },
+      "WARN_ONLY": {
+        "label": "Chỉ cảnh báo",
+        "description": "Báo cáo áp lực review-cycle nhưng vẫn cho workflow tiếp tục."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Giới hạn review non-test thất bại",
+    "description": "Số lần thử review non-test thất bại tối đa trước khi bảo vệ chu kỳ review phản ứng."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Giới hạn tổng review non-test",
+    "description": "Tổng số lần thử review non-test tối đa trước khi bảo vệ chu kỳ review phản ứng."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Loại review bị loại trừ",
+    "description": "Chọn nhiều: các loại review được chọn sẽ bị loại khỏi việc tính giới hạn của review-cycle guard.",
+    "options": {
+      "code": {
+        "label": "Review mã nguồn"
+      },
+      "db": {
+        "label": "Review cơ sở dữ liệu"
+      },
+      "security": {
+        "label": "Review bảo mật"
+      },
+      "refactor": {
+        "label": "Review refactor"
+      },
+      "api": {
+        "label": "Review API"
+      },
+      "test": {
+        "label": "Review kiểm thử"
+      },
+      "performance": {
+        "label": "Review hiệu năng"
+      },
+      "infra": {
+        "label": "Review hạ tầng"
+      },
+      "dependency": {
+        "label": "Review phụ thuộc"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Gợi ý tách tự động chu kỳ review",
+    "description": "Cho phép áp lực review-cycle phát gợi ý auto-split khi hành động là BLOCK_FOR_OPERATOR_DECISION.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Áp lực review-cycle có thể phát gợi ý auto-split khi hành động là BLOCK_FOR_OPERATOR_DECISION."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Áp lực review-cycle không bao giờ phát gợi ý auto-split."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Bảo trì bộ nhớ dự án",
+    "description": "Kiểm soát việc closeout có kiểm tra tác động bộ nhớ dự án hay không.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Closeout kiểm tra xem có cần bằng chứng tác động bộ nhớ dự án hay không."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Closeout không chạy kiểm tra bảo trì bộ nhớ dự án."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Chế độ bộ nhớ dự án",
+    "description": "Mức độ workflow bắt buộc công việc tác động bộ nhớ dự án.",
+    "options": {
+      "off": {
+        "label": "Tắt",
+        "description": "Không chạy bảo trì bộ nhớ dự án trong closeout."
+      },
+      "check": {
+        "label": "Kiểm tra",
+        "description": "Kiểm tra xem có cần cập nhật bộ nhớ hay không mà không ghi file."
+      },
+      "update": {
+        "label": "Cập nhật",
+        "description": "Cho phép workflow cập nhật các file bộ nhớ dự án tập trung khi cần."
+      },
+      "strict": {
+        "label": "Nghiêm ngặt",
+        "description": "Yêu cầu bằng chứng bộ nhớ trước khi closeout thành công."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Chạy kiểm tra bộ nhớ trước closeout cuối",
+    "description": "Chạy bảo trì bộ nhớ dự án trước bước hoàn tất cuối cùng.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Bảo trì bộ nhớ dự án chạy trước bước hoàn tất cuối cùng."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Bảo trì bộ nhớ dự án không được chèn trước closeout cuối."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Yêu cầu phê duyệt người dùng khi ghi bộ nhớ",
+    "description": "Yêu cầu phê duyệt rõ ràng của người dùng trước khi workflow ghi file bộ nhớ dự án.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Ghi bộ nhớ dự án yêu cầu phê duyệt rõ ràng của người dùng trước khi sửa file."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Ghi bộ nhớ dự án có thể tiếp tục theo chế độ bảo trì đã cấu hình mà không cần bước phê duyệt thêm."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Kích thước tóm tắt gọn bộ nhớ dự án",
+    "description": "Kích thước tối đa của tóm tắt gọn bộ nhớ dự án được tạo, tính bằng ký tự."
+  },
+  "project-memory-read-strategy": {
+    "label": "Chiến lược đọc bộ nhớ dự án",
+    "description": "Cách agent nên đọc bộ nhớ bền vững khi bắt đầu tác vụ.",
+    "options": {
+      "index_first": {
+        "label": "Chỉ mục trước",
+        "description": "Đọc chỉ mục bộ nhớ trước và chỉ mở file chi tiết khi chỉ mục trỏ tới chúng."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Thời gian lưu tác động bộ nhớ dự án",
+    "description": "Số ngày lưu giữ artefact tác động bộ nhớ dự án."
+  },
+  "task-reset-enabled": {
+    "label": "Lệnh reset tác vụ",
+    "description": "Cho phép các thao tác reset hoặc discard tác vụ đã xác nhận.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Lệnh reset và discard tác vụ đã xác nhận có sẵn qua các đường dẫn được bảo vệ."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Thao tác reset và discard tác vụ không khả dụng."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Sao lưu tự động theo lịch",
+    "description": "Cho phép bảo trì hàng ngày tạo bản sao lưu rollback theo lịch khi đến hạn.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Bảo trì hàng ngày có thể tạo bản sao lưu rollback theo lịch khi đến kỳ."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Bảo trì hàng ngày sẽ không tạo bản sao lưu rollback theo lịch."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Khoảng cách sao lưu tự động",
+    "description": "Số ngày tối thiểu giữa các bản sao lưu theo lịch thành công."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Giữ lại bản sao lưu",
+    "description": "Số bản sao lưu mới nhất được giữ sau khi tạo bản sao lưu theo lịch."
+  },
+  "garda-self-guard": {
+    "label": "Tự bảo vệ Garda",
+    "description": "Kiểm soát liệu agent có thể trực tiếp vào công việc control-plane Garda được bảo vệ hay không.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "Bật",
+        "description": "Agent không thể vào công việc control-plane được bảo vệ nếu không có đường dẫn thuộc operator."
+      },
+      "require_operator_confirmation": {
+        "label": "Xác nhận operator",
+        "description": "Vào control-plane được bảo vệ yêu cầu xác nhận rõ ràng của operator."
+      }
+    }
+  }
+}

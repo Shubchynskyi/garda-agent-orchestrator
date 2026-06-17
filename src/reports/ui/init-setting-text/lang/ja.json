@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "アシスタント言語",
+    "description": "オペレーターとのやり取りでアシスタントが使用する言語。"
+  },
+  "AssistantBrevity": {
+    "label": "アシスタントの詳細度",
+    "description": "通常の回答をどの程度詳しくするか。"
+  },
+  "SourceOfTruth": {
+    "label": "指示の所有者",
+    "description": "生成されたエージェント指示を所有する正規の provider ファイル。"
+  },
+  "ActiveAgentFiles": {
+    "label": "アクティブなエージェントファイル",
+    "description": "このプロジェクトに現在含まれているエージェント entrypoint ファイル。"
+  },
+  "EnforceNoAutoCommit": {
+    "label": "自動 commit 禁止",
+    "description": "オペレーターの明示的な承認なしにエージェントが commit するのを防ぎます（少なくともそのように動作します）。"
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude フルアクセスモード",
+    "description": "Claude 向けの指示がオーケストレーターへのフルアクセスを前提とするかどうか。"
+  },
+  "TokenEconomyEnabled": {
+    "label": "トークン節約",
+    "description": "生成される指示をコンパクトに保ち、不要なコンテキストを避けます。"
+  },
+  "ProviderMinimalism": {
+    "label": "プロバイダー最小主義",
+    "description": "可能な限り、非正規の provider entrypoint をリダイレクトのままにします。"
+  },
+  "OrchestratorVersion": {
+    "label": "オーケストレーターバージョン",
+    "description": "状態を書き込んだ Garda のバージョン。"
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "言語確認済み",
+    "description": "アシスタント言語のチェックポイントを通過したかどうか。"
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "エージェントファイル確認済み",
+    "description": "選択したアクティブなエージェントファイルが明示的に確認されたかどうか。"
+  },
+  "ProjectRulesUpdated": {
+    "label": "プロジェクトルール更新済み",
+    "description": "エージェント初期化中にプロジェクトルールが確認または承認されたかどうか。"
+  },
+  "SkillsPromptCompleted": {
+    "label": "スキルプロンプト完了",
+    "description": "スキルプロンプトのチェックポイントが完了したかどうか。"
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "通常ドキュメント確認済み",
+    "description": "通常のドキュメントパスが確認されたかどうか。"
+  },
+  "VerificationPassed": {
+    "label": "検証合格",
+    "description": "初期化後の検証に合格したかどうか。"
+  },
+  "ManifestValidationPassed": {
+    "label": "マニフェスト有効",
+    "description": "保護された control-plane manifest の検証に合格したかどうか。"
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "設定済みコンパイルコマンド",
+    "description": "初期化時に workflow 設定へ書き込まれたコンパイル／ビルド／型チェックコマンド。"
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "設定済みフルスイートコマンド",
+    "description": "初期化時に workflow 設定へ書き込まれたテストコマンド。"
+  },
+  "reinit": {
+    "title": "ワークスペースの再初期化",
+    "description": "現在の初期化回答から Garda の生成ファイルを再生成します。初期化の選択を変更した後に使用します。"
+  },
+  "agent-init": {
+    "title": "エージェントプロンプト引き継ぎ",
+    "description": "AGENT_INIT_PROMPT.md をエージェントに渡し、agent-init フローの完了を依頼してください。厳格なコマンドは、エージェントがこれらのチェックを実行した後にのみ動作します。"
+  }
+}

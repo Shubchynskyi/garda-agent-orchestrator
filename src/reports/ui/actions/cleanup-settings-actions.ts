@@ -101,12 +101,72 @@ function displayPath(repoRoot: string, targetPath: string): string {
     return path.relative(repoRoot, targetPath).replace(/\\/gu, '/') || targetPath;
 }
 
-function buildSettingsUpdateCommand(repoRoot: string, configPath: string): string {
+function buildSettingsUpdateCommand(repoRoot: string, configPath: string, changedKeys: string[]): string {
+    const pathGroups = new Set<string>();
+    for (const key of changedKeys) {
+        if (key.startsWith('daily_maintenance_')) {
+            pathGroups.add('daily_maintenance.{enabled,max_tasks_per_run,eligible_older_than_days,keep_latest_tasks,dry_run}');
+        } else if (key === 'purge_require_confirm') {
+            pathGroups.add('purge.require_confirm');
+        } else if (key === 'healthy_done_compact_after_days') {
+            pathGroups.add('healthy_done.compact_after_days');
+        } else if (key === 'problem_tasks_compress_after_days') {
+            pathGroups.add('problem_tasks.compress_after_days');
+        }
+    }
+    const paths = [...pathGroups];
     return [
         'update',
         quoteCommandPart(displayPath(repoRoot, configPath)),
-        'daily_maintenance.{enabled,max_tasks_per_run,eligible_older_than_days,keep_latest_tasks,dry_run}'
+        paths.length > 0 ? paths.join(',') : 'runtime-retention'
     ].join(' ');
+}
+
+function applyCleanupSettingsPatch(
+    document: RuntimeRetentionPolicyDocument,
+    rawSettings: Record<string, unknown>
+): RuntimeRetentionPolicyDocument {
+    const nextDocument = JSON.parse(JSON.stringify(document)) as RuntimeRetentionPolicyDocument;
+    if (rawSettings.daily_maintenance_enabled !== undefined) {
+        nextDocument.daily_maintenance.enabled = parseBoolean(rawSettings.daily_maintenance_enabled, 'daily_maintenance_enabled');
+    }
+    if (rawSettings.daily_maintenance_max_tasks_per_run !== undefined) {
+        nextDocument.daily_maintenance.max_tasks_per_run = parseNonNegativeInteger(
+            rawSettings.daily_maintenance_max_tasks_per_run,
+            'daily_maintenance_max_tasks_per_run'
+        );
+    }
+    if (rawSettings.eligible_older_than_days !== undefined) {
+        nextDocument.daily_maintenance.eligible_older_than_days = parseNonNegativeInteger(
+            rawSettings.eligible_older_than_days,
+            'eligible_older_than_days'
+        );
+    }
+    if (rawSettings.keep_latest_tasks !== undefined) {
+        nextDocument.daily_maintenance.keep_latest_tasks = parseNonNegativeInteger(
+            rawSettings.keep_latest_tasks,
+            'keep_latest_tasks'
+        );
+    }
+    if (rawSettings.daily_maintenance_dry_run !== undefined) {
+        nextDocument.daily_maintenance.dry_run = parseBoolean(rawSettings.daily_maintenance_dry_run, 'daily_maintenance_dry_run');
+    }
+    if (rawSettings.purge_require_confirm !== undefined) {
+        nextDocument.purge.require_confirm = parseBoolean(rawSettings.purge_require_confirm, 'purge_require_confirm');
+    }
+    if (rawSettings.healthy_done_compact_after_days !== undefined) {
+        nextDocument.healthy_done.compact_after_days = parseNonNegativeInteger(
+            rawSettings.healthy_done_compact_after_days,
+            'healthy_done_compact_after_days'
+        );
+    }
+    if (rawSettings.problem_tasks_compress_after_days !== undefined) {
+        nextDocument.problem_tasks.compress_after_days = parseNonNegativeInteger(
+            rawSettings.problem_tasks_compress_after_days,
+            'problem_tasks_compress_after_days'
+        );
+    }
+    return validateManagedConfigByName('runtime-retention', nextDocument) as RuntimeRetentionPolicyDocument;
 }
 
 function buildCleanupCommand(repoRoot: string, request: CleanupRunRequest, execute: boolean): ReturnType<typeof buildUiActionCommand> {
@@ -192,17 +252,12 @@ export async function handleUiCleanupSettingsRequest(
     const rawSettings = payload.settings && typeof payload.settings === 'object'
         ? payload.settings as Record<string, unknown>
         : {};
-    const nextDocument: RuntimeRetentionPolicyDocument = JSON.parse(JSON.stringify(document)) as RuntimeRetentionPolicyDocument;
-    nextDocument.daily_maintenance = {
-        ...nextDocument.daily_maintenance,
-        enabled: parseBoolean(rawSettings.daily_maintenance_enabled, 'daily_maintenance_enabled'),
-        max_tasks_per_run: parseNonNegativeInteger(rawSettings.daily_maintenance_max_tasks_per_run, 'daily_maintenance_max_tasks_per_run'),
-        eligible_older_than_days: parseNonNegativeInteger(rawSettings.eligible_older_than_days, 'eligible_older_than_days'),
-        keep_latest_tasks: parseNonNegativeInteger(rawSettings.keep_latest_tasks, 'keep_latest_tasks'),
-        dry_run: parseBoolean(rawSettings.daily_maintenance_dry_run, 'daily_maintenance_dry_run')
-    };
-    const normalized = validateManagedConfigByName('runtime-retention', nextDocument) as RuntimeRetentionPolicyDocument;
-    const command = buildSettingsUpdateCommand(repoRoot, configPath);
+    if (Object.keys(rawSettings).length === 0) {
+        sendApiError(response, 400, 'Cleanup settings request must include at least one setting field.', 'cleanup_settings_empty');
+        return;
+    }
+    const normalized = applyCleanupSettingsPatch(document, rawSettings);
+    const command = buildSettingsUpdateCommand(repoRoot, configPath, Object.keys(rawSettings));
 
     if (mode === 'preview') {
         const auditPath = appendUiActionAudit(repoRoot, {
@@ -218,7 +273,12 @@ export async function handleUiCleanupSettingsRequest(
             status: 'previewed',
             command,
             config_path: configPath,
-            proposed_settings: normalized.daily_maintenance,
+            proposed_settings: {
+                daily_maintenance: normalized.daily_maintenance,
+                purge: normalized.purge,
+                healthy_done: normalized.healthy_done,
+                problem_tasks: normalized.problem_tasks
+            },
             requires_confirmation: true,
             confirmation_phrase: CLEANUP_SETTINGS_CONFIRMATION,
             audit_path: auditPath
@@ -260,7 +320,12 @@ export async function handleUiCleanupSettingsRequest(
         status: 'executed',
         command,
         config_path: configPath,
-        saved_settings: savedDocument.daily_maintenance,
+        saved_settings: {
+            daily_maintenance: savedDocument.daily_maintenance,
+            purge: savedDocument.purge,
+            healthy_done: savedDocument.healthy_done,
+            problem_tasks: savedDocument.problem_tasks
+        },
         audit_path: auditPath
     });
 }

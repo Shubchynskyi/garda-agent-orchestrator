@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Compile-gate komutu",
+    "description": "Derleme, build ve type-check doğrulaması için compile-gate'in çalıştırdığı komut. workflow-config'de ayarlanmamışsa, proje özel bir komut yapılandırılana kadar compile-gate güvenli şekilde başarısız olur."
+  },
+  "compile-gate-command-fallback": {
+    "description": "workflow-config'de ayarlanmamış; proje özel bir komut yapılandırılana kadar compile-gate güvenli şekilde başarısız olur."
+  },
+  "full-suite-enabled": {
+    "label": "Zorunlu tam paket doğrulaması",
+    "description": "Yapılandırılmış tam paket test komutunun görev yaşam döngüsünün zorunlu parçası olup olmayacağını belirler.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Yapılandırılmış tam paket komutu görev yaşam döngüsünde zorunludur."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "Başka bir workflow yolu gerektirmedikçe tam paket kapısı atlanır."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Tam paket komutu",
+    "description": "Zorunlu tam paket doğrulaması etkin olduğunda tam paket kapısının çalıştırdığı komut."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Tam paket zaman aşımı",
+    "description": "Tam paket komutunun milisaniye cinsinden maksimum çalışma süresi."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Başarılı tam paket özet uzunluğu",
+    "description": "Kompakt görev kanıtlarında kaç başarılı tam paket çıktı satırının görünür kalacağı."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Hata çıktısı parça uzunluğu",
+    "description": "Her kompakt hata parçasında kaç başarısız tam paket satırının saklanacağı."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Kapsam dışı hata işleme",
+    "description": "Tam paket çıktısı mevcut görev kapsamı dışında bir hata gösterdiğinde workflow'un ne yapacağı.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Denetle ve engelle",
+        "description": "Kapsam dışı hatayı kaydeder ve çözülene kadar workflow'u durdurur."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Denetle ve uyar",
+        "description": "Kapsam dışı hatayı kaydeder ancak uyarıyla devam etmesine izin verir."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Tam paket yerleşimi",
+    "description": "Zorunlu tam paket kapısının görev yaşam döngüsünde nerede çalışacağı.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "Derlemeden sonra, incelemelerden önce",
+        "description": "Derleme geçtikten sonra ve inceleme çalışması başlamadan önce tam paketi çalıştırır."
+      },
+      "before_test_review": {
+        "label": "Test incelemesinden önce",
+        "description": "Test inceleme hattının kanıta ihtiyaç duymasından hemen önce tam paketi çalıştırır."
+      },
+      "before_completion": {
+        "label": "Tamamlamadan önce",
+        "description": "Tam paketi son tamamlama yoluna kadar erteler."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "İnceleme yürütme modu",
+    "description": "Gerekli inceleme hatlarının paralel mi çalışacağını, kod incelemesini mi bekleyeceğini yoksa sıralı mı yürütüleceğini belirler.",
+    "options": {
+      "parallel_all": {
+        "label": "Hepsi paralel",
+        "description": "Tüm inceleme türleri bağımsız olarak hazırlanabilir; üst akış başlatma bağımlılığı yoktur."
+      },
+      "test_after_code": {
+        "label": "Test, koddan sonra",
+        "description": "Yalnızca test mevcut döngüdeki kod PASS'ini bekler; diğer inceleme türleri bağımsız kalır."
+      },
+      "code_first_optional": {
+        "label": "İsteğe bağlılar için önce kod",
+        "description": "API, performance, infra ve dependency kod PASS'ini bekler; test tüm gerekli üst incelemelerin altında kalır."
+      },
+      "strict_sequential": {
+        "label": "Katı sıralı",
+        "description": "Tüm gerekli incelemeler mevcut döngü için kanonik sırayla tek tek yürütülür."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Kapsam bütçesi koruması",
+    "description": "Görev yapılandırılmış profil bütçesi için çok büyük olduğunda uyarır veya engeller.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Kapsam bütçesi kontrolleri, görev yapılandırılmış profil bütçesini aştığında uyarır veya engeller."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "Kapsam bütçesi limitleri görev boyutu kararlarında uygulanmaz."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Kapsam bütçesi eylemi",
+    "description": "Kapsam bütçesi aşıldığında ne olacağı.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Bölme için engelle",
+        "description": "Aşırı büyük işi durdurur ve operatörden veya ajandan bölmesini ister."
+      },
+      "WARN_ONLY": {
+        "label": "Yalnızca uyar",
+        "description": "Kapsam uyarısını gösterir ancak sonraki yaşam döngüsü adımını durdurmaz."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Kapsam bütçesi profilleri",
+    "description": "Kapsam bütçesi korumasının uygulandığı görev profilleri. Bilinmeyen eski değerler açıkça gösterilir, sessizce silinmez."
+  },
+  "scope-budget-max-files": {
+    "label": "Kapsam bütçesi dosya limiti",
+    "description": "Kapsam bütçesi koruması tepki vermeden önceki maksimum değişen dosya sayısı."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Kapsam bütçesi değişen satır limiti",
+    "description": "Kapsam bütçesi koruması tepki vermeden önceki maksimum değişen satır sayısı."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Kapsam bütçesi inceleme hattı limiti",
+    "description": "Kapsam bütçesi koruması tepki vermeden önceki maksimum gerekli inceleme hattı sayısı."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Kapsam bütçesi inceleme token tahmini",
+    "description": "Kapsam bütçesi koruması tepki vermeden önceki maksimum tahmini inceleme token bütçesi."
+  },
+  "review-cycle-enabled": {
+    "label": "İnceleme döngüsü koruması",
+    "description": "Çok fazla iş tüketmeden önce tekrarlayan non-test inceleme döngülerini algılar.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Kapanış devam etmeden önce tekrarlayan non-test inceleme döngüleri algılanır."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "İnceleme döngüsü baskısı bu koruma tarafından kontrol edilmez."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "İnceleme döngüsü eylemi",
+    "description": "Tekrarlayan inceleme denemeleri yapılandırılmış limitleri aştığında ne olacağı.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Operatör kararı için engelle",
+        "description": "Operatör kurtarma yolunu seçene kadar tekrarlayan inceleme döngülerini durdurur."
+      },
+      "WARN_ONLY": {
+        "label": "Yalnızca uyar",
+        "description": "İnceleme döngüsü baskısını bildirir ancak workflow'un devam etmesine izin verir."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Başarısız non-test inceleme limiti",
+    "description": "İnceleme döngüsü koruması tepki vermeden önceki maksimum başarısız non-test inceleme denemesi."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Toplam non-test inceleme limiti",
+    "description": "İnceleme döngüsü koruması tepki vermeden önceki maksimum toplam non-test inceleme denemesi."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Hariç tutulan inceleme türleri",
+    "description": "Çoklu seçim: işaretlenen inceleme türleri review-cycle guard sayımından hariç tutulur.",
+    "options": {
+      "code": {
+        "label": "Kod incelemesi"
+      },
+      "db": {
+        "label": "Veritabanı incelemesi"
+      },
+      "security": {
+        "label": "Güvenlik incelemesi"
+      },
+      "refactor": {
+        "label": "Refaktör incelemesi"
+      },
+      "api": {
+        "label": "API incelemesi"
+      },
+      "test": {
+        "label": "Test incelemesi"
+      },
+      "performance": {
+        "label": "Performans incelemesi"
+      },
+      "infra": {
+        "label": "Altyapı incelemesi"
+      },
+      "dependency": {
+        "label": "Bağımlılık incelemesi"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Otomatik inceleme döngüsü bölme istemi",
+    "description": "Eylem BLOCK_FOR_OPERATOR_DECISION olduğunda inceleme döngüsü baskısının otomatik bölme istemi yayınlamasına izin verir.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Eylem BLOCK_FOR_OPERATOR_DECISION olduğunda inceleme döngüsü baskısı otomatik bölme istemi yayınlayabilir."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "İnceleme döngüsü baskısı asla otomatik bölme istemi yayınlamaz."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Proje belleği bakımı",
+    "description": "Kapanışın proje belleği etkisini kontrol edip etmeyeceğini belirler.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Kapanış, proje belleği etki kanıtının gerekli olup olmadığını kontrol eder."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "Kapanış proje belleği bakım kontrollerini çalıştırmaz."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Proje belleği modu",
+    "description": "Workflow'un proje belleği etki çalışmasını ne kadar sıkı uyguladığı.",
+    "options": {
+      "off": {
+        "label": "Kapalı",
+        "description": "Kapanış sırasında proje belleği bakımı çalıştırma."
+      },
+      "check": {
+        "label": "Kontrol et",
+        "description": "Bellek güncellemelerinin gerekli olup olmadığını yazmadan kontrol et."
+      },
+      "update": {
+        "label": "Güncelle",
+        "description": "Gerektiğinde workflow'un odaklı proje belleği dosyalarını güncellemesine izin ver."
+      },
+      "strict": {
+        "label": "Katı",
+        "description": "Kapanış geçmeden önce bellek kanıtı gerektir."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Son kapanıştan önce bellek kontrolü çalıştır",
+    "description": "Son tamamlama adımından önce proje belleği bakımını çalıştırır.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Proje belleği bakımı son tamamlama adımından önce çalışır."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "Proje belleği bakımı son kapanıştan önce eklenmez."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Bellek yazımları için kullanıcı onayı gerektir",
+    "description": "Workflow proje belleği dosyalarını yazmadan önce açık kullanıcı onayı gerektirir.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Proje belleği yazımları, dosyalar değiştirilmeden önce açık kullanıcı onayı gerektirir."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "Proje belleği yazımları, ek onay adımı olmadan yapılandırılmış bakım modunda devam edebilir."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Proje belleği kompakt özet boyutu",
+    "description": "Oluşturulan kompakt proje belleği özetinin karakter cinsinden maksimum boyutu."
+  },
+  "project-memory-read-strategy": {
+    "label": "Proje belleği okuma stratejisi",
+    "description": "Ajanların görev başlangıcında kalıcı belleği nasıl okuması gerektiği.",
+    "options": {
+      "index_first": {
+        "label": "Önce indeks",
+        "description": "Önce bellek indeksini oku ve ayrıntılı dosyaları yalnızca indeks işaret ettiğinde aç."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Proje belleği etki saklama süresi",
+    "description": "Proje belleği etki çıktılarının kaç gün saklanacağı."
+  },
+  "task-reset-enabled": {
+    "label": "Görev sıfırlama komutları",
+    "description": "Onaylanmış görev sıfırlama/iptal mutasyonlarına izin verir.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Onaylanmış görev sıfırlama ve iptal komutları korumalı yollar üzerinden kullanılabilir."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "Görev sıfırlama ve iptal mutasyonları kullanılamaz."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Zamanlanmış otomatik yedekleme",
+    "description": "Günlük bakım tetikleyicisinin vadesi geldiğinde geri alma için zamanlanmış yedekler oluşturmasına izin verir.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Günlük bakım, aralık vadesi geldiğinde geri alma için zamanlanmış yedekler oluşturabilir."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "Günlük bakım zamanlanmış geri alma yedekleri oluşturmaz."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Otomatik yedekleme aralığı",
+    "description": "Başarılı zamanlanmış yedekler arasındaki minimum gün sayısı."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Otomatik yedek saklama",
+    "description": "Zamanlanmış bir yedek oluşturulduktan sonra tutulacak en son yedek sayısı."
+  },
+  "garda-self-guard": {
+    "label": "Garda kendi koruması",
+    "description": "Ajanların doğrudan korumalı Garda control-plane işine girip giremeyeceğini belirler.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "Açık",
+        "description": "Ajanlar, operatöre ait yol olmadan korumalı control-plane işine giremez."
+      },
+      "require_operator_confirmation": {
+        "label": "Operatör onayı",
+        "description": "Korumalı control-plane girişi açık operatör onayı gerektirir."
+      }
+    }
+  }
+}

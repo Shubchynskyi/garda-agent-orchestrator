@@ -12,52 +12,8 @@
     "initSettingsTab": "Ayarları başlat",
     "projectMemoryTab": "Proje belleği",
     "backupsTab": "Yedekler",
-    "backupsTabIntro": "Yedek envanterindeki rollback anlık görüntülerini listeler. Korumalı geri yükleme ve auto-backup düzenlemeleri için `garda ui --actions` gerekir.",
-    "backupsInventoryTitle": "Yedek envanteri",
-    "backupsEmpty": "Envanterde yedek yok.",
-    "backupsSnapshotsRoot": "Anlık görüntü kökü",
-    "backupRootPresent": "var",
-    "backupRootMissing": "yok",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Oluşturuldu",
-    "backupSizeColumn": "Boyut",
-    "backupReasonColumn": "Neden",
-    "backupStatusColumn": "Durum",
-    "backupRestoreColumn": "Geri yükle",
-    "backupReasonUpdate": "güncelleme",
-    "backupReasonScheduled": "zamanlanmış",
-    "backupsActionsDisabled": "Kontrollü eylemler devre dışı.",
-    "backupRestoreUnavailable": "Bu yedek için geri yükleme kullanılamıyor.",
-    "restoreBackup": "Yedeği geri yükle",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Etkin",
-    "backupAutoIntervalDays": "Aralık (gün)",
-    "backupAutoKeepLatest": "Sonuncuları tut",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Talimatlar",
     "cleanupSettingsTab": "Temizlik ayarları",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Etkin politika",
-    "cleanupEffectivePolicyHelp": "Görev kapsamlı kanıtlar ve paylaşılan agregalar runtime sahiplik haritası ile ayrılır; görev purge işlemi paylaşılan dosyaları tamamen silmek yerine sahip olunan artefaktları kaldırır ve paylaşılan durumu onarır.",
-    "cleanupPolicyPath": "Politika yolu",
-    "cleanupDailyEnabled": "Günlük bakım etkin",
-    "cleanupDailyDryRun": "Günlük bakım dry-run",
-    "cleanupOlderThanDays": "Şu günden eskiyse uygun",
-    "cleanupKeepLatestTasks": "En son görevleri tut",
-    "cleanupPurgeRequireConfirm": "Purge onay gerektirir",
-    "cleanupHealthyDoneCompactDays": "Sağlıklı DONE şu gün sonra sıkıştırılır",
-    "cleanupProblemCompressDays": "Sorunlu görev şu gün sonra sıkıştırılır",
-    "cleanupEditSettingsTitle": "Saklama kontrolleri",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Çalıştırma başına maks. görev",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Görev purge",
-    "cleanupTaskPurgeHelp": "Bir görev kimliğine ait runtime artefaktlarını purge eder. Aktif görev koruması ve paylaşılan durum onarımı sunucu tarafında kalır.",
-    "cleanupTaskId": "Görev ID",
-    "cleanupPurgeTask": "Görevi purge et",
     "actionsTab": "Eylemler",
     "noticeActionsEnabled": "Görev ayrıntıları yerel sunucudan talep üzerine yüklenir. Sunucu 127.0.0.1'e bağlıdır ve bu CLI işleminden çıkıldığında durur. Kontrollü eylemler yalnızca izin verilenler listesindeki komutlar için etkinleştirilir.",
     "noticeActionsDisabled": "Görev ayrıntıları yerel sunucudan talep üzerine yüklenir. Sunucu 127.0.0.1'e bağlıdır ve bu CLI işleminden çıkıldığında durur. Sunucu --actions ile başlamadığı sürece kontrollü eylemler devre dışı bırakılır.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Mevcut eserler",
     "missingArtifacts": "Eksik eserler",
     "artifactPath": "Artefakt yolu",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Sıradan belgeler",
+    "ordinaryDocsHelp": "Sıradan belgeler kullanıcıya ait planlama, changelog veya ürün belgeleridir. Bu yollardaki değişiklikler denetlenebilir kalır ancak tek başlarına ek inceleme hatlarını tetiklemez.",
+    "ordinaryDocsPath": "Belge yolu",
+    "ordinaryDocsEmpty": "Yapılandırılmış sıradan belge yolu yok.",
+    "ordinaryDocsActionsDisabled": "Sıradan belge düzenleme devre dışı. Şununla yeniden başlatın",
+    "addOrdinaryDoc": "Belge ekle",
+    "removeOrdinaryDoc": "Kaldır",
+    "availableReviewTypes": "Kullanılabilir inceleme türleri"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -348,5 +305,15 @@
       "description": "Bilinen riskler, kırılgan yollar, güvenlik notları ve uyumluluk kısıtları."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Başlatma ayarları",
+      "body": "Başlatma ayarları sekmesi güncel yanıtları, zorunlu agent init kontrol noktalarını, sıradan belge yönetimini ve onboarding’i tamamlamak için handoff istemini gösterir."
+    },
+    "project-memory": {
+      "title": "Proje belleği",
+      "body": "Proje belleği sekmesi geçerli bakım modunu ve kalıcı bellek dosyalarını gösterir. Tüm içeriği panele yüklemek yerine her dosyayı isteğe bağlı açın."
+    }
+  }
 }

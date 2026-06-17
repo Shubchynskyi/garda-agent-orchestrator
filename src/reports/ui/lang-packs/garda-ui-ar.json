@@ -12,52 +12,8 @@
     "initSettingsTab": "إعدادات التهيئة",
     "projectMemoryTab": "ذاكرة المشروع",
     "backupsTab": "النسخ الاحتياطية",
-    "backupsTabIntro": "يعرض لقطات rollback من جرد النسخ الاحتياطية. الاستعادة وتعديلات auto-backup تتطلب `garda ui --actions`.",
-    "backupsInventoryTitle": "جرد النسخ الاحتياطية",
-    "backupsEmpty": "لا توجد نسخ احتياطية في الجرد.",
-    "backupsSnapshotsRoot": "جذر اللقطات",
-    "backupRootPresent": "موجود",
-    "backupRootMissing": "مفقود",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "تاريخ الإنشاء",
-    "backupSizeColumn": "الحجم",
-    "backupReasonColumn": "السبب",
-    "backupStatusColumn": "الحالة",
-    "backupRestoreColumn": "استعادة",
-    "backupReasonUpdate": "تحديث",
-    "backupReasonScheduled": "مجدول",
-    "backupsActionsDisabled": "الإجراءات المُتحكَّم بها معطّلة.",
-    "backupRestoreUnavailable": "الاستعادة غير متاحة لهذه النسخة الاحتياطية.",
-    "restoreBackup": "استعادة النسخة الاحتياطية",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "مفعّل",
-    "backupAutoIntervalDays": "الفاصل (أيام)",
-    "backupAutoKeepLatest": "الاحتفاظ بالأحدث",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "تعليمات",
     "cleanupSettingsTab": "إعدادات التنظيف",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "السياسة الفعلية",
-    "cleanupEffectivePolicyHelp": "تفصل خريطة ملكية وقت التشغيل بين أدلة المهمة والمجاميع المشتركة؛ يزيل تنظيف المهمة الملفات المملوكة لها ويصلح الحالة المشتركة بدلاً من حذف الملفات المشتركة بالكامل.",
-    "cleanupPolicyPath": "مسار السياسة",
-    "cleanupDailyEnabled": "الصيانة اليومية مفعّلة",
-    "cleanupDailyDryRun": "الصيانة اليومية كتجربة فقط",
-    "cleanupOlderThanDays": "مؤهل إذا كان أقدم من عدد الأيام",
-    "cleanupKeepLatestTasks": "الاحتفاظ بأحدث المهام",
-    "cleanupPurgeRequireConfirm": "التنظيف الكامل يتطلب تأكيداً",
-    "cleanupHealthyDoneCompactDays": "ضغط مهام DONE السليمة بعد أيام",
-    "cleanupProblemCompressDays": "ضغط المهام ذات المشكلات بعد أيام",
-    "cleanupEditSettingsTitle": "عناصر تحكم الاحتفاظ",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "الحد الأقصى للمهام في التشغيل",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "تنظيف المهمة",
-    "cleanupTaskPurgeHelp": "يزيل ملفات وقت التشغيل المملوكة لمعرّف مهمة واحد. تبقى حماية المهمة النشطة وإصلاح الحالة المشتركة على جانب الخادم.",
-    "cleanupTaskId": "معرّف المهمة",
-    "cleanupPurgeTask": "تنظيف المهمة",
     "actionsTab": "الإجراءات",
     "noticeActionsEnabled": "يتم تحميل تفاصيل المهام عند الطلب من الخادم المحلي. الخادم مرتبط بـ 127.0.0.1 ويتوقف عند انتهاء عملية CLI هذه. الإجراءات المُتحكَّم بها مفعّلة فقط للأوامر المسموح بها.",
     "noticeActionsDisabled": "يتم تحميل تفاصيل المهام عند الطلب من الخادم المحلي. الخادم مرتبط بـ 127.0.0.1 ويتوقف عند انتهاء عملية CLI هذه. الإجراءات المُتحكَّم بها معطّلة ما لم يبدأ الخادم بـ --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "التحف الموجودة",
     "missingArtifacts": "التحف المفقودة",
     "artifactPath": "مسار الأثر",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "المستندات العادية",
+    "ordinaryDocsHelp": "المستندات العادية هي مستندات تخطيط أو سجل تغييرات أو منتج يملكها المستخدم. تبقى تغييرات هذه المسارات قابلة للتدقيق لكنها لا تُفعّل مسارات مراجعة إضافية بمفردها.",
+    "ordinaryDocsPath": "مسار المستند",
+    "ordinaryDocsEmpty": "لم يتم تكوين مسارات مستندات عادية.",
+    "ordinaryDocsActionsDisabled": "تعديل المستندات العادية معطّل. أعد التشغيل مع",
+    "addOrdinaryDoc": "إضافة مستند",
+    "removeOrdinaryDoc": "إزالة",
+    "availableReviewTypes": "أنواع المراجعة المتاحة"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "مخاطر معروفة ومسارات هشة وملاحظات أمنية وقيود التوافق."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "إعدادات التهيئة",
+      "body": "تعرض علامة تبويب إعدادات التهيئة الإجابات الحالية ونقاط تفتيش تهيئة الوكيل الإلزامية وإدارة المستندات العادية ومطالبة handoff لإكمال onboarding."
+    },
+    "project-memory": {
+      "title": "ذاكرة المشروع",
+      "body": "تعرض علامة تبويب ذاكرة المشروع وضع الصيانة الحالي وملفات الذاكرة الدائمة. افتح كل ملف عند الطلب بدلاً من تحميل المحتوى الكامل في لوحة المعلومات."
+    }
+  }
 }

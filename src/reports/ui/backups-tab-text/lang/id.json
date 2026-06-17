@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Menampilkan snapshot rollback dari inventaris cadangan. Restore terjaga dan pengeditan auto-backup memerlukan `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Daftar cadangan"
+  },
+  "empty": {
+    "label": "Tidak ada cadangan dalam daftar."
+  },
+  "snapshots_root": {
+    "label": "Akar snapshot"
+  },
+  "root_present": {
+    "label": "ada"
+  },
+  "root_missing": {
+    "label": "tidak ada"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Dibuat"
+  },
+  "size_column": {
+    "label": "Ukuran"
+  },
+  "reason_column": {
+    "label": "Alasan"
+  },
+  "status_column": {
+    "label": "Status"
+  },
+  "restore_column": {
+    "label": "Pulihkan"
+  },
+  "reason_update": {
+    "label": "pembaruan"
+  },
+  "reason_scheduled": {
+    "label": "terjadwal"
+  },
+  "health_available": {
+    "label": "Tersedia"
+  },
+  "health_missing_records": {
+    "label": "Catatan hilang"
+  },
+  "health_invalid_records": {
+    "label": "Catatan tidak valid"
+  },
+  "actions_disabled": {
+    "label": "Tindakan terkendali dinonaktifkan."
+  },
+  "restore_unavailable": {
+    "label": "Pemulihan tidak tersedia untuk cadangan ini."
+  },
+  "restore_backup": {
+    "label": "Pulihkan cadangan"
+  },
+  "auto_backup_title": {
+    "label": "Cadangan otomatis"
+  },
+  "auto_backup_help": {
+    "description": "Cadangan otomatis terjadwal memakai pengaturan workflow yang diaudit. Menyimpan memerlukan konfirmasi."
+  },
+  "auto_enabled": {
+    "label": "Diaktifkan"
+  },
+  "auto_interval_days": {
+    "label": "Interval (hari)"
+  },
+  "auto_keep_latest": {
+    "label": "Simpan terbaru"
+  },
+  "restore_preview_help": {
+    "description": "Pilih cadangan untuk memulihkannya melalui tindakan rollback yang terjaga."
+  }
+}

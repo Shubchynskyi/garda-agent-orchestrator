@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "لغة المساعد",
+    "description": "اللغة التي يجب أن يستخدمها المساعد مع المشغّل."
+  },
+  "AssistantBrevity": {
+    "label": "تفصيل إجابات المساعد",
+    "description": "مدى تفصيل الإجابات العادية التي يقدّمها المساعد."
+  },
+  "SourceOfTruth": {
+    "label": "مالك التعليمات",
+    "description": "ملف المزوّد الأساسي الذي يملك تعليمات الوكيل المُولَّدة."
+  },
+  "ActiveAgentFiles": {
+    "label": "ملفات الوكيل النشطة",
+    "description": "ملفات نقطة دخول الوكيل المضمّنة حاليًا في هذا المشروع."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "منع الالتزام التلقائي",
+    "description": "يمنع الوكلاء من تنفيذ commit دون موافقة صريحة من المشغّل (على الأقل يحاول ذلك)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "وضع الوصول الكامل لـ Claude",
+    "description": "ما إذا كانت تعليمات Claude تفترض وصولًا كاملًا إلى المنسّق."
+  },
+  "TokenEconomyEnabled": {
+    "label": "توفير الرموز",
+    "description": "يجعل التعليمات المُولَّدة مدمجة ويتجنّب السياق غير الضروري."
+  },
+  "ProviderMinimalism": {
+    "label": "تبسيط ملفات المزوّد",
+    "description": "يبقي نقاط دخول المزوّد غير الأساسية كإعادات توجيه عندما يكون ذلك ممكنًا."
+  },
+  "OrchestratorVersion": {
+    "label": "إصدار المنسّق",
+    "description": "إصدار Garda الذي كتب الحالة."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "تم تأكيد اللغة",
+    "description": "ما إذا كان اختبار اللغة الخاص بالمساعد قد اجتُاز."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "تم تأكيد ملفات الوكيل",
+    "description": "ما إذا كانت ملفات الوكيل النشطة المحدّدة قد أُكّدت صراحةً."
+  },
+  "ProjectRulesUpdated": {
+    "label": "تم تحديث قواعد المشروع",
+    "description": "ما إذا كانت قواعد المشروع قد رُاجعت أو قُبلت أثناء تهيئة الوكيل."
+  },
+  "SkillsPromptCompleted": {
+    "label": "اكتملت مطالبة المهارات",
+    "description": "ما إذا كان اختبار مطالبة المهارات قد اكتمل."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "تم تأكيد المستندات العادية",
+    "description": "ما إذا كانت مسارات المستندات العادية قد أُكّدت."
+  },
+  "VerificationPassed": {
+    "label": "اجتاز التحقق",
+    "description": "ما إذا كان التحقق بعد التهيئة قد نجح."
+  },
+  "ManifestValidationPassed": {
+    "label": "البيان صالح",
+    "description": "ما إذا كان التحقق من manifest لوحة التحكم المحمية قد نجح."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "أمر compile-gate المُهيَّأ",
+    "description": "أمر التجميع أو البناء أو فحص الأنواع الذي أُدخل في إعدادات workflow أثناء التهيئة."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "أمر التحقق الكامل المُهيَّأ",
+    "description": "أمر الاختبار الذي أُدخل في إعدادات workflow أثناء التهيئة."
+  },
+  "reinit": {
+    "title": "إعادة تهيئة مساحة العمل",
+    "description": "يعيد إنشاء ملفات Garda المُولَّدة من إجابات التهيئة الحالية. استخدمه بعد تغيير خيارات التهيئة."
+  },
+  "agent-init": {
+    "title": "تسليم مطالبة الوكيل",
+    "description": "أعطِ AGENT_INIT_PROMPT.md للوكيل واطلب منه إكمال تدفق agent-init؛ الأمر الصارم لا يعمل إلا بعد أن ينفّذ الوكيل تلك الفحوصات."
+  }
+}

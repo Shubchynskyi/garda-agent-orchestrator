@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "助手语言",
+    "description": "助手与操作员交流时应使用的语言。"
+  },
+  "AssistantBrevity": {
+    "label": "助手详细程度",
+    "description": "普通助手回答应有多详细。"
+  },
+  "SourceOfTruth": {
+    "label": "指令所有者",
+    "description": "拥有所生成代理指令的规范 provider 文件。"
+  },
+  "ActiveAgentFiles": {
+    "label": "活动代理文件",
+    "description": "当前包含在本项目中的代理 entrypoint 文件。"
+  },
+  "EnforceNoAutoCommit": {
+    "label": "禁止自动 commit",
+    "description": "防止代理在未获得操作员明确批准时执行 commit（至少会尝试这样做）。"
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude 完全访问模式",
+    "description": "面向 Claude 的指令是否假定对编排器拥有完全访问权限。"
+  },
+  "TokenEconomyEnabled": {
+    "label": "令牌节约",
+    "description": "保持生成的指令紧凑，并避免不必要的上下文。"
+  },
+  "ProviderMinimalism": {
+    "label": "Provider 极简模式",
+    "description": "在可能的情况下，将非规范 provider entrypoint 保留为重定向。"
+  },
+  "OrchestratorVersion": {
+    "label": "编排器版本",
+    "description": "写入状态的 Garda 版本。"
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "语言已确认",
+    "description": "助手语言检查点是否已通过。"
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "代理文件已确认",
+    "description": "所选活动代理文件是否已明确确认。"
+  },
+  "ProjectRulesUpdated": {
+    "label": "项目规则已更新",
+    "description": "代理初始化期间是否已审阅或接受项目规则。"
+  },
+  "SkillsPromptCompleted": {
+    "label": "Skills 提示已完成",
+    "description": "Skills 提示检查点是否已完成。"
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "普通文档已确认",
+    "description": "普通文档路径是否已确认。"
+  },
+  "VerificationPassed": {
+    "label": "验证已通过",
+    "description": "初始化后验证是否已通过。"
+  },
+  "ManifestValidationPassed": {
+    "label": "清单有效",
+    "description": "受保护的 control-plane manifest 验证是否已通过。"
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "已写入的编译命令",
+    "description": "初始化期间写入工作流配置的编译/构建/类型检查命令。"
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "已写入的完整套件命令",
+    "description": "初始化期间写入工作流配置的测试命令。"
+  },
+  "reinit": {
+    "title": "重新初始化工作区",
+    "description": "根据当前初始化答案重新生成 Garda 生成的文件。更改初始化选项后使用。"
+  },
+  "agent-init": {
+    "title": "代理提示交接",
+    "description": "将 AGENT_INIT_PROMPT.md 交给代理并要求其完成 agent-init 流程；严格命令仅在代理执行这些检查后才会生效。"
+  }
+}

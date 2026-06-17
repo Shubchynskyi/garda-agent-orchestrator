@@ -67,6 +67,14 @@ function localizedOption(pack, id, option, field, fallback) {
   }
   return fallback;
 }
+function formatSettingOptionTitle(setting, option) {
+  const label = localizedOption(settingTextPacks, setting.id, option, 'label', option.label);
+  const value = String(option.value ?? '');
+  if (!value || String(label || '').trim().toLowerCase() === value.trim().toLowerCase()) {
+    return '<code>' + safe(value || label) + '</code>';
+  }
+  return safe(label) + ' <code>' + safe(value) + '</code>';
+}
 function safe(value) {
   return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
@@ -121,6 +129,14 @@ function workflowStatusText(status) {
   if (status === 'invalid') return t('workflowStatusInvalid');
   return String(status || 'unknown');
 }
+function setPanelConfigPath(node, pathValue) {
+  if (!node) {
+    return;
+  }
+  const paths = Array.isArray(pathValue) ? pathValue : [pathValue];
+  const joined = paths.map(value => String(value || '').trim()).filter(Boolean).join(', ');
+  node.textContent = joined ? '(' + joined + ')' : '';
+}
 function resultStatusText(status) {
   if (status === 'previewed') return t('resultStatusPreviewed');
   if (status === 'executed') return t('resultStatusExecuted');
@@ -167,9 +183,6 @@ function applyLanguage() {
   }
   if (currentSettingsPayload) {
     renderSettingsEditor(currentSettingsPayload);
-  }
-  if (currentSettingResult) {
-    renderSettingResult(currentSettingResult);
   }
   if (currentActionResult) {
     renderActionResult(currentActionResult);

@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Compile-gate-kommando",
+    "description": "Kommando som compile-gate kör för validering av kompilering, build och typkontroll. Utan konfiguration misslyckas compile-gate med stängt läge tills ett projektspecifikt kommando konfigureras."
+  },
+  "compile-gate-command-fallback": {
+    "description": "Inte angivet i workflow-config; compile-gate misslyckas med stängt läge tills ett projektspecifikt kommando konfigureras."
+  },
+  "full-suite-enabled": {
+    "label": "Obligatorisk full testsvit",
+    "description": "Styr om det konfigurerade kommandot för full testsvit ingår i uppgiftens livscykel.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Det konfigurerade kommandot för full testsvit krävs i uppgiftens livscykel."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Full testsvit-gate hoppas över om inte en annan workflow-väg kräver den."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Kommando för full testsvit",
+    "description": "Kommando som full testsvit-gate kör när obligatorisk full validering är aktiverad."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Timeout för full testsvit",
+    "description": "Maximal körtid för kommandot för full testsvit, i millisekunder."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Längd på lyckad testsammanfattning",
+    "description": "Hur många rader lyckad testutdata som ska vara synliga i kompakt uppgiftsbevis."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Längd på felblock",
+    "description": "Hur många rader misslyckad testutdata som sparas per kompakt felblock."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Hantering av fel utanför scope",
+    "description": "Vad workflow gör när full testsvit visar ett fel utanför den aktuella uppgiftens scope.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Logga och blockera",
+        "description": "Registrerar felet utanför scope och stoppar workflow tills det är löst."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Logga och varna",
+        "description": "Registrerar felet utanför scope men låter workflow fortsätta med en varning."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Placering av full testsvit",
+    "description": "Var den obligatoriska full testsvit-gate körs i uppgiftens livscykel.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "Efter kompilering, före reviews",
+        "description": "Kör full testsvit efter lyckad kompilering och innan review-arbete startar."
+      },
+      "before_test_review": {
+        "label": "Före testreview",
+        "description": "Kör full testsvit direkt innan testreview-lane behöver sitt bevis."
+      },
+      "before_completion": {
+        "label": "Före slutförande",
+        "description": "Skjuter upp full testsvit till den slutliga slutförandevägen."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Review-körningsläge",
+    "description": "Styr om obligatoriska review-lanes körs parallellt, väntar på kodreview eller körs sekventiellt.",
+    "options": {
+      "parallel_all": {
+        "label": "Allt parallellt",
+        "description": "Alla review-typer kan förberedas oberoende; inga upstream-beroenden gäller."
+      },
+      "test_after_code": {
+        "label": "Test efter code",
+        "description": "Endast test väntar på aktuell code PASS; andra review-typer förblir oberoende."
+      },
+      "code_first_optional": {
+        "label": "Code först för valfria",
+        "description": "API, performance, infra och dependency väntar på code PASS; test förblir downstream."
+      },
+      "strict_sequential": {
+        "label": "Strikt sekventiellt",
+        "description": "Alla obligatoriska review-lanes följer den kanoniska ordningen en i taget i aktuell cykel."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Scope-budgetvakt",
+    "description": "Varnar eller blockerar när en uppgift är för stor för den konfigurerade profilbudgeten.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Scope-budgetkontroller varnar eller blockerar när en uppgift överskrider profilbudgeten."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Scope-budgetgränser tillämpas inte vid beslut om uppgiftsstorlek."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Scope-budgetåtgärd",
+    "description": "Vad som händer när scope-budgeten överskrids.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Blockera för uppdelning",
+        "description": "Stoppar för stort arbete och ber operatören eller agenten dela upp det."
+      },
+      "WARN_ONLY": {
+        "label": "Endast varna",
+        "description": "Visar scope-varningen men stoppar inte nästa livscykelsteg."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Scope-budgetprofiler",
+    "description": "Uppgiftsprofiler där scope-budgetvakten gäller. Okända legacy-värden visas uttryckligen i stället för att tas bort tyst."
+  },
+  "scope-budget-max-files": {
+    "label": "Gräns för filer",
+    "description": "Maximalt antal ändrade filer innan scope-budgetvakten reagerar."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Gräns för ändrade rader",
+    "description": "Maximalt antal ändrade rader innan scope-budgetvakten reagerar."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Gräns för review-lanes",
+    "description": "Maximalt antal obligatoriska review-lanes innan scope-budgetvakten reagerar."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Gräns för review-tokens",
+    "description": "Maximal uppskattad review-tokenbudget innan scope-budgetvakten reagerar."
+  },
+  "review-cycle-enabled": {
+    "label": "Review-cykelvakt",
+    "description": "Upptäcker upprepade icke-test review-loopar innan de förbrukar för mycket arbete.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Upprepade icke-test review-loopar upptäcks innan closeout fortsätter."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Review-cykeltryck kontrolleras inte av denna vakt."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Review-cykelåtgärd",
+    "description": "Vad som händer när upprepade review-försök överskrider konfigurerade gränser.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Vänta på operatörsbeslut",
+        "description": "Stoppar upprepade review-loopar tills en operatör väljer återställningsväg."
+      },
+      "WARN_ONLY": {
+        "label": "Endast varna",
+        "description": "Rapporterar review-cykeltryck men låter workflow fortsätta."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Gräns för misslyckade icke-test reviews",
+    "description": "Maximalt antal misslyckade icke-test review-försök innan review-cykelvakten reagerar."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Total gräns för icke-test reviews",
+    "description": "Maximalt totalt antal icke-test review-försök innan review-cykelvakten reagerar."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Exkluderade review-typer",
+    "description": "Flerval: ikryssade review-typer exkluderas från räkningen i review-cykelvakten (review-cycle guard).",
+    "options": {
+      "code": {
+        "label": "Kodgranskning"
+      },
+      "db": {
+        "label": "Databasgranskning"
+      },
+      "security": {
+        "label": "Säkerhetsgranskning"
+      },
+      "refactor": {
+        "label": "Refaktoriseringsgranskning"
+      },
+      "api": {
+        "label": "API-granskning"
+      },
+      "test": {
+        "label": "Testgranskning"
+      },
+      "performance": {
+        "label": "Prestandagranskning"
+      },
+      "infra": {
+        "label": "Infrastrukturgranskning"
+      },
+      "dependency": {
+        "label": "Beroendegranskning"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Automatisk uppdelningsprompt",
+    "description": "Tillåter att review-cykeltryck skickar en auto-split-prompt när åtgärden är BLOCK_FOR_OPERATOR_DECISION. Har ingen blockerande effekt medan åtgärden är WARN_ONLY.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Review-cykeltryck kan skicka auto-split-prompten när åtgärden är BLOCK_FOR_OPERATOR_DECISION."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Review-cykeltryck skickar aldrig auto-split-prompten."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Projektminnesunderhåll",
+    "description": "Styr om closeout kontrollerar projektminnespåverkan.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Vid closeout kontrolleras om bevis för projektminnespåverkan behövs."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Vid closeout körs inga projektminneskontroller."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Projektminnesläge",
+    "description": "Hur strikt workflow kräver projektminnespåverkansarbete.",
+    "options": {
+      "off": {
+        "label": "Av",
+        "description": "Kör inte projektminnesunderhåll under closeout."
+      },
+      "check": {
+        "label": "Kontrollera",
+        "description": "Kontrollera om minnesuppdateringar behövs utan att skriva dem."
+      },
+      "update": {
+        "label": "Uppdatera",
+        "description": "Tillåt workflow att uppdatera fokuserade projektminnesfiler vid behov."
+      },
+      "strict": {
+        "label": "Strikt",
+        "description": "Kräv minnesbevis innan closeout kan godkännas."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Kör minneskontroll före slutlig closeout",
+    "description": "Kör projektminnesunderhåll före det sista slutförandesteget.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Projektminnesunderhåll körs före det sista slutförandesteget."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Projektminnesunderhåll infogas inte före slutlig closeout."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Kräv användargodkännande för minnesskrivning",
+    "description": "Kräver uttryckligt användargodkännande innan workflow skriver projektminnesfiler.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Skrivning till projektminne kräver uttryckligt användargodkännande innan filer ändras."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Skrivning till projektminne kan fortsätta enligt konfigurerat underhållsläge utan extra godkännandesteg."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Storlek på kompakt minnessammanfattning",
+    "description": "Maximal storlek på genererad kompakt projektminnessammanfattning, i tecken."
+  },
+  "project-memory-read-strategy": {
+    "label": "Lässtrategi för projektminne",
+    "description": "Hur agenter ska läsa beständigt minne vid uppgiftsstart.",
+    "options": {
+      "index_first": {
+        "label": "Index först",
+        "description": "Läs minnesindex först och öppna detaljfiler endast när indexet pekar på dem."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Kvarhållning av minnespåverkansartefakter",
+    "description": "Hur många dagar projektminnespåverkansartefakter behålls."
+  },
+  "task-reset-enabled": {
+    "label": "Kommandon för återställning/avvisning av uppgifter",
+    "description": "Tillåter bekräftade reset- eller discard-mutationer för uppgifter.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Bekräftade reset- och discard-kommandon för uppgifter är tillgängliga via skyddade vägar."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Reset- och discard-mutationer för uppgifter är inte tillgängliga."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Schemalagda automatiska säkerhetskopior",
+    "description": "Tillåter att den dagliga underhållstriggern skapar schemalagda rollback-säkerhetskopior när intervallet har passerat.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Dagligt underhåll kan skapa schemalagda rollback-säkerhetskopior när intervallet har passerat."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Dagligt underhåll skapar inte schemalagda rollback-säkerhetskopior."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Intervall för automatisk säkerhetskopia",
+    "description": "Minsta antal dagar mellan lyckade schemalagda säkerhetskopior."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Kvarhållning av säkerhetskopior",
+    "description": "Antal senaste säkerhetskopior att behålla efter att en schemalagd säkerhetskopia skapats."
+  },
+  "garda-self-guard": {
+    "label": "Garda självskydd",
+    "description": "Styr om agenter får gå direkt in i skyddat Garda control-plane-arbete.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "På",
+        "description": "Agenter kan inte gå in i skyddat control-plane-arbete utan operatörens väg."
+      },
+      "require_operator_confirmation": {
+        "label": "Operatörsbekräftelse",
+        "description": "Inträde i skyddat control-plane kräver uttrycklig operatörsbekräftelse."
+      }
+    }
+  }
+}

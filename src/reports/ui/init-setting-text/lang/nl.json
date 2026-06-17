@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Assistenttaal",
+    "description": "Taal die de assistent moet gebruiken bij communicatie met de operator."
+  },
+  "AssistantBrevity": {
+    "label": "Uitvoerigheid assistent",
+    "description": "Hoe gedetailleerd de normale antwoorden van de assistent moeten zijn."
+  },
+  "SourceOfTruth": {
+    "label": "Instructie-eigenaar",
+    "description": "Canoniek provider-bestand dat de gegenereerde agent-instructies bezit."
+  },
+  "ActiveAgentFiles": {
+    "label": "Actieve agentbestanden",
+    "description": "Agent-entrypointbestanden die momenteel in dit project zijn opgenomen."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Geen automatische commits",
+    "description": "Voorkomt dat agenten committen zonder expliciete goedkeuring van de operator (het probeert het in ieder geval)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude volledige-toegangsmodus",
+    "description": "Of Claude-gerichte instructies volledige orchestrator-toegang veronderstellen."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Token-besparing",
+    "description": "Houdt gegenereerde instructies compact en vermijdt onnodige context."
+  },
+  "ProviderMinimalism": {
+    "label": "Provider-minimalisme",
+    "description": "Houdt niet-canonieke provider-entrypoints waar mogelijk als omleidingen."
+  },
+  "OrchestratorVersion": {
+    "label": "Orchestratorversie",
+    "description": "Garda-versie die de status heeft weggeschreven."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Taal bevestigd",
+    "description": "Of de taalcheckpoint van de assistent is geslaagd."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Agentbestanden bevestigd",
+    "description": "Of de geselecteerde actieve agentbestanden expliciet zijn bevestigd."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Projectregels bijgewerkt",
+    "description": "Of projectregels zijn bekeken of geaccepteerd tijdens agent-initialisatie."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Skills-prompt voltooid",
+    "description": "Of de skills-promptcheckpoint is voltooid."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Gewone documenten bevestigd",
+    "description": "Of gewone documentatiepaden zijn bevestigd."
+  },
+  "VerificationPassed": {
+    "label": "Verificatie geslaagd",
+    "description": "Of de post-init-verificatie is geslaagd."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest geldig",
+    "description": "Of validatie van het beveiligde control-plane-manifest is geslaagd."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Ingestelde compile-opdracht",
+    "description": "Compile-, build- of typecheck-opdracht die tijdens initialisatie in de workflowconfiguratie is geschreven."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Ingestelde volledige-suite-opdracht",
+    "description": "Testopdracht die tijdens initialisatie in de workflowconfiguratie is geschreven."
+  },
+  "reinit": {
+    "title": "Werkruimte opnieuw initialiseren",
+    "description": "Materialiseert Garda-gegenereerde bestanden opnieuw vanuit de huidige init-antwoorden. Gebruik dit na wijziging van initialisatiekeuzes."
+  },
+  "agent-init": {
+    "title": "Agent-promptoverdracht",
+    "description": "Geef de agent AGENT_INIT_PROMPT.md en vraag om de agent-init-flow te voltooien; de harde opdracht werkt pas nadat de agent die controles heeft uitgevoerd."
+  }
+}

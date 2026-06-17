@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Sprache des Assistenten",
+    "description": "Sprache, die der Assistent für die Kommunikation mit dem Operator verwenden soll."
+  },
+  "AssistantBrevity": {
+    "label": "Ausführlichkeit",
+    "description": "Wie detailliert die normalen Antworten des Assistenten sein sollen."
+  },
+  "SourceOfTruth": {
+    "label": "Instruktionsquelle",
+    "description": "Kanonische Provider-Datei, die die generierten Agenteninstruktionen besitzt."
+  },
+  "ActiveAgentFiles": {
+    "label": "Aktive Agentendateien",
+    "description": "Agent-Entrypoint-Dateien, die aktuell in diesem Projekt enthalten sind."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Keine automatischen Commits",
+    "description": "Verhindert, dass Agenten ohne ausdrückliche Genehmigung des Operators committen (zumindest wird es versucht)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude Vollzugriffsmodus",
+    "description": "Ob Claude-orientierte Instruktionen vollen Orchestrator-Zugriff voraussetzen."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Token-Sparsamkeit",
+    "description": "Hält generierte Instruktionen kompakt und vermeidet unnötigen Kontext."
+  },
+  "ProviderMinimalism": {
+    "label": "Provider-Minimalismus",
+    "description": "Hält nicht-kanonische Provider-Entrypoints nach Möglichkeit als Weiterleitungen."
+  },
+  "OrchestratorVersion": {
+    "label": "Orchestrator-Version",
+    "description": "Garda-Version, die den Zustand geschrieben hat."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Sprache bestätigt",
+    "description": "Ob der Sprach-Checkpoint bestanden wurde."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Agentendateien bestätigt",
+    "description": "Ob die ausgewählten aktiven Agentendateien explizit bestätigt wurden."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Projektregeln aktualisiert",
+    "description": "Ob Projektregeln während der Agenten-Initialisierung überprüft oder akzeptiert wurden."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Skills-Prompt abgeschlossen",
+    "description": "Ob der Skills-Prompt-Checkpoint abgeschlossen wurde."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Gewöhnliche Dokumente bestätigt",
+    "description": "Ob gewöhnliche Dokumentationspfade bestätigt wurden."
+  },
+  "VerificationPassed": {
+    "label": "Verifizierung bestanden",
+    "description": "Ob die Post-Init-Verifizierung bestanden wurde."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest gültig",
+    "description": "Ob die Validierung des geschützten Control-Plane-Manifests bestanden wurde."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Gesetzter Compile-Befehl",
+    "description": "Compile-/Build-/Type-Check-Befehl, der während der Initialisierung in die Workflow-Konfiguration geschrieben wurde."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Gesetzter Volltest-Befehl",
+    "description": "Testbefehl, der während der Initialisierung in die Workflow-Konfiguration geschrieben wurde."
+  },
+  "reinit": {
+    "title": "Arbeitsbereich neu initialisieren",
+    "description": "Materialisiert Garda-generierte Dateien aus den aktuellen Init-Antworten neu. Verwenden Sie dies nach Änderung der Initialisierungsoptionen."
+  },
+  "agent-init": {
+    "title": "Agenten-Prompt-Übergabe",
+    "description": "Geben Sie dem Agenten AGENT_INIT_PROMPT.md und bitten Sie ihn, den agent-init-Ablauf abzuschließen; der harte Befehl funktioniert erst, nachdem der Agent diese Prüfungen durchgeführt hat."
+  }
+}

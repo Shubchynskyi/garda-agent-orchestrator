@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Geheugenonderhoud ingeschakeld",
+    "description": "Of workflow-closeout duurzaam projectgeheugen controleert."
+  },
+  "memory-mode": {
+    "label": "Geheugenonderhoudsmodus",
+    "description": "Huidige workflowmodus: off, check, update of strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Uitgevoerd vóór finale closeout",
+    "description": "Of de project-memory gate vóór voltooiing wordt uitgevoerd."
+  },
+  "memory-require-approval": {
+    "label": "Goedkeuring vereist voor schrijfacties",
+    "description": "Of schrijfacties naar project-memory-bestanden gebruikersgoedkeuring vereisen."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Limiet compacte samenvatting",
+    "description": "Maximale grootte van de gegenereerde compacte projectgeheugensamenvatting, in tekens."
+  },
+  "memory-read-strategy": {
+    "label": "Leesstrategie",
+    "description": "Hoe agents projectgeheugen aan het begin van een taak moeten lezen."
+  },
+  "memory-impact-retention-days": {
+    "label": "Bewaring impactartefacten",
+    "description": "Hoeveel dagen project-memory-impactartefacten worden bewaard."
+  },
+  "memory-initialized": {
+    "label": "Geïnitialiseerd door agent init",
+    "description": "Of agent-init de initialisatie van projectgeheugen heeft vastgelegd."
+  },
+  "memory-validated": {
+    "label": "Gevalideerd door agent init",
+    "description": "Of agent-init een succesvolle validatie van projectgeheugen heeft vastgelegd."
+  },
+  "memory-dir": {
+    "label": "Geheugenmap",
+    "description": "Map met door de gebruiker beheerde bestanden voor duurzaam geheugen."
+  },
+  "memory-read-first": {
+    "label": "Eerst te lezen bestanden",
+    "description": "Bestanden die agents moeten lezen vóór focused geheugenbestanden."
+  },
+  "memory-summary-rule": {
+    "label": "Gegenereerde samenvattingsregel",
+    "description": "Gegenereerd rule-bestand dat projectgeheugen samenvat voor agentstart."
+  },
+  "memory-bootstrap-report": {
+    "label": "Bootstraprapport",
+    "description": "Runtime-rapport van project-memory bootstrap of validatie."
+  }
+}

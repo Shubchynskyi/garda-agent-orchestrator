@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Listet Rollback-Snapshots aus dem Backup-Inventar. Geschützte Wiederherstellung und Auto-Backup-Bearbeitung erfordern `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Backup-Liste"
+  },
+  "empty": {
+    "label": "Keine Backups in der Liste."
+  },
+  "snapshots_root": {
+    "label": "Snapshot-Stamm"
+  },
+  "root_present": {
+    "label": "vorhanden"
+  },
+  "root_missing": {
+    "label": "fehlt"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Erstellt"
+  },
+  "size_column": {
+    "label": "Größe"
+  },
+  "reason_column": {
+    "label": "Grund"
+  },
+  "status_column": {
+    "label": "Zustand"
+  },
+  "restore_column": {
+    "label": "Wiederherstellen"
+  },
+  "reason_update": {
+    "label": "Update"
+  },
+  "reason_scheduled": {
+    "label": "geplant"
+  },
+  "health_available": {
+    "label": "Verfügbar"
+  },
+  "health_missing_records": {
+    "label": "Datensätze fehlen"
+  },
+  "health_invalid_records": {
+    "label": "Ungültige Datensätze"
+  },
+  "actions_disabled": {
+    "label": "Kontrollierte Aktionen sind deaktiviert."
+  },
+  "restore_unavailable": {
+    "label": "Wiederherstellung für dieses Backup nicht verfügbar."
+  },
+  "restore_backup": {
+    "label": "Backup wiederherstellen"
+  },
+  "auto_backup_title": {
+    "label": "Auto-Backup"
+  },
+  "auto_backup_help": {
+    "description": "Geplante Auto-Backups nutzen geprüfte Workflow-Einstellungen. Speichern erfordert eine Bestätigung."
+  },
+  "auto_enabled": {
+    "label": "Aktiviert"
+  },
+  "auto_interval_days": {
+    "label": "Intervall (Tage)"
+  },
+  "auto_keep_latest": {
+    "label": "Neueste behalten"
+  },
+  "restore_preview_help": {
+    "description": "Wählen Sie ein Backup aus, um es über die geschützte Rollback-Aktion wiederherzustellen."
+  }
+}

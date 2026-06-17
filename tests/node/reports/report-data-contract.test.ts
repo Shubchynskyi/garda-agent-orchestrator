@@ -278,7 +278,7 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(excludedReviewTypes);
     assert.equal(excludedReviewTypes.value_type, 'enum_list');
     assert.ok(excludedReviewTypes.options.some((option) => option.value === 'test'));
-    assert.ok(excludedReviewTypes.options.some((option) => option.value === 'performance' && option.description.includes('disabled')));
+    assert.ok(excludedReviewTypes.options.some((option) => option.value === 'performance' && option.label === 'Performance review'));
     assert.match(excludedReviewTypes.command, /--review-cycle-excluded-review-types <comma-separated: /u);
     const projectMemoryCompactLimit = tab.settings.find((setting) => setting.key === 'project_memory_maintenance.max_compact_summary_chars');
     assert.ok(projectMemoryCompactLimit);
@@ -345,6 +345,8 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
         && setting.value === 12000
     )));
     assert.ok(report.project_memory_tab.files.some((file) => file.path.endsWith('project-memory/compact.md') && file.exists && file.size_bytes !== null));
+    assert.match(report.project_memory_tab.settings_config_path, /workflow-config\.json$/u);
+    assert.match(report.project_memory_tab.memory_directory_path, /project-memory$/u);
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Task execution'));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Review execution modes'));
     assert.ok(report.instructions_tab.entries.some((entry) => entry.title === 'Backups'));
@@ -352,6 +354,7 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.backups_tab.auto_backup.keep_latest, 10);
     assert.deepEqual(report.backups_tab.rows, []);
     assert.equal(report.backups_tab.snapshots_root_exists, false);
+    assert.match(report.backups_tab.workflow_config_path, /workflow-config\.json$/u);
     assert.ok(report.tasks_tab.rows[0].detail.unavailable.some((entry) => entry.scope === 'task:T-100:detail'));
     assert.equal(report.unavailable.length, 0);
 });

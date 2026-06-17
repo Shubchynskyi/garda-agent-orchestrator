@@ -65,6 +65,8 @@ export function buildProjectMemoryTab(
         };
     });
     return {
+        settings_config_path: workflowTab.config_path,
+        memory_directory_path: toRepoRelativePath(root, memoryDir),
         status: buildProjectMemoryStatusRows(workflowTab, agentState.value),
         settings: workflowTab.settings.filter((setting) => setting.key.startsWith('project_memory_maintenance.')),
         files,

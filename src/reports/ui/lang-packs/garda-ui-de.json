@@ -12,52 +12,8 @@
     "initSettingsTab": "Initialisierungseinstellungen",
     "projectMemoryTab": "Projektspeicher",
     "backupsTab": "Backups",
-    "backupsTabIntro": "Listet Rollback-Snapshots aus dem Backup-Inventar. Geschützte Wiederherstellung und Auto-Backup-Bearbeitung erfordern `garda ui --actions`.",
-    "backupsInventoryTitle": "Backup-Inventar",
-    "backupsEmpty": "Keine Backups im Inventar.",
-    "backupsSnapshotsRoot": "Snapshot-Stamm",
-    "backupRootPresent": "vorhanden",
-    "backupRootMissing": "fehlt",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Erstellt",
-    "backupSizeColumn": "Größe",
-    "backupReasonColumn": "Grund",
-    "backupStatusColumn": "Zustand",
-    "backupRestoreColumn": "Wiederherstellen",
-    "backupReasonUpdate": "Update",
-    "backupReasonScheduled": "geplant",
-    "backupsActionsDisabled": "Kontrollierte Aktionen sind deaktiviert.",
-    "backupRestoreUnavailable": "Wiederherstellung für dieses Backup nicht verfügbar.",
-    "restoreBackup": "Backup wiederherstellen",
-    "backupsAutoBackupTitle": "Auto-Backup",
-    "backupAutoEnabled": "Aktiviert",
-    "backupAutoIntervalDays": "Intervall (Tage)",
-    "backupAutoKeepLatest": "Neueste behalten",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Anweisungen",
     "cleanupSettingsTab": "Bereinigungseinstellungen",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Wirksame Richtlinie",
-    "cleanupEffectivePolicyHelp": "Aufgabengebundene Nachweise und gemeinsame Aggregate werden durch die Runtime-Eigentumskarte getrennt; die Aufgabenbereinigung entfernt eigene Artefakte und repariert gemeinsamen Zustand, statt gemeinsame Dateien vollständig zu löschen.",
-    "cleanupPolicyPath": "Richtlinienpfad",
-    "cleanupDailyEnabled": "Tägliche Wartung aktiviert",
-    "cleanupDailyDryRun": "Tägliche Wartung als Trockenlauf",
-    "cleanupOlderThanDays": "Geeignet, wenn älter als Tage",
-    "cleanupKeepLatestTasks": "Neueste Aufgaben behalten",
-    "cleanupPurgeRequireConfirm": "Bereinigung erfordert Bestätigung",
-    "cleanupHealthyDoneCompactDays": "Gesunde DONE-Aufgaben komprimieren nach Tagen",
-    "cleanupProblemCompressDays": "Problemaufgaben komprimieren nach Tagen",
-    "cleanupEditSettingsTitle": "Aufbewahrung steuern",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Max. Aufgaben pro Lauf",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Aufgabe bereinigen",
-    "cleanupTaskPurgeHelp": "Entfernt Runtime-Artefakte, die einer Aufgaben-ID gehören. Schutz aktiver Aufgaben und Reparatur gemeinsamen Zustands bleiben serverseitig.",
-    "cleanupTaskId": "Aufgaben-ID",
-    "cleanupPurgeTask": "Aufgabe bereinigen",
     "actionsTab": "Aktionen",
     "noticeActionsEnabled": "Aufgabendetails werden bei Bedarf vom lokalen Server geladen. Der Server ist an 127.0.0.1 gebunden und stoppt, wenn dieser CLI-Prozess beendet wird. Kontrollierte Aktionen sind nur für Befehle auf der Zulassungsliste aktiviert.",
     "noticeActionsDisabled": "Aufgabendetails werden bei Bedarf vom lokalen Server geladen. Der Server ist an 127.0.0.1 gebunden und stoppt, wenn dieser CLI-Prozess beendet wird. Kontrollierte Aktionen sind deaktiviert, es sei denn, der Server startet mit --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Vorhandene Artefakte",
     "missingArtifacts": "Fehlende Artefakte",
     "artifactPath": "Artefaktpfad",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Gewöhnliche Dokumente",
+    "ordinaryDocsHelp": "Gewöhnliche Dokumente sind benutzereigene Planungs-, Changelog- oder Produktdokumente. Änderungen an diesen Pfaden bleiben prüfbar, lösen aber für sich allein keine zusätzlichen Review-Lanes aus.",
+    "ordinaryDocsPath": "Dokumentpfad",
+    "ordinaryDocsEmpty": "Keine Pfade für gewöhnliche Dokumente konfiguriert.",
+    "ordinaryDocsActionsDisabled": "Bearbeitung gewöhnlicher Dokumente ist deaktiviert. Neu starten mit",
+    "addOrdinaryDoc": "Dokument hinzufügen",
+    "removeOrdinaryDoc": "Entfernen",
+    "availableReviewTypes": "Verfügbare Review-Typen"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -348,5 +305,15 @@
       "description": "Bekannte Risiken, fragile Pfade, Sicherheitshinweise und Kompatibilitätsgrenzen."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Initialisierungseinstellungen",
+      "body": "Die Registerkarte Initialisierungseinstellungen zeigt aktuelle Antworten, erforderliche Agent-Init-Checkpoints, Verwaltung gewöhnlicher Dokumente und den Handoff-Prompt zum Abschluss des Onboardings."
+    },
+    "project-memory": {
+      "title": "Projektspeicher",
+      "body": "Die Registerkarte Projektspeicher zeigt den aktuellen Wartungsmodus und die dauerhaften Projektspeicherdateien. Öffnen Sie jede Datei bei Bedarf, statt den vollständigen Inhalt ins Dashboard zu laden."
+    }
+  }
 }

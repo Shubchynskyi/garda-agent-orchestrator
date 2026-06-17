@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Retentionspolicy för runtime i `runtime-retention.json`: trösklar för schemalagt underhåll, regler för kompaktering och skyddade manuella rensningsåtgärder."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Dagligt underhåll",
+    "description": "Slår på eller av schemalagt dagligt underhåll. När det är aktiverat kan orkestreraren enligt schema behandla en begränsad mängd kvalificerade uppgifter utan manuell inblandning."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Max antal uppgifter per underhållskörning",
+    "description": "Övre gräns för hur många kvalificerade uppgifter det dagliga underhållet behandlar i en enda körning. Begränsar påverkan om tröskelvärdena är felkonfigurerade."
+  },
+  "eligible_older_than_days": {
+    "label": "Minsta uppgiftsålder (dagar)",
+    "description": "En uppgift måste vara minst så här gammal innan underhåll eller manuell rensning får röra dess runtime-artefakter. Aktiva och nyare uppgifter förblir skyddade."
+  },
+  "keep_latest_tasks": {
+    "label": "Behåll de senaste uppgifterna (antal)",
+    "description": "Bevarar alltid minst så många av de senaste uppgifterna även om de är äldre än ålderströskeln. Sätt 0 för att bara förlita dig på ålder och skydd för aktiva uppgifter."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run för dagligt underhåll",
+    "description": "När värdet är true listar det schemalagda dagliga underhållet bara kandidater och skriver granskningsutdata; det tar inte bort eller komprimerar artefakter. Använd true medan du justerar trösklarna och byt sedan till false för att tillämpa."
+  },
+  "purge_require_confirm": {
+    "label": "Kräv bekräftelse för purge",
+    "description": "När värdet är true kräver destruktiva purge- och cleanup-kommandon en uttryckligen inskriven bekräftelsefras innan servern kör dem."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Kompaktera friska DONE efter (dagar)",
+    "description": "Efter så många dagar kan framgångsrikt slutförda uppgifter (DONE) kompakteras till endast ledger-historik när ledger-bevisen har verifierats."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Komprimera problemuppgifter efter (dagar)",
+    "description": "Efter så många dagar kan tunga forensiska artefakter från misslyckade eller fastnade uppgifter komprimeras samtidigt som läsbara återställningsbevis bevaras."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Manuell runtime-rensning",
+    "description": "Kör `garda cleanup` en gång med ålders- och behåll-senaste-värdena från raderna ovan. Förhandsvisning visar bara kandidater; Verkställ tar bort eller komprimerar enligt policyn och kräver bekräftelse."
+  },
+  "task_purge": {
+    "label": "Uppgifts-purge",
+    "description": "Tar bort runtime-artefakter som ägs av ett enda uppgifts-ID och reparerar delade index. Tar inte bort hela delade filer; skydd för aktiva uppgifter gäller fortfarande på servern."
+  },
+  "task_id": {
+    "label": "Uppgifts-ID"
+  },
+  "purge_task_button": {
+    "label": "Rensa uppgift"
+  },
+  "run_preview": {
+    "label": "Förhandsvisning"
+  },
+  "value_true": {
+    "label": "true — aktiverad"
+  },
+  "value_false": {
+    "label": "false — inaktiverad"
+  }
+}

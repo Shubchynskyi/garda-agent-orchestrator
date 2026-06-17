@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "compile-gate コマンド",
+    "description": "コンパイル／ビルド／型チェック検証で compile-gate が実行するコマンド。workflow-config で未設定の場合、プロジェクト固有のコマンドが設定されるまで compile-gate は fail-closed で終了します。"
+  },
+  "compile-gate-command-fallback": {
+    "description": "workflow-config で未設定です。プロジェクト固有のコマンドが設定されるまで compile-gate は fail-closed で終了します。"
+  },
+  "full-suite-enabled": {
+    "label": "フルスイート検証の必須化",
+    "description": "設定済みのフルスイートテストコマンドをタスクのライフサイクルに含めるかどうかを制御します。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "設定済みのフルスイートコマンドはタスクのライフサイクルで必須です。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "他のワークフロー経路で要求されない限り、フルスイートゲートはスキップされます。"
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "フルスイートコマンド",
+    "description": "フルスイート検証が必須のときにフルスイートゲートが実行するコマンド。"
+  },
+  "full-suite-timeout-ms": {
+    "label": "フルスイートのタイムアウト",
+    "description": "フルスイートコマンドの最大実行時間（ミリ秒）。"
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "成功時フルスイート要約の行数",
+    "description": "コンパクトなタスク証跡に残す成功時フルスイート出力の行数。"
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "失敗出力チャンクの行数",
+    "description": "コンパクトな失敗チャンクごとに保持する失敗時フルスイート出力の行数。"
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "スコープ外失敗の扱い",
+    "description": "フルスイート出力に現在のタスクスコープ外の失敗が含まれる場合のワークフローの動作。",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "記録してブロック",
+        "description": "スコープ外の失敗を記録し、解決するまでワークフローを停止します。"
+      },
+      "AUDIT_AND_WARN": {
+        "label": "記録して警告",
+        "description": "スコープ外の失敗を記録しますが、警告付きでワークフローの継続を許可します。"
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "フルスイートの実行位置",
+    "description": "タスクのライフサイクル内で必須フルスイートゲートを実行するタイミング。",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "コンパイル後、レビュー前",
+        "description": "コンパイル成功後、レビュー作業開始前にフルスイートを実行します。"
+      },
+      "before_test_review": {
+        "label": "テストレビュー前",
+        "description": "テストレビューレーンが証跡を必要とする直前にフルスイートを実行します。"
+      },
+      "before_completion": {
+        "label": "完了前",
+        "description": "最終完了経路までフルスイートの実行を遅延します。"
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "レビュー実行モード",
+    "description": "必須レビューレーンを並列実行するか、コードレビューを待つか、順次実行するかを制御します。",
+    "options": {
+      "parallel_all": {
+        "label": "すべて並列",
+        "description": "すべてのレビュータイプを独立して準備できます。上流の起動依存はありません。"
+      },
+      "test_after_code": {
+        "label": "コード後にテスト",
+        "description": "テストのみが現在サイクルのコード PASS を待ちます。他のレビュータイプは独立しています。"
+      },
+      "code_first_optional": {
+        "label": "オプションはコード優先",
+        "description": "API、パフォーマンス、インフラ、依存関係はコード PASS を待ちます。テストはすべての必須上流レビューの下流に残ります。"
+      },
+      "strict_sequential": {
+        "label": "厳密な逐次実行",
+        "description": "すべての必須レビューは現在のサイクルで正規のレビュー順に一つずつ実行されます。"
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "スコープ予算ガード",
+    "description": "タスクが設定済みプロファイル予算に対して大きすぎる場合に警告またはブロックします。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "タスクが設定済みプロファイル予算を超えた場合、スコープ予算チェックが警告またはブロックします。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "タスクサイズの判断でスコープ予算の上限は適用されません。"
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "スコープ予算超過時の動作",
+    "description": "スコープ予算を超えた場合の動作。",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "分割までブロック",
+        "description": "大きすぎる作業を停止し、オペレーターまたはエージェントに分割を求めます。"
+      },
+      "WARN_ONLY": {
+        "label": "警告のみ",
+        "description": "スコープ警告を表示しますが、次のライフサイクルステップは停止しません。"
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "スコープ予算の対象プロファイル",
+    "description": "スコープ予算ガードが適用されるタスクプロファイル。不明なレガシー値は黙って削除されず、明示的に表示されます。"
+  },
+  "scope-budget-max-files": {
+    "label": "スコープ予算のファイル上限",
+    "description": "スコープ予算ガードが反応するまでの変更ファイル数の上限。"
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "スコープ予算の変更行上限",
+    "description": "スコープ予算ガードが反応するまでの変更行数の上限。"
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "スコープ予算のレビューレーン上限",
+    "description": "スコープ予算ガードが反応するまでの必須レビューレーン数の上限。"
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "スコープ予算のレビュートークン予測",
+    "description": "スコープ予算ガードが反応するまでのレビュートークン予測予算の上限。"
+  },
+  "review-cycle-enabled": {
+    "label": "レビューサイクルガード",
+    "description": "過剰な作業を消費する前に、繰り返される非テストレビューループを検出します。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "クローズアウト継続前に、繰り返される非テストレビューループが検出されます。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "このガードではレビューサイクルの圧力はチェックされません。"
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "レビューサイクル超過時の動作",
+    "description": "繰り返されるレビュー試行が設定上限を超えた場合の動作。",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "オペレーター判断までブロック",
+        "description": "オペレーターが復旧経路を選択するまで、繰り返されるレビューループを停止します。"
+      },
+      "WARN_ONLY": {
+        "label": "警告のみ",
+        "description": "レビューサイクルの圧力を報告しますが、ワークフローの継続を許可します。"
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "失敗非テストレビュー上限",
+    "description": "レビューサイクルガードが反応するまでの失敗した非テストレビュー試行数の上限。"
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "非テストレビュー合計上限",
+    "description": "レビューサイクルガードが反応するまでの非テストレビュー試行合計数の上限。"
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "除外するレビュータイプ",
+    "description": "複数選択：チェックされたレビュータイプは、レビューサイクルガード（review-cycle guard）のカウントから除外されます。",
+    "options": {
+      "code": {
+        "label": "コードレビュー"
+      },
+      "db": {
+        "label": "データベースレビュー"
+      },
+      "security": {
+        "label": "セキュリティレビュー"
+      },
+      "refactor": {
+        "label": "リファクタリングレビュー"
+      },
+      "api": {
+        "label": "APIレビュー"
+      },
+      "test": {
+        "label": "テストレビュー"
+      },
+      "performance": {
+        "label": "パフォーマンスレビュー"
+      },
+      "infra": {
+        "label": "インフラレビュー"
+      },
+      "dependency": {
+        "label": "依存関係レビュー"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "自動分割プロンプト",
+    "description": "レビューサイクル動作が BLOCK_FOR_OPERATOR_DECISION のとき、レビューサイクル圧力による自動分割プロンプトを許可します。動作が WARN_ONLY の間はブロック効果はありません。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "動作が BLOCK_FOR_OPERATOR_DECISION のとき、レビューサイクル圧力が自動分割プロンプトを発行できます。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "レビューサイクル圧力は自動分割プロンプトを発行しません。"
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "プロジェクトメモリ保守",
+    "description": "クローズアウト時にプロジェクトメモリへの影響をチェックするかどうかを制御します。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "クローズアウト時にプロジェクトメモリ影響の証跡が必要かどうかをチェックします。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "クローズアウト時にプロジェクトメモリ保守チェックは実行されません。"
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "プロジェクトメモリモード",
+    "description": "ワークフローがプロジェクトメモリ影響作業をどの程度厳格に要求するか。",
+    "options": {
+      "off": {
+        "label": "オフ",
+        "description": "クローズアウト時にプロジェクトメモリ保守を実行しません。"
+      },
+      "check": {
+        "label": "チェック",
+        "description": "メモリ更新が必要かどうかを確認しますが、書き込みは行いません。"
+      },
+      "update": {
+        "label": "更新",
+        "description": "必要に応じてワークフローが対象のプロジェクトメモリファイルを更新することを許可します。"
+      },
+      "strict": {
+        "label": "厳格",
+        "description": "クローズアウトが成功する前にメモリ証跡を要求します。"
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "最終クローズアウト前にメモリチェック",
+    "description": "最終完了ステップの前にプロジェクトメモリ保守を実行します。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "最終完了ステップの前にプロジェクトメモリ保守を実行します。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "最終クローズアウト前にプロジェクトメモリ保守は挿入されません。"
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "メモリ書き込みのユーザー承認",
+    "description": "ワークフローがプロジェクトメモリファイルを書き込む前に、明示的なユーザー承認を要求します。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "プロジェクトメモリの書き込みには、ファイル変更前の明示的なユーザー承認が必要です。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "プロジェクトメモリの書き込みは、追加の承認ステップなしで設定済み保守モードの下で実行できます。"
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "プロジェクトメモリ要約サイズ",
+    "description": "生成されるコンパクトなプロジェクトメモリ要約の最大サイズ（文字数）。"
+  },
+  "project-memory-read-strategy": {
+    "label": "プロジェクトメモリ読み取り戦略",
+    "description": "タスク開始時にエージェントが永続メモリをどのように読み取るか。",
+    "options": {
+      "index_first": {
+        "label": "インデックス優先",
+        "description": "まずメモリインデックスを読み、インデックスが指す場合にのみ詳細ファイルを開きます。"
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "プロジェクトメモリ影響の保持期間",
+    "description": "プロジェクトメモリ影響アーティファクトを保持する日数。"
+  },
+  "task-reset-enabled": {
+    "label": "タスクリセットコマンド",
+    "description": "確認済みのタスクリセット／破棄ミューテーションを許可します。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "確認済みのタスクリセットおよび破棄コマンドが保護された経路で利用できます。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "タスクリセットおよび破棄ミューテーションは利用できません。"
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "スケジュール自動バックアップ",
+    "description": "期限到来時に日次メンテナンストリガーがスケジュール済みロールバックバックアップを作成することを許可します。",
+    "options": {
+      "true": {
+        "label": "有効",
+        "description": "日次メンテナンスは、間隔が到来したときにスケジュール済みロールバックバックアップを作成できます。"
+      },
+      "false": {
+        "label": "無効",
+        "description": "日次メンテナンスはスケジュール済みロールバックバックアップを作成しません。"
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "自動バックアップ間隔",
+    "description": "成功したスケジュールバックアップ間の最小日数。"
+  },
+  "auto-backup-keep-latest": {
+    "label": "自動バックアップ保持数",
+    "description": "スケジュールバックアップ作成後に保持する最新バックアップ数。"
+  },
+  "garda-self-guard": {
+    "label": "Garda セルフガード",
+    "description": "エージェントが保護された Garda コントロールプレーン作業に直接入れるかどうかを制御します。",
+    "options": {
+      "deny_agent_entry": {
+        "label": "有効",
+        "description": "オペレーター所有の経路なしでは、エージェントは保護されたコントロールプレーン作業に入れません。"
+      },
+      "require_operator_confirmation": {
+        "label": "オペレーター確認",
+        "description": "保護されたコントロールプレーンへの入場には、明示的なオペレーター確認が必要です。"
+      }
+    }
+  }
+}

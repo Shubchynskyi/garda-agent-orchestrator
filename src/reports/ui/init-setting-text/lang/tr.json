@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Asistan dili",
+    "description": "Asistanın operatörle iletişim kurarken kullanması gereken dil."
+  },
+  "AssistantBrevity": {
+    "label": "Asistan ayrıntı düzeyi",
+    "description": "Normal asistan yanıtlarının ne kadar ayrıntılı olması gerektiği."
+  },
+  "SourceOfTruth": {
+    "label": "Talimat sahibi",
+    "description": "Üretilen ajan talimatlarına sahip olan kanonik sağlayıcı dosyası."
+  },
+  "ActiveAgentFiles": {
+    "label": "Aktif ajan dosyaları",
+    "description": "Bu projede şu anda dahil edilen ajan giriş noktası dosyaları."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Otomatik commit yok",
+    "description": "Ajanların operatörün açık onayı olmadan commit yapmasını engeller (en azından dener)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude tam erişim modu",
+    "description": "Claude odaklı talimatların tam orkestratör erişimi varsayıp varsaymadığı."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Token ekonomisi",
+    "description": "Üretilen talimatları kompakt tutar ve gereksiz bağlamdan kaçınır."
+  },
+  "ProviderMinimalism": {
+    "label": "Sağlayıcı minimalizmi",
+    "description": "Mümkün olduğunda kanonik olmayan sağlayıcı giriş noktalarını yönlendirme olarak bırakır."
+  },
+  "OrchestratorVersion": {
+    "label": "Orkestratör sürümü",
+    "description": "Durumu yazan Garda sürümü."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Dil onaylandı",
+    "description": "Asistan dili kontrol noktasının geçilip geçilmediği."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Ajan dosyaları onaylandı",
+    "description": "Seçilen aktif ajan dosyalarının açıkça onaylanıp onaylanmadığı."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Proje kuralları güncellendi",
+    "description": "Ajan başlatma sırasında proje kurallarının gözden geçirilip kabul edilip edilmediği."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Skills istemi tamamlandı",
+    "description": "Skills istemi kontrol noktasının tamamlanıp tamamlanmadığı."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Sıradan belgeler onaylandı",
+    "description": "Sıradan belge yollarının onaylanıp onaylanmadığı."
+  },
+  "VerificationPassed": {
+    "label": "Doğrulama geçildi",
+    "description": "Başlatma sonrası doğrulamanın geçilip geçilmediği."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest geçerli",
+    "description": "Korumalı kontrol düzlemi manifest doğrulamasının geçilip geçilmediği."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Eklenen derleme komutu",
+    "description": "Başlatma sırasında workflow yapılandırmasına eklenen derleme, build veya type-check komutu."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Eklenen tam paket komutu",
+    "description": "Başlatma sırasında workflow yapılandırmasına eklenen test komutu."
+  },
+  "reinit": {
+    "title": "Çalışma alanını yeniden başlat",
+    "description": "Garda tarafından üretilen dosyaları mevcut başlatma yanıtlarından yeniden oluşturur. Başlatma seçeneklerini değiştirdikten sonra kullanın."
+  },
+  "agent-init": {
+    "title": "Ajan istemi devri",
+    "description": "AGENT_INIT_PROMPT.md dosyasını ajana verin ve agent-init akışını tamamlamasını isteyin; katı komut yalnızca ajan bu kontrolleri yaptıktan sonra çalışır."
+  }
+}

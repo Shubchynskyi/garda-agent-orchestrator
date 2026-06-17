@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "बैकअप इन्वेंटरी से rollback स्नैपशॉट दिखाता है। सुरक्षित restore और auto-backup संपादन के लिए `garda ui --actions` चाहिए।"
+  },
+  "inventory_title": {
+    "label": "बैकअप सूची"
+  },
+  "empty": {
+    "label": "सूची में कोई बैकअप नहीं है।"
+  },
+  "snapshots_root": {
+    "label": "स्नैपशॉट रूट"
+  },
+  "root_present": {
+    "label": "मौजूद"
+  },
+  "root_missing": {
+    "label": "अनुपस्थित"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "बनाया गया"
+  },
+  "size_column": {
+    "label": "आकार"
+  },
+  "reason_column": {
+    "label": "कारण"
+  },
+  "status_column": {
+    "label": "स्थिति"
+  },
+  "restore_column": {
+    "label": "पुनर्स्थापना"
+  },
+  "reason_update": {
+    "label": "अपडेट"
+  },
+  "reason_scheduled": {
+    "label": "अनुसूचित"
+  },
+  "health_available": {
+    "label": "उपलब्ध"
+  },
+  "health_missing_records": {
+    "label": "रिकॉर्ड गायब"
+  },
+  "health_invalid_records": {
+    "label": "अमान्य रिकॉर्ड"
+  },
+  "actions_disabled": {
+    "label": "नियंत्रित क्रियाएँ अक्षम हैं।"
+  },
+  "restore_unavailable": {
+    "label": "इस बैकअप के लिए पुनर्स्थापना उपलब्ध नहीं।"
+  },
+  "restore_backup": {
+    "label": "बैकअप पुनर्स्थापित करें"
+  },
+  "auto_backup_title": {
+    "label": "स्वचालित बैकअप"
+  },
+  "auto_backup_help": {
+    "description": "निर्धारित स्वचालित बैकअप ऑडिट किए गए workflow सेटिंग्स का उपयोग करते हैं। सहेजने के लिए पुष्टि आवश्यक है।"
+  },
+  "auto_enabled": {
+    "label": "सक्षम"
+  },
+  "auto_interval_days": {
+    "label": "अंतराल (दिन)"
+  },
+  "auto_keep_latest": {
+    "label": "नवीनतम रखें"
+  },
+  "restore_preview_help": {
+    "description": "सुरक्षित रोलबैक क्रिया के जरिए उसे पुनर्स्थापित करने के लिए एक बैकअप चुनें।"
+  }
+}

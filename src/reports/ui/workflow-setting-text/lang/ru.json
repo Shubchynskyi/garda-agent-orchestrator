@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Команда compile-gate",
+    "description": "Команда для compile/build/type-check проверки. Если в workflow-config она не задана, compile-gate блокируется и не берёт fallback из 40-commands.md."
+  },
+  "compile-gate-command-fallback": {
+    "description": "Не задано в workflow-config; compile-gate блокируется, пока `workflow set` не запишет проектную команду compile/build/type-check."
+  },
+  "full-suite-enabled": {
+    "label": "Обязательная полная проверка",
+    "description": "Определяет, должна ли команда полного тестового набора быть обязательной частью lifecycle задачи.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Настроенная команда полной проверки обязательна в жизненном цикле задачи."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Gate полной проверки пропускается, если другой путь workflow не требует его."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Команда полной проверки",
+    "description": "Команда, которую запускает gate полной проверки, когда обязательная полная проверка включена."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Таймаут полной проверки",
+    "description": "Максимальное время выполнения команды полной проверки в миллисекундах."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Размер успешного отчёта полной проверки",
+    "description": "Сколько строк успешного вывода полной проверки сохранять в компактных доказательствах задачи."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Размер блока ошибки полной проверки",
+    "description": "Сколько строк неуспешного вывода сохранять в одном компактном блоке ошибки."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Ошибки вне scope задачи",
+    "description": "Что делать, если полная проверка нашла проблему за пределами текущей задачи.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Записать и заблокировать",
+        "description": "Записывает проблему и останавливает workflow до решения."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Записать и предупредить",
+        "description": "Записывает проблему, но разрешает продолжить с предупреждением."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Место полной проверки в жизненном цикле",
+    "description": "На каком этапе жизненного цикла задачи запускать обязательный gate полной проверки.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "После компиляции, перед ревью",
+        "description": "Запускает полную проверку после успешной компиляции и до старта ревью."
+      },
+      "before_test_review": {
+        "label": "Перед тестовым ревью",
+        "description": "Запускает полную проверку прямо перед тем, как тестовому ревью потребуются доказательства."
+      },
+      "before_completion": {
+        "label": "Перед завершением",
+        "description": "Откладывает полную проверку до финального пути завершения."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Режим запуска review",
+    "description": "Определяет, какие ревью могут идти параллельно, а какие должны ждать code review.",
+    "options": {
+      "parallel_all": {
+        "label": "Все параллельно",
+        "description": "Все review lanes можно готовить независимо; upstream-зависимостей нет."
+      },
+      "test_after_code": {
+        "label": "Test после code",
+        "description": "Только test ждёт текущий code PASS; остальные ревью независимы."
+      },
+      "code_first_optional": {
+        "label": "Code сначала для optional",
+        "description": "API, performance, infra и dependency ждут code PASS; test остаётся downstream."
+      },
+      "strict_sequential": {
+        "label": "Строго по очереди",
+        "description": "Обязательные review lanes идут по одному в каноническом порядке."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Контроль размера задачи",
+    "description": "Включает предупреждение или блокировку, когда задача становится больше лимита выбранного профиля.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Проверки бюджета охвата предупреждают или блокируют задачу при превышении лимита профиля."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Лимиты бюджета охвата не применяются при оценке размера задачи."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Реакция на превышение scope",
+    "description": "Что делать, когда задача превысила настроенный бюджет охвата.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Блокировать до разбиения",
+        "description": "Останавливает слишком большую задачу и требует разбиения."
+      },
+      "WARN_ONLY": {
+        "label": "Только предупредить",
+        "description": "Показывает предупреждение, но не останавливает lifecycle."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Профили для бюджета охвата",
+    "description": "Профили задач, для которых действует контроль размера. Неизвестные устаревшие значения показываются явно и не удаляются молча."
+  },
+  "scope-budget-max-files": {
+    "label": "Лимит файлов",
+    "description": "Максимальное число изменённых файлов до реакции защиты бюджета охвата."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Лимит изменённых строк",
+    "description": "Максимальное число изменённых строк до реакции защиты бюджета охвата."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Лимит review lanes",
+    "description": "Максимальное число обязательных review lanes до реакции защиты бюджета охвата."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Лимит токенов на ревью",
+    "description": "Максимальная оценка токенов на ревью до реакции защиты бюджета охвата."
+  },
+  "review-cycle-enabled": {
+    "label": "Контроль циклов ревью",
+    "description": "Отслеживает повторяющиеся не-test циклы ревью, чтобы они не забирали слишком много работы.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Повторяющиеся не-test циклы ревью отслеживаются до продолжения closeout."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Давление review-cycle этой защитой не проверяется."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Реакция на цикл ревью",
+    "description": "Что делать, если повторные попытки ревью превысили лимиты.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Ждать решение оператора",
+        "description": "Останавливает повторяющиеся review loops до выбора recovery path."
+      },
+      "WARN_ONLY": {
+        "label": "Только предупредить",
+        "description": "Показывает давление review-cycle, но не останавливает workflow."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Лимит проваленных non-test ревью",
+    "description": "Сколько проваленных non-test попыток ревью допускается до реакции защиты."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Общий лимит non-test ревью",
+    "description": "Сколько всего non-test попыток ревью допускается до реакции защиты."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Исключённые типы ревью",
+    "description": "Множественный выбор: отмеченные типы ревью не учитываются в подсчёте лимитов review-cycle guard.",
+    "options": {
+      "code": {
+        "label": "Ревью кода"
+      },
+      "db": {
+        "label": "Ревью БД"
+      },
+      "security": {
+        "label": "Ревью безопасности"
+      },
+      "refactor": {
+        "label": "Ревью рефакторинга"
+      },
+      "api": {
+        "label": "Ревью API"
+      },
+      "test": {
+        "label": "Тестовое ревью"
+      },
+      "performance": {
+        "label": "Ревью производительности"
+      },
+      "infra": {
+        "label": "Ревью инфраструктуры"
+      },
+      "dependency": {
+        "label": "Ревью зависимостей"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Автопредложение разбиения",
+    "description": "Разрешает подсказку auto-split только когда действие review-cycle блокирует до решения оператора.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "При действии BLOCK_FOR_OPERATOR_DECISION давление review-cycle может выдать подсказку auto-split."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Давление review-cycle никогда не выдаёт подсказку auto-split."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Проверка памяти проекта",
+    "description": "Включает проверку при закрытии задачи: нужно ли обновить устойчивую память проекта.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "При closeout проверяется, нужны ли доказательства влияния на память проекта."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "При closeout не выполняются проверки обслуживания памяти проекта."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Режим памяти проекта",
+    "description": "Насколько строго workflow требует работу с project memory.",
+    "options": {
+      "off": {
+        "label": "Выключено",
+        "description": "Не запускать project-memory maintenance во время closeout."
+      },
+      "check": {
+        "label": "Проверить",
+        "description": "Проверять, нужны ли memory updates, но не писать файлы."
+      },
+      "update": {
+        "label": "Обновлять",
+        "description": "Разрешить workflow обновлять focused project-memory файлы при необходимости."
+      },
+      "strict": {
+        "label": "Строго",
+        "description": "Требовать memory evidence до успешного closeout."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Запускать проверку памяти до закрытия",
+    "description": "Запускает обслуживание памяти проекта перед финальным шагом завершения.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Обслуживание памяти проекта выполняется перед финальным шагом завершения."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Обслуживание памяти проекта не вставляется перед финальным closeout."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Подтверждение записи в память",
+    "description": "Требует явного согласия пользователя перед записью файлов памяти проекта.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Запись в память проекта требует явного согласия пользователя перед изменением файлов."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Запись в память проекта может выполняться в настроенном режиме обслуживания без отдельного шага согласования."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Размер компактной сводки памяти",
+    "description": "Максимальный размер сгенерированной компактной сводки памяти проекта в символах."
+  },
+  "project-memory-read-strategy": {
+    "label": "Стратегия чтения памяти",
+    "description": "Как агент должен читать устойчивую память на старте задачи.",
+    "options": {
+      "index_first": {
+        "label": "Сначала индекс",
+        "description": "Сначала читать memory index и открывать подробные файлы только по ссылкам из индекса."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Хранение артефактов влияния памяти",
+    "description": "Сколько дней хранить артефакты влияния памяти проекта."
+  },
+  "task-reset-enabled": {
+    "label": "Команды сброса/отмены задач",
+    "description": "Разрешает подтверждённые мутации reset или discard для задач.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Подтверждённые команды сброса и отмены задач доступны через защищённые пути."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Мутации сброса и отмены задач недоступны."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Плановые резервные копии",
+    "description": "Разрешает ежедневному обслуживанию создавать плановые снимки для отката, когда наступает заданный интервал.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Ежедневное обслуживание может создавать плановые резервные копии для отката, когда наступает интервал."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Ежедневное обслуживание не создаёт плановые резервные копии для отката."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Интервал резервного копирования",
+    "description": "Минимальное число дней между успешными плановыми резервными копиями."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Хранение резервных копий",
+    "description": "Сколько последних резервных копий оставить после создания плановой копии."
+  },
+  "garda-self-guard": {
+    "label": "Защита control-plane Garda",
+    "description": "Определяет, могут ли агенты напрямую входить в защищённую работу control-plane Garda.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "Включено",
+        "description": "Агенты не могут входить в защищённую работу control-plane без пути, принадлежащего оператору."
+      },
+      "require_operator_confirmation": {
+        "label": "Подтверждение оператора",
+        "description": "Вход в защищённый control-plane требует явного подтверждения оператора."
+      }
+    }
+  }
+}

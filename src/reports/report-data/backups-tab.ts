@@ -57,6 +57,7 @@ function mapBackupRow(backup: ReturnType<typeof listBackups>[number]): ReportBac
 export function buildBackupsTab(repoRoot: string): ReportBackupsTab {
     const root = path.resolve(repoRoot);
     const unavailable: ReportDataUnavailableEntry[] = [];
+    const workflowConfigPath = joinOrchestratorPath(root, path.join('live', 'config', 'workflow-config.json'));
     const snapshotsRoot = getBackupSnapshotsRoot(root);
     const snapshotsRootExists = fs.existsSync(snapshotsRoot) && fs.statSync(snapshotsRoot).isDirectory();
     let rows: ReportBackupRow[] = [];
@@ -70,6 +71,7 @@ export function buildBackupsTab(repoRoot: string): ReportBackupsTab {
     }
 
     return {
+        workflow_config_path: toRepoRelativePath(root, workflowConfigPath),
         snapshots_root: toRepoRelativePath(root, snapshotsRoot),
         snapshots_root_exists: snapshotsRootExists,
         auto_backup: readAutoBackupSettings(root, unavailable),

@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Compile-gate-Befehl",
+    "description": "Befehl, den compile-gate für Compile-, Build- und Type-Check-Validierung ausführt. Wenn in workflow-config nicht gesetzt, schlägt compile-gate fehl (fail-closed), bis ein projektspezifischer Befehl konfiguriert ist."
+  },
+  "compile-gate-command-fallback": {
+    "description": "Nicht in workflow-config gesetzt; compile-gate schlägt fehl (fail-closed), bis ein projektspezifischer Befehl konfiguriert ist."
+  },
+  "full-suite-enabled": {
+    "label": "Pflicht-Volltestsuite",
+    "description": "Legt fest, ob der konfigurierte Volltest-Befehl Teil des Task-Lifecycles ist.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Der konfigurierte Volltest-Befehl ist im Task-Lifecycle erforderlich."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Das Volltest-Gate wird übersprungen, sofern kein anderer Workflow-Pfad es erfordert."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Volltest-Befehl",
+    "description": "Befehl, den das Volltest-Gate ausführt, wenn die Pflicht-Volltestsuite aktiviert ist."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Volltest-Timeout",
+    "description": "Maximale Laufzeit des Volltest-Befehls in Millisekunden."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Grüne Volltest-Zusammenfassung",
+    "description": "Wie viele erfolgreiche Volltest-Ausgabezeilen in kompakten Task-Nachweisen sichtbar bleiben."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Fehlerausgabe-Chunk-Größe",
+    "description": "Wie viele fehlgeschlagene Volltest-Zeilen pro kompaktem Fehlerblock gespeichert werden."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Fehler außerhalb des Task-Scopes",
+    "description": "Was der Workflow tut, wenn die Volltestsuite einen Fehler außerhalb des aktuellen Task-Scopes findet.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Protokollieren und blockieren",
+        "description": "Protokolliert den Fehler und stoppt den Workflow, bis er behoben ist."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Protokollieren und warnen",
+        "description": "Protokolliert den Fehler, erlaubt dem Workflow aber mit einer Warnung fortzufahren."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Position der Volltestsuite",
+    "description": "An welcher Stelle im Task-Lifecycle das Pflicht-Volltest-Gate ausgeführt wird.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "Nach Compile, vor Reviews",
+        "description": "Führt die Volltestsuite nach erfolgreichem Compile und vor Beginn der Review-Arbeit aus."
+      },
+      "before_test_review": {
+        "label": "Vor Test-Review",
+        "description": "Führt die Volltestsuite unmittelbar vor dem Test-Review-Lane aus, wenn dessen Nachweise benötigt werden."
+      },
+      "before_completion": {
+        "label": "Vor Abschluss",
+        "description": "Verschiebt die Volltestsuite auf den finalen Abschlusspfad."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Review-Ausführungsmodus",
+    "description": "Steuert, ob erforderliche Review-Lanes parallel laufen, auf Code-Review warten oder sequenziell ausgeführt werden.",
+    "options": {
+      "parallel_all": {
+        "label": "Alle parallel",
+        "description": "Alle Review-Typen können unabhängig vorbereitet werden; es gelten keine upstream-Launch-Abhängigkeiten."
+      },
+      "test_after_code": {
+        "label": "Test nach Code",
+        "description": "Nur test wartet auf ein Code-PASS im aktuellen Zyklus; andere Review-Typen bleiben unabhängig."
+      },
+      "code_first_optional": {
+        "label": "Code zuerst für optionale",
+        "description": "API, performance, infra und dependency warten auf Code-PASS; test bleibt downstream aller erforderlichen upstream Reviews."
+      },
+      "strict_sequential": {
+        "label": "Strikt sequenziell",
+        "description": "Alle erforderlichen Reviews folgen im aktuellen Zyklus der kanonischen Review-Reihenfolge nacheinander."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Scope-Budget-Schutz",
+    "description": "Warnt oder blockiert, wenn eine Task für das konfigurierte Profil-Budget zu groß wird.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Scope-Budget-Prüfungen warnen oder blockieren, wenn eine Task das konfigurierte Profil-Budget überschreitet."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Scope-Budget-Limits werden bei Task-Größenentscheidungen nicht durchgesetzt."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Reaktion auf Scope-Budget",
+    "description": "Was passiert, wenn das Scope-Budget überschritten wird.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Blockieren bis zur Aufteilung",
+        "description": "Stoppt überdimensionierte Arbeit und fordert eine Aufteilung."
+      },
+      "WARN_ONLY": {
+        "label": "Nur warnen",
+        "description": "Zeigt die Scope-Warnung, stoppt aber nicht den nächsten Lifecycle-Schritt."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Scope-Budget-Profile",
+    "description": "Task-Profile, für die der Scope-Budget-Schutz gilt. Unbekannte Legacy-Werte werden explizit angezeigt statt stillschweigend entfernt."
+  },
+  "scope-budget-max-files": {
+    "label": "Dateilimit",
+    "description": "Maximale Anzahl geänderter Dateien, bevor der Scope-Budget-Schutz reagiert."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Limit geänderter Zeilen",
+    "description": "Maximale Anzahl geänderter Zeilen, bevor der Scope-Budget-Schutz reagiert."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Limit Review-Lanes",
+    "description": "Maximale Anzahl erforderlicher Review-Lanes, bevor der Scope-Budget-Schutz reagiert."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Review-Token-Prognose",
+    "description": "Maximales geschätztes Review-Token-Budget, bevor der Scope-Budget-Schutz reagiert."
+  },
+  "review-cycle-enabled": {
+    "label": "Review-Cycle-Schutz",
+    "description": "Erkennt wiederholte non-test Review-Schleifen, bevor sie zu viel Arbeit verbrauchen.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Wiederholte non-test Review-Schleifen werden erkannt, bevor der Closeout fortgesetzt wird."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Review-Cycle-Druck wird von diesem Schutz nicht geprüft."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Reaktion auf Review-Cycle",
+    "description": "Was passiert, wenn wiederholte Review-Versuche die konfigurierten Limits überschreiten.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Auf Operator-Entscheidung warten",
+        "description": "Stoppt wiederholte Review-Schleifen, bis ein Operator den Recovery-Pfad wählt."
+      },
+      "WARN_ONLY": {
+        "label": "Nur warnen",
+        "description": "Meldet Review-Cycle-Druck, lässt den Workflow aber fortfahren."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Limit fehlgeschlagener non-test Reviews",
+    "description": "Maximale Anzahl fehlgeschlagener non-test Review-Versuche, bevor der Review-Cycle-Schutz reagiert."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Gesamtlimit non-test Reviews",
+    "description": "Maximale Gesamtzahl non-test Review-Versuche, bevor der Review-Cycle-Schutz reagiert."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Ausgeschlossene Review-Typen",
+    "description": "Mehrfachauswahl: markierte Review-Typen werden bei der Zählung des Review-Cycle-Schutzes ausgeschlossen.",
+    "options": {
+      "code": {
+        "label": "Code-Review"
+      },
+      "db": {
+        "label": "Datenbank-Review"
+      },
+      "security": {
+        "label": "Sicherheits-Review"
+      },
+      "refactor": {
+        "label": "Refactoring-Review"
+      },
+      "api": {
+        "label": "API-Review"
+      },
+      "test": {
+        "label": "Test-Review"
+      },
+      "performance": {
+        "label": "Performance-Review"
+      },
+      "infra": {
+        "label": "Infrastruktur-Review"
+      },
+      "dependency": {
+        "label": "Abhängigkeits-Review"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Automatische Split-Aufforderung",
+    "description": "Erlaubt dem Review-Cycle-Druck eine Auto-Split-Aufforderung, wenn die Aktion BLOCK_FOR_OPERATOR_DECISION ist. Bei WARN_ONLY hat dies keine blockierende Wirkung.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Review-Cycle-Druck kann bei Aktion BLOCK_FOR_OPERATOR_DECISION eine Auto-Split-Aufforderung ausgeben."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Review-Cycle-Druck gibt niemals eine Auto-Split-Aufforderung aus."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Project-Memory-Wartung",
+    "description": "Steuert, ob der Closeout Project-Memory-Auswirkungen prüft.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Beim Closeout wird geprüft, ob Project-Memory-Impact-Nachweise benötigt werden."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Beim Closeout werden keine Project-Memory-Wartungsprüfungen ausgeführt."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Project-Memory-Modus",
+    "description": "Wie streng der Workflow Project-Memory-Arbeit durchsetzt.",
+    "options": {
+      "off": {
+        "label": "Aus",
+        "description": "Keine Project-Memory-Wartung während des Closeout ausführen."
+      },
+      "check": {
+        "label": "Prüfen",
+        "description": "Prüfen, ob Memory-Updates nötig sind, ohne Dateien zu schreiben."
+      },
+      "update": {
+        "label": "Aktualisieren",
+        "description": "Dem Workflow erlauben, fokussierte Project-Memory-Dateien bei Bedarf zu aktualisieren."
+      },
+      "strict": {
+        "label": "Strikt",
+        "description": "Memory-Nachweise vor erfolgreichem Closeout verlangen."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Memory-Prüfung vor finalem Closeout",
+    "description": "Führt Project-Memory-Wartung vor dem finalen Abschlussschritt aus.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Project-Memory-Wartung wird vor dem finalen Abschlussschritt ausgeführt."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Project-Memory-Wartung wird nicht vor dem finalen Closeout eingefügt."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Bestätigung für Memory-Schreibvorgänge",
+    "description": "Erfordert ausdrückliche Benutzerfreigabe, bevor der Workflow Project-Memory-Dateien schreibt.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Project-Memory-Schreibvorgänge erfordern ausdrückliche Benutzerfreigabe vor dem Schreiben von Dateien."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Project-Memory-Schreibvorgänge können im konfigurierten Wartungsmodus ohne zusätzlichen Freigabeschritt erfolgen."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Kompakte Memory-Zusammenfassung",
+    "description": "Maximale Größe der generierten kompakten Project-Memory-Zusammenfassung in Zeichen."
+  },
+  "project-memory-read-strategy": {
+    "label": "Project-Memory-Lesestrategie",
+    "description": "Wie Agenten beim Task-Start dauerhafte Memory lesen sollen.",
+    "options": {
+      "index_first": {
+        "label": "Index zuerst",
+        "description": "Zuerst den Memory-Index lesen und Detaildateien nur öffnen, wenn der Index darauf verweist."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Aufbewahrung Impact-Artefakte",
+    "description": "Wie viele Tage Project-Memory-Impact-Artefakte aufbewahrt werden."
+  },
+  "task-reset-enabled": {
+    "label": "Task-Reset-Befehle",
+    "description": "Erlaubt bestätigte Task-Reset- und Discard-Mutationen.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Bestätigte Task-Reset- und Discard-Befehle sind über geschützte Pfade verfügbar."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Task-Reset- und Discard-Mutationen sind nicht verfügbar."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Geplante Auto-Backups",
+    "description": "Erlaubt dem täglichen Wartungstrigger, geplante Rollback-Backups zu erstellen, wenn sie fällig sind.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Die tägliche Wartung kann geplante Rollback-Backups erstellen, wenn das Intervall fällig ist."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Die tägliche Wartung erstellt keine geplanten Rollback-Backups."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Backup-Intervall",
+    "description": "Mindestanzahl Tage zwischen erfolgreichen geplanten Backups."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Backup-Aufbewahrung",
+    "description": "Anzahl der neuesten Backups, die nach Erstellung eines geplanten Backups behalten werden."
+  },
+  "garda-self-guard": {
+    "label": "Garda Self-Guard",
+    "description": "Steuert, ob Agenten direkt in geschützte Garda-Control-Plane-Arbeit eintreten dürfen.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "Ein",
+        "description": "Agenten können ohne den operator-eigenen Pfad nicht in geschützte Control-Plane-Arbeit eintreten."
+      },
+      "require_operator_confirmation": {
+        "label": "Operator-Bestätigung",
+        "description": "Der Zugang zur geschützten Control-Plane erfordert ausdrückliche Operator-Bestätigung."
+      }
+    }
+  }
+}

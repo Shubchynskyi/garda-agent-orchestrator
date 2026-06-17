@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Liste les instantanés rollback de l’inventaire des sauvegardes. La restauration protégée et les réglages auto-backup nécessitent `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Liste des sauvegardes"
+  },
+  "empty": {
+    "label": "Aucune sauvegarde dans la liste."
+  },
+  "snapshots_root": {
+    "label": "Racine des instantanés"
+  },
+  "root_present": {
+    "label": "présent"
+  },
+  "root_missing": {
+    "label": "absent"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Créé"
+  },
+  "size_column": {
+    "label": "Taille"
+  },
+  "reason_column": {
+    "label": "Raison"
+  },
+  "status_column": {
+    "label": "État"
+  },
+  "restore_column": {
+    "label": "Restaurer"
+  },
+  "reason_update": {
+    "label": "mise à jour"
+  },
+  "reason_scheduled": {
+    "label": "planifié"
+  },
+  "health_available": {
+    "label": "Disponible"
+  },
+  "health_missing_records": {
+    "label": "Enregistrements manquants"
+  },
+  "health_invalid_records": {
+    "label": "Enregistrements invalides"
+  },
+  "actions_disabled": {
+    "label": "Les actions contrôlées sont désactivées."
+  },
+  "restore_unavailable": {
+    "label": "Restauration indisponible pour cette sauvegarde."
+  },
+  "restore_backup": {
+    "label": "Restaurer la sauvegarde"
+  },
+  "auto_backup_title": {
+    "label": "Sauvegarde automatique"
+  },
+  "auto_backup_help": {
+    "description": "Les sauvegardes automatiques planifiées utilisent des paramètres workflow audités. L’enregistrement exige une confirmation."
+  },
+  "auto_enabled": {
+    "label": "Activé"
+  },
+  "auto_interval_days": {
+    "label": "Intervalle (jours)"
+  },
+  "auto_keep_latest": {
+    "label": "Conserver les dernières"
+  },
+  "restore_preview_help": {
+    "description": "Choisissez une sauvegarde pour la restaurer via l’action de rollback protégée."
+  }
+}

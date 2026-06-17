@@ -12,52 +12,8 @@
     "initSettingsTab": "Configuración de inicio",
     "projectMemoryTab": "Memoria de proyecto",
     "backupsTab": "Copias de seguridad",
-    "backupsTabIntro": "Lista instantáneas rollback del inventario de copias. La restauración protegida y los cambios de auto-backup requieren `garda ui --actions`.",
-    "backupsInventoryTitle": "Inventario de copias",
-    "backupsEmpty": "No hay copias en el inventario.",
-    "backupsSnapshotsRoot": "Raíz de instantáneas",
-    "backupRootPresent": "presente",
-    "backupRootMissing": "ausente",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Creado",
-    "backupSizeColumn": "Tamaño",
-    "backupReasonColumn": "Motivo",
-    "backupStatusColumn": "Estado",
-    "backupRestoreColumn": "Restaurar",
-    "backupReasonUpdate": "actualización",
-    "backupReasonScheduled": "programado",
-    "backupsActionsDisabled": "Las acciones controladas están deshabilitadas.",
-    "backupRestoreUnavailable": "Restauración no disponible para esta copia.",
-    "restoreBackup": "Restaurar copia",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Activado",
-    "backupAutoIntervalDays": "Intervalo (días)",
-    "backupAutoKeepLatest": "Conservar últimas",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Instrucciones",
     "cleanupSettingsTab": "Ajustes de limpieza",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Política efectiva",
-    "cleanupEffectivePolicyHelp": "Las evidencias de cada tarea y los agregados compartidos se separan mediante el mapa de propiedad de runtime; la purga de tarea elimina artefactos propios y repara el estado compartido sin borrar archivos compartidos completos.",
-    "cleanupPolicyPath": "Ruta de la política",
-    "cleanupDailyEnabled": "Mantenimiento diario activado",
-    "cleanupDailyDryRun": "Mantenimiento diario en simulación",
-    "cleanupOlderThanDays": "Elegible si supera estos días",
-    "cleanupKeepLatestTasks": "Conservar tareas más recientes",
-    "cleanupPurgeRequireConfirm": "La purga requiere confirmación",
-    "cleanupHealthyDoneCompactDays": "Compactar DONE sanas tras días",
-    "cleanupProblemCompressDays": "Comprimir tareas con problemas tras días",
-    "cleanupEditSettingsTitle": "Controles de retención",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Máx. tareas por ejecución",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purga de tarea",
-    "cleanupTaskPurgeHelp": "Purga artefactos de runtime propiedad de una tarea. La protección de tarea activa y la reparación de estado compartido quedan en el servidor.",
-    "cleanupTaskId": "ID de tarea",
-    "cleanupPurgeTask": "Purgar tarea",
     "actionsTab": "Acciones",
     "noticeActionsEnabled": "Los detalles de la tarea se cargan a pedido desde el servidor local. El servidor está vinculado a 127.0.0.1 y se detiene cuando finaliza este proceso CLI. Las acciones controladas están habilitadas solo para los comandos de la lista permitida.",
     "noticeActionsDisabled": "Los detalles de la tarea se cargan a pedido desde el servidor local. El servidor está vinculado a 127.0.0.1 y se detiene cuando finaliza este proceso CLI. Las acciones controladas están deshabilitadas a menos que el servidor comience con --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Artefactos existentes",
     "missingArtifacts": "Artefactos faltantes",
     "artifactPath": "Ruta del artefacto",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Documentos ordinarios",
+    "ordinaryDocsHelp": "Los documentos ordinarios son documentos de planificación, changelog o producto del usuario. Los cambios en estas rutas siguen siendo auditables, pero no activan por sí solos carriles de revisión adicionales.",
+    "ordinaryDocsPath": "Ruta del documento",
+    "ordinaryDocsEmpty": "No hay rutas de documentos ordinarios configuradas.",
+    "ordinaryDocsActionsDisabled": "La edición de documentos ordinarios está deshabilitada. Reinicie con",
+    "addOrdinaryDoc": "Añadir documento",
+    "removeOrdinaryDoc": "Eliminar",
+    "availableReviewTypes": "Tipos de revisión disponibles"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -348,5 +305,15 @@
       "description": "Riesgos conocidos, rutas frágiles, notas de seguridad y restricciones de compatibilidad."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Configuración de inicio",
+      "body": "La pestaña de configuración de inicio muestra las respuestas actuales, los checkpoints obligatorios de inicio del agente, la gestión de documentos ordinarios y el prompt de handoff para completar el onboarding."
+    },
+    "project-memory": {
+      "title": "Memoria del proyecto",
+      "body": "La pestaña de memoria del proyecto muestra el modo de mantenimiento actual y los archivos de memoria duradera. Abra cada archivo bajo demanda en lugar de cargar el contenido completo en el panel."
+    }
+  }
 }

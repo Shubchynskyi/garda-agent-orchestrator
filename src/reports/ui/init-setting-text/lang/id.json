@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Bahasa asisten",
+    "description": "Bahasa yang harus digunakan asisten saat berkomunikasi dengan operator."
+  },
+  "AssistantBrevity": {
+    "label": "Tingkat detail asisten",
+    "description": "Seberapa rinci jawaban asisten dalam komunikasi normal."
+  },
+  "SourceOfTruth": {
+    "label": "Pemilik instruksi",
+    "description": "File provider kanonik yang menjadi sumber instruksi agen yang dihasilkan."
+  },
+  "ActiveAgentFiles": {
+    "label": "File agen aktif",
+    "description": "File entrypoint agen yang saat ini disertakan dalam proyek ini."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Tanpa commit otomatis",
+    "description": "Mencegah agen melakukan commit tanpa persetujuan eksplisit operator (setidaknya mencoba)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Mode akses penuh Claude",
+    "description": "Apakah instruksi berorientasi Claude mengasumsikan akses penuh ke orkestrator."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Ekonomi token",
+    "description": "Menjaga instruksi yang dihasilkan tetap ringkas dan menghindari konteks yang tidak perlu."
+  },
+  "ProviderMinimalism": {
+    "label": "Minimalisme provider",
+    "description": "Mempertahankan entrypoint provider non-kanonik sebagai pengalihan jika memungkinkan."
+  },
+  "OrchestratorVersion": {
+    "label": "Versi orkestrator",
+    "description": "Versi Garda yang menulis status."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Bahasa dikonfirmasi",
+    "description": "Apakah checkpoint bahasa asisten sudah lulus."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "File agen dikonfirmasi",
+    "description": "Apakah file agen aktif yang dipilih sudah dikonfirmasi secara eksplisit."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Aturan proyek diperbarui",
+    "description": "Apakah aturan proyek ditinjau atau diterima selama inisialisasi agen."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Prompt skills selesai",
+    "description": "Apakah checkpoint prompt skills sudah selesai."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Dokumen biasa dikonfirmasi",
+    "description": "Apakah jalur dokumentasi biasa sudah dikonfirmasi."
+  },
+  "VerificationPassed": {
+    "label": "Verifikasi lulus",
+    "description": "Apakah verifikasi pasca-inisialisasi lulus."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifes valid",
+    "description": "Apakah validasi manifest control-plane yang dilindungi lulus."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Perintah compile-gate yang disematkan",
+    "description": "Perintah kompilasi, build, atau type-check yang disematkan ke konfigurasi workflow saat inisialisasi."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Perintah full-suite yang disematkan",
+    "description": "Perintah uji yang disematkan ke konfigurasi workflow saat inisialisasi."
+  },
+  "reinit": {
+    "title": "Inisialisasi ulang workspace",
+    "description": "Membuat ulang file yang dihasilkan Garda dari jawaban inisialisasi saat ini. Gunakan setelah mengubah pilihan inisialisasi."
+  },
+  "agent-init": {
+    "title": "Serah terima prompt agen",
+    "description": "Berikan AGENT_INIT_PROMPT.md kepada agen dan minta agar menyelesaikan alur agent-init; perintah keras hanya berfungsi setelah agen melakukan pemeriksaan tersebut."
+  }
+}

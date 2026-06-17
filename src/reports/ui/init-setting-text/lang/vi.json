@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Ngôn ngữ trợ lý",
+    "description": "Ngôn ngữ mà trợ lý nên dùng khi giao tiếp với người vận hành."
+  },
+  "AssistantBrevity": {
+    "label": "Mức độ chi tiết của trợ lý",
+    "description": "Mức độ chi tiết của các câu trả lời thông thường từ trợ lý."
+  },
+  "SourceOfTruth": {
+    "label": "Chủ sở hữu hướng dẫn",
+    "description": "Tệp provider chuẩn sở hữu các hướng dẫn agent được tạo ra."
+  },
+  "ActiveAgentFiles": {
+    "label": "Tệp agent đang hoạt động",
+    "description": "Các tệp entrypoint agent hiện được đưa vào dự án này."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Không commit tự động",
+    "description": "Ngăn agent commit mà không có sự chấp thuận rõ ràng từ người vận hành (ít nhất là cố gắng)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Chế độ truy cập đầy đủ Claude",
+    "description": "Liệu hướng dẫn hướng Claude có giả định quyền truy cập đầy đủ vào orchestrator hay không."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Tiết kiệm token",
+    "description": "Giữ hướng dẫn được tạo ra gọn gàng và tránh ngữ cảnh không cần thiết."
+  },
+  "ProviderMinimalism": {
+    "label": "Tối giản provider",
+    "description": "Giữ các entrypoint provider không chuẩn dưới dạng chuyển hướng khi có thể."
+  },
+  "OrchestratorVersion": {
+    "label": "Phiên bản orchestrator",
+    "description": "Phiên bản Garda đã ghi trạng thái."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Đã xác nhận ngôn ngữ",
+    "description": "Checkpoint ngôn ngữ trợ lý đã vượt qua hay chưa."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Đã xác nhận tệp agent",
+    "description": "Các tệp agent đang hoạt động đã được xác nhận rõ ràng hay chưa."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Đã cập nhật quy tắc dự án",
+    "description": "Quy tắc dự án đã được xem xét hoặc chấp nhận trong quá trình khởi tạo agent hay chưa."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Đã hoàn thành prompt skills",
+    "description": "Checkpoint prompt skills đã hoàn thành hay chưa."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Đã xác nhận tài liệu thông thường",
+    "description": "Các đường dẫn tài liệu thông thường đã được xác nhận hay chưa."
+  },
+  "VerificationPassed": {
+    "label": "Đã vượt qua xác minh",
+    "description": "Xác minh sau khởi tạo đã vượt qua hay chưa."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest hợp lệ",
+    "description": "Xác thực manifest control-plane được bảo vệ đã vượt qua hay chưa."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Lệnh compile-gate đã gieo",
+    "description": "Lệnh biên dịch, build hoặc type-check được gieo vào cấu hình workflow trong quá trình khởi tạo."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Lệnh full-suite đã gieo",
+    "description": "Lệnh kiểm thử được gieo vào cấu hình workflow trong quá trình khởi tạo."
+  },
+  "reinit": {
+    "title": "Khởi tạo lại workspace",
+    "description": "Tạo lại các tệp do Garda sinh ra từ câu trả lời khởi tạo hiện tại. Dùng sau khi thay đổi lựa chọn khởi tạo."
+  },
+  "agent-init": {
+    "title": "Bàn giao prompt agent",
+    "description": "Đưa AGENT_INIT_PROMPT.md cho agent và yêu cầu hoàn thành luồng agent-init; lệnh cứng chỉ hoạt động sau khi agent thực hiện các kiểm tra đó."
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "`runtime-retention.json` にある runtime 保持ポリシーです。定期メンテナンスのしきい値、圧縮ルール、保護付きの手動クリーンアップ操作を定義します。"
+  },
+  "daily_maintenance_enabled": {
+    "label": "日次メンテナンス",
+    "description": "定期的な日次メンテナンスを有効または無効にします。有効な場合、オーケストレーターは手動介入なしで、スケジュールに従って適格なタスクを限定数だけ処理できます。"
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "1 回のメンテナンスで処理する最大タスク数",
+    "description": "日次メンテナンスが 1 回の実行で処理する適格タスク数の上限です。しきい値設定を誤った場合の影響範囲を抑えます。"
+  },
+  "eligible_older_than_days": {
+    "label": "タスクの最小経過日数",
+    "description": "メンテナンスまたは手動クリーンアップがその runtime アーティファクトに触れる前に、タスクは少なくともこの日数だけ経過している必要があります。アクティブなタスクと新しいタスクは保護されます。"
+  },
+  "keep_latest_tasks": {
+    "label": "最新タスクを保持する数",
+    "description": "経過日数のしきい値を超えていても、少なくともこの数の最新タスクを常に保持します。経過日数とアクティブタスク保護のみに依存する場合は 0 を設定します。"
+  },
+  "daily_maintenance_dry_run": {
+    "label": "日次メンテナンスの dry-run",
+    "description": "true の場合、定期日次メンテナンスは候補を列挙して監査出力を書くだけで、アーティファクトの削除や圧縮は行いません。しきい値調整中は true を使い、適用時に false に切り替えてください。"
+  },
+  "purge_require_confirm": {
+    "label": "Purge に確認を必須化",
+    "description": "true の場合、破壊的な purge および cleanup コマンドをサーバーが実行する前に、明示的に入力した確認フレーズが必要です。"
+  },
+  "healthy_done_compact_after_days": {
+    "label": "正常な DONE を圧縮するまでの日数",
+    "description": "この日数を過ぎると、正常に完了したタスク (DONE) は ledger 証跡の検証後に ledger のみの履歴へ圧縮できます。"
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "問題タスクを圧縮するまでの日数",
+    "description": "この日数を過ぎると、失敗または停止したタスクの大きなフォレンジックアーティファクトを、復旧時に読める証跡を残したまま圧縮できます。"
+  },
+  "manual_runtime_cleanup": {
+    "label": "手動 runtime クリーンアップ",
+    "description": "上の行の経過日数と最新保持数を使って `garda cleanup` を 1 回実行します。プレビューは候補のみを表示し、適用ではポリシーに従って削除または圧縮を行い、確認が必要です。"
+  },
+  "task_purge": {
+    "label": "タスク purge",
+    "description": "1 つのタスク ID に属する runtime アーティファクトを削除し、共有インデックスを修復します。共有ファイル全体は削除せず、アクティブタスク保護はサーバー側で引き続き適用されます。"
+  },
+  "task_id": {
+    "label": "タスク ID"
+  },
+  "purge_task_button": {
+    "label": "タスクを purge"
+  },
+  "run_preview": {
+    "label": "プレビュー"
+  },
+  "value_true": {
+    "label": "true — 有効"
+  },
+  "value_false": {
+    "label": "false — 無効"
+  }
+}

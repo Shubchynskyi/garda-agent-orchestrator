@@ -12,52 +12,8 @@
     "initSettingsTab": "Paramètres d'initialisation",
     "projectMemoryTab": "Mémoire du projet",
     "backupsTab": "Sauvegardes",
-    "backupsTabIntro": "Liste les instantanés rollback de l’inventaire des sauvegardes. La restauration protégée et les réglages auto-backup nécessitent `garda ui --actions`.",
-    "backupsInventoryTitle": "Inventaire des sauvegardes",
-    "backupsEmpty": "Aucune sauvegarde dans l’inventaire.",
-    "backupsSnapshotsRoot": "Racine des instantanés",
-    "backupRootPresent": "présent",
-    "backupRootMissing": "absent",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Créé",
-    "backupSizeColumn": "Taille",
-    "backupReasonColumn": "Raison",
-    "backupStatusColumn": "État",
-    "backupRestoreColumn": "Restaurer",
-    "backupReasonUpdate": "mise à jour",
-    "backupReasonScheduled": "planifié",
-    "backupsActionsDisabled": "Les actions contrôlées sont désactivées.",
-    "backupRestoreUnavailable": "Restauration indisponible pour cette sauvegarde.",
-    "restoreBackup": "Restaurer la sauvegarde",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Activé",
-    "backupAutoIntervalDays": "Intervalle (jours)",
-    "backupAutoKeepLatest": "Conserver les dernières",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Instructions",
     "cleanupSettingsTab": "Paramètres de nettoyage",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Politique effective",
-    "cleanupEffectivePolicyHelp": "Les preuves propres aux tâches et les agrégats partagés sont séparés par la carte de propriété du runtime ; la purge de tâche supprime les artefacts possédés et répare l’état partagé au lieu de supprimer entièrement les fichiers partagés.",
-    "cleanupPolicyPath": "Chemin de la politique",
-    "cleanupDailyEnabled": "Maintenance quotidienne activée",
-    "cleanupDailyDryRun": "Maintenance quotidienne en simulation",
-    "cleanupOlderThanDays": "Éligible si plus ancien que ces jours",
-    "cleanupKeepLatestTasks": "Conserver les tâches les plus récentes",
-    "cleanupPurgeRequireConfirm": "La purge exige une confirmation",
-    "cleanupHealthyDoneCompactDays": "Compacter les DONE saines après jours",
-    "cleanupProblemCompressDays": "Compresser les tâches problématiques après jours",
-    "cleanupEditSettingsTitle": "Contrôles de rétention",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Nombre max. de tâches par exécution",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge de tâche",
-    "cleanupTaskPurgeHelp": "Purge les artefacts runtime possédés par un ID de tâche. La protection des tâches actives et la réparation de l’état partagé restent côté serveur.",
-    "cleanupTaskId": "ID de tâche",
-    "cleanupPurgeTask": "Purger la tâche",
     "actionsTab": "Actions",
     "noticeActionsEnabled": "Les détails des tâches sont chargés à la demande depuis le serveur local. Le serveur est lié à 127.0.0.1 et s'arrête à la fin de ce processus CLI. Les actions contrôlées sont activées uniquement pour les commandes autorisées.",
     "noticeActionsDisabled": "Les détails des tâches sont chargés à la demande depuis le serveur local. Le serveur est lié à 127.0.0.1 et s'arrête à la fin de ce processus CLI. Les actions contrôlées sont désactivées sauf si le serveur démarre par --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Artefacts existants",
     "missingArtifacts": "Artefacts manquants",
     "artifactPath": "Chemin de l’artefact",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Documents ordinaires",
+    "ordinaryDocsHelp": "Les documents ordinaires sont des docs de planification, changelog ou produit appartenant à l’utilisateur. Les changements sur ces chemins restent auditables mais ne déclenchent pas à eux seuls des voies de revue supplémentaires.",
+    "ordinaryDocsPath": "Chemin du document",
+    "ordinaryDocsEmpty": "Aucun chemin de document ordinaire configuré.",
+    "ordinaryDocsActionsDisabled": "La modification des documents ordinaires est désactivée. Redémarrez avec",
+    "addOrdinaryDoc": "Ajouter un document",
+    "removeOrdinaryDoc": "Supprimer",
+    "availableReviewTypes": "Types de review disponibles"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -348,5 +305,15 @@
       "description": "Risques connus, chemins fragiles, notes de sécurité et contraintes de compatibilité."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Paramètres d’initialisation",
+      "body": "L’onglet des paramètres d’initialisation affiche les réponses actuelles, les checkpoints d’initialisation agent obligatoires, la gestion des documents ordinaires et le prompt de handoff pour terminer l’onboarding."
+    },
+    "project-memory": {
+      "title": "Mémoire du projet",
+      "body": "L’onglet mémoire du projet affiche le mode de maintenance actuel et les fichiers de mémoire durable. Ouvrez chaque fichier à la demande au lieu de charger tout le contenu dans le tableau de bord."
+    }
+  }
 }

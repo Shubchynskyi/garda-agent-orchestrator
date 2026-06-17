@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Manutenção da memória ativada",
+    "description": "Se o workflow verifica a memória durável do projeto no closeout."
+  },
+  "memory-mode": {
+    "label": "Modo de manutenção da memória",
+    "description": "Modo atual do workflow: off, check, update ou strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Executa antes do closeout final",
+    "description": "Se o project-memory gate corre antes da conclusão."
+  },
+  "memory-require-approval": {
+    "label": "Requer aprovação para escrita",
+    "description": "Se a escrita em ficheiros project-memory requer aprovação do utilizador."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Limite do tamanho do resumo compacto",
+    "description": "Tamanho máximo do resumo compacto gerado da memória do projeto, em caracteres."
+  },
+  "memory-read-strategy": {
+    "label": "Estratégia de leitura",
+    "description": "Como os agentes devem ler a memória do projeto no início da tarefa."
+  },
+  "memory-impact-retention-days": {
+    "label": "Retenção de artefatos de impacto",
+    "description": "Quantos dias os artefatos de impacto project-memory são retidos."
+  },
+  "memory-initialized": {
+    "label": "Inicializado no agent init",
+    "description": "Se o agent-init registou a inicialização da memória do projeto."
+  },
+  "memory-validated": {
+    "label": "Validado no agent init",
+    "description": "Se o agent-init registou a validação bem-sucedida da memória do projeto."
+  },
+  "memory-dir": {
+    "label": "Diretório de memória",
+    "description": "Diretório que contém os ficheiros de memória durável do utilizador."
+  },
+  "memory-read-first": {
+    "label": "Ficheiros a ler primeiro",
+    "description": "Ficheiros que os agentes devem ler antes dos ficheiros de memória focados."
+  },
+  "memory-summary-rule": {
+    "label": "Regra de resumo gerada",
+    "description": "Ficheiro de regra gerado que resume a memória do projeto para o arranque do agente."
+  },
+  "memory-bootstrap-report": {
+    "label": "Relatório de bootstrap",
+    "description": "Relatório de runtime do bootstrap ou validação da memória do projeto."
+  }
+}

@@ -153,7 +153,6 @@ function createFakeDocument(): {
         'workflow',
         'workflow-config-path',
         'settings-editor',
-        'setting-status',
         'init-settings',
         'project-memory',
         'instructions',
@@ -647,7 +646,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
 
         vm.runInNewContext(extractDashboardScript(html), context);
         await flushPromises();
-        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Effective policy/u);
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Minimum task age \(days\)/u);
 
         const renderCleanupResult = context.renderCleanupResult as ((result: unknown) => void) | undefined;
         assert.equal(typeof renderCleanupResult, 'function');
@@ -662,7 +661,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         fakeDocument.elements['language-select'].value = 'de';
         await fakeDocument.elements['language-select'].dispatch('change');
 
-        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Wirksame Richtlinie/u);
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Mindestalter der Aufgabe|Mindestaufgabenalter|Tägliche Wartung|Speichern/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Dry-run/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });

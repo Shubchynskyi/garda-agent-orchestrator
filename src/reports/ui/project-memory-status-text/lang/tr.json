@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Bellek bakımı etkin",
+    "description": "Workflow'un kapanışta kalıcı proje belleğini kontrol edip etmediği."
+  },
+  "memory-mode": {
+    "label": "Bellek bakım modu",
+    "description": "Geçerli workflow modu: off, check, update veya strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Son kapanıştan önce çalışır",
+    "description": "Project-memory gate'in tamamlamadan önce çalışıp çalışmadığı."
+  },
+  "memory-require-approval": {
+    "label": "Yazma için onay gerektirir",
+    "description": "Project-memory dosyalarına yazmadan önce kullanıcı onayı gerekip gerekmediği."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Kompakt özet boyut sınırı",
+    "description": "Oluşturulan kompakt proje belleği özetinin karakter cinsinden maksimum boyutu."
+  },
+  "memory-read-strategy": {
+    "label": "Okuma stratejisi",
+    "description": "Ajanların görev başlangıcında proje belleğini nasıl okuması gerektiği."
+  },
+  "memory-impact-retention-days": {
+    "label": "Etki artefaktı saklama süresi",
+    "description": "Project-memory etki artefaktlarının kaç gün saklandığı."
+  },
+  "memory-initialized": {
+    "label": "Agent init ile başlatıldı",
+    "description": "Agent-init'in proje belleği başlatmasını kaydedip kaydetmediği."
+  },
+  "memory-validated": {
+    "label": "Agent init ile doğrulandı",
+    "description": "Agent-init'in başarılı proje belleği doğrulamasını kaydedip kaydetmediği."
+  },
+  "memory-dir": {
+    "label": "Bellek dizini",
+    "description": "Kullanıcıya ait kalıcı bellek dosyalarını içeren dizin."
+  },
+  "memory-read-first": {
+    "label": "Önce okunacak dosyalar",
+    "description": "Ajanların odaklı bellek dosyalarından önce okuması gereken dosyalar."
+  },
+  "memory-summary-rule": {
+    "label": "Oluşturulan özet kuralı",
+    "description": "Ajan başlangıcı için proje belleğini özetleyen oluşturulmuş rule dosyası."
+  },
+  "memory-bootstrap-report": {
+    "label": "Bootstrap raporu",
+    "description": "Project-memory bootstrap veya doğrulamasından runtime raporu."
+  }
+}

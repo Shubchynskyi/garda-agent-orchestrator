@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Liệt kê snapshot rollback từ kho sao lưu. Khôi phục được bảo vệ và chỉnh sửa auto-backup cần `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Danh sách sao lưu"
+  },
+  "empty": {
+    "label": "Không có sao lưu trong danh sách."
+  },
+  "snapshots_root": {
+    "label": "Gốc snapshot"
+  },
+  "root_present": {
+    "label": "có"
+  },
+  "root_missing": {
+    "label": "không"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Tạo lúc"
+  },
+  "size_column": {
+    "label": "Kích thước"
+  },
+  "reason_column": {
+    "label": "Lý do"
+  },
+  "status_column": {
+    "label": "Trạng thái"
+  },
+  "restore_column": {
+    "label": "Khôi phục"
+  },
+  "reason_update": {
+    "label": "cập nhật"
+  },
+  "reason_scheduled": {
+    "label": "theo lịch"
+  },
+  "health_available": {
+    "label": "Khả dụng"
+  },
+  "health_missing_records": {
+    "label": "Thiếu bản ghi"
+  },
+  "health_invalid_records": {
+    "label": "Bản ghi không hợp lệ"
+  },
+  "actions_disabled": {
+    "label": "Hành động được kiểm soát đã tắt."
+  },
+  "restore_unavailable": {
+    "label": "Không thể khôi phục bản sao lưu này."
+  },
+  "restore_backup": {
+    "label": "Khôi phục sao lưu"
+  },
+  "auto_backup_title": {
+    "label": "Sao lưu tự động"
+  },
+  "auto_backup_help": {
+    "description": "Sao lưu tự động theo lịch dùng cài đặt workflow đã kiểm toán. Lưu yêu cầu xác nhận."
+  },
+  "auto_enabled": {
+    "label": "Bật"
+  },
+  "auto_interval_days": {
+    "label": "Chu kỳ (ngày)"
+  },
+  "auto_keep_latest": {
+    "label": "Giữ mới nhất"
+  },
+  "restore_preview_help": {
+    "description": "Chọn một bản sao lưu để khôi phục qua hành động rollback được bảo vệ."
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "يعرض لقطات rollback من جرد النسخ الاحتياطية. الاستعادة وتعديلات auto-backup تتطلب `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "قائمة النسخ الاحتياطية"
+  },
+  "empty": {
+    "label": "لا توجد نسخ احتياطية في القائمة."
+  },
+  "snapshots_root": {
+    "label": "جذر اللقطات"
+  },
+  "root_present": {
+    "label": "موجود"
+  },
+  "root_missing": {
+    "label": "مفقود"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "تاريخ الإنشاء"
+  },
+  "size_column": {
+    "label": "الحجم"
+  },
+  "reason_column": {
+    "label": "السبب"
+  },
+  "status_column": {
+    "label": "الحالة"
+  },
+  "restore_column": {
+    "label": "استعادة"
+  },
+  "reason_update": {
+    "label": "تحديث"
+  },
+  "reason_scheduled": {
+    "label": "مجدول"
+  },
+  "health_available": {
+    "label": "متاحة"
+  },
+  "health_missing_records": {
+    "label": "سجلات مفقودة"
+  },
+  "health_invalid_records": {
+    "label": "سجلات غير صالحة"
+  },
+  "actions_disabled": {
+    "label": "الإجراءات المُتحكَّم بها معطّلة."
+  },
+  "restore_unavailable": {
+    "label": "الاستعادة غير متاحة لهذه النسخة الاحتياطية."
+  },
+  "restore_backup": {
+    "label": "استعادة النسخة الاحتياطية"
+  },
+  "auto_backup_title": {
+    "label": "النسخ الاحتياطي التلقائي"
+  },
+  "auto_backup_help": {
+    "description": "تستخدم النسخ الاحتياطية المجدولة إعدادات workflow المدققة. الحفظ يتطلب تأكيدًا."
+  },
+  "auto_enabled": {
+    "label": "مفعّل"
+  },
+  "auto_interval_days": {
+    "label": "الفاصل (أيام)"
+  },
+  "auto_keep_latest": {
+    "label": "الاحتفاظ بالأحدث"
+  },
+  "restore_preview_help": {
+    "description": "اختر نسخة احتياطية لاستعادتها عبر إجراء التراجع المحمي."
+  }
+}

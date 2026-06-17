@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "列出备份清单中的 rollback 快照。受保护的恢复和 auto-backup 编辑需要 `garda ui --actions`。"
+  },
+  "inventory_title": {
+    "label": "备份列表"
+  },
+  "empty": {
+    "label": "列表中没有备份。"
+  },
+  "snapshots_root": {
+    "label": "快照根目录"
+  },
+  "root_present": {
+    "label": "存在"
+  },
+  "root_missing": {
+    "label": "缺失"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "创建时间"
+  },
+  "size_column": {
+    "label": "大小"
+  },
+  "reason_column": {
+    "label": "原因"
+  },
+  "status_column": {
+    "label": "状态"
+  },
+  "restore_column": {
+    "label": "恢复"
+  },
+  "reason_update": {
+    "label": "更新"
+  },
+  "reason_scheduled": {
+    "label": "计划"
+  },
+  "health_available": {
+    "label": "可用"
+  },
+  "health_missing_records": {
+    "label": "记录缺失"
+  },
+  "health_invalid_records": {
+    "label": "记录无效"
+  },
+  "actions_disabled": {
+    "label": "受控操作已禁用。"
+  },
+  "restore_unavailable": {
+    "label": "此备份无法恢复。"
+  },
+  "restore_backup": {
+    "label": "恢复备份"
+  },
+  "auto_backup_title": {
+    "label": "自动备份"
+  },
+  "auto_backup_help": {
+    "description": "计划的自动备份使用已审计的 workflow 设置。保存需要确认。"
+  },
+  "auto_enabled": {
+    "label": "已启用"
+  },
+  "auto_interval_days": {
+    "label": "间隔（天）"
+  },
+  "auto_keep_latest": {
+    "label": "保留最新"
+  },
+  "restore_preview_help": {
+    "description": "选择一个备份，通过受保护的回滚操作恢复它。"
+  }
+}

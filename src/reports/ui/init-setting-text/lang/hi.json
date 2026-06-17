@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "सहायक की भाषा",
+    "description": "ऑपरेटर के साथ बातचीत के लिए सहायक को कौन-सी भाषा उपयोग करनी चाहिए।"
+  },
+  "AssistantBrevity": {
+    "label": "सहायक की विस्तारिता",
+    "description": "सामान्य उत्तरों में सहायक कितना विस्तृत होना चाहिए।"
+  },
+  "SourceOfTruth": {
+    "label": "निर्देश का स्वामी",
+    "description": "मानक provider फ़ाइल जो उत्पन्न agent निर्देशों का स्वामी है।"
+  },
+  "ActiveAgentFiles": {
+    "label": "सक्रिय agent फ़ाइलें",
+    "description": "agent entrypoint फ़ाइलें जो वर्तमान में इस प्रोजेक्ट में शामिल हैं।"
+  },
+  "EnforceNoAutoCommit": {
+    "label": "स्वचालित commit नहीं",
+    "description": "ऑपरेटर की स्पष्ट अनुमति के बिना agents को commit करने से रोकता है (कम से कम कोशिश करता है)।"
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude पूर्ण पहुँच मोड",
+    "description": "क्या Claude-उन्मुख निर्देश orchestrator की पूर्ण पहुँच मानते हैं।"
+  },
+  "TokenEconomyEnabled": {
+    "label": "टोकन अर्थव्यवस्था",
+    "description": "उत्पन्न निर्देशों को संक्षिप्त रखता है और अनावश्यक संदर्भ से बचता है।"
+  },
+  "ProviderMinimalism": {
+    "label": "Provider न्यूनतमता",
+    "description": "जहाँ संभव हो, गैर-मानक provider entrypoints को रीडायरेक्ट के रूप में रखता है।"
+  },
+  "OrchestratorVersion": {
+    "label": "Orchestrator संस्करण",
+    "description": "Garda का संस्करण जिसने स्थिति लिखी।"
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "भाषा की पुष्टि",
+    "description": "क्या सहायक भाषा checkpoint पास हुआ।"
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Agent फ़ाइलों की पुष्टि",
+    "description": "क्या चुनी गई सक्रिय agent फ़ाइलों की स्पष्ट पुष्टि हुई।"
+  },
+  "ProjectRulesUpdated": {
+    "label": "प्रोजेक्ट नियम अपडेट",
+    "description": "क्या agent init के दौरान प्रोजेक्ट नियमों की समीक्षा या स्वीकृति हुई।"
+  },
+  "SkillsPromptCompleted": {
+    "label": "Skills prompt पूर्ण",
+    "description": "क्या skills prompt checkpoint पूरा हुआ।"
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "सामान्य दस्तावेज़ की पुष्टि",
+    "description": "क्या सामान्य दस्तावेज़ पथों की पुष्टि हुई।"
+  },
+  "VerificationPassed": {
+    "label": "सत्यापन पास",
+    "description": "क्या init के बाद का सत्यापन पास हुआ।"
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest मान्य",
+    "description": "क्या संरक्षित control-plane manifest सत्यापन पास हुआ।"
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "बीजित compile-gate कमांड",
+    "description": "Initialization के दौरान workflow config में बीजित compile, build या type-check कमांड।"
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "बीजित full-suite कमांड",
+    "description": "Initialization के दौरान workflow config में बीजित परीक्षण कमांड।"
+  },
+  "reinit": {
+    "title": "Workspace पुनः प्रारंभ",
+    "description": "वर्तमान init उत्तरों से Garda द्वारा उत्पन्न फ़ाइलों को पुनः बनाता है। init विकल्प बदलने के बाद उपयोग करें।"
+  },
+  "agent-init": {
+    "title": "Agent prompt हस्तांतरण",
+    "description": "AGENT_INIT_PROMPT.md agent को दें और agent-init प्रवाह पूरा करने को कहें; कठोर कमांड तभी काम करता है जब agent ने वे जाँचें पूरी कर ली हों।"
+  }
+}

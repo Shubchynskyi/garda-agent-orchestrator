@@ -12,52 +12,8 @@
     "initSettingsTab": "초기화 설정",
     "projectMemoryTab": "프로젝트 메모리",
     "backupsTab": "백업",
-    "backupsTabIntro": "백업 인벤토리의 rollback 스냅샷을 표시합니다. 보호된 복원 및 auto-backup 편집에는 `garda ui --actions`가 필요합니다.",
-    "backupsInventoryTitle": "백업 인벤토리",
-    "backupsEmpty": "인벤토리에 백업이 없습니다.",
-    "backupsSnapshotsRoot": "스냅샷 루트",
-    "backupRootPresent": "있음",
-    "backupRootMissing": "없음",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "생성됨",
-    "backupSizeColumn": "크기",
-    "backupReasonColumn": "사유",
-    "backupStatusColumn": "상태",
-    "backupRestoreColumn": "복원",
-    "backupReasonUpdate": "업데이트",
-    "backupReasonScheduled": "예약됨",
-    "backupsActionsDisabled": "제어된 작업이 비활성화되어 있습니다.",
-    "backupRestoreUnavailable": "이 백업은 복원할 수 없습니다.",
-    "restoreBackup": "백업 복원",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "사용",
-    "backupAutoIntervalDays": "간격(일)",
-    "backupAutoKeepLatest": "최신 유지",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "지침",
     "cleanupSettingsTab": "정리 설정",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "적용 정책",
-    "cleanupEffectivePolicyHelp": "런타임 소유권 맵은 작업 범위 증거와 공유 집계를 분리합니다. 작업 삭제는 공유 파일 전체를 지우지 않고 소유 아티팩트를 제거하고 공유 상태를 복구합니다.",
-    "cleanupPolicyPath": "정책 경로",
-    "cleanupDailyEnabled": "일일 유지관리 활성화",
-    "cleanupDailyDryRun": "일일 유지관리 드라이런",
-    "cleanupOlderThanDays": "다음 일수보다 오래되면 대상",
-    "cleanupKeepLatestTasks": "최신 작업 유지",
-    "cleanupPurgeRequireConfirm": "삭제에는 확인 필요",
-    "cleanupHealthyDoneCompactDays": "정상 DONE 압축 기준 일수",
-    "cleanupProblemCompressDays": "문제 작업 압축 기준 일수",
-    "cleanupEditSettingsTitle": "보존 제어",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "실행당 최대 작업 수",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "작업 삭제",
-    "cleanupTaskPurgeHelp": "하나의 작업 ID가 소유한 런타임 아티팩트를 삭제합니다. 활성 작업 보호와 공유 상태 복구는 서버 쪽에서 유지됩니다.",
-    "cleanupTaskId": "작업 ID",
-    "cleanupPurgeTask": "작업 삭제",
     "actionsTab": "동작",
     "noticeActionsEnabled": "작업 세부 정보는 로컬 서버에서 요청 시 로드됩니다. 서버는 127.0.0.1에 바인딩되며 이 CLI 프로세스가 종료되면 중지됩니다. 제어된 작업은 허용 목록 명령에만 활성화됩니다.",
     "noticeActionsDisabled": "작업 세부 정보는 로컬 서버에서 요청 시 로드됩니다. 서버는 127.0.0.1에 바인딩되며 이 CLI 프로세스가 종료되면 중지됩니다. --actions 없이 서버가 시작되면 제어된 작업은 비활성화됩니다.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "기존 아티팩트",
     "missingArtifacts": "누락된 아티팩트",
     "artifactPath": "아티팩트 경로",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "일반 문서",
+    "ordinaryDocsHelp": "일반 문서는 사용자 소유의 계획, changelog 또는 제품 문서입니다. 이러한 경로의 변경은 감사 가능하지만 그 자체로 추가 검토 레인을 트리거하지 않습니다.",
+    "ordinaryDocsPath": "문서 경로",
+    "ordinaryDocsEmpty": "구성된 일반 문서 경로가 없습니다.",
+    "ordinaryDocsActionsDisabled": "일반 문서 편집이 비활성화되어 있습니다. 다음으로 다시 시작하세요",
+    "addOrdinaryDoc": "문서 추가",
+    "removeOrdinaryDoc": "제거",
+    "availableReviewTypes": "사용 가능한 리뷰 유형"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "알려진 위험, 취약한 경로, 보안 메모, 호환성 제약."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "초기화 설정",
+      "body": "초기화 설정 탭에는 현재 응답, 필수 에이전트 init 체크포인트, 일반 문서 관리, 온보딩 완료용 handoff 프롬프트가 표시됩니다."
+    },
+    "project-memory": {
+      "title": "프로젝트 메모리",
+      "body": "프로젝트 메모리 탭에는 현재 유지보수 모드와 영구 메모리 파일이 표시됩니다. 대시보드에 전체 내용을 로드하지 말고 필요할 때 각 파일을 여세요."
+    }
+  }
 }

@@ -24,17 +24,20 @@ async function openReadOnlyFile(pathValue, targetId) {
   const target = document.getElementById(targetId);
   if (!target) return;
   target.hidden = false;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   target.innerHTML = '<h3><code>' + safe(pathValue) + '</code></h3><p class="empty">' + safe(t('loading')) + '</p>';
   try {
     const response = await fetch(fileViewerHref(pathValue));
     const body = await response.text();
     target.innerHTML = '<h3><code>' + safe(pathValue) + '</code></h3><pre>' + safe(body) + '</pre>';
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) {
     target.innerHTML = '<h3><code>' + safe(pathValue) + '</code></h3><p class="error">' + safe(error && error.message ? error.message : error) + '</p>';
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 }
 function openFileButton(pathValue, targetId) {
-  return '<button type="button" data-file-path="' + safe(pathValue) + '" data-file-target="' + safe(targetId) + '">' + safe(t('openMemoryFile')) + '</button>';
+  return '<button type="button" class="file-open-inline" data-file-path="' + safe(pathValue) + '" data-file-target="' + safe(targetId) + '">' + safe(t('openMemoryFile')) + '</button>';
 }
 function wireFileButtons(rootNode) {
   for (const button of rootNode.querySelectorAll('button[data-file-path]')) {
@@ -50,8 +53,8 @@ function renderValueTable(rows) {
   return '<div class="value-table"><table><thead><tr><th>' + safe(t('fieldColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('valueColumn')) + '</th></tr></thead><tbody>'
     + rows.map(row => {
       const localized = localizedValueRow(row);
-      const openControl = row.file_path ? '<br><code>' + safe(row.file_path) + '</code><div class="file-open-row">' + openFileButton(row.file_path, 'init-file-content') + '</div>' : '';
-      return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(row.id) + '</code>' + openControl + '</td><td class="description-cell">' + inlineText(localized.description) + '</td><td><code class="current-value">' + safe(renderJsonValue(row.value)) + '</code></td></tr>';
+      const valueOpenControl = row.file_path ? openFileButton(row.file_path, 'init-file-content') : '';
+      return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(row.id) + '</code></td><td class="description-cell">' + inlineText(localized.description) + '</td><td><span class="value-with-open"><code class="current-value">' + safe(renderJsonValue(row.value)) + '</code>' + valueOpenControl + '</span></td></tr>';
     }).join('')
     + '</tbody></table></div>';
 }
@@ -61,13 +64,22 @@ function initStatusText(status) {
   if (status === 'invalid') return t('initStatusInvalid');
   return String(status || 'unknown');
 }
+function renderInitStatusNotice(status) {
+  if (status === 'present') {
+    return '';
+  }
+  return '<p class="workflow-state">' + safe(initStatusText(status)) + '</p>';
+}
 function renderInitSettings(report) {
   const tab = report.init_settings_tab || {};
   const commands = tab.commands || [];
-  initSettingsNode.innerHTML = '<section class="workflow-group"><h3>' + safe(t('initBlockTitle')) + ' <span class="config-path">(' + safe(tab.init_answers_path || '-') + ')</span></h3>'
-    + '<p class="workflow-state">' + safe(initStatusText(tab.init_answers_status)) + '</p>' + renderValueTable(tab.init_answers || []) + '</section>'
-    + '<section class="workflow-group"><h3>' + safe(t('agentInitBlockTitle')) + ' <span class="config-path">(' + safe(tab.agent_init_state_path || '-') + ')</span></h3>'
-    + '<p class="workflow-state">' + safe(initStatusText(tab.agent_init_state_status)) + '</p>' + renderValueTable(tab.agent_init_state || []) + '</section>'
+  setPanelConfigPath(initSettingsConfigPathNode, [
+    tab.init_answers_path,
+    tab.agent_init_state_path,
+    tab.ordinary_docs && tab.ordinary_docs.config_path
+  ]);
+  initSettingsNode.innerHTML = '<section class="workflow-group">' + renderInitStatusNotice(tab.init_answers_status) + renderValueTable(tab.init_answers || []) + '</section>'
+    + '<section class="workflow-group"><h3>' + safe(t('agentInitBlockTitle')) + '</h3>' + renderInitStatusNotice(tab.agent_init_state_status) + renderValueTable(tab.agent_init_state || []) + '</section>'
     + renderOrdinaryDocs(tab.ordinary_docs || { paths: [], config_path: '-', status: 'missing' })
     + '<section class="workflow-group"><h3>' + safe(t('initCommandsTitle')) + '</h3><div class="action-table"><table><thead><tr><th>' + safe(t('action')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('commandColumn')) + '</th></tr></thead><tbody>'
     + commands.map(command => '<tr><td><strong>' + safe(localizedField(initSettingTextPacks, command.id, 'title', command.title)) + '</strong></td><td class="description-cell">' + inlineText(localizedField(initSettingTextPacks, command.id, 'description', command.description)) + '</td><td class="command-cell"><code>' + safe(command.command) + '</code></td></tr>').join('')
@@ -81,7 +93,7 @@ function renderOrdinaryDocs(info) {
     ? '<div class="value-table"><table><thead><tr><th>' + safe(t('fileColumn')) + '</th></tr></thead><tbody>' + rows + '</tbody></table></div><div class="setting-buttons"><button type="button" data-ordinary-doc-operation="remove-selected" data-ordinary-doc-mode="execute"' + (!actionsEnabled ? ' disabled' : '') + '>' + safe(t('removeOrdinaryDoc')) + '</button></div>'
     : '<p class="empty">' + safe(t('ordinaryDocsEmpty')) + '</p>';
   const disabledText = !actionsEnabled ? '<p class="empty">' + safe(t('ordinaryDocsActionsDisabled')) + ' <code>garda ui --actions</code></p>' : '';
-  return '<section class="workflow-group ordinary-docs"><h3>' + safe(t('ordinaryDocsTitle')) + ' <span class="config-path">(' + safe(info.config_path || '-') + ')</span></h3>'
+  return '<section class="workflow-group ordinary-docs"><h3>' + safe(t('ordinaryDocsTitle')) + '</h3>'
     + '<p class="empty">' + safe(t('ordinaryDocsHelp')) + '</p>'
     + table
     + '<div id="ordinary-docs-status" class="action-status empty"></div>'

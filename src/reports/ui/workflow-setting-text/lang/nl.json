@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Compile-gate-opdracht",
+    "description": "Opdracht die compile-gate uitvoert voor compile-, build- en typecheck-validatie. Zonder configuratie faalt compile-gate gesloten totdat een projectspecifieke opdracht is ingesteld."
+  },
+  "compile-gate-command-fallback": {
+    "description": "Niet ingesteld in workflow-config; compile-gate faalt gesloten totdat een projectspecifieke opdracht is geconfigureerd."
+  },
+  "full-suite-enabled": {
+    "label": "Verplichte volledige testsuite",
+    "description": "Bepaalt of de geconfigureerde volledige testopdracht onderdeel is van de taaklevenscyclus.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "De geconfigureerde volledige testopdracht is verplicht in de taaklevenscyclus."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "De volledige testgate wordt overgeslagen, tenzij een ander workflowpad dit vereist."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Volledige testopdracht",
+    "description": "Opdracht die de volledige testgate uitvoert wanneer verplichte volledige validatie is ingeschakeld."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Time-out volledige testsuite",
+    "description": "Maximale looptijd van de volledige testopdracht, in milliseconden."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Lengte succesvolle testsamenvatting",
+    "description": "Hoeveel regels succesvolle testuitvoer zichtbaar blijven in compact taakbewijs."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Lengte foutblok",
+    "description": "Hoeveel mislukte testregels per compact foutblok worden bewaard."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Afhandeling van fouten buiten scope",
+    "description": "Wat de workflow doet wanneer de volledige testsuite een fout buiten de huidige taakscope toont.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Loggen en blokkeren",
+        "description": "Registreert de fout buiten scope en stopt de workflow totdat deze is opgelost."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Loggen en waarschuwen",
+        "description": "Registreert de fout buiten scope, maar laat de workflow doorgaan met een waarschuwing."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Plaatsing volledige testsuite",
+    "description": "Waar de verplichte volledige testgate in de taaklevenscyclus wordt uitgevoerd.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "Na compile, vóór reviews",
+        "description": "Voert de volledige testsuite uit na een geslaagde compile en vóór reviewwerk begint."
+      },
+      "before_test_review": {
+        "label": "Vóór testreview",
+        "description": "Voert de volledige testsuite direct uit vóór de testreviewlane bewijs nodig heeft."
+      },
+      "before_completion": {
+        "label": "Vóór afronding",
+        "description": "Stelt de volledige testsuite uit tot het finale afrondingspad."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Review-uitvoeringsmodus",
+    "description": "Bepaalt of verplichte reviewlanes parallel lopen, op codereview wachten of sequentieel worden uitgevoerd.",
+    "options": {
+      "parallel_all": {
+        "label": "Alles parallel",
+        "description": "Alle reviewtypes kunnen onafhankelijk worden voorbereid; er gelden geen upstream-afhankelijkheden."
+      },
+      "test_after_code": {
+        "label": "Test na code",
+        "description": "Alleen test wacht op een huidige code-PASS; andere reviewtypes blijven onafhankelijk."
+      },
+      "code_first_optional": {
+        "label": "Code eerst voor optioneel",
+        "description": "API, performance, infra en dependency wachten op code-PASS; test blijft downstream."
+      },
+      "strict_sequential": {
+        "label": "Strikt sequentieel",
+        "description": "Alle verplichte reviewlanes volgen de canonieke volgorde één voor één in de huidige cyclus."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Scope-budgetbewaking",
+    "description": "Waarschuwt of blokkeert wanneer een taak te groot is voor het geconfigureerde profielbudget.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Scope-budgetcontroles waarschuwen of blokkeren wanneer een taak het geconfigureerde profielbudget overschrijdt."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Scope-budgetlimieten worden niet afgedwongen bij taakgroottebeslissingen."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Scope-budgetactie",
+    "description": "Wat er gebeurt wanneer het scope-budget wordt overschreden.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Blokkeren voor splitsing",
+        "description": "Stopt te grote taken en vraagt de operator of agent om te splitsen."
+      },
+      "WARN_ONLY": {
+        "label": "Alleen waarschuwen",
+        "description": "Toont de scope-waarschuwing maar stopt de volgende levenscyclusstap niet."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Scope-budgetprofielen",
+    "description": "Taakprofielen waarop de scope-budgetbewaking van toepassing is. Onbekende legacy-waarden worden expliciet getoond in plaats van stil verwijderd."
+  },
+  "scope-budget-max-files": {
+    "label": "Limiet gewijzigde bestanden",
+    "description": "Maximaal aantal gewijzigde bestanden voordat de scope-budgetbewaking reageert."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Limiet gewijzigde regels",
+    "description": "Maximaal aantal gewijzigde regels voordat de scope-budgetbewaking reageert."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Limiet reviewlanes",
+    "description": "Maximaal aantal verplichte reviewlanes voordat de scope-budgetbewaking reageert."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Limiet reviewtokens",
+    "description": "Maximaal geschat reviewtokenbudget voordat de scope-budgetbewaking reageert."
+  },
+  "review-cycle-enabled": {
+    "label": "Review-cyclusbewaking",
+    "description": "Detecteert herhaalde niet-test reviewloops voordat ze te veel werk verbruiken.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Herhaalde niet-test reviewloops worden gedetecteerd voordat afronding doorgaat."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Review-cyclusdruk wordt niet gecontroleerd door deze bewaking."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Review-cyclusactie",
+    "description": "Wat er gebeurt wanneer herhaalde reviewpogingen de geconfigureerde limieten overschrijden.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Wachten op operatorbeslissing",
+        "description": "Stopt herhaalde reviewloops totdat een operator het herstelpad kiest."
+      },
+      "WARN_ONLY": {
+        "label": "Alleen waarschuwen",
+        "description": "Rapporteert review-cyclusdruk maar laat de workflow doorgaan."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Limiet mislukte niet-test reviews",
+    "description": "Maximaal aantal mislukte niet-test reviewpogingen voordat de review-cyclusbewaking reageert."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Totale limiet niet-test reviews",
+    "description": "Maximaal totaal aantal niet-test reviewpogingen voordat de review-cyclusbewaking reageert."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Uitgesloten reviewtypes",
+    "description": "Meervoudige keuze: aangevinkte reviewtypes worden uitgesloten van de telling van de review-cycle guard.",
+    "options": {
+      "code": {
+        "label": "Codereview"
+      },
+      "db": {
+        "label": "Database-review"
+      },
+      "security": {
+        "label": "Beveiligingsreview"
+      },
+      "refactor": {
+        "label": "Refactor-review"
+      },
+      "api": {
+        "label": "API-review"
+      },
+      "test": {
+        "label": "Testreview"
+      },
+      "performance": {
+        "label": "Performancereview"
+      },
+      "infra": {
+        "label": "Infrastructuurreview"
+      },
+      "dependency": {
+        "label": "Afhankelijkheidsreview"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Automatische splitsingsprompt bij review-cyclus",
+    "description": "Staat toe dat review-cyclusdruk een auto-split prompt uitgeeft wanneer de actie BLOCK_FOR_OPERATOR_DECISION is. Heeft geen blokkerend effect zolang de actie WARN_ONLY is.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Review-cyclusdruk kan de auto-split prompt uitgeven wanneer de actie BLOCK_FOR_OPERATOR_DECISION is."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Review-cyclusdruk geeft nooit de auto-split prompt uit."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Projectgeheugenonderhoud",
+    "description": "Bepaalt of afronding de impact op projectgeheugen controleert.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Bij afronding wordt gecontroleerd of bewijs van projectgeheugenimpact nodig is."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Bij afronding worden geen projectgeheugencontroles uitgevoerd."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Projectgeheugenmodus",
+    "description": "Hoe strikt de workflow projectgeheugenimpact afdwingt.",
+    "options": {
+      "off": {
+        "label": "Uit",
+        "description": "Voer geen projectgeheugenonderhoud uit tijdens afronding."
+      },
+      "check": {
+        "label": "Controleren",
+        "description": "Controleer of geheugenupdates nodig zijn zonder ze weg te schrijven."
+      },
+      "update": {
+        "label": "Bijwerken",
+        "description": "Sta toe dat de workflow gerichte projectgeheugenbestanden bijwerkt wanneer nodig."
+      },
+      "strict": {
+        "label": "Strikt",
+        "description": "Vereis geheugbewijs voordat afronding kan slagen."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Geheugencontrole vóór finale afronding",
+    "description": "Voert projectgeheugenonderhoud uit vóór de laatste afrondingsstap.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Projectgeheugenonderhoud wordt uitgevoerd vóór de laatste afrondingsstap."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Projectgeheugenonderhoud wordt niet ingevoegd vóór finale afronding."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Gebruikersgoedkeuring voor geheugenschrijfacties",
+    "description": "Vereist expliciete gebruikersgoedkeuring voordat de workflow projectgeheugenbestanden schrijft.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Schrijfacties naar projectgeheugen vereisen expliciete gebruikersgoedkeuring voordat bestanden worden gewijzigd."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Schrijfacties naar projectgeheugen kunnen doorgaan volgens de geconfigureerde onderhoudsmodus zonder extra goedkeuringsstap."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Grootte compacte geheugensamenvatting",
+    "description": "Maximale grootte van de gegenereerde compacte projectgeheugensamenvatting, in tekens."
+  },
+  "project-memory-read-strategy": {
+    "label": "Leesstrategie projectgeheugen",
+    "description": "Hoe agents duurzaam geheugen aan het begin van een taak moeten lezen.",
+    "options": {
+      "index_first": {
+        "label": "Eerst index",
+        "description": "Lees eerst de geheugenindex en open gedetailleerde bestanden alleen wanneer de index ernaar verwijst."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Bewaring impactartefacten geheugen",
+    "description": "Hoeveel dagen impactartefacten van projectgeheugen worden bewaard."
+  },
+  "task-reset-enabled": {
+    "label": "Taak reset-/verwerpingsopdrachten",
+    "description": "Staat bevestigde reset- of discard-mutaties voor taken toe.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Bevestigde reset- en discard-opdrachten voor taken zijn beschikbaar via beveiligde paden."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Reset- en discard-mutaties voor taken zijn niet beschikbaar."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Geplande automatische back-ups",
+    "description": "Staat toe dat de dagelijkse onderhoudstrigger geplande rollback-back-ups maakt wanneer het interval is verstreken.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Dagelijks onderhoud kan geplande rollback-back-ups maken wanneer het interval is verstreken."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "Dagelijks onderhoud maakt geen geplande rollback-back-ups."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Interval automatische back-up",
+    "description": "Minimaal aantal dagen tussen succesvolle geplande back-ups."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Bewaring automatische back-ups",
+    "description": "Aantal recente back-ups dat behouden blijft na het maken van een geplande back-up."
+  },
+  "garda-self-guard": {
+    "label": "Garda zelfbescherming",
+    "description": "Bepaalt of agents direct beschermd Garda control-plane-werk mogen starten.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "Aan",
+        "description": "Agents kunnen beschermd control-plane-werk niet betreden zonder het operator-eigendomspad."
+      },
+      "require_operator_confirmation": {
+        "label": "Operatorbevestiging",
+        "description": "Toegang tot beschermd control-plane vereist expliciete operatorbevestiging."
+      }
+    }
+  }
+}

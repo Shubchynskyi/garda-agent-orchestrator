@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Aufbewahrungsrichtlinie für Runtime-Daten in `runtime-retention.json`: Schwellenwerte für geplante Wartung, Regeln zur Verdichtung und geschützte manuelle Bereinigungsaktionen."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Tägliche Wartung",
+    "description": "Schaltet die geplante tägliche Wartung ein oder aus. Wenn sie aktiviert ist, kann der Orchestrator nach Zeitplan eine begrenzte Anzahl geeigneter Aufgaben ohne manuelles Eingreifen verarbeiten."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Max. Aufgaben pro Wartungslauf",
+    "description": "Obergrenze dafür, wie viele geeignete Aufgaben die tägliche Wartung in einem einzelnen Lauf verarbeitet. Begrenzt den möglichen Schaden, wenn Schwellenwerte falsch konfiguriert sind."
+  },
+  "eligible_older_than_days": {
+    "label": "Mindestalter der Aufgabe (Tage)",
+    "description": "Eine Aufgabe muss mindestens so viele Tage alt sein, bevor Wartung oder manuelle Bereinigung ihre Runtime-Artefakte anfassen dürfen. Aktive und neuere Aufgaben bleiben geschützt."
+  },
+  "keep_latest_tasks": {
+    "label": "Neueste Aufgaben behalten (Anzahl)",
+    "description": "Bewahrt immer mindestens so viele der neuesten Aufgaben auf, auch wenn sie älter als die Altersgrenze sind. Auf 0 setzen, um sich nur auf Alter und Schutz aktiver Aufgaben zu verlassen."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Tägliche Wartung als Dry-Run",
+    "description": "Wenn true gesetzt ist, listet die geplante tägliche Wartung nur Kandidaten auf und schreibt Audit-Ausgaben; Artefakte werden weder gelöscht noch komprimiert. Verwenden Sie true beim Feinabstimmen der Grenzwerte und wechseln Sie danach zu false für die Anwendung."
+  },
+  "purge_require_confirm": {
+    "label": "Bestätigung für Purge erforderlich",
+    "description": "Wenn true gesetzt ist, verlangen zerstörerische Purge- und Cleanup-Befehle eine explizit eingegebene Bestätigungsphrase, bevor der Server sie ausführt."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Erfolgreiche DONE nach (Tagen) verdichten",
+    "description": "Nach so vielen Tagen dürfen erfolgreich abgeschlossene Aufgaben (DONE) auf eine reine Ledger-Historie verdichtet werden, sobald der Ledger-Nachweis verifiziert ist."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Problematische Aufgaben nach (Tagen) komprimieren",
+    "description": "Nach so vielen Tagen dürfen umfangreiche forensische Artefakte fehlgeschlagener oder hängengebliebener Aufgaben komprimiert werden, solange lesbare Wiederherstellungsnachweise erhalten bleiben."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Manuelle Runtime-Bereinigung",
+    "description": "Führt `garda cleanup` einmal mit den Werten für Alter und Neueste-behalten aus den Zeilen oben aus. Die Vorschau zeigt nur Kandidaten; Anwenden löscht oder komprimiert gemäß Richtlinie und verlangt eine Bestätigung."
+  },
+  "task_purge": {
+    "label": "Aufgaben-Purge",
+    "description": "Löscht Runtime-Artefakte, die zu einer einzelnen Aufgaben-ID gehören, und repariert gemeinsame Indizes. Ganze gemeinsame Dateien werden nicht entfernt; der Schutz aktiver Aufgaben gilt serverseitig weiterhin."
+  },
+  "task_id": {
+    "label": "Aufgaben-ID"
+  },
+  "purge_task_button": {
+    "label": "Aufgabe löschen"
+  },
+  "run_preview": {
+    "label": "Vorschau"
+  },
+  "value_true": {
+    "label": "true — aktiviert"
+  },
+  "value_false": {
+    "label": "false — deaktiviert"
+  }
+}

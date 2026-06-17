@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Обслуживание памяти включено",
+    "description": "Проверяет ли workflow устойчивую память проекта перед closeout."
+  },
+  "memory-mode": {
+    "label": "Режим обслуживания памяти",
+    "description": "Текущий режим: off, check, update или strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Запуск до финального closeout",
+    "description": "Запускается ли project-memory gate перед завершением задачи."
+  },
+  "memory-require-approval": {
+    "label": "Подтверждение записи",
+    "description": "Нужно ли согласие пользователя перед записью project-memory файлов."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Лимит размера компактной сводки",
+    "description": "Максимальный размер сгенерированной компактной сводки памяти проекта в символах."
+  },
+  "memory-read-strategy": {
+    "label": "Стратегия чтения",
+    "description": "Как агент должен читать память проекта на старте задачи."
+  },
+  "memory-impact-retention-days": {
+    "label": "Хранение артефактов влияния",
+    "description": "Сколько дней хранятся артефакты влияния project-memory."
+  },
+  "memory-initialized": {
+    "label": "Инициализировано в agent init",
+    "description": "Зафиксировал ли agent-init инициализацию памяти проекта."
+  },
+  "memory-validated": {
+    "label": "Проверено в agent init",
+    "description": "Зафиксировал ли agent-init успешную проверку памяти проекта."
+  },
+  "memory-dir": {
+    "label": "Папка памяти",
+    "description": "Директория с пользовательскими файлами устойчивой памяти."
+  },
+  "memory-read-first": {
+    "label": "Читать первыми",
+    "description": "Файлы, которые агент должен читать перед сфокусированными файлами памяти."
+  },
+  "memory-summary-rule": {
+    "label": "Сгенерированное правило сводки",
+    "description": "Сгенерированный rule-файл со сводкой памяти проекта для старта агента."
+  },
+  "memory-bootstrap-report": {
+    "label": "Bootstrap-отчёт",
+    "description": "Runtime-отчёт bootstrap или проверки памяти проекта."
+  }
+}

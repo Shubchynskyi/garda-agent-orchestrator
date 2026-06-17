@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Kebijakan retensi runtime di `runtime-retention.json`: ambang pemeliharaan terjadwal, aturan pemadatan, dan tindakan pembersihan manual yang terlindungi."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Pemeliharaan harian",
+    "description": "Mengaktifkan atau menonaktifkan pemeliharaan harian terjadwal. Saat aktif, orkestrator dapat memproses sejumlah terbatas tugas yang memenuhi syarat sesuai jadwal tanpa intervensi manual."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Maksimum tugas per proses pemeliharaan",
+    "description": "Batas atas jumlah tugas yang memenuhi syarat yang diproses pemeliharaan harian dalam satu kali jalan. Membatasi dampak jika ambang dikonfigurasi secara keliru."
+  },
+  "eligible_older_than_days": {
+    "label": "Usia minimum tugas (hari)",
+    "description": "Sebuah tugas harus berusia setidaknya selama ini sebelum pemeliharaan atau pembersihan manual boleh menyentuh artefak runtime miliknya. Tugas aktif dan tugas yang lebih baru tetap dilindungi."
+  },
+  "keep_latest_tasks": {
+    "label": "Pertahankan tugas terbaru (jumlah)",
+    "description": "Selalu simpan setidaknya sebanyak ini tugas terbaru meskipun usianya melebihi ambang umur. Setel ke 0 untuk hanya mengandalkan umur dan perlindungan tugas aktif."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run pemeliharaan harian",
+    "description": "Saat bernilai true, pemeliharaan harian terjadwal hanya menampilkan kandidat dan menulis keluaran audit; tidak menghapus atau mengompresi artefak. Gunakan true saat menyetel ambang, lalu ubah ke false untuk menerapkan."
+  },
+  "purge_require_confirm": {
+    "label": "Purge wajib konfirmasi",
+    "description": "Saat bernilai true, perintah purge dan cleanup yang destruktif memerlukan frasa konfirmasi yang diketik secara eksplisit sebelum server mengeksekusinya."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Padatkan DONE yang sehat setelah (hari)",
+    "description": "Setelah selama ini, tugas yang berhasil selesai (DONE) dapat dipadatkan menjadi riwayat ledger saja setelah bukti ledger diverifikasi."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Kompres tugas bermasalah setelah (hari)",
+    "description": "Setelah selama ini, artefak forensik besar dari tugas yang gagal atau macet dapat dikompresi sambil tetap menyimpan bukti yang dapat dibaca untuk pemulihan."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Pembersihan runtime manual",
+    "description": "Menjalankan `garda cleanup` sekali dengan nilai umur dan pertahankan-terbaru dari baris di atas. Pratinjau hanya menampilkan kandidat; Terapkan menghapus atau mengompresi sesuai kebijakan dan memerlukan konfirmasi."
+  },
+  "task_purge": {
+    "label": "Purge tugas",
+    "description": "Menghapus artefak runtime milik satu ID tugas dan memperbaiki indeks bersama. Tidak menghapus seluruh file bersama; perlindungan tugas aktif tetap berlaku di server."
+  },
+  "task_id": {
+    "label": "ID tugas"
+  },
+  "purge_task_button": {
+    "label": "Purge tugas"
+  },
+  "run_preview": {
+    "label": "Pratinjau"
+  },
+  "value_true": {
+    "label": "true — aktif"
+  },
+  "value_false": {
+    "label": "false — nonaktif"
+  }
+}

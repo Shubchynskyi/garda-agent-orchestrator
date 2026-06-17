@@ -12,52 +12,8 @@
     "initSettingsTab": "Configurações de inicialização",
     "projectMemoryTab": "Memória do projeto",
     "backupsTab": "Backups",
-    "backupsTabIntro": "Lista snapshots de rollback do inventário de backups. Restauração protegida e edições de auto-backup exigem `garda ui --actions`.",
-    "backupsInventoryTitle": "Inventário de backups",
-    "backupsEmpty": "Nenhum backup no inventário.",
-    "backupsSnapshotsRoot": "Raiz dos snapshots",
-    "backupRootPresent": "presente",
-    "backupRootMissing": "ausente",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Criado",
-    "backupSizeColumn": "Tamanho",
-    "backupReasonColumn": "Motivo",
-    "backupStatusColumn": "Status",
-    "backupRestoreColumn": "Restaurar",
-    "backupReasonUpdate": "atualização",
-    "backupReasonScheduled": "agendado",
-    "backupsActionsDisabled": "Ações controladas estão desativadas.",
-    "backupRestoreUnavailable": "Restauração indisponível para este backup.",
-    "restoreBackup": "Restaurar backup",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Ativado",
-    "backupAutoIntervalDays": "Intervalo (dias)",
-    "backupAutoKeepLatest": "Manter os mais recentes",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Instruções",
     "cleanupSettingsTab": "Configurações de limpeza",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Política efetiva",
-    "cleanupEffectivePolicyHelp": "Evidências no escopo da tarefa e agregados compartilhados são separados pelo mapa de propriedade do runtime; o purge da tarefa remove artefatos próprios e repara o estado compartilhado em vez de apagar arquivos compartilhados por inteiro.",
-    "cleanupPolicyPath": "Caminho da política",
-    "cleanupDailyEnabled": "Manutenção diária ativada",
-    "cleanupDailyDryRun": "Manutenção diária em dry-run",
-    "cleanupOlderThanDays": "Elegível se mais antigo que dias",
-    "cleanupKeepLatestTasks": "Manter tarefas mais recentes",
-    "cleanupPurgeRequireConfirm": "Purge exige confirmação",
-    "cleanupHealthyDoneCompactDays": "Compactar DONE saudáveis após dias",
-    "cleanupProblemCompressDays": "Comprimir tarefas com problema após dias",
-    "cleanupEditSettingsTitle": "Controles de retenção",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Máx. tarefas por execução",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge de tarefa",
-    "cleanupTaskPurgeHelp": "Remove artefatos runtime pertencentes a um ID de tarefa. Proteção de tarefa ativa e reparo de estado compartilhado ficam no servidor.",
-    "cleanupTaskId": "ID da tarefa",
-    "cleanupPurgeTask": "Fazer purge da tarefa",
     "actionsTab": "Ações",
     "noticeActionsEnabled": "Os detalhes da tarefa são carregados sob demanda do servidor local. O servidor está vinculado a 127.0.0.1 e para quando esse processo CLI é encerrado. As ações controladas são habilitadas apenas para comandos listados como permitidos.",
     "noticeActionsDisabled": "Os detalhes da tarefa são carregados sob demanda do servidor local. O servidor está vinculado a 127.0.0.1 e para quando esse processo CLI é encerrado. As ações controladas são desativadas, a menos que o servidor inicie com --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Artefatos existentes",
     "missingArtifacts": "Artefatos ausentes",
     "artifactPath": "Caminho do artefato",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Documentos ordinários",
+    "ordinaryDocsHelp": "Documentos ordinários são documentos de planejamento, changelog ou produto do usuário. Alterações nesses caminhos permanecem auditáveis, mas não disparam sozinhas faixas de revisão adicionais.",
+    "ordinaryDocsPath": "Caminho do documento",
+    "ordinaryDocsEmpty": "Nenhum caminho de documento ordinário configurado.",
+    "ordinaryDocsActionsDisabled": "A edição de documentos ordinários está desativada. Reinicie com",
+    "addOrdinaryDoc": "Adicionar documento",
+    "removeOrdinaryDoc": "Remover",
+    "availableReviewTypes": "Tipos de review disponíveis"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -348,5 +305,15 @@
       "description": "Riscos conhecidos, caminhos frágeis, notas de segurança e restrições de compatibilidade."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Configurações de inicialização",
+      "body": "A aba de configurações de inicialização mostra as respostas atuais, checkpoints obrigatórios de init do agente, gerenciamento de documentos ordinários e o prompt de handoff para concluir o onboarding."
+    },
+    "project-memory": {
+      "title": "Memória do projeto",
+      "body": "A aba de memória do projeto mostra o modo de manutenção atual e os arquivos de memória durável. Abra cada arquivo sob demanda em vez de carregar todo o conteúdo no painel."
+    }
+  }
 }

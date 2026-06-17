@@ -4,6 +4,16 @@ import {
     type LocalUiLocalizedText,
     type UiLanguagePackDescriptor
 } from './ui-language-pack-loader';
+import { buildBackupsTabTextCatalog } from './backups-tab-text/catalog';
+import { loadBackupsTabTextTranslations } from './backups-tab-text/load-translations';
+import { buildCleanupSettingTextCatalog } from './cleanup-setting-text/catalog';
+import { loadCleanupSettingTextTranslations } from './cleanup-setting-text/load-translations';
+import { buildInitSettingTextCatalog } from './init-setting-text/catalog';
+import { loadInitSettingTextTranslations } from './init-setting-text/load-translations';
+import { buildProjectMemoryStatusTextCatalog } from './project-memory-status-text/catalog';
+import { loadProjectMemoryStatusTextTranslations } from './project-memory-status-text/load-translations';
+import { buildWorkflowSettingTextCatalog } from './workflow-setting-text/catalog';
+import { loadWorkflowSettingTextTranslations } from './workflow-setting-text/load-translations';
 
 export type { LocalUiLocalizedText };
 
@@ -23,53 +33,9 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     initSettingsTab: 'Init settings',
     projectMemoryTab: 'Project memory',
     backupsTab: 'Backups',
-    backupsTabIntro: 'The Backups tab lists rollback snapshots from the backup inventory, shows auto-backup settings from workflow config, and exposes guarded restore actions when the UI server runs with `--actions`.',
-    backupsInventoryTitle: 'Backup inventory',
-    backupsEmpty: 'No backups in inventory.',
-    backupsSnapshotsRoot: 'Snapshots root',
-    backupRootPresent: 'present',
-    backupRootMissing: 'missing',
-    backupIdColumn: 'ID',
-    backupCreatedColumn: 'Created',
-    backupSizeColumn: 'Size',
-    backupReasonColumn: 'Reason',
-    backupStatusColumn: 'Health',
-    backupRestoreColumn: 'Restore',
-    backupReasonUpdate: 'update',
-    backupReasonScheduled: 'scheduled',
-    backupsActionsDisabled: 'Controlled actions are disabled.',
-    backupRestoreUnavailable: 'Restore unavailable for this backup.',
-    restoreBackup: 'Restore backup',
-    backupsAutoBackupTitle: 'Auto-backup',
-    backupAutoEnabled: 'Enabled',
-    backupAutoIntervalDays: 'Interval (days)',
-    backupAutoKeepLatest: 'Keep latest',
-    backupsAutoBackupHelp: 'Scheduled auto-backups use audited workflow settings. Saving requires confirmation.',
-    backupsRestorePreviewHelp: 'Choose a backup to restore it through the guarded rollback action.',
     instructionsTab: 'Instructions',
     cleanupSettingsTab: 'Cleanup settings',
-    cleanupSettingsIntro: 'Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.',
-    cleanupPreviewHelp: 'Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.',
-    cleanupEffectivePolicyTitle: 'Effective policy',
-    cleanupEffectivePolicyHelp: 'Task-scoped evidence and shared aggregates are separated by the runtime ownership map; task purge removes owned artifacts and repairs shared state instead of deleting shared files wholesale.',
-    cleanupPolicyPath: 'Policy path',
-    cleanupDailyEnabled: 'Daily maintenance enabled',
-    cleanupDailyDryRun: 'Daily maintenance dry-run',
-    cleanupOlderThanDays: 'Eligible older than days',
-    cleanupKeepLatestTasks: 'Keep latest tasks',
-    cleanupPurgeRequireConfirm: 'Purge requires confirmation',
-    cleanupHealthyDoneCompactDays: 'Healthy DONE compact after days',
-    cleanupProblemCompressDays: 'Problem task compress after days',
-    cleanupEditSettingsTitle: 'Retention controls',
-    cleanupEditSettingsHelp: 'Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.',
-    cleanupMaxTasksPerRun: 'Max tasks per run',
-    cleanupRunTitle: 'Dry-run and apply',
-    cleanupRunHelp: 'Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.',
-    cleanupTaskPurgeTitle: 'Task purge',
-    cleanupTaskPurgeHelp: 'Purge runtime artifacts owned by one task id. Active task protection and shared-state repair stay on the server side.',
-    cleanupTaskId: 'Task ID',
-    cleanupPurgeTask: 'Purge task',
-    actionsTab: 'Actions',
+    actionsTab: 'System state',
     noticeActionsEnabled: 'Task details are loaded on demand from the local server. The server is bound to 127.0.0.1 and stops when this CLI process exits.',
     noticeActionsDisabled: 'Task details are loaded on demand from the local server. The server is bound to 127.0.0.1 and stops when this CLI process exits.',
     languageTitle: 'Language',
@@ -193,6 +159,7 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     currentValueColumn: 'Current value',
     optionsColumn: 'Options',
     changeColumn: 'Change',
+    availableReviewTypes: 'Available review types',
     noFixedOptions: 'No fixed options',
     freeValueHelp: 'Enter a value that matches the description.',
     reviewCycleAutoSplitDependency: 'Auto-split only affects blocking mode: review_cycle_guard.action must be BLOCK_FOR_OPERATOR_DECISION. When the action is WARN_ONLY, this setting is informational.',
@@ -313,23 +280,137 @@ function buildImportedLanguageMap<T>(
 const EMPTY_LOCALIZED_TEXT_MAP = Object.freeze({});
 const EMPTY_CATEGORY_TEXT_MAP = Object.freeze({});
 
-const CORE_LOCAL_UI_SETTING_TEXT = Object.freeze({
-    en: EMPTY_LOCALIZED_TEXT_MAP
-} satisfies Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>>);
+const WORKFLOW_SETTING_TEXT_CATALOG = buildWorkflowSettingTextCatalog();
+const WORKFLOW_SETTING_TEXT_TRANSLATIONS = loadWorkflowSettingTextTranslations();
 
-export const LOCAL_UI_SETTING_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
-    CORE_LOCAL_UI_SETTING_TEXT,
-    (pack) => pack.LOCAL_UI_SETTING_TEXT
-);
+function buildWorkflowSettingTextMap(): Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> {
+    const merged: Record<string, Record<string, LocalUiLocalizedText>> = {
+        en: WORKFLOW_SETTING_TEXT_CATALOG
+    };
 
-const CORE_LOCAL_UI_INIT_SETTING_TEXT = Object.freeze({
-    en: EMPTY_LOCALIZED_TEXT_MAP
-} satisfies Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>>);
+    for (const [languageId, pack] of Object.entries(WORKFLOW_SETTING_TEXT_TRANSLATIONS)) {
+        merged[languageId] = pack;
+    }
 
-export const LOCAL_UI_INIT_SETTING_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
-    CORE_LOCAL_UI_INIT_SETTING_TEXT,
-    (pack) => pack.LOCAL_UI_INIT_SETTING_TEXT
-);
+    for (const pack of IMPORTED_UI_LANGUAGE_PACKS) {
+        const legacy = pack.LOCAL_UI_SETTING_TEXT;
+        if (Object.keys(legacy).length === 0) {
+            continue;
+        }
+        merged[pack.language.id] = {
+            ...(merged[pack.language.id] || {}),
+            ...legacy
+        };
+    }
+
+    return Object.freeze(
+        Object.fromEntries(
+            Object.entries(merged).map(([languageId, pack]) => [languageId, Object.freeze(pack)])
+        )
+    );
+}
+
+export const LOCAL_UI_SETTING_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> =
+    buildWorkflowSettingTextMap();
+
+const INIT_SETTING_TEXT_CATALOG = buildInitSettingTextCatalog();
+const INIT_SETTING_TEXT_TRANSLATIONS = loadInitSettingTextTranslations();
+
+function buildInitSettingTextMap(): Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> {
+    const merged: Record<string, Record<string, LocalUiLocalizedText>> = {
+        en: INIT_SETTING_TEXT_CATALOG
+    };
+
+    for (const [languageId, pack] of Object.entries(INIT_SETTING_TEXT_TRANSLATIONS)) {
+        merged[languageId] = pack;
+    }
+
+    for (const pack of IMPORTED_UI_LANGUAGE_PACKS) {
+        const legacy = pack.LOCAL_UI_INIT_SETTING_TEXT;
+        if (Object.keys(legacy).length === 0) {
+            continue;
+        }
+        merged[pack.language.id] = {
+            ...(merged[pack.language.id] || {}),
+            ...legacy
+        };
+    }
+
+    return Object.freeze(
+        Object.fromEntries(
+            Object.entries(merged).map(([languageId, entries]) => [languageId, Object.freeze(entries)])
+        )
+    );
+}
+
+export const LOCAL_UI_INIT_SETTING_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> =
+    buildInitSettingTextMap();
+
+const PROJECT_MEMORY_STATUS_TEXT_CATALOG = buildProjectMemoryStatusTextCatalog();
+const PROJECT_MEMORY_STATUS_TEXT_TRANSLATIONS = loadProjectMemoryStatusTextTranslations();
+
+function buildProjectMemoryStatusTextMap(): Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> {
+    const merged: Record<string, Record<string, LocalUiLocalizedText>> = {
+        en: PROJECT_MEMORY_STATUS_TEXT_CATALOG
+    };
+
+    for (const [languageId, pack] of Object.entries(PROJECT_MEMORY_STATUS_TEXT_TRANSLATIONS)) {
+        merged[languageId] = pack;
+    }
+
+    return Object.freeze(
+        Object.fromEntries(
+            Object.entries(merged).map(([languageId, entries]) => [languageId, Object.freeze(entries)])
+        )
+    );
+}
+
+export const LOCAL_UI_PROJECT_MEMORY_STATUS_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> =
+    buildProjectMemoryStatusTextMap();
+
+const CLEANUP_SETTING_TEXT_CATALOG = buildCleanupSettingTextCatalog();
+const CLEANUP_SETTING_TEXT_TRANSLATIONS = loadCleanupSettingTextTranslations();
+
+function buildCleanupSettingTextMap(): Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> {
+    const merged: Record<string, Record<string, LocalUiLocalizedText>> = {
+        en: CLEANUP_SETTING_TEXT_CATALOG
+    };
+
+    for (const [languageId, pack] of Object.entries(CLEANUP_SETTING_TEXT_TRANSLATIONS)) {
+        merged[languageId] = pack;
+    }
+
+    return Object.freeze(
+        Object.fromEntries(
+            Object.entries(merged).map(([languageId, entries]) => [languageId, Object.freeze(entries)])
+        )
+    );
+}
+
+export const LOCAL_UI_CLEANUP_SETTING_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> =
+    buildCleanupSettingTextMap();
+
+const BACKUPS_TAB_TEXT_CATALOG = buildBackupsTabTextCatalog();
+const BACKUPS_TAB_TEXT_TRANSLATIONS = loadBackupsTabTextTranslations();
+
+function buildBackupsTabTextMap(): Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> {
+    const merged: Record<string, Record<string, LocalUiLocalizedText>> = {
+        en: BACKUPS_TAB_TEXT_CATALOG
+    };
+
+    for (const [languageId, pack] of Object.entries(BACKUPS_TAB_TEXT_TRANSLATIONS)) {
+        merged[languageId] = pack;
+    }
+
+    return Object.freeze(
+        Object.fromEntries(
+            Object.entries(merged).map(([languageId, entries]) => [languageId, Object.freeze(entries)])
+        )
+    );
+}
+
+export const LOCAL_UI_BACKUPS_TAB_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> =
+    buildBackupsTabTextMap();
 
 const CORE_LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
     en: {

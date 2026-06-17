@@ -12,52 +12,8 @@
     "initSettingsTab": "Impostazioni di inizializzazione",
     "projectMemoryTab": "Memoria del progetto",
     "backupsTab": "Backup",
-    "backupsTabIntro": "Elenca snapshot rollback dall’inventario backup. Il ripristino protetto e le modifiche auto-backup richiedono `garda ui --actions`.",
-    "backupsInventoryTitle": "Inventario backup",
-    "backupsEmpty": "Nessun backup nell’inventario.",
-    "backupsSnapshotsRoot": "Radice snapshot",
-    "backupRootPresent": "presente",
-    "backupRootMissing": "assente",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Creato",
-    "backupSizeColumn": "Dimensione",
-    "backupReasonColumn": "Motivo",
-    "backupStatusColumn": "Stato",
-    "backupRestoreColumn": "Ripristina",
-    "backupReasonUpdate": "aggiornamento",
-    "backupReasonScheduled": "pianificato",
-    "backupsActionsDisabled": "Le azioni controllate sono disabilitate.",
-    "backupRestoreUnavailable": "Ripristino non disponibile per questo backup.",
-    "restoreBackup": "Ripristina backup",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Abilitato",
-    "backupAutoIntervalDays": "Intervallo (giorni)",
-    "backupAutoKeepLatest": "Mantieni ultimi",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Istruzioni",
     "cleanupSettingsTab": "Impostazioni di pulizia",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Policy effettiva",
-    "cleanupEffectivePolicyHelp": "Le prove legate all’attività e gli aggregati condivisi sono separati dalla mappa di proprietà runtime; il purge attività rimuove gli artefatti posseduti e ripara lo stato condiviso invece di eliminare interamente i file condivisi.",
-    "cleanupPolicyPath": "Percorso policy",
-    "cleanupDailyEnabled": "Manutenzione giornaliera attiva",
-    "cleanupDailyDryRun": "Manutenzione giornaliera in simulazione",
-    "cleanupOlderThanDays": "Idoneo se più vecchio di giorni",
-    "cleanupKeepLatestTasks": "Mantieni attività più recenti",
-    "cleanupPurgeRequireConfirm": "Il purge richiede conferma",
-    "cleanupHealthyDoneCompactDays": "Compatta DONE sane dopo giorni",
-    "cleanupProblemCompressDays": "Comprimi attività problematiche dopo giorni",
-    "cleanupEditSettingsTitle": "Controlli di conservazione",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Max attività per esecuzione",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge attività",
-    "cleanupTaskPurgeHelp": "Elimina gli artefatti runtime posseduti da un ID attività. Protezione attività attiva e riparazione dello stato condiviso restano lato server.",
-    "cleanupTaskId": "ID attività",
-    "cleanupPurgeTask": "Esegui purge attività",
     "actionsTab": "Azioni",
     "noticeActionsEnabled": "I dettagli delle attività vengono caricati su richiesta dal server locale. Il server è associato a 127.0.0.1 e si arresta quando termina questo processo CLI. Le azioni controllate sono abilitate solo per i comandi consentiti.",
     "noticeActionsDisabled": "I dettagli delle attività vengono caricati su richiesta dal server locale. Il server è associato a 127.0.0.1 e si arresta quando termina questo processo CLI. Le azioni controllate sono disabilitate a meno che il server non avvii con --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Artefatti esistenti",
     "missingArtifacts": "Manufatti mancanti",
     "artifactPath": "Percorso dell’artefatto",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Documenti ordinari",
+    "ordinaryDocsHelp": "I documenti ordinari sono documenti di pianificazione, changelog o prodotto di proprietà dell’utente. Le modifiche a questi percorsi restano verificabili ma non attivano da sole ulteriori corsie di review.",
+    "ordinaryDocsPath": "Percorso documento",
+    "ordinaryDocsEmpty": "Nessun percorso di documento ordinario configurato.",
+    "ordinaryDocsActionsDisabled": "La modifica dei documenti ordinari è disabilitata. Riavvia con",
+    "addOrdinaryDoc": "Aggiungi documento",
+    "removeOrdinaryDoc": "Rimuovi",
+    "availableReviewTypes": "Tipi di review disponibili"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "Rischi noti, percorsi fragili, note di sicurezza e vincoli di compatibilità."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Impostazioni di inizializzazione",
+      "body": "La scheda impostazioni di inizializzazione mostra le risposte correnti, i checkpoint obbligatori di init agente, la gestione dei documenti ordinari e il prompt di handoff per completare l’onboarding."
+    },
+    "project-memory": {
+      "title": "Memoria del progetto",
+      "body": "La scheda memoria del progetto mostra la modalità di manutenzione corrente e i file di memoria durevole. Apri ogni file su richiesta invece di caricare l’intero contenuto nella dashboard."
+    }
+  }
 }

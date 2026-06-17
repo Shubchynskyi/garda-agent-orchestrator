@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "compile-gate 命令",
+    "description": "compile-gate 用于编译/构建/类型检查验证时执行的命令。若在 workflow-config 中未配置，则 compile-gate 将以 fail-closed 方式结束，直到配置项目专用命令。"
+  },
+  "compile-gate-command-fallback": {
+    "description": "未在 workflow-config 中设置；compile-gate 将以 fail-closed 方式结束，直到配置项目专用命令。"
+  },
+  "full-suite-enabled": {
+    "label": "强制完整套件验证",
+    "description": "控制是否将已配置的完整套件测试命令纳入任务生命周期。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "已配置的完整套件命令在任务生命周期中为必填项。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "除非其他工作流路径要求，否则将跳过完整套件门禁。"
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "完整套件命令",
+    "description": "启用强制完整套件验证时，完整套件门禁执行的命令。"
+  },
+  "full-suite-timeout-ms": {
+    "label": "完整套件超时",
+    "description": "完整套件命令的最大运行时间（毫秒）。"
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "成功完整套件摘要行数",
+    "description": "在紧凑任务证据中保留的成功完整套件输出行数。"
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "失败输出块行数",
+    "description": "每个紧凑失败块中保留的失败完整套件输出行数。"
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "范围外失败处理",
+    "description": "当完整套件输出显示当前任务范围外的失败时，工作流的处理方式。",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "记录并阻止",
+        "description": "记录范围外失败，并在解决前停止工作流。"
+      },
+      "AUDIT_AND_WARN": {
+        "label": "记录并警告",
+        "description": "记录范围外失败，但允许工作流在警告下继续。"
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "完整套件执行位置",
+    "description": "强制完整套件门禁在任务生命周期中的执行时机。",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "编译后、评审前",
+        "description": "在编译通过后、评审工作开始前运行完整套件。"
+      },
+      "before_test_review": {
+        "label": "测试评审前",
+        "description": "在测试评审通道需要证据之前立即运行完整套件。"
+      },
+      "before_completion": {
+        "label": "完成前",
+        "description": "将完整套件推迟到最终完成路径。"
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "评审执行模式",
+    "description": "控制必填评审通道是并行运行、等待代码评审，还是按顺序运行。",
+    "options": {
+      "parallel_all": {
+        "label": "全部并行",
+        "description": "所有评审类型可独立准备；无上游启动依赖。"
+      },
+      "test_after_code": {
+        "label": "代码后测试",
+        "description": "仅测试等待当前周期的代码 PASS；其他评审类型保持独立。"
+      },
+      "code_first_optional": {
+        "label": "可选项代码优先",
+        "description": "API、性能、基础设施和依赖项等待代码 PASS；测试仍位于所有必填上游评审的下游。"
+      },
+      "strict_sequential": {
+        "label": "严格顺序",
+        "description": "所有必填评审在当前周期中按规范评审顺序逐一执行。"
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "范围预算防护",
+    "description": "当任务超出已配置配置文件预算时发出警告或阻止。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "当任务超出已配置配置文件预算时，范围预算检查将警告或阻止。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "任务规模决策不强制执行范围预算限制。"
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "范围预算超限动作",
+    "description": "超出范围预算时的处理方式。",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "阻止直至拆分",
+        "description": "停止过大的工作，并要求操作员或智能体进行拆分。"
+      },
+      "WARN_ONLY": {
+        "label": "仅警告",
+        "description": "显示范围警告，但不停止下一生命周期步骤。"
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "范围预算配置文件",
+    "description": "应用范围预算防护的任务配置文件。未知的旧值会明确显示，而不会被静默丢弃。"
+  },
+  "scope-budget-max-files": {
+    "label": "范围预算文件上限",
+    "description": "范围预算防护触发前的最大变更文件数。"
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "范围预算变更行上限",
+    "description": "范围预算防护触发前的最大变更行数。"
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "范围预算评审通道上限",
+    "description": "范围预算防护触发前的最大必填评审通道数。"
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "范围预算评审令牌预测",
+    "description": "范围预算防护触发前的最大预估评审令牌预算。"
+  },
+  "review-cycle-enabled": {
+    "label": "评审循环防护",
+    "description": "在重复的非测试评审循环消耗过多工作之前进行检测。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "在收尾继续之前检测重复的非测试评审循环。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "此防护不检查评审循环压力。"
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "评审循环超限动作",
+    "description": "重复评审尝试超出配置限制时的处理方式。",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "阻止直至操作员决策",
+        "description": "在操作员选择恢复路径之前停止重复的评审循环。"
+      },
+      "WARN_ONLY": {
+        "label": "仅警告",
+        "description": "报告评审循环压力，但允许工作流继续。"
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "失败非测试评审上限",
+    "description": "评审循环防护触发前的最大失败非测试评审尝试次数。"
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "非测试评审总上限",
+    "description": "评审循环防护触发前的最大非测试评审尝试总次数。"
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "排除的评审类型",
+    "description": "多选：勾选的评审类型不计入 review-cycle guard 的限额统计。",
+    "options": {
+      "code": {
+        "label": "代码评审"
+      },
+      "db": {
+        "label": "数据库评审"
+      },
+      "security": {
+        "label": "安全评审"
+      },
+      "refactor": {
+        "label": "重构评审"
+      },
+      "api": {
+        "label": "API 评审"
+      },
+      "test": {
+        "label": "测试评审"
+      },
+      "performance": {
+        "label": "性能评审"
+      },
+      "infra": {
+        "label": "基础设施评审"
+      },
+      "dependency": {
+        "label": "依赖评审"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "自动拆分提示",
+    "description": "当评审循环动作为 BLOCK_FOR_OPERATOR_DECISION 时，允许评审循环压力发出自动拆分提示。动作为 WARN_ONLY 时不具有阻止效果。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "当动作为 BLOCK_FOR_OPERATOR_DECISION 时，评审循环压力可发出自动拆分提示。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "评审循环压力从不发出自动拆分提示。"
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "项目记忆维护",
+    "description": "控制收尾时是否检查项目记忆影响。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "收尾时检查是否需要项目记忆影响证据。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "收尾时不运行项目记忆维护检查。"
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "项目记忆模式",
+    "description": "工作流对项目记忆影响工作的强制程度。",
+    "options": {
+      "off": {
+        "label": "关闭",
+        "description": "收尾期间不运行项目记忆维护。"
+      },
+      "check": {
+        "label": "检查",
+        "description": "检查是否需要记忆更新，但不写入。"
+      },
+      "update": {
+        "label": "更新",
+        "description": "允许工作流在需要时更新重点的项目记忆文件。"
+      },
+      "strict": {
+        "label": "严格",
+        "description": "要求收尾通过前提供记忆证据。"
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "最终收尾前运行记忆检查",
+    "description": "在最终完成步骤之前运行项目记忆维护。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "在最终完成步骤之前运行项目记忆维护。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "不在最终收尾之前插入项目记忆维护。"
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "记忆写入需用户批准",
+    "description": "工作流写入项目记忆文件前需要明确的用户批准。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "项目记忆写入在修改文件前需要明确的用户批准。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "项目记忆写入可在已配置的维护模式下进行，无需额外批准步骤。"
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "项目记忆摘要大小",
+    "description": "生成的紧凑项目记忆摘要的最大大小（字符数）。"
+  },
+  "project-memory-read-strategy": {
+    "label": "项目记忆读取策略",
+    "description": "智能体在任务开始时如何读取持久记忆。",
+    "options": {
+      "index_first": {
+        "label": "索引优先",
+        "description": "先读取记忆索引，仅在索引指向时才打开详细文件。"
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "项目记忆影响保留期",
+    "description": "项目记忆影响产物保留的天数。"
+  },
+  "task-reset-enabled": {
+    "label": "任务重置命令",
+    "description": "允许经确认的任务重置/丢弃变更。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "经确认的任务重置和丢弃命令可通过受保护路径使用。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "任务重置和丢弃变更不可用。"
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "计划自动备份",
+    "description": "允许每日维护触发器在到期时创建计划回滚备份。",
+    "options": {
+      "true": {
+        "label": "启用",
+        "description": "每日维护可在间隔到期时创建计划回滚备份。"
+      },
+      "false": {
+        "label": "禁用",
+        "description": "每日维护不会创建计划回滚备份。"
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "自动备份间隔",
+    "description": "成功计划备份之间的最少天数。"
+  },
+  "auto-backup-keep-latest": {
+    "label": "自动备份保留数",
+    "description": "创建计划备份后保留的最新备份数量。"
+  },
+  "garda-self-guard": {
+    "label": "Garda 自防护",
+    "description": "控制智能体是否可直接进入受保护的 Garda 控制平面工作。",
+    "options": {
+      "deny_agent_entry": {
+        "label": "启用",
+        "description": "没有操作员所属路径时，智能体无法进入受保护的控制平面工作。"
+      },
+      "require_operator_confirmation": {
+        "label": "操作员确认",
+        "description": "进入受保护的控制平面需要明确的操作员确认。"
+      }
+    }
+  }
+}

@@ -40,7 +40,7 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <div class="overview" id="overview"></div>
 <div class="tasks-layout">
 <section class="panel task-list-panel">
-<div class="panel-head"><h2 data-i18n="tasksTab">\${text.tasksTab}</h2></div>
+<div class="panel-head tab-head"><h2 data-i18n="tasksTab">\${text.tasksTab}</h2><span class="config-path" id="tasks-config-path"></span></div>
 <div class="panel-head">
 <div class="toolbar">
 <input id="task-search" type="search" placeholder="\${text.searchTasks}" data-i18n-placeholder="searchTasks">
@@ -62,45 +62,43 @@ export const UI_DASHBOARD_MARKUP = `<header>
 </div>
 </section>
 <section class="panel tab" id="workflow-tab" hidden>
-<div class="panel-head workflow-head"><h2 data-i18n="workflowTab">\${text.workflowTab}</h2><span class="config-path" id="workflow-config-path"></span></div>
-<div class="workflow-top-grid">
-<div class="detail" id="workflow"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
-<div class="detail setting-status" id="setting-status"></div>
+<div class="panel-head tab-head"><h2 id="workflow-panel-title"></h2><span class="config-path" id="workflow-config-path"></span></div>
+<div class="detail tab-body">
+<div id="workflow" class="tab-messages" hidden></div>
+<div id="settings-editor"></div>
 </div>
-<div class="detail" id="settings-editor"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
 </section>
 <section class="panel tab" id="init-settings-tab" hidden>
-<div class="panel-head"><h2 data-i18n="initSettingsTab">\${text.initSettingsTab}</h2></div>
-<div class="detail" id="init-settings"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
+<div class="panel-head tab-head"><h2 data-i18n="initSettingsTab">\${text.initSettingsTab}</h2><span class="config-path" id="init-settings-config-path"></span></div>
+<div class="detail tab-body" id="init-settings"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
 </section>
 <section class="panel tab" id="project-memory-tab" hidden>
-<div class="panel-head"><h2 data-i18n="projectMemoryTab">\${text.projectMemoryTab}</h2></div>
-<div class="detail" id="project-memory"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
+<div class="panel-head tab-head"><h2 data-i18n="projectMemoryTab">\${text.projectMemoryTab}</h2><span class="config-path" id="project-memory-config-path"></span></div>
+<div class="detail tab-body" id="project-memory"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
 </section>
 <section class="panel tab" id="backups-tab" hidden>
-<div class="panel-head"><h2 data-i18n="backupsTab">\${text.backupsTab}</h2></div>
-<div class="detail backups-detail">
-<p class="empty" data-i18n="backupsTabIntro">\${text.backupsTabIntro}</p>
+<div class="panel-head tab-head"><h2 data-i18n="backupsTab">\${text.backupsTab}</h2><span class="config-path" id="backups-config-path"></span></div>
+<div class="detail tab-body backups-detail">
 <div id="backup-action-status" class="action-status empty"></div>
 <section id="backups-settings" class="backups-settings"></section>
 <section id="backups-table" class="backups-table"></section>
 </div>
 </section>
 <section class="panel tab" id="cleanup-settings-tab" hidden>
-<div class="panel-head"><h2 data-i18n="cleanupSettingsTab">\${text.cleanupSettingsTab}</h2></div>
-<div class="detail cleanup-detail">
-<p class="empty" data-i18n="cleanupSettingsIntro">\${text.cleanupSettingsIntro}</p>
+<div class="panel-head tab-head"><h2 data-i18n="cleanupSettingsTab">\${text.cleanupSettingsTab}</h2><span class="config-path" id="cleanup-config-path"></span></div>
+<div class="detail tab-body cleanup-detail">
 <div id="cleanup-status" class="action-status empty"></div>
 <section id="cleanup-settings" class="cleanup-settings"><p class="empty" data-i18n="loading">\${text.loading}</p></section>
 </div>
 </section>
 <section class="panel tab" id="instructions-tab" hidden>
-<div class="panel-head"><h2 data-i18n="instructionsTab">\${text.instructionsTab}</h2></div>
-<div class="detail" id="instructions"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
+<div class="panel-head tab-head"><h2 data-i18n="instructionsTab">\${text.instructionsTab}</h2></div>
+<div class="detail tab-body" id="instructions"><p class="empty" data-i18n="loading">\${text.loading}</p></div>
 </section>
 <section class="panel tab" id="actions-tab" hidden>
-<div class="panel-head"><h2 data-i18n="actionsTab">\${text.actionsTab}</h2></div>
-<div class="detail">
+<div class="panel-head tab-head"><h2 data-i18n="actionsTab">\${text.actionsTab}</h2></div>
+<div class="detail tab-body">
+<section id="system-state-panel" class="system-state-panel"></section>
 <section class="switch-strip" id="garda-switch-panel" hidden></section>
 <section class="action-status empty" id="action-status"></section>
 <div id="actions" hidden></div>

@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Bảo trì bộ nhớ đã bật",
+    "description": "Workflow có kiểm tra bộ nhớ dự án bền vững trước closeout hay không."
+  },
+  "memory-mode": {
+    "label": "Chế độ bảo trì bộ nhớ",
+    "description": "Chế độ workflow hiện tại: off, check, update hoặc strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Chạy trước closeout cuối",
+    "description": "Project-memory gate có chạy trước khi hoàn tất hay không."
+  },
+  "memory-require-approval": {
+    "label": "Yêu cầu phê duyệt khi ghi",
+    "description": "Ghi file project-memory có cần phê duyệt của người dùng hay không."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Giới hạn kích thước tóm tắt gọn",
+    "description": "Kích thước tối đa của tóm tắt gọn bộ nhớ dự án được tạo, tính bằng ký tự."
+  },
+  "memory-read-strategy": {
+    "label": "Chiến lược đọc",
+    "description": "Cách agent nên đọc bộ nhớ dự án khi bắt đầu tác vụ."
+  },
+  "memory-impact-retention-days": {
+    "label": "Thời gian lưu artefact tác động",
+    "description": "Số ngày lưu giữ artefact tác động project-memory."
+  },
+  "memory-initialized": {
+    "label": "Đã khởi tạo bởi agent init",
+    "description": "Agent-init có ghi nhận khởi tạo bộ nhớ dự án hay không."
+  },
+  "memory-validated": {
+    "label": "Đã xác thực bởi agent init",
+    "description": "Agent-init có ghi nhận xác thực bộ nhớ dự án thành công hay không."
+  },
+  "memory-dir": {
+    "label": "Thư mục bộ nhớ",
+    "description": "Thư mục chứa các file bộ nhớ bền vững do người dùng sở hữu."
+  },
+  "memory-read-first": {
+    "label": "File đọc trước",
+    "description": "Các file agent nên đọc trước các file bộ nhớ tập trung."
+  },
+  "memory-summary-rule": {
+    "label": "Quy tắc tóm tắt được tạo",
+    "description": "File rule được tạo tóm tắt bộ nhớ dự án cho khởi động agent."
+  },
+  "memory-bootstrap-report": {
+    "label": "Báo cáo bootstrap",
+    "description": "Báo cáo runtime từ bootstrap hoặc xác thực bộ nhớ dự án."
+  }
+}

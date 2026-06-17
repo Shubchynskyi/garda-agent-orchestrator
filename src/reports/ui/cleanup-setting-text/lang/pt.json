@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Política de retenção de runtime em `runtime-retention.json`: limites de manutenção agendada, regras de compactação e ações protegidas de limpeza manual."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Manutenção diária",
+    "description": "Ativa ou desativa a manutenção diária agendada. Quando está ativada, o orquestrador pode processar, de acordo com o agendamento, um lote limitado de tarefas elegíveis sem intervenção manual."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Máximo de tarefas por execução de manutenção",
+    "description": "Limite superior de quantas tarefas elegíveis a manutenção diária processa numa única execução. Reduz o alcance do impacto se os limites estiverem configurados incorretamente."
+  },
+  "eligible_older_than_days": {
+    "label": "Idade mínima da tarefa (dias)",
+    "description": "Uma tarefa tem de ter pelo menos esta idade antes que a manutenção ou a limpeza manual possam tocar nos seus artefactos de runtime. Tarefas ativas e mais recentes permanecem protegidas."
+  },
+  "keep_latest_tasks": {
+    "label": "Manter as tarefas mais recentes (quantidade)",
+    "description": "Preserva sempre pelo menos esta quantidade de tarefas mais recentes, mesmo que sejam mais antigas do que o limite de idade. Defina 0 para depender apenas da idade e da proteção de tarefas ativas."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run da manutenção diária",
+    "description": "Quando está em true, a manutenção diária agendada apenas lista candidatos e grava saída de auditoria; não elimina nem comprime artefactos. Use true enquanto ajusta os limites e depois mude para false para aplicar."
+  },
+  "purge_require_confirm": {
+    "label": "Confirmação obrigatória para purge",
+    "description": "Quando está em true, os comandos destrutivos de purge e cleanup exigem uma frase de confirmação escrita explicitamente antes de o servidor os executar."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Compactar DONE saudáveis após (dias)",
+    "description": "Após este número de dias, tarefas concluídas com sucesso (DONE) podem ser compactadas para um histórico apenas de ledger, depois de a evidência do ledger ser verificada."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Comprimir tarefas problemáticas após (dias)",
+    "description": "Após este número de dias, artefactos forenses pesados de tarefas com falha ou bloqueadas podem ser comprimidos, mantendo evidência legível para recuperação."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Limpeza manual de runtime",
+    "description": "Executa `garda cleanup` uma vez com os valores de idade e manter-mais-recentes das linhas acima. A pré-visualização mostra apenas candidatos; Aplicar elimina ou comprime de acordo com a política e requer confirmação."
+  },
+  "task_purge": {
+    "label": "Purge de tarefa",
+    "description": "Elimina artefactos de runtime pertencentes a um único ID de tarefa e repara índices partilhados. Não remove ficheiros partilhados inteiros; a proteção de tarefas ativas continua a aplicar-se no servidor."
+  },
+  "task_id": {
+    "label": "ID da tarefa"
+  },
+  "purge_task_button": {
+    "label": "Purge da tarefa"
+  },
+  "run_preview": {
+    "label": "Pré-visualização"
+  },
+  "value_true": {
+    "label": "true — ativado"
+  },
+  "value_false": {
+    "label": "false — desativado"
+  }
+}

@@ -12,52 +12,8 @@
     "initSettingsTab": "Configurações de inicialização",
     "projectMemoryTab": "Memória do projeto",
     "backupsTab": "Cópias de segurança",
-    "backupsTabIntro": "Lista instantâneos rollback do inventário de cópias. Restauro protegido e edições de auto-backup requerem `garda ui --actions`.",
-    "backupsInventoryTitle": "Inventário de cópias",
-    "backupsEmpty": "Sem cópias no inventário.",
-    "backupsSnapshotsRoot": "Raiz de instantâneos",
-    "backupRootPresent": "presente",
-    "backupRootMissing": "em falta",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Criado",
-    "backupSizeColumn": "Tamanho",
-    "backupReasonColumn": "Motivo",
-    "backupStatusColumn": "Estado",
-    "backupRestoreColumn": "Restaurar",
-    "backupReasonUpdate": "atualização",
-    "backupReasonScheduled": "agendado",
-    "backupsActionsDisabled": "Ações controladas estão desativadas.",
-    "backupRestoreUnavailable": "Restauro indisponível para esta cópia.",
-    "restoreBackup": "Restaurar cópia",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Ativado",
-    "backupAutoIntervalDays": "Intervalo (dias)",
-    "backupAutoKeepLatest": "Manter recentes",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Instruções",
     "cleanupSettingsTab": "Definições de limpeza",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Política efetiva",
-    "cleanupEffectivePolicyHelp": "As evidências no âmbito da tarefa e os agregados partilhados são separados pelo mapa de propriedade do runtime; o purge da tarefa remove artefactos próprios e repara o estado partilhado em vez de apagar ficheiros partilhados por completo.",
-    "cleanupPolicyPath": "Caminho da política",
-    "cleanupDailyEnabled": "Manutenção diária ativada",
-    "cleanupDailyDryRun": "Manutenção diária em dry-run",
-    "cleanupOlderThanDays": "Elegível se mais antigo que dias",
-    "cleanupKeepLatestTasks": "Manter tarefas mais recentes",
-    "cleanupPurgeRequireConfirm": "Purge exige confirmação",
-    "cleanupHealthyDoneCompactDays": "Compactar DONE saudáveis após dias",
-    "cleanupProblemCompressDays": "Comprimir tarefas problemáticas após dias",
-    "cleanupEditSettingsTitle": "Controlos de retenção",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Máx. tarefas por execução",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge de tarefa",
-    "cleanupTaskPurgeHelp": "Remove artefactos runtime pertencentes a um ID de tarefa. A proteção de tarefa ativa e a reparação do estado partilhado permanecem no servidor.",
-    "cleanupTaskId": "ID da tarefa",
-    "cleanupPurgeTask": "Fazer purge da tarefa",
     "actionsTab": "Ações",
     "noticeActionsEnabled": "Os detalhes das tarefas são carregados sob demanda do servidor local. O servidor está ligado a 127.0.0.1 e pára quando este processo CLI termina. As ações controladas estão ativas apenas para comandos permitidos.",
     "noticeActionsDisabled": "Os detalhes das tarefas são carregados sob demanda do servidor local. O servidor está ligado a 127.0.0.1 e pára quando este processo CLI termina. As ações controladas estão desativadas a menos que o servidor inicie com --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Artefatos existentes",
     "missingArtifacts": "Artefatos ausentes",
     "artifactPath": "Caminho do artefacto",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Documentos ordinários",
+    "ordinaryDocsHelp": "Documentos ordinários são documentos de planeamento, changelog ou produto do utilizador. As alterações a estes caminhos permanecem auditáveis, mas não acionam por si só faixas de revisão adicionais.",
+    "ordinaryDocsPath": "Caminho do documento",
+    "ordinaryDocsEmpty": "Nenhum caminho de documento ordinário configurado.",
+    "ordinaryDocsActionsDisabled": "A edição de documentos ordinários está desativada. Reinicie com",
+    "addOrdinaryDoc": "Adicionar documento",
+    "removeOrdinaryDoc": "Remover",
+    "availableReviewTypes": "Tipos de review disponíveis"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "Riscos conhecidos, caminhos frágeis, notas de segurança e restrições de compatibilidade."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Configurações de inicialização",
+      "body": "O separador de configurações de inicialização mostra as respostas atuais, checkpoints obrigatórios de init do agente, gestão de documentos ordinários e o prompt de handoff para concluir o onboarding."
+    },
+    "project-memory": {
+      "title": "Memória do projeto",
+      "body": "O separador de memória do projeto mostra o modo de manutenção atual e os ficheiros de memória durável. Abra cada ficheiro sob pedido em vez de carregar todo o conteúdo no painel."
+    }
+  }
 }

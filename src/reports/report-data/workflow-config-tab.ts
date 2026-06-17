@@ -4,6 +4,11 @@ import { buildDefaultWorkflowConfig, type WorkflowConfigData } from '../../core/
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
+    EXCLUDED_REVIEW_TYPE_LEGACY_OPTION_DESCRIPTION,
+    getKnownReviewTypeLabel,
+    KNOWN_REVIEW_TYPE_IDS
+} from '../review-type-setting-text';
+import {
     WORKFLOW_SETTING_DEFINITIONS,
     getWorkflowSettingDefinition,
     type WorkflowSettingOption,
@@ -12,7 +17,7 @@ import {
 import { readJsonObject } from './shared';
 import type { ReportDataUnavailableEntry, ReportWorkflowConfigTab, ReportWorkflowSetting } from './types';
 
-const KNOWN_REVIEW_TYPES = ['code', 'db', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency'];
+const KNOWN_REVIEW_TYPES: readonly string[] = KNOWN_REVIEW_TYPE_IDS;
 const FALLBACK_PROFILE_IDS = ['balanced', 'fast', 'strict', 'docs-only'];
 
 function getConfigValue(config: WorkflowConfigData, key: string): unknown {
@@ -68,20 +73,12 @@ function buildReviewTypeOptions(repoRoot: string, currentValue: unknown): Workfl
         }
         return a.localeCompare(b);
     });
-    const options: WorkflowSettingOption[] = reviewTypes.map((reviewType) => {
-        const capabilityValue = capabilities?.[reviewType];
-        const capabilityText = capabilityValue === true
-            ? 'enabled'
-            : capabilityValue === false
-                ? 'disabled'
-                : 'not configured';
-        return {
-            value: reviewType,
-            label: reviewType,
-            description: `Known review contract key; capability is ${capabilityText}.`
-        };
-    });
-    return appendUnknownCurrentValues(options, currentValue, 'Unknown legacy review type preserved from the current config.');
+    const options: WorkflowSettingOption[] = reviewTypes.map((reviewType) => ({
+        value: reviewType,
+        label: getKnownReviewTypeLabel(reviewType),
+        description: ''
+    }));
+    return appendUnknownCurrentValues(options, currentValue, EXCLUDED_REVIEW_TYPE_LEGACY_OPTION_DESCRIPTION);
 }
 
 function buildProfileOptions(repoRoot: string, currentValue: unknown): WorkflowSettingOption[] {

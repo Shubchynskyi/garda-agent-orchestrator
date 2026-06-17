@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "메모리 유지보수 사용",
+    "description": "워크플로가 마무리 시 영구 프로젝트 메모리를 확인하는지 여부입니다."
+  },
+  "memory-mode": {
+    "label": "메모리 유지보수 모드",
+    "description": "현재 워크플로 모드: off, check, update 또는 strict입니다."
+  },
+  "memory-run-before-closeout": {
+    "label": "최종 마무리 전 실행",
+    "description": "완료 전에 프로젝트 메모리 게이트가 실행되는지 여부입니다."
+  },
+  "memory-require-approval": {
+    "label": "쓰기에 승인 필요",
+    "description": "프로젝트 메모리 파일 쓰기에 사용자 승인이 필요한지 여부입니다."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "간결한 요약 크기 제한",
+    "description": "생성되는 간결한 프로젝트 메모리 요약의 최대 크기(문자 수)입니다."
+  },
+  "memory-read-strategy": {
+    "label": "읽기 전략",
+    "description": "작업 시작 시 에이전트가 프로젝트 메모리를 읽는 방법입니다."
+  },
+  "memory-impact-retention-days": {
+    "label": "영향 아티팩트 보존",
+    "description": "프로젝트 메모리 영향 아티팩트를 보존하는 일수입니다."
+  },
+  "memory-initialized": {
+    "label": "에이전트 초기화로 초기화됨",
+    "description": "에이전트 초기화가 프로젝트 메모리 초기화를 기록했는지 여부입니다."
+  },
+  "memory-validated": {
+    "label": "에이전트 초기화로 검증됨",
+    "description": "에이전트 초기화가 프로젝트 메모리 검증 성공을 기록했는지 여부입니다."
+  },
+  "memory-dir": {
+    "label": "메모리 디렉터리",
+    "description": "사용자 소유 영구 메모리 파일이 있는 디렉터리입니다."
+  },
+  "memory-read-first": {
+    "label": "우선 읽기 파일",
+    "description": "집중 메모리 파일 전에 에이전트가 읽어야 하는 파일입니다."
+  },
+  "memory-summary-rule": {
+    "label": "생성된 요약 규칙",
+    "description": "에이전트 시작을 위해 프로젝트 메모리를 요약하는 생성 규칙 파일입니다."
+  },
+  "memory-bootstrap-report": {
+    "label": "부트스트랩 보고서",
+    "description": "프로젝트 메모리 부트스트랩 또는 검증의 런타임 보고서입니다."
+  }
+}

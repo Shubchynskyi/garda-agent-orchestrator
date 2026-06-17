@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "`runtime-retention.json` 中的 runtime 保留策略：计划维护阈值、压缩规则以及受保护的手动清理操作。"
+  },
+  "daily_maintenance_enabled": {
+    "label": "每日维护",
+    "description": "开启或关闭计划中的每日维护。启用后，编排器可以按计划在无需人工干预的情况下处理一批数量受限的合格任务。"
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "每次维护运行的最大任务数",
+    "description": "每日维护在单次运行中可处理的合格任务数量上限。如果阈值配置错误，它可以限制影响范围。"
+  },
+  "eligible_older_than_days": {
+    "label": "任务最小保留天数",
+    "description": "任务至少达到这个天数后，维护或手动清理才可以触碰它的 runtime 制品。活动中的任务和较新的任务仍会受到保护。"
+  },
+  "keep_latest_tasks": {
+    "label": "保留最新任务数",
+    "description": "即使任务已经超过年龄阈值，也始终至少保留这么多最近的任务。设置为 0 时，仅依赖年龄规则和活动任务保护。"
+  },
+  "daily_maintenance_dry_run": {
+    "label": "每日维护 dry-run",
+    "description": "当值为 true 时，计划中的每日维护只会列出候选项并写入审计输出；不会删除或压缩任何制品。调试阈值时请使用 true，准备真正执行时再切换为 false。"
+  },
+  "purge_require_confirm": {
+    "label": "Purge 需要确认",
+    "description": "当值为 true 时，具有破坏性的 purge 和 cleanup 命令在服务器执行前需要明确输入确认短语。"
+  },
+  "healthy_done_compact_after_days": {
+    "label": "健康 DONE 在多少天后压缩",
+    "description": "成功完成的任务 (DONE) 在达到这个天数后，可在 ledger 证据验证通过后压缩为仅保留 ledger 历史。"
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "问题任务在多少天后压缩",
+    "description": "失败或卡住的任务在达到这个天数后，可以压缩其较大的取证制品，同时保留可用于恢复的可读证据。"
+  },
+  "manual_runtime_cleanup": {
+    "label": "手动 runtime 清理",
+    "description": "使用上方行中的年龄和保留最新值执行一次 `garda cleanup`。预览只显示候选项；应用会按策略删除或压缩，并要求确认。"
+  },
+  "task_purge": {
+    "label": "任务 purge",
+    "description": "删除属于单个任务 ID 的 runtime 制品，并修复共享索引。不会删除整个共享文件；活动任务保护仍然会在服务器端生效。"
+  },
+  "task_id": {
+    "label": "任务 ID"
+  },
+  "purge_task_button": {
+    "label": "清理任务"
+  },
+  "run_preview": {
+    "label": "预览"
+  },
+  "value_true": {
+    "label": "true — 已启用"
+  },
+  "value_false": {
+    "label": "false — 已禁用"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Yedek envanterindeki rollback anlık görüntülerini listeler. Korumalı geri yükleme ve auto-backup düzenlemeleri için `garda ui --actions` gerekir."
+  },
+  "inventory_title": {
+    "label": "Yedek listesi"
+  },
+  "empty": {
+    "label": "Listede yedek yok."
+  },
+  "snapshots_root": {
+    "label": "Anlık görüntü kökü"
+  },
+  "root_present": {
+    "label": "var"
+  },
+  "root_missing": {
+    "label": "yok"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Oluşturuldu"
+  },
+  "size_column": {
+    "label": "Boyut"
+  },
+  "reason_column": {
+    "label": "Neden"
+  },
+  "status_column": {
+    "label": "Durum"
+  },
+  "restore_column": {
+    "label": "Geri yükle"
+  },
+  "reason_update": {
+    "label": "güncelleme"
+  },
+  "reason_scheduled": {
+    "label": "zamanlanmış"
+  },
+  "health_available": {
+    "label": "Kullanılabilir"
+  },
+  "health_missing_records": {
+    "label": "Kayıtlar eksik"
+  },
+  "health_invalid_records": {
+    "label": "Geçersiz kayıtlar"
+  },
+  "actions_disabled": {
+    "label": "Kontrollü eylemler devre dışı."
+  },
+  "restore_unavailable": {
+    "label": "Bu yedek için geri yükleme kullanılamıyor."
+  },
+  "restore_backup": {
+    "label": "Yedeği geri yükle"
+  },
+  "auto_backup_title": {
+    "label": "Otomatik yedekleme"
+  },
+  "auto_backup_help": {
+    "description": "Zamanlanmış otomatik yedekler denetlenmiş workflow ayarlarını kullanır. Kaydetmek onay gerektirir."
+  },
+  "auto_enabled": {
+    "label": "Etkin"
+  },
+  "auto_interval_days": {
+    "label": "Aralık (gün)"
+  },
+  "auto_keep_latest": {
+    "label": "Sonuncuları tut"
+  },
+  "restore_preview_help": {
+    "description": "Korumalı rollback eylemiyle geri yüklemek için bir yedek seçin."
+  }
+}

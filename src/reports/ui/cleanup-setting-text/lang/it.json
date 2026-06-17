@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Politica di conservazione del runtime in `runtime-retention.json`: soglie della manutenzione pianificata, regole di compattazione e azioni protette di pulizia manuale."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Manutenzione giornaliera",
+    "description": "Attiva o disattiva la manutenzione giornaliera pianificata. Quando è abilitata, l’orchestratore può elaborare in base alla pianificazione un lotto limitato di attività idonee senza intervento manuale."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Numero massimo di attività per esecuzione",
+    "description": "Limite superiore di quante attività idonee la manutenzione giornaliera elabora in una singola esecuzione. Riduce l’ampiezza dell’impatto se le soglie sono configurate in modo errato."
+  },
+  "eligible_older_than_days": {
+    "label": "Età minima dell’attività (giorni)",
+    "description": "Un’attività deve avere almeno questa età prima che la manutenzione o la pulizia manuale possano toccare i suoi artefatti di runtime. Le attività attive e più recenti restano protette."
+  },
+  "keep_latest_tasks": {
+    "label": "Mantieni le attività più recenti (numero)",
+    "description": "Conserva sempre almeno questo numero di attività più recenti anche se sono più vecchie della soglia di età. Imposta 0 per affidarti solo all’età e alla protezione delle attività attive."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run della manutenzione giornaliera",
+    "description": "Quando è true, la manutenzione giornaliera pianificata elenca solo i candidati e scrive l’output di audit; non elimina né comprime artefatti. Usa true mentre regoli le soglie, poi passa a false per applicare."
+  },
+  "purge_require_confirm": {
+    "label": "Conferma obbligatoria per la purge",
+    "description": "Quando è true, i comandi distruttivi di purge e cleanup richiedono una frase di conferma digitata esplicitamente prima che il server li esegua."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Compatta i DONE sani dopo (giorni)",
+    "description": "Dopo questo numero di giorni, le attività completate con successo (DONE) possono essere compattate in una cronologia solo ledger una volta verificata l’evidenza del ledger."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Comprimi le attività problematiche dopo (giorni)",
+    "description": "Dopo questo numero di giorni, gli artefatti forensi pesanti delle attività fallite o bloccate possono essere compressi mantenendo comunque evidenze leggibili per il recupero."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Pulizia manuale del runtime",
+    "description": "Esegue `garda cleanup` una volta con i valori di età e mantieni-le-più-recenti delle righe sopra. L’anteprima mostra solo i candidati; Applica elimina o comprime secondo la politica e richiede conferma."
+  },
+  "task_purge": {
+    "label": "Purge dell’attività",
+    "description": "Elimina gli artefatti di runtime appartenenti a un singolo ID attività e ripara gli indici condivisi. Non rimuove interi file condivisi; la protezione delle attività attive continua ad applicarsi sul server."
+  },
+  "task_id": {
+    "label": "ID attività"
+  },
+  "purge_task_button": {
+    "label": "Purge attività"
+  },
+  "run_preview": {
+    "label": "Anteprima"
+  },
+  "value_true": {
+    "label": "true — abilitato"
+  },
+  "value_false": {
+    "label": "false — disabilitato"
+  }
+}

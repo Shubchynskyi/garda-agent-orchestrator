@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "已启用记忆维护",
+    "description": "工作流收尾时是否检查持久项目记忆。"
+  },
+  "memory-mode": {
+    "label": "记忆维护模式",
+    "description": "当前工作流模式：off、check、update 或 strict。"
+  },
+  "memory-run-before-closeout": {
+    "label": "在最终收尾前运行",
+    "description": "项目记忆闸门是否在完成前运行。"
+  },
+  "memory-require-approval": {
+    "label": "写入需要批准",
+    "description": "写入项目记忆文件是否需要用户批准。"
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "紧凑摘要大小限制",
+    "description": "生成的紧凑项目记忆摘要的最大大小（字符数）。"
+  },
+  "memory-read-strategy": {
+    "label": "读取策略",
+    "description": "智能体在任务开始时如何读取项目记忆。"
+  },
+  "memory-impact-retention-days": {
+    "label": "影响产物保留",
+    "description": "项目记忆影响产物保留的天数。"
+  },
+  "memory-initialized": {
+    "label": "智能体初始化已初始化",
+    "description": "智能体初始化是否记录了项目记忆的初始化。"
+  },
+  "memory-validated": {
+    "label": "智能体初始化已验证",
+    "description": "智能体初始化是否记录了项目记忆验证成功。"
+  },
+  "memory-dir": {
+    "label": "记忆目录",
+    "description": "包含用户拥有的持久记忆文件的目录。"
+  },
+  "memory-read-first": {
+    "label": "优先读取文件",
+    "description": "智能体在读取聚焦记忆文件之前应读取的文件。"
+  },
+  "memory-summary-rule": {
+    "label": "生成的摘要规则",
+    "description": "为智能体启动汇总项目记忆的生成规则文件。"
+  },
+  "memory-bootstrap-report": {
+    "label": "引导报告",
+    "description": "项目记忆引导或验证的运行时报告。"
+  }
+}

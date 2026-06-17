@@ -8,7 +8,7 @@ export interface LocalUiLocalizedText {
     body?: string;
     options?: Record<string, {
         label: string;
-        description: string;
+        description?: string;
     }>;
 }
 

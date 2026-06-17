@@ -12,52 +12,8 @@
     "initSettingsTab": "Init সেটিংস",
     "projectMemoryTab": "প্রকল্প মেমরি",
     "backupsTab": "ব্যাকআপ",
-    "backupsTabIntro": "ব্যাকআপ ইনভেন্টরি থেকে rollback স্ন্যাপশট দেখায়। সুরক্ষিত restore এবং auto-backup সম্পাদনার জন্য `garda ui --actions` প্রয়োজন।",
-    "backupsInventoryTitle": "ব্যাকআপ ইনভেন্টরি",
-    "backupsEmpty": "ইনভেন্টরিতে কোনো ব্যাকআপ নেই।",
-    "backupsSnapshotsRoot": "স্ন্যাপশট রুট",
-    "backupRootPresent": "আছে",
-    "backupRootMissing": "নেই",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "তৈরি",
-    "backupSizeColumn": "আকার",
-    "backupReasonColumn": "কারণ",
-    "backupStatusColumn": "অবস্থা",
-    "backupRestoreColumn": "পুনরুদ্ধার",
-    "backupReasonUpdate": "আপডেট",
-    "backupReasonScheduled": "নির্ধারিত",
-    "backupsActionsDisabled": "নিয়ন্ত্রিত ক্রিয়া নিষ্ক্রিয়।",
-    "backupRestoreUnavailable": "এই ব্যাকআপের জন্য পুনরুদ্ধার উপলব্ধ নয়।",
-    "restoreBackup": "ব্যাকআপ পুনরুদ্ধার",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "সক্রিয়",
-    "backupAutoIntervalDays": "ব্যবধান (দিন)",
-    "backupAutoKeepLatest": "সর্বশেষ রাখুন",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "নির্দেশনা",
     "cleanupSettingsTab": "ক্লিনআপ সেটিংস",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "কার্যকর নীতি",
-    "cleanupEffectivePolicyHelp": "runtime ownership map টাস্ক-স্কোপড প্রমাণ ও শেয়ার্ড aggregate আলাদা রাখে; task purge শেয়ার্ড ফাইল পুরোটা না মুছে নিজস্ব artifact সরায় এবং shared state মেরামত করে।",
-    "cleanupPolicyPath": "নীতির পথ",
-    "cleanupDailyEnabled": "দৈনিক রক্ষণাবেক্ষণ চালু",
-    "cleanupDailyDryRun": "দৈনিক রক্ষণাবেক্ষণ dry-run",
-    "cleanupOlderThanDays": "যোগ্য যদি দিনের বেশি পুরোনো",
-    "cleanupKeepLatestTasks": "সর্বশেষ টাস্ক রাখুন",
-    "cleanupPurgeRequireConfirm": "Purge করতে নিশ্চিতকরণ দরকার",
-    "cleanupHealthyDoneCompactDays": "সুস্থ DONE compact হবে এত দিন পরে",
-    "cleanupProblemCompressDays": "সমস্যাযুক্ত টাস্ক compress হবে এত দিন পরে",
-    "cleanupEditSettingsTitle": "রক্ষণ নীতি নিয়ন্ত্রণ",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "প্রতি রানে সর্বোচ্চ টাস্ক",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "টাস্ক purge",
-    "cleanupTaskPurgeHelp": "একটি টাস্ক ID-এর মালিকানাধীন runtime artifact সরায়। সক্রিয় টাস্ক সুরক্ষা ও shared-state repair সার্ভারেই থাকে।",
-    "cleanupTaskId": "টাস্ক ID",
-    "cleanupPurgeTask": "টাস্ক purge করুন",
     "actionsTab": "অ্যাকশন",
     "noticeActionsEnabled": "স্থানীয় সার্ভার থেকে চাহিদা অনুযায়ী টাস্কের বিবরণ লোড হয়। সার্ভার 127.0.0.1-এ বাঁধা এবং এই CLI প্রক্রিয়া শেষ হলে বন্ধ হয়। নিয়ন্ত্রিত ক্রিয়া শুধু অনুমোদিত কমান্ডের জন্য সক্রিয়।",
     "noticeActionsDisabled": "স্থানীয় সার্ভার থেকে চাহিদা অনুযায়ী টাস্কের বিবরণ লোড হয়। সার্ভার 127.0.0.1-এ বাঁধা এবং এই CLI প্রক্রিয়া শেষ হলে বন্ধ হয়। --actions ছাড়া সার্ভার শুরু না হলে নিয়ন্ত্রিত ক্রিয়া নিষ্ক্রিয়।",
@@ -268,13 +224,14 @@
     "existingArtifacts": "বিদ্যমান নিদর্শন",
     "missingArtifacts": "নিখোঁজ নিদর্শন",
     "artifactPath": "আর্টিফ্যাক্টের পথ",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "সাধারণ নথি",
+    "ordinaryDocsHelp": "সাধারণ নথি হলো ব্যবহারকারী-মালিকানাধীন পরিকল্পনা, চেঞ্জলগ বা প্রোডাক্ট ডক। এই পাথে পরিবর্তন অডিটযোগ্য থাকে, কিন্তু নিজে থেকে অতিরিক্ত রিভিউ লেন ট্রিগার করে না।",
+    "ordinaryDocsPath": "নথির পাথ",
+    "ordinaryDocsEmpty": "কোনো সাধারণ নথির পাথ কনফিগার করা নেই।",
+    "ordinaryDocsActionsDisabled": "সাধারণ নথি সম্পাদনা নিষ্ক্রিয়। পুনরায় চালু করুন",
+    "addOrdinaryDoc": "নথি যোগ করুন",
+    "removeOrdinaryDoc": "সরান",
+    "availableReviewTypes": "উপলব্ধ রিভিউ ধরন"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "পরিচিত ঝুঁকি, ভঙ্গুর পাথ, নিরাপত্তা নোট এবং সামঞ্জস্য সীমা।"
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "ইনিশিয়ালাইজেশন সেটিংস",
+      "body": "ইনিশিয়ালাইজেশন সেটিংস ট্যাবে বর্তমান উত্তর, বাধ্যতামূলক এজেন্ট init checkpoint, সাধারণ নথি ব্যবস্থাপনা এবং onboarding সম্পন্ন করার handoff prompt দেখায়।"
+    },
+    "project-memory": {
+      "title": "প্রকল্প মেমরি",
+      "body": "প্রকল্প মেমরি ট্যাবে বর্তমান রক্ষণাবেক্ষণ মোড এবং স্থায়ী মেমরি ফাইল দেখায়। ড্যাশবোর্ডে পুরো কনটেন্ট লোড না করে প্রয়োজন অনুযায়ী প্রতিটি ফাইল খুলুন।"
+    }
+  }
 }

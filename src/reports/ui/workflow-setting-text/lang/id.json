@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Perintah compile-gate",
+    "description": "Perintah yang dijalankan compile-gate untuk validasi kompilasi, build, dan type-check. Jika tidak dikonfigurasi di workflow-config, compile-gate gagal tertutup hingga perintah khusus proyek dikonfigurasi."
+  },
+  "compile-gate-command-fallback": {
+    "description": "Tidak diatur di workflow-config; compile-gate gagal tertutup hingga perintah khusus proyek dikonfigurasi."
+  },
+  "full-suite-enabled": {
+    "label": "Validasi full-suite wajib",
+    "description": "Mengontrol apakah perintah uji full-suite yang dikonfigurasi menjadi bagian wajib dari siklus hidup tugas.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Perintah full-suite yang dikonfigurasi wajib dalam siklus hidup tugas."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Gerbang full-suite dilewati kecuali jalur workflow lain mewajibkannya."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Perintah full-suite",
+    "description": "Perintah yang dijalankan gerbang full-suite saat validasi full-suite wajib diaktifkan."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Batas waktu full-suite",
+    "description": "Waktu eksekusi maksimum perintah full-suite, dalam milidetik."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Panjang ringkasan sukses full-suite",
+    "description": "Berapa banyak baris output full-suite yang berhasil tetap terlihat dalam bukti tugas ringkas."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Panjang potongan output kegagalan",
+    "description": "Berapa banyak baris full-suite yang gagal disimpan per potongan kegagalan ringkas."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Penanganan kegagalan di luar cakupan",
+    "description": "Apa yang dilakukan workflow ketika output full-suite menunjukkan kegagalan di luar cakupan tugas saat ini.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Audit dan blokir",
+        "description": "Mencatat kegagalan di luar cakupan dan menghentikan workflow hingga diselesaikan."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Audit dan peringatkan",
+        "description": "Mencatat kegagalan di luar cakupan tetapi mengizinkan workflow melanjutkan dengan peringatan."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Penempatan full-suite",
+    "description": "Di mana gerbang full-suite wajib dijalankan dalam siklus hidup tugas.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "Setelah kompilasi, sebelum review",
+        "description": "Menjalankan full-suite setelah kompilasi lulus dan sebelum pekerjaan reviewer dimulai."
+      },
+      "before_test_review": {
+        "label": "Sebelum review pengujian",
+        "description": "Menjalankan full-suite tepat sebelum jalur review pengujian membutuhkan buktinya."
+      },
+      "before_completion": {
+        "label": "Sebelum penyelesaian",
+        "description": "Menunda full-suite hingga jalur penyelesaian akhir."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Mode eksekusi review",
+    "description": "Mengontrol apakah jalur review wajib berjalan paralel, menunggu code review, atau berjalan berurutan.",
+    "options": {
+      "parallel_all": {
+        "label": "Semua paralel",
+        "description": "Semua jenis review dapat disiapkan secara independen; tidak ada ketergantungan peluncuran upstream."
+      },
+      "test_after_code": {
+        "label": "Test setelah code",
+        "description": "Hanya test yang menunggu code PASS siklus saat ini; jenis review lain tetap independen."
+      },
+      "code_first_optional": {
+        "label": "Code dulu untuk opsional",
+        "description": "API, performance, infra, dan dependency menunggu code PASS; test tetap downstream dari semua review upstream wajib."
+      },
+      "strict_sequential": {
+        "label": "Berurutan ketat",
+        "description": "Semua review wajib mengikuti urutan kanonik satu per satu untuk siklus saat ini."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Penjaga anggaran cakupan",
+    "description": "Memperingatkan atau memblokir ketika tugas terlalu besar untuk anggaran profil yang dikonfigurasi.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Pemeriksaan anggaran cakupan memperingatkan atau memblokir ketika tugas melebihi anggaran profil."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Batas anggaran cakupan tidak diterapkan untuk keputusan ukuran tugas."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Tindakan anggaran cakupan",
+    "description": "Apa yang terjadi ketika anggaran cakupan terlampaui.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Blokir untuk pemisahan",
+        "description": "Menghentikan pekerjaan yang terlalu besar dan meminta operator atau agen membaginya."
+      },
+      "WARN_ONLY": {
+        "label": "Hanya peringatkan",
+        "description": "Menampilkan peringatan cakupan tetapi tidak menghentikan langkah siklus hidup berikutnya."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Profil anggaran cakupan",
+    "description": "Profil tugas tempat penjaga anggaran cakupan berlaku. Nilai warisan yang tidak dikenal ditampilkan secara eksplisit alih-alih dihapus diam-diam."
+  },
+  "scope-budget-max-files": {
+    "label": "Batas file anggaran cakupan",
+    "description": "Jumlah file yang diubah maksimum sebelum penjaga anggaran cakupan bereaksi."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Batas baris yang diubah",
+    "description": "Jumlah baris yang diubah maksimum sebelum penjaga anggaran cakupan bereaksi."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Batas jalur review",
+    "description": "Jumlah jalur review wajib maksimum sebelum penjaga anggaran cakupan bereaksi."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Perkiraan token review",
+    "description": "Perkiraan anggaran token review maksimum sebelum penjaga anggaran cakupan bereaksi."
+  },
+  "review-cycle-enabled": {
+    "label": "Penjaga siklus review",
+    "description": "Mendeteksi loop review non-test berulang sebelum menghabiskan terlalu banyak pekerjaan.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Loop review non-test berulang terdeteksi sebelum closeout dilanjutkan."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Tekanan siklus review tidak diperiksa oleh penjaga ini."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Tindakan siklus review",
+    "description": "Apa yang terjadi ketika upaya review berulang melebihi batas yang dikonfigurasi.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Blokir untuk keputusan operator",
+        "description": "Menghentikan loop review berulang hingga operator memilih jalur pemulihan."
+      },
+      "WARN_ONLY": {
+        "label": "Hanya peringatkan",
+        "description": "Melaporkan tekanan siklus review tetapi membiarkan workflow melanjutkan."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Batas review non-test gagal",
+    "description": "Upaya review non-test gagal maksimum sebelum penjaga siklus review bereaksi."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Batas total review non-test",
+    "description": "Total upaya review non-test maksimum sebelum penjaga siklus review bereaksi."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Jenis review yang dikecualikan",
+    "description": "Pilihan ganda: jenis review yang dicentang dikecualikan dari penghitungan penjaga siklus review (review-cycle guard).",
+    "options": {
+      "code": {
+        "label": "Review kode"
+      },
+      "db": {
+        "label": "Review basis data"
+      },
+      "security": {
+        "label": "Review keamanan"
+      },
+      "refactor": {
+        "label": "Review refactor"
+      },
+      "api": {
+        "label": "Review API"
+      },
+      "test": {
+        "label": "Review pengujian"
+      },
+      "performance": {
+        "label": "Review performa"
+      },
+      "infra": {
+        "label": "Review infrastruktur"
+      },
+      "dependency": {
+        "label": "Review dependensi"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Prompt pemisahan otomatis siklus review",
+    "description": "Mengizinkan tekanan siklus review mengeluarkan prompt auto-split ketika tindakannya BLOCK_FOR_OPERATOR_DECISION.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Tekanan siklus review dapat mengeluarkan prompt auto-split ketika tindakannya BLOCK_FOR_OPERATOR_DECISION."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Tekanan siklus review tidak pernah mengeluarkan prompt auto-split."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Pemeliharaan memori proyek",
+    "description": "Mengontrol apakah closeout memeriksa dampak memori proyek.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Closeout memeriksa apakah bukti dampak memori proyek diperlukan."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Closeout tidak menjalankan pemeriksaan pemeliharaan memori proyek."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Mode memori proyek",
+    "description": "Seberapa ketat workflow menegakkan pekerjaan dampak memori proyek.",
+    "options": {
+      "off": {
+        "label": "Nonaktif",
+        "description": "Jangan menjalankan pemeliharaan memori proyek selama closeout."
+      },
+      "check": {
+        "label": "Periksa",
+        "description": "Periksa apakah pembaruan memori diperlukan tanpa menuliskannya."
+      },
+      "update": {
+        "label": "Perbarui",
+        "description": "Izinkan workflow memperbarui file memori proyek terfokus bila diperlukan."
+      },
+      "strict": {
+        "label": "Ketat",
+        "description": "Wajibkan bukti memori sebelum closeout dapat lulus."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Jalankan pemeriksaan memori sebelum closeout akhir",
+    "description": "Menjalankan pemeliharaan memori proyek sebelum langkah penyelesaian akhir.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Pemeliharaan memori proyek dijalankan sebelum langkah penyelesaian akhir."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Pemeliharaan memori proyek tidak disisipkan sebelum closeout akhir."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Wajibkan persetujuan pengguna untuk penulisan memori",
+    "description": "Mewajibkan persetujuan eksplisit pengguna sebelum workflow menulis file memori proyek.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Penulisan memori proyek memerlukan persetujuan eksplisit pengguna sebelum file diubah."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Penulisan memori proyek dapat dilanjutkan sesuai mode pemeliharaan yang dikonfigurasi tanpa langkah persetujuan tambahan."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Ukuran ringkasan ringkas memori proyek",
+    "description": "Ukuran maksimum ringkasan ringkas memori proyek yang dihasilkan, dalam karakter."
+  },
+  "project-memory-read-strategy": {
+    "label": "Strategi membaca memori proyek",
+    "description": "Bagaimana agen harus membaca memori persisten saat tugas dimulai.",
+    "options": {
+      "index_first": {
+        "label": "Indeks dulu",
+        "description": "Baca indeks memori terlebih dahulu dan buka file detail hanya ketika indeks menunjukkannya."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Retensi dampak memori proyek",
+    "description": "Berapa hari artefak dampak memori proyek disimpan."
+  },
+  "task-reset-enabled": {
+    "label": "Perintah reset tugas",
+    "description": "Mengizinkan mutasi reset atau discard tugas yang dikonfirmasi.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Perintah reset dan discard tugas yang dikonfirmasi tersedia melalui jalur terlindungi."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Mutasi reset dan discard tugas tidak tersedia."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Cadangan otomatis terjadwal",
+    "description": "Mengizinkan pemicu pemeliharaan harian membuat cadangan rollback terjadwal saat jatuh tempo.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Pemeliharaan harian dapat membuat cadangan rollback terjadwal saat interval jatuh tempo."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Pemeliharaan harian tidak akan membuat cadangan rollback terjadwal."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Interval cadangan otomatis",
+    "description": "Jumlah hari minimum antara cadangan terjadwal yang berhasil."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Retensi cadangan otomatis",
+    "description": "Jumlah cadangan terbaru yang disimpan setelah cadangan terjadwal dibuat."
+  },
+  "garda-self-guard": {
+    "label": "Perlindungan diri Garda",
+    "description": "Mengontrol apakah agen dapat langsung memasuki pekerjaan control-plane Garda yang dilindungi.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "Aktif",
+        "description": "Agen tidak dapat memasuki pekerjaan control-plane yang dilindungi tanpa jalur milik operator."
+      },
+      "require_operator_confirmation": {
+        "label": "Konfirmasi operator",
+        "description": "Masuk ke control-plane yang dilindungi memerlukan konfirmasi eksplisit operator."
+      }
+    }
+  }
+}

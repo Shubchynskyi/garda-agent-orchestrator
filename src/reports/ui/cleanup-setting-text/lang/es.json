@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Política de retención de runtime en `runtime-retention.json`: umbrales de mantenimiento programado, reglas de compactación y acciones protegidas de limpieza manual."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Mantenimiento diario",
+    "description": "Activa o desactiva el mantenimiento diario programado. Cuando está habilitado, el orquestador puede procesar por horario un lote limitado de tareas aptas sin intervención manual."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Máximo de tareas por ejecución de mantenimiento",
+    "description": "Límite superior de cuántas tareas aptas procesa el mantenimiento diario en una sola ejecución. Reduce el alcance del impacto si los umbrales están mal configurados."
+  },
+  "eligible_older_than_days": {
+    "label": "Edad mínima de la tarea (días)",
+    "description": "Una tarea debe tener al menos esta cantidad de días antes de que el mantenimiento o la limpieza manual puedan tocar sus artefactos de runtime. Las tareas activas y más recientes permanecen protegidas."
+  },
+  "keep_latest_tasks": {
+    "label": "Conservar las tareas más recientes (cantidad)",
+    "description": "Conserva siempre al menos esta cantidad de tareas más recientes, aunque sean más antiguas que el umbral de edad. Usa 0 para depender solo de la edad y de la protección de tareas activas."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run de mantenimiento diario",
+    "description": "Cuando es true, el mantenimiento diario programado solo enumera candidatos y escribe salida de auditoría; no elimina ni comprime artefactos. Usa true mientras ajustas los umbrales y luego cambia a false para aplicar."
+  },
+  "purge_require_confirm": {
+    "label": "Confirmación obligatoria para purga",
+    "description": "Cuando es true, los comandos destructivos de purga y limpieza requieren una frase de confirmación escrita explícitamente antes de que el servidor los ejecute."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Compactar DONE correctas después de (días)",
+    "description": "Después de esta cantidad de días, las tareas completadas con éxito (DONE) pueden compactarse a un historial solo de ledger una vez verificada la evidencia del ledger."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Comprimir tareas problemáticas después de (días)",
+    "description": "Después de esta cantidad de días, las tareas fallidas o atascadas pueden tener sus artefactos forenses pesados comprimidos, manteniendo evidencia legible para recuperación."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Limpieza manual de runtime",
+    "description": "Ejecuta `garda cleanup` una vez con los valores de antigüedad y conservar-las-más-recientes de las filas anteriores. La vista previa solo muestra candidatos; Aplicar elimina o comprime según la política y requiere confirmación."
+  },
+  "task_purge": {
+    "label": "Purga de tarea",
+    "description": "Elimina artefactos de runtime pertenecientes a un único ID de tarea y repara índices compartidos. No elimina archivos compartidos completos; la protección de tareas activas sigue aplicándose en el servidor."
+  },
+  "task_id": {
+    "label": "ID de tarea"
+  },
+  "purge_task_button": {
+    "label": "Purgar tarea"
+  },
+  "run_preview": {
+    "label": "Vista previa"
+  },
+  "value_true": {
+    "label": "true — habilitado"
+  },
+  "value_false": {
+    "label": "false — deshabilitado"
+  }
+}

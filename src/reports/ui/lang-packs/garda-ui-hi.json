@@ -12,52 +12,8 @@
     "initSettingsTab": "इनिट सेटिंग्स",
     "projectMemoryTab": "प्रोजेक्ट मेमोरी",
     "backupsTab": "बैकअप",
-    "backupsTabIntro": "बैकअप इन्वेंटरी से rollback स्नैपशॉट दिखाता है। सुरक्षित restore और auto-backup संपादन के लिए `garda ui --actions` चाहिए।",
-    "backupsInventoryTitle": "बैकअप इन्वेंटरी",
-    "backupsEmpty": "इन्वेंटरी में कोई बैकअप नहीं।",
-    "backupsSnapshotsRoot": "स्नैपशॉट रूट",
-    "backupRootPresent": "मौजूद",
-    "backupRootMissing": "अनुपस्थित",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "बनाया गया",
-    "backupSizeColumn": "आकार",
-    "backupReasonColumn": "कारण",
-    "backupStatusColumn": "स्थिति",
-    "backupRestoreColumn": "पुनर्स्थापना",
-    "backupReasonUpdate": "अपडेट",
-    "backupReasonScheduled": "अनुसूचित",
-    "backupsActionsDisabled": "नियंत्रित क्रियाएँ अक्षम हैं।",
-    "backupRestoreUnavailable": "इस बैकअप के लिए पुनर्स्थापना उपलब्ध नहीं।",
-    "restoreBackup": "बैकअप पुनर्स्थापित करें",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "सक्षम",
-    "backupAutoIntervalDays": "अंतराल (दिन)",
-    "backupAutoKeepLatest": "नवीनतम रखें",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "निर्देश",
     "cleanupSettingsTab": "क्लीनअप सेटिंग्स",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "प्रभावी नीति",
-    "cleanupEffectivePolicyHelp": "runtime ownership map टास्क-स्कोप evidence और shared aggregates को अलग रखता है; task purge shared files को पूरी तरह हटाने के बजाय owned artifacts हटाता है और shared state सुधारता है।",
-    "cleanupPolicyPath": "नीति पथ",
-    "cleanupDailyEnabled": "दैनिक maintenance सक्षम",
-    "cleanupDailyDryRun": "दैनिक maintenance dry-run",
-    "cleanupOlderThanDays": "इतने दिनों से पुराने योग्य",
-    "cleanupKeepLatestTasks": "नवीनतम टास्क रखें",
-    "cleanupPurgeRequireConfirm": "Purge के लिए confirmation चाहिए",
-    "cleanupHealthyDoneCompactDays": "Healthy DONE इतने दिनों बाद compact",
-    "cleanupProblemCompressDays": "Problem task इतने दिनों बाद compress",
-    "cleanupEditSettingsTitle": "रिटेंशन नियंत्रण",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "हर run में अधिकतम टास्क",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "टास्क purge",
-    "cleanupTaskPurgeHelp": "एक task id के owned runtime artifacts purge करता है। Active task protection और shared-state repair server side पर रहते हैं।",
-    "cleanupTaskId": "टास्क ID",
-    "cleanupPurgeTask": "टास्क purge करें",
     "actionsTab": "कार्रवाइयाँ",
     "noticeActionsEnabled": "कार्य विवरण स्थानीय सर्वर से मांग पर लोड किए जाते हैं। सर्वर 127.0.0.1 से बंधा है और यह CLI प्रक्रिया समाप्त होने पर रुक जाता है। नियंत्रित क्रियाएँ केवल अनुमत सूची वाले कमांड के लिए सक्षम हैं।",
     "noticeActionsDisabled": "कार्य विवरण स्थानीय सर्वर से मांग पर लोड किए जाते हैं। सर्वर 127.0.0.1 से बंधा है और यह CLI प्रक्रिया समाप्त होने पर रुक जाता है। --actions के बिना सर्वर शुरू होने पर नियंत्रित क्रियाएँ अक्षम रहती हैं।",
@@ -268,13 +224,14 @@
     "existingArtifacts": "मौजूदा कलाकृतियाँ",
     "missingArtifacts": "गायब कलाकृतियाँ",
     "artifactPath": "आर्टिफैक्ट पथ",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "साधारण दस्तावेज़",
+    "ordinaryDocsHelp": "साधारण दस्तावेज़ उपयोगकर्ता के स्वामित्व वाले planning, changelog या product docs होते हैं। इन पथों में बदलाव ऑडिट योग्य रहते हैं, लेकिन अपने आप अतिरिक्त review lanes ट्रिगर नहीं करते।",
+    "ordinaryDocsPath": "दस्तावेज़ पथ",
+    "ordinaryDocsEmpty": "कोई साधारण दस्तावेज़ पथ कॉन्फ़िगर नहीं है।",
+    "ordinaryDocsActionsDisabled": "साधारण दस्तावेज़ संपादन अक्षम है। पुनः प्रारंभ करें",
+    "addOrdinaryDoc": "दस्तावेज़ जोड़ें",
+    "removeOrdinaryDoc": "हटाएँ",
+    "availableReviewTypes": "उपलब्ध रिव्यू प्रकार"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "ज्ञात जोखिम, नाज़ुक पथ, सुरक्षा नोट्स और अनुकूलता सीमाएँ।"
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "इनिट सेटिंग्स",
+      "body": "इनिट सेटिंग्स टैब वर्तमान उत्तर, अनिवार्य एजेंट init checkpoint, साधारण दस्तावेज़ प्रबंधन और onboarding पूरा करने के लिए handoff prompt दिखाता है।"
+    },
+    "project-memory": {
+      "title": "प्रोजेक्ट मेमोरी",
+      "body": "प्रोजेक्ट मेमोरी टैब वर्तमान रखरखाव मोड और टिकाऊ मेमोरी फ़ाइलें दिखाता है। पूरा कंटेंट डैशबोर्ड में लोड करने के बजाय प्रत्येक फ़ाइल को मांग पर खोलें।"
+    }
+  }
 }

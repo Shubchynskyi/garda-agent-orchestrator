@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Assistentens språk",
+    "description": "Språk som assistenten ska använda med operatören."
+  },
+  "AssistantBrevity": {
+    "label": "Assistentens detaljnivå",
+    "description": "Hur detaljerade vanliga svar från assistenten ska vara."
+  },
+  "SourceOfTruth": {
+    "label": "Huvudfil för instruktioner",
+    "description": "Kanonic provider-fil som innehåller de genererade agentinstruktionerna."
+  },
+  "ActiveAgentFiles": {
+    "label": "Aktiva agentfiler",
+    "description": "Agentens entrypoint-filer som för närvarande ingår i detta projekt."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Inga automatiska commits",
+    "description": "Förhindrar att agenter committar utan uttryckligt godkännande från operatören (åtminstone försöker den)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude full access-läge",
+    "description": "Om Claude-inriktade instruktioner förutsätter full åtkomst till orchestratorn."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Tokenekonomi",
+    "description": "Håller genererade instruktioner kompakta och undviker onödig kontext."
+  },
+  "ProviderMinimalism": {
+    "label": "Provider-minimalism",
+    "description": "Behåller icke-kanoniska provider-entrypoints som omdirigeringar när det är möjligt."
+  },
+  "OrchestratorVersion": {
+    "label": "Orchestrator-version",
+    "description": "Garda-version som skrev tillståndet."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Språk bekräftat",
+    "description": "Om checkpointen för assistentens språk har passerats."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Agentfiler bekräftade",
+    "description": "Om valda aktiva agentfiler uttryckligen bekräftades."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Projektregler uppdaterade",
+    "description": "Om projektregler granskades eller accepterades under agentinitieringen."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Skills-prompt slutförd",
+    "description": "Om checkpointen för skills-prompten slutfördes."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Vanlig dokumentation bekräftad",
+    "description": "Om sökvägar till vanlig dokumentation bekräftades."
+  },
+  "VerificationPassed": {
+    "label": "Verifiering godkänd",
+    "description": "Om verifieringen efter initiering godkändes."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest giltigt",
+    "description": "Om valideringen av det skyddade control-plane-manifestet godkändes."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Fördefinierat kompileringskommando",
+    "description": "Kompilerings-, build- eller type-check-kommando som skrevs till workflow-konfigurationen under initieringen."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Fördefinierat fullsvit-kommando",
+    "description": "Testkommando som skrevs till workflow-konfigurationen under initieringen."
+  },
+  "reinit": {
+    "title": "Initiera om arbetsytan",
+    "description": "Återskapar Gardas genererade filer från aktuella initieringssvar. Använd efter att initieringsval har ändrats."
+  },
+  "agent-init": {
+    "title": "Överlämning av prompt till agenten",
+    "description": "Ge AGENT_INIT_PROMPT.md till agenten och be den slutföra agent-init-flödet; det strikta kommandot fungerar först efter att agenten har utfört dessa kontroller."
+  }
+}

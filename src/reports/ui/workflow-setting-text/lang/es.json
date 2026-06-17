@@ -1,0 +1,356 @@
+{
+  "compile-gate-command": {
+    "label": "Comando compile-gate",
+    "description": "Comando que ejecuta compile-gate para validación de compilación, build y type-check. Si no está configurado en workflow-config, compile-gate falla en modo fail-closed hasta que se configure un comando específico del proyecto."
+  },
+  "compile-gate-command-fallback": {
+    "description": "No configurado en workflow-config; compile-gate falla en modo fail-closed hasta que se configure un comando específico del proyecto."
+  },
+  "full-suite-enabled": {
+    "label": "Validación completa obligatoria",
+    "description": "Determina si el comando de prueba completa configurado forma parte del ciclo de vida de la tarea.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "El comando de suite completa configurado es obligatorio en el ciclo de vida de la tarea."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "El gate de suite completa se omite salvo que otro camino del workflow lo requiera."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Comando de suite completa",
+    "description": "Comando que ejecuta el gate de suite completa cuando la validación completa obligatoria está activada."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Tiempo de espera de suite completa",
+    "description": "Tiempo máximo de ejecución del comando de suite completa, en milisegundos."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Tamaño del resumen exitoso",
+    "description": "Cuántas líneas de salida exitosa de la suite completa se conservan en las pruebas compactas de la tarea."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Tamaño del bloque de error",
+    "description": "Cuántas líneas fallidas de la suite completa se guardan por bloque de error compacto."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Fallos fuera del alcance de la tarea",
+    "description": "Qué hace el workflow cuando la suite completa detecta un fallo fuera del alcance de la tarea actual.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Auditar y bloquear",
+        "description": "Registra el fallo y detiene el workflow hasta resolverlo."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Auditar y advertir",
+        "description": "Registra el fallo pero permite continuar el workflow con una advertencia."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Ubicación de la suite completa",
+    "description": "En qué punto del ciclo de vida de la tarea se ejecuta el gate obligatorio de suite completa.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "Después de compilar, antes de reviews",
+        "description": "Ejecuta la suite completa tras una compilación exitosa y antes de iniciar los reviews."
+      },
+      "before_test_review": {
+        "label": "Antes del review test",
+        "description": "Ejecuta la suite completa justo antes de que la review lane test necesite sus pruebas."
+      },
+      "before_completion": {
+        "label": "Antes de completar",
+        "description": "Aplaza la suite completa hasta la ruta final de finalización."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Modo de ejecución de reviews",
+    "description": "Controla si las review lanes requeridas se ejecutan en paralelo, esperan al code review o se encadenan secuencialmente.",
+    "options": {
+      "parallel_all": {
+        "label": "Todo en paralelo",
+        "description": "Todos los tipos de review pueden prepararse de forma independiente; no hay dependencias upstream de lanzamiento."
+      },
+      "test_after_code": {
+        "label": "Test después de code",
+        "description": "Solo test espera un PASS de code del ciclo actual; los demás tipos de review permanecen independientes."
+      },
+      "code_first_optional": {
+        "label": "Code primero para opcionales",
+        "description": "API, performance, infra y dependency esperan un PASS de code; test queda downstream de todos los reviews upstream requeridos."
+      },
+      "strict_sequential": {
+        "label": "Estrictamente secuencial",
+        "description": "Todos los reviews requeridos siguen el orden canónico uno a uno en el ciclo actual."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Control de presupuesto de alcance",
+    "description": "Advierte o bloquea cuando una tarea supera el presupuesto del perfil configurado.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "Las comprobaciones de presupuesto de alcance advierten o bloquean cuando una tarea supera el presupuesto del perfil configurado."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "Los límites de presupuesto de alcance no se aplican en decisiones de tamaño de tarea."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Acción ante exceso de alcance",
+    "description": "Qué ocurre cuando se supera el presupuesto de alcance.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Bloquear hasta dividir",
+        "description": "Detiene el trabajo demasiado grande y solicita dividirlo."
+      },
+      "WARN_ONLY": {
+        "label": "Solo advertir",
+        "description": "Muestra la advertencia de alcance sin detener el siguiente paso del ciclo de vida."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Perfiles de presupuesto de alcance",
+    "description": "Perfiles de tarea a los que aplica el control de presupuesto de alcance. Los valores legacy desconocidos se muestran explícitamente en lugar de eliminarse en silencio."
+  },
+  "scope-budget-max-files": {
+    "label": "Límite de archivos",
+    "description": "Número máximo de archivos modificados antes de que reaccione el control de presupuesto de alcance."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Límite de líneas modificadas",
+    "description": "Número máximo de líneas modificadas antes de que reaccione el control de presupuesto de alcance."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Límite de review lanes",
+    "description": "Número máximo de review lanes requeridas antes de que reaccione el control de presupuesto de alcance."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Previsión de tokens de review",
+    "description": "Presupuesto máximo estimado de tokens de review antes de que reaccione el control de presupuesto de alcance."
+  },
+  "review-cycle-enabled": {
+    "label": "Control de ciclos de review",
+    "description": "Detecta bucles de review no-test repetidos antes de que consuman demasiado trabajo.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "Los bucles de review no-test repetidos se detectan antes de continuar el closeout."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "La presión del review-cycle no se comprueba con este control."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Acción ante ciclo de review",
+    "description": "Qué ocurre cuando los intentos de review repetidos superan los límites configurados.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Esperar decisión del operador",
+        "description": "Detiene los bucles de review repetidos hasta que un operador elija la ruta de recuperación."
+      },
+      "WARN_ONLY": {
+        "label": "Solo advertir",
+        "description": "Informa la presión del review-cycle pero deja continuar el workflow."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Límite de reviews no-test fallidos",
+    "description": "Número máximo de intentos de review no-test fallidos antes de que reaccione el control."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Límite total de reviews no-test",
+    "description": "Número total máximo de intentos de review no-test antes de que reaccione el control."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Tipos de review excluidos",
+    "description": "Selección múltiple: los tipos de review marcados quedan excluidos del conteo del guard review-cycle.",
+    "options": {
+      "code": {
+        "label": "Revisión de código"
+      },
+      "db": {
+        "label": "Revisión de base de datos"
+      },
+      "security": {
+        "label": "Revisión de seguridad"
+      },
+      "refactor": {
+        "label": "Revisión de refactorización"
+      },
+      "api": {
+        "label": "Revisión de API"
+      },
+      "test": {
+        "label": "Revisión de pruebas"
+      },
+      "performance": {
+        "label": "Revisión de rendimiento"
+      },
+      "infra": {
+        "label": "Revisión de infraestructura"
+      },
+      "dependency": {
+        "label": "Revisión de dependencias"
+      }
+    }
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Sugerencia de división automática",
+    "description": "Permite que la presión del review-cycle emita una sugerencia auto-split cuando la acción es BLOCK_FOR_OPERATOR_DECISION. No tiene efecto bloqueante mientras la acción sea WARN_ONLY.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "La presión del review-cycle puede emitir la sugerencia auto-split cuando la acción es BLOCK_FOR_OPERATOR_DECISION."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "La presión del review-cycle nunca emite la sugerencia auto-split."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Mantenimiento de memoria del proyecto",
+    "description": "Activa la comprobación en closeout del impacto en la memoria durable del proyecto.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "El closeout comprueba si se necesitan pruebas de impacto en la memoria del proyecto."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "El closeout no ejecuta comprobaciones de mantenimiento de memoria del proyecto."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Modo de memoria del proyecto",
+    "description": "Grado de exigencia del workflow respecto al trabajo con project memory.",
+    "options": {
+      "off": {
+        "label": "Desactivado",
+        "description": "No ejecutar mantenimiento de project-memory durante el closeout."
+      },
+      "check": {
+        "label": "Comprobar",
+        "description": "Comprobar si hacen falta actualizaciones de memoria sin escribir archivos."
+      },
+      "update": {
+        "label": "Actualizar",
+        "description": "Permitir que el workflow actualice archivos focalizados de project-memory cuando sea necesario."
+      },
+      "strict": {
+        "label": "Estricto",
+        "description": "Exigir pruebas de memoria antes de un closeout exitoso."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Comprobar memoria antes del closeout final",
+    "description": "Ejecuta el mantenimiento de memoria del proyecto antes del paso final de finalización.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "El mantenimiento de memoria del proyecto se ejecuta antes del paso final de finalización."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "El mantenimiento de memoria del proyecto no se inserta antes del closeout final."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Aprobación de escrituras en memoria",
+    "description": "Exige consentimiento explícito del usuario antes de que el workflow escriba archivos de memoria del proyecto.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "Las escrituras en memoria del proyecto exigen consentimiento explícito del usuario antes de modificar archivos."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "Las escrituras en memoria del proyecto pueden realizarse en el modo de mantenimiento configurado sin un paso de aprobación adicional."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Tamaño del resumen compacto de memoria",
+    "description": "Tamaño máximo del resumen compacto de memoria del proyecto generado, en caracteres."
+  },
+  "project-memory-read-strategy": {
+    "label": "Estrategia de lectura de memoria",
+    "description": "Cómo deben leer los agentes la memoria durable al iniciar la tarea.",
+    "options": {
+      "index_first": {
+        "label": "Índice primero",
+        "description": "Leer primero el índice de memoria y abrir archivos detallados solo cuando el índice apunte a ellos."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Retención de artefactos de impacto",
+    "description": "Cuántos días se conservan los artefactos de impacto de la memoria del proyecto."
+  },
+  "task-reset-enabled": {
+    "label": "Comandos de reinicio de tarea",
+    "description": "Permite mutaciones confirmadas de reinicio o descarte de tareas.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "Los comandos confirmados de reinicio y descarte de tareas están disponibles mediante rutas protegidas."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "Las mutaciones de reinicio y descarte de tareas no están disponibles."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Copias de seguridad programadas",
+    "description": "Permite que el mantenimiento diario cree copias de seguridad de rollback programadas cuando corresponda el intervalo.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "El mantenimiento diario puede crear copias de seguridad de rollback programadas cuando corresponda el intervalo."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "El mantenimiento diario no crea copias de seguridad de rollback programadas."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Intervalo de copias de seguridad",
+    "description": "Número mínimo de días entre copias de seguridad programadas exitosas."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Retención de copias de seguridad",
+    "description": "Número de copias de seguridad más recientes que conservar tras crear una copia programada."
+  },
+  "garda-self-guard": {
+    "label": "Protección Garda self-guard",
+    "description": "Determina si los agentes pueden entrar directamente en el trabajo protegido del control-plane de Garda.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "Activado",
+        "description": "Los agentes no pueden acceder al trabajo protegido del control-plane sin la ruta del operador."
+      },
+      "require_operator_confirmation": {
+        "label": "Confirmación del operador",
+        "description": "El acceso al control-plane protegido exige confirmación explícita del operador."
+      }
+    }
+  }
+}

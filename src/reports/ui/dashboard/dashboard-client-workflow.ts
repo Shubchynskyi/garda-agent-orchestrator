@@ -1,13 +1,32 @@
 /** Browser-side dashboard script fragment (workflow). */
-export const UI_DASHBOARD_CLIENT_WORKFLOW = `function renderWorkflow(report) {
+export const UI_DASHBOARD_CLIENT_WORKFLOW = `function syncWorkflowMessagesVisibility() {
+  if (!workflowNode) {
+    return;
+  }
+  workflowNode.hidden = workflowNode.innerHTML.trim() === '';
+}
+function updateWorkflowPanelTitle() {
+  if (!workflowPanelTitleNode) {
+    return;
+  }
+  workflowPanelTitleNode.textContent = settingGroupLabel(currentWorkflowSettingGroup);
+}
+function renderWorkflow(report) {
   const tab = report.workflow_config_tab;
-  workflowConfigPathNode.textContent = tab && tab.config_path ? '(' + tab.config_path + ')' : '';
+  setPanelConfigPath(workflowConfigPathNode, tab && tab.config_path ? tab.config_path : '');
   const unavailable = tab && tab.unavailable ? tab.unavailable : [];
   if (unavailable.length > 0) {
     workflowNode.innerHTML = '<div class="blocker-alert"><strong>' + safe(t('workflowWarningTitle')) + ':</strong> ' + safe(unavailable.map(item => item.reason).join(' ')) + '</div>';
+    syncWorkflowMessagesVisibility();
     return;
   }
-  workflowNode.innerHTML = '<p class="workflow-state">' + safe(workflowStatusText(tab ? tab.status : 'missing')) + '</p>';
+  const status = tab ? tab.status : 'missing';
+  if (status === 'present') {
+    workflowNode.innerHTML = '';
+  } else {
+    workflowNode.innerHTML = '<p class="workflow-state">' + safe(workflowStatusText(status)) + '</p>';
+  }
+  syncWorkflowMessagesVisibility();
 }
 function renderSettingResultMarkup(result) {
   const label = localizedField(settingTextPacks, result.setting_id, 'label', result.label || result.key || result.setting_id || t('setting'));
@@ -24,10 +43,6 @@ function renderSettingResultMarkup(result) {
     + outputBlock('stderr', result.stderr)
     + '</section>';
 }
-function renderSettingResult(result) {
-  currentSettingResult = result;
-  settingStatusNode.innerHTML = renderSettingResultMarkup(result);
-}
 async function submitSetting(settingId, mode, value, confirmation, resultRenderer) {
   const response = await fetch('/api/settings', {
     method: 'POST',
@@ -37,8 +52,6 @@ async function submitSetting(settingId, mode, value, confirmation, resultRendere
   const result = await response.json();
   if (typeof resultRenderer === 'function') {
     resultRenderer(result);
-  } else {
-    renderSettingResult(result);
   }
   if (result && result.status === 'executed') {
     await refreshSettingsPayload();
@@ -73,7 +86,11 @@ function renderSettingOptions(setting) {
   if (!setting.options || setting.options.length === 0) {
     return '<div class="option-item"><strong>' + safe(t('noFixedOptions')) + '</strong><span>' + safe(t('freeValueHelp')) + '</span></div>';
   }
-  return '<div class="option-list">' + setting.options.map(option => '<div class="option-item"><strong>' + safe(localizedOption(settingTextPacks, setting.id, option, 'label', option.label)) + ' <code>' + safe(option.value) + '</code></strong><span>' + inlineText(localizedOption(settingTextPacks, setting.id, option, 'description', option.description)) + '</span></div>').join('') + '</div>';
+  if (setting.id === 'review-cycle-excluded-review-types') {
+    const values = setting.options.map(option => String(option.value || '').trim()).filter(Boolean);
+    return '<div class="option-list"><div class="option-item"><strong>' + safe(t('availableReviewTypes')) + '</strong><span><code>' + safe(values.join(', ')) + '</code></span></div></div>';
+  }
+  return '<div class="option-list">' + setting.options.map(option => '<div class="option-item"><strong>' + formatSettingOptionTitle(setting, option) + '</strong><span>' + inlineText(localizedOption(settingTextPacks, setting.id, option, 'description', option.description)) + '</span></div>').join('') + '</div>';
 }
 function settingControlId(settingId, controlScope) {
   return 'setting-input-' + (controlScope || 'workflow') + '-' + settingId;
@@ -88,7 +105,7 @@ function renderSettingControl(setting, disabled, controlScope) {
   }
   if (setting.value_type === 'enum_list' && setting.options && setting.options.length > 0) {
     const selected = new Set(settingValueList(setting));
-    return '<div id="' + controlId + '" class="enum-list-control" role="group">' + setting.options.map(option => '<label><input type="checkbox" value="' + safe(option.value) + '"' + (selected.has(String(option.value)) ? ' checked' : '') + disabledAttr + '><span>' + safe(localizedOption(settingTextPacks, setting.id, option, 'label', option.label)) + ' <code>' + safe(option.value) + '</code></span></label>').join('') + '</div>';
+    return '<div id="' + controlId + '" class="enum-list-control" role="group">' + setting.options.map(option => '<label><input type="checkbox" value="' + safe(option.value) + '"' + (selected.has(String(option.value)) ? ' checked' : '') + disabledAttr + '><span>' + formatSettingOptionTitle(setting, option) + '</span></label>').join('') + '</div>';
   }
   if (setting.options && setting.options.length > 0) {
     return '<select id="' + controlId + '"' + disabledAttr + '>' + setting.options.map(option => '<option value="' + safe(option.value) + '"' + (String(option.value) === inputValue ? ' selected' : '') + '>' + safe(localizedOption(settingTextPacks, setting.id, option, 'label', option.label)) + ' (' + safe(option.value) + ')</option>').join('') + '</select>';
@@ -142,27 +159,28 @@ function renderSettingsEditor(payload) {
   currentSettingsPayload = payload;
   const settings = payload.settings || [];
   if (settings.length === 0) {
-    settingsEditorNode.innerHTML = '<h3>' + safe(t('guardedEditor')) + '</h3><p class="empty">' + safe(t('noEditableSettings')) + '</p>';
+    updateWorkflowPanelTitle();
+    settingsEditorNode.innerHTML = '<p class="empty">' + safe(t('noEditableSettings')) + '</p>';
+    syncWorkflowMessagesVisibility();
     return;
   }
   const disabled = !payload.enabled;
   const disabledNotice = disabled
     ? '<p class="empty">' + safe(t('settingEditsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('settingEditsDisabledTail')) + '</p>'
-    : '<p class="empty">' + safe(t('guardedEditorHelp')) + '</p>';
+    : '';
   const groupOrder = ['validation', 'review', 'scope', 'safety'];
   const availableGroups = groupOrder.filter(groupId => settings.some(setting => settingGroupId(setting) === groupId));
   if (!availableGroups.includes(currentWorkflowSettingGroup)) {
     currentWorkflowSettingGroup = availableGroups[0] || 'validation';
   }
-  if (!currentSettingResult) {
-    settingStatusNode.innerHTML = '';
-  }
-  settingsEditorNode.innerHTML = '<h3>' + safe(t('guardedEditor')) + '</h3>' + disabledNotice
+  updateWorkflowPanelTitle();
+  settingsEditorNode.innerHTML = disabledNotice
     + (() => {
       const groupSettings = settings.filter(setting => settingGroupId(setting) === currentWorkflowSettingGroup);
       if (groupSettings.length === 0) return '<p class="empty">' + safe(t('noWorkflowSettings')) + '</p>';
-      return '<section class="workflow-group workflow-setting-group"><h3>' + safe(settingGroupLabel(currentWorkflowSettingGroup)) + '</h3><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled, 'workflow')).join('') + '</tbody></table></div></section>';
+      return '<section class="workflow-group workflow-setting-group"><div class="workflow-table"><table><thead><tr><th>' + safe(t('configSettingColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('currentValueColumn')) + '</th><th>' + safe(t('optionsColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + groupSettings.map(setting => renderSettingRow(setting, disabled, 'workflow')).join('') + '</tbody></table></div></section>';
     })();
+  syncWorkflowMessagesVisibility();
   for (const button of settingsEditorNode.querySelectorAll('button[data-setting-id]')) {
     button.addEventListener('click', () => {
       const setting = settings.find(item => item.id === button.dataset.settingId);

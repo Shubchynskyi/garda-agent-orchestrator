@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Maintenance mémoire activée",
+    "description": "Indique si le closeout du workflow vérifie la mémoire projet durable."
+  },
+  "memory-mode": {
+    "label": "Mode de maintenance mémoire",
+    "description": "Mode workflow actuel : off, check, update ou strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Exécuté avant le closeout final",
+    "description": "Indique si le project-memory gate s'exécute avant l'achèvement."
+  },
+  "memory-require-approval": {
+    "label": "Approbation requise pour les écritures",
+    "description": "Indique si les écritures dans les fichiers project-memory requièrent l'accord de l'utilisateur."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Limite de taille du résumé compact",
+    "description": "Taille maximale du résumé compact de mémoire projet généré, en caractères."
+  },
+  "memory-read-strategy": {
+    "label": "Stratégie de lecture",
+    "description": "Comment les agents doivent lire la mémoire projet au démarrage de la tâche."
+  },
+  "memory-impact-retention-days": {
+    "label": "Rétention des artefacts d'impact",
+    "description": "Nombre de jours de conservation des artefacts d'impact project-memory."
+  },
+  "memory-initialized": {
+    "label": "Initialisé par agent init",
+    "description": "Indique si agent-init a enregistré l'initialisation de la mémoire projet."
+  },
+  "memory-validated": {
+    "label": "Validé par agent init",
+    "description": "Indique si agent-init a enregistré une validation réussie de la mémoire projet."
+  },
+  "memory-dir": {
+    "label": "Répertoire mémoire",
+    "description": "Répertoire contenant les fichiers de mémoire durable appartenant à l'utilisateur."
+  },
+  "memory-read-first": {
+    "label": "Fichiers à lire en premier",
+    "description": "Fichiers que les agents doivent lire avant les fichiers mémoire ciblés (focused)."
+  },
+  "memory-summary-rule": {
+    "label": "Règle de résumé générée",
+    "description": "Fichier rule généré qui résume la mémoire projet pour le démarrage de l'agent."
+  },
+  "memory-bootstrap-report": {
+    "label": "Rapport bootstrap",
+    "description": "Rapport runtime du bootstrap ou de la validation project-memory."
+  }
+}

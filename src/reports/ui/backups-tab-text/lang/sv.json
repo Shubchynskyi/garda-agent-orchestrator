@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Visar rollback-ögonblicksbilder från säkerhetskopieinventariet. Skyddad återställning och auto-backup-redigering kräver `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Säkerhetskopielista"
+  },
+  "empty": {
+    "label": "Inga säkerhetskopior i listan."
+  },
+  "snapshots_root": {
+    "label": "Ögonblicksbildsrot"
+  },
+  "root_present": {
+    "label": "finns"
+  },
+  "root_missing": {
+    "label": "saknas"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Skapad"
+  },
+  "size_column": {
+    "label": "Storlek"
+  },
+  "reason_column": {
+    "label": "Orsak"
+  },
+  "status_column": {
+    "label": "Status"
+  },
+  "restore_column": {
+    "label": "Återställ"
+  },
+  "reason_update": {
+    "label": "uppdatering"
+  },
+  "reason_scheduled": {
+    "label": "schemalagd"
+  },
+  "health_available": {
+    "label": "Tillgänglig"
+  },
+  "health_missing_records": {
+    "label": "Poster saknas"
+  },
+  "health_invalid_records": {
+    "label": "Ogiltiga poster"
+  },
+  "actions_disabled": {
+    "label": "Kontrollerade åtgärder är inaktiverade."
+  },
+  "restore_unavailable": {
+    "label": "Återställning är inte tillgänglig för denna säkerhetskopia."
+  },
+  "restore_backup": {
+    "label": "Återställ säkerhetskopia"
+  },
+  "auto_backup_title": {
+    "label": "Automatisk säkerhetskopiering"
+  },
+  "auto_backup_help": {
+    "description": "Schemalagda automatiska säkerhetskopior använder granskade workflow-inställningar. Spara kräver bekräftelse."
+  },
+  "auto_enabled": {
+    "label": "Aktiverad"
+  },
+  "auto_interval_days": {
+    "label": "Intervall (dagar)"
+  },
+  "auto_keep_latest": {
+    "label": "Behåll senaste"
+  },
+  "restore_preview_help": {
+    "description": "Välj en säkerhetskopia för att återställa den via den skyddade rollback-åtgärden."
+  }
+}

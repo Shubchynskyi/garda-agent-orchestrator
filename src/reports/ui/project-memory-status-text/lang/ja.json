@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "メモリ保守が有効",
+    "description": "ワークフローのクローズアウト時に永続プロジェクトメモリを確認するかどうか。"
+  },
+  "memory-mode": {
+    "label": "メモリ保守モード",
+    "description": "現在のワークフローモード: off、check、update、strict。"
+  },
+  "memory-run-before-closeout": {
+    "label": "最終クローズアウト前に実行",
+    "description": "完了前にプロジェクトメモリゲートが実行されるかどうか。"
+  },
+  "memory-require-approval": {
+    "label": "書き込みに承認が必要",
+    "description": "プロジェクトメモリファイルへの書き込みにユーザー承認が必要かどうか。"
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "コンパクト要約のサイズ上限",
+    "description": "生成されるコンパクトなプロジェクトメモリ要約の最大サイズ（文字数）。"
+  },
+  "memory-read-strategy": {
+    "label": "読み取り戦略",
+    "description": "タスク開始時にエージェントがプロジェクトメモリを読み取る方法。"
+  },
+  "memory-impact-retention-days": {
+    "label": "影響アーティファクトの保持",
+    "description": "プロジェクトメモリ影響アーティファクトを保持する日数。"
+  },
+  "memory-initialized": {
+    "label": "エージェント初期化で初期化済み",
+    "description": "エージェント初期化がプロジェクトメモリの初期化を記録したかどうか。"
+  },
+  "memory-validated": {
+    "label": "エージェント初期化で検証済み",
+    "description": "エージェント初期化がプロジェクトメモリの検証成功を記録したかどうか。"
+  },
+  "memory-dir": {
+    "label": "メモリディレクトリ",
+    "description": "ユーザー所有の永続メモリファイルを格納するディレクトリ。"
+  },
+  "memory-read-first": {
+    "label": "優先読み取りファイル",
+    "description": "フォーカス対象メモリファイルの前にエージェントが読むべきファイル。"
+  },
+  "memory-summary-rule": {
+    "label": "生成された要約ルール",
+    "description": "エージェント起動用にプロジェクトメモリを要約する生成ルールファイル。"
+  },
+  "memory-bootstrap-report": {
+    "label": "ブートストラップレポート",
+    "description": "プロジェクトメモリのブートストラップまたは検証のランタイムレポート。"
+  }
+}

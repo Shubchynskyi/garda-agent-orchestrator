@@ -197,6 +197,8 @@ export interface ReportProjectMemoryFile {
 }
 
 export interface ReportProjectMemoryTab {
+    settings_config_path: string;
+    memory_directory_path: string;
     status: ReportValueRow[];
     settings: ReportWorkflowSetting[];
     files: ReportProjectMemoryFile[];
@@ -217,6 +219,7 @@ export interface ReportBackupRow {
 }
 
 export interface ReportBackupsTab {
+    workflow_config_path: string;
     snapshots_root: string;
     snapshots_root_exists: boolean;
     auto_backup: {

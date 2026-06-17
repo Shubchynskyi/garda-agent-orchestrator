@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "백업 인벤토리의 rollback 스냅샷을 표시합니다. 보호된 복원 및 auto-backup 편집에는 `garda ui --actions`가 필요합니다."
+  },
+  "inventory_title": {
+    "label": "백업 목록"
+  },
+  "empty": {
+    "label": "목록에 백업이 없습니다."
+  },
+  "snapshots_root": {
+    "label": "스냅샷 루트"
+  },
+  "root_present": {
+    "label": "있음"
+  },
+  "root_missing": {
+    "label": "없음"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "생성됨"
+  },
+  "size_column": {
+    "label": "크기"
+  },
+  "reason_column": {
+    "label": "사유"
+  },
+  "status_column": {
+    "label": "상태"
+  },
+  "restore_column": {
+    "label": "복원"
+  },
+  "reason_update": {
+    "label": "업데이트"
+  },
+  "reason_scheduled": {
+    "label": "예약됨"
+  },
+  "health_available": {
+    "label": "사용 가능"
+  },
+  "health_missing_records": {
+    "label": "레코드 누락"
+  },
+  "health_invalid_records": {
+    "label": "잘못된 레코드"
+  },
+  "actions_disabled": {
+    "label": "제어된 작업이 비활성화되어 있습니다."
+  },
+  "restore_unavailable": {
+    "label": "이 백업은 복원할 수 없습니다."
+  },
+  "restore_backup": {
+    "label": "백업 복원"
+  },
+  "auto_backup_title": {
+    "label": "자동 백업"
+  },
+  "auto_backup_help": {
+    "description": "예약된 자동 백업은 감사된 workflow 설정을 사용합니다. 저장하려면 확인이 필요합니다."
+  },
+  "auto_enabled": {
+    "label": "사용"
+  },
+  "auto_interval_days": {
+    "label": "간격(일)"
+  },
+  "auto_keep_latest": {
+    "label": "최신 유지"
+  },
+  "restore_preview_help": {
+    "description": "보호된 롤백 작업으로 복원할 백업을 선택하세요."
+  }
+}

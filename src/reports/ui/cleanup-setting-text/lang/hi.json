@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "`runtime-retention.json` में runtime प्रतिधारण नीति: निर्धारित रखरखाव सीमाएँ, compact करने के नियम, और सुरक्षित मैनुअल cleanup क्रियाएँ।"
+  },
+  "daily_maintenance_enabled": {
+    "label": "दैनिक रखरखाव",
+    "description": "निर्धारित दैनिक रखरखाव को चालू या बंद करता है। सक्षम होने पर orchestrator बिना मैनुअल हस्तक्षेप के समयानुसार सीमित संख्या में योग्य कार्यों को प्रोसेस कर सकता है।"
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "प्रति रखरखाव रन अधिकतम कार्य",
+    "description": "एक रन में दैनिक रखरखाव कितने योग्य कार्य प्रोसेस करेगा इसकी ऊपरी सीमा। यदि थ्रेशहोल्ड गलत कॉन्फ़िगर हों तो प्रभाव का दायरा सीमित रहता है।"
+  },
+  "eligible_older_than_days": {
+    "label": "कार्य की न्यूनतम आयु (दिन)",
+    "description": "किसी कार्य के runtime artifact को maintenance या manual cleanup छू सके, उससे पहले उसका इतना पुराना होना आवश्यक है। सक्रिय और नए कार्य सुरक्षित रहते हैं।"
+  },
+  "keep_latest_tasks": {
+    "label": "नवीनतम कार्य सुरक्षित रखें (संख्या)",
+    "description": "उम्र सीमा पार होने पर भी कम से कम इतने सबसे हाल के कार्य हमेशा सुरक्षित रखे जाते हैं। केवल उम्र और active-task सुरक्षा पर निर्भर रहने के लिए 0 सेट करें।"
+  },
+  "daily_maintenance_dry_run": {
+    "label": "दैनिक रखरखाव dry-run",
+    "description": "जब मान true हो, निर्धारित दैनिक रखरखाव केवल उम्मीदवारों की सूची बनाता है और audit output लिखता है; कोई artifact हटाता या compress नहीं करता। थ्रेशहोल्ड ठीक करते समय true रखें, फिर लागू करने के लिए false करें।"
+  },
+  "purge_require_confirm": {
+    "label": "purge के लिए पुष्टि आवश्यक",
+    "description": "जब मान true हो, destructive purge और cleanup कमांड चलाने से पहले सर्वर स्पष्ट रूप से टाइप किया गया confirmation phrase मांगता है।"
+  },
+  "healthy_done_compact_after_days": {
+    "label": "स्वस्थ DONE को इतने दिन बाद compact करें",
+    "description": "इतने दिनों बाद सफलतापूर्वक पूर्ण (DONE) कार्यों को ledger evidence सत्यापित होने पर केवल ledger-history में compact किया जा सकता है।"
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "समस्याग्रस्त कार्य इतने दिन बाद compress करें",
+    "description": "इतने दिनों बाद विफल या अटके हुए कार्यों के भारी forensic artifact compress किए जा सकते हैं, जबकि recovery के लिए पढ़ने योग्य evidence सुरक्षित रहता है।"
+  },
+  "manual_runtime_cleanup": {
+    "label": "मैनुअल runtime cleanup",
+    "description": "ऊपर की पंक्तियों से आयु और keep-latest मान लेकर `garda cleanup` एक बार चलाता है। Preview केवल उम्मीदवार दिखाता है; Apply नीति के अनुसार हटाता या compress करता है और पुष्टि मांगता है।"
+  },
+  "task_purge": {
+    "label": "कार्य purge",
+    "description": "एक task ID के स्वामित्व वाले runtime artifact हटाता है और shared index की मरम्मत करता है। पूरे shared file नहीं हटाता; server पर active-task सुरक्षा लागू रहती है।"
+  },
+  "task_id": {
+    "label": "कार्य ID"
+  },
+  "purge_task_button": {
+    "label": "कार्य purge करें"
+  },
+  "run_preview": {
+    "label": "पूर्वावलोकन"
+  },
+  "value_true": {
+    "label": "true — सक्षम"
+  },
+  "value_false": {
+    "label": "false — अक्षम"
+  }
+}

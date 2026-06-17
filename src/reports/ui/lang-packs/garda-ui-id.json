@@ -12,52 +12,8 @@
     "initSettingsTab": "Pengaturan awal",
     "projectMemoryTab": "Memori proyek",
     "backupsTab": "Cadangan",
-    "backupsTabIntro": "Menampilkan snapshot rollback dari inventaris cadangan. Restore terjaga dan pengeditan auto-backup memerlukan `garda ui --actions`.",
-    "backupsInventoryTitle": "Inventaris cadangan",
-    "backupsEmpty": "Tidak ada cadangan dalam inventaris.",
-    "backupsSnapshotsRoot": "Akar snapshot",
-    "backupRootPresent": "ada",
-    "backupRootMissing": "tidak ada",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Dibuat",
-    "backupSizeColumn": "Ukuran",
-    "backupReasonColumn": "Alasan",
-    "backupStatusColumn": "Status",
-    "backupRestoreColumn": "Pulihkan",
-    "backupReasonUpdate": "pembaruan",
-    "backupReasonScheduled": "terjadwal",
-    "backupsActionsDisabled": "Tindakan terkendali dinonaktifkan.",
-    "backupRestoreUnavailable": "Pemulihan tidak tersedia untuk cadangan ini.",
-    "restoreBackup": "Pulihkan cadangan",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Diaktifkan",
-    "backupAutoIntervalDays": "Interval (hari)",
-    "backupAutoKeepLatest": "Simpan terbaru",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "instruksi",
     "cleanupSettingsTab": "Pengaturan pembersihan",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Kebijakan efektif",
-    "cleanupEffectivePolicyHelp": "Bukti berskup tugas dan agregat bersama dipisahkan oleh peta kepemilikan runtime; purge tugas menghapus artefak milik tugas dan memperbaiki state bersama, bukan menghapus file bersama secara penuh.",
-    "cleanupPolicyPath": "Path kebijakan",
-    "cleanupDailyEnabled": "Pemeliharaan harian aktif",
-    "cleanupDailyDryRun": "Pemeliharaan harian dry-run",
-    "cleanupOlderThanDays": "Layak jika lebih lama dari hari",
-    "cleanupKeepLatestTasks": "Simpan tugas terbaru",
-    "cleanupPurgeRequireConfirm": "Purge memerlukan konfirmasi",
-    "cleanupHealthyDoneCompactDays": "Compact DONE sehat setelah hari",
-    "cleanupProblemCompressDays": "Compress tugas bermasalah setelah hari",
-    "cleanupEditSettingsTitle": "Kontrol retensi",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Maks. tugas per run",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge tugas",
-    "cleanupTaskPurgeHelp": "Purge artefak runtime milik satu ID tugas. Perlindungan tugas aktif dan perbaikan state bersama tetap di sisi server.",
-    "cleanupTaskId": "ID tugas",
-    "cleanupPurgeTask": "Purge tugas",
     "actionsTab": "Tindakan",
     "noticeActionsEnabled": "Detail tugas dimuat sesuai permintaan dari server lokal. Server terikat ke 127.0.0.1 dan berhenti saat proses CLI ini berakhir. Tindakan terkendali hanya diaktifkan untuk perintah yang diizinkan.",
     "noticeActionsDisabled": "Detail tugas dimuat sesuai permintaan dari server lokal. Server terikat ke 127.0.0.1 dan berhenti saat proses CLI ini berakhir. Tindakan terkendali dinonaktifkan kecuali server dimulai dengan --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Artefak yang ada",
     "missingArtifacts": "Artefak yang hilang",
     "artifactPath": "Jalur artefak",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Dokumen biasa",
+    "ordinaryDocsHelp": "Dokumen biasa adalah dokumen perencanaan, changelog, atau produk milik pengguna. Perubahan pada path ini tetap dapat diaudit tetapi tidak memicu jalur review tambahan sendiri.",
+    "ordinaryDocsPath": "Path dokumen",
+    "ordinaryDocsEmpty": "Tidak ada path dokumen biasa yang dikonfigurasi.",
+    "ordinaryDocsActionsDisabled": "Pengeditan dokumen biasa dinonaktifkan. Mulai ulang dengan",
+    "addOrdinaryDoc": "Tambah dokumen",
+    "removeOrdinaryDoc": "Hapus",
+    "availableReviewTypes": "Jenis review yang tersedia"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "Risiko yang diketahui, jalur rapuh, catatan keamanan, dan batas kompatibilitas."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Pengaturan awal",
+      "body": "Tab pengaturan awal menampilkan jawaban saat ini, checkpoint init agen wajib, pengelolaan dokumen biasa, dan prompt handoff untuk menyelesaikan onboarding."
+    },
+    "project-memory": {
+      "title": "Memori proyek",
+      "body": "Tab memori proyek menampilkan mode pemeliharaan saat ini dan file memori tahan lama. Buka setiap file sesuai permintaan alih-alih memuat seluruh konten ke dashboard."
+    }
+  }
 }

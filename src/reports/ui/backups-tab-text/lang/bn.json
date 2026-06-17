@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "ব্যাকআপ ইনভেন্টরি থেকে rollback স্ন্যাপশট দেখায়। সুরক্ষিত restore এবং auto-backup সম্পাদনার জন্য `garda ui --actions` প্রয়োজন।"
+  },
+  "inventory_title": {
+    "label": "ব্যাকআপ তালিকা"
+  },
+  "empty": {
+    "label": "তালিকায় কোনো ব্যাকআপ নেই।"
+  },
+  "snapshots_root": {
+    "label": "স্ন্যাপশট রুট"
+  },
+  "root_present": {
+    "label": "আছে"
+  },
+  "root_missing": {
+    "label": "নেই"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "তৈরি"
+  },
+  "size_column": {
+    "label": "আকার"
+  },
+  "reason_column": {
+    "label": "কারণ"
+  },
+  "status_column": {
+    "label": "অবস্থা"
+  },
+  "restore_column": {
+    "label": "পুনরুদ্ধার"
+  },
+  "reason_update": {
+    "label": "আপডেট"
+  },
+  "reason_scheduled": {
+    "label": "নির্ধারিত"
+  },
+  "health_available": {
+    "label": "উপলব্ধ"
+  },
+  "health_missing_records": {
+    "label": "রেকর্ড অনুপস্থিত"
+  },
+  "health_invalid_records": {
+    "label": "অবৈধ রেকর্ড"
+  },
+  "actions_disabled": {
+    "label": "নিয়ন্ত্রিত ক্রিয়া নিষ্ক্রিয়।"
+  },
+  "restore_unavailable": {
+    "label": "এই ব্যাকআপের জন্য পুনরুদ্ধার উপলব্ধ নয়।"
+  },
+  "restore_backup": {
+    "label": "ব্যাকআপ পুনরুদ্ধার"
+  },
+  "auto_backup_title": {
+    "label": "স্বয়ংক্রিয় ব্যাকআপ"
+  },
+  "auto_backup_help": {
+    "description": "নির্ধারিত স্বয়ংক্রিয় ব্যাকআপ অডিট করা workflow সেটিংস ব্যবহার করে। সংরক্ষণের জন্য নিশ্চিতকরণ প্রয়োজন।"
+  },
+  "auto_enabled": {
+    "label": "সক্রিয়"
+  },
+  "auto_interval_days": {
+    "label": "ব্যবধান (দিন)"
+  },
+  "auto_keep_latest": {
+    "label": "সর্বশেষ রাখুন"
+  },
+  "restore_preview_help": {
+    "description": "সংরক্ষিত rollback ক্রিয়ার মাধ্যমে পুনরুদ্ধার করতে একটি ব্যাকআপ বেছে নিন।"
+  }
+}

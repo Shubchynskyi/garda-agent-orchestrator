@@ -12,52 +12,8 @@
     "initSettingsTab": "初始化设置",
     "projectMemoryTab": "项目记忆",
     "backupsTab": "备份",
-    "backupsTabIntro": "列出备份清单中的 rollback 快照。受保护的恢复和 auto-backup 编辑需要 `garda ui --actions`。",
-    "backupsInventoryTitle": "备份清单",
-    "backupsEmpty": "清单中没有备份。",
-    "backupsSnapshotsRoot": "快照根目录",
-    "backupRootPresent": "存在",
-    "backupRootMissing": "缺失",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "创建时间",
-    "backupSizeColumn": "大小",
-    "backupReasonColumn": "原因",
-    "backupStatusColumn": "状态",
-    "backupRestoreColumn": "恢复",
-    "backupReasonUpdate": "更新",
-    "backupReasonScheduled": "计划",
-    "backupsActionsDisabled": "受控操作已禁用。",
-    "backupRestoreUnavailable": "此备份无法恢复。",
-    "restoreBackup": "恢复备份",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "已启用",
-    "backupAutoIntervalDays": "间隔（天）",
-    "backupAutoKeepLatest": "保留最新",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "指示",
     "cleanupSettingsTab": "清理设置",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "生效策略",
-    "cleanupEffectivePolicyHelp": "运行时所有权映射会分离任务范围证据和共享聚合；任务清除只删除该任务拥有的工件并修复共享状态，而不是整批删除共享文件。",
-    "cleanupPolicyPath": "策略路径",
-    "cleanupDailyEnabled": "每日维护已启用",
-    "cleanupDailyDryRun": "每日维护为 dry-run",
-    "cleanupOlderThanDays": "超过指定天数后符合条件",
-    "cleanupKeepLatestTasks": "保留最新任务",
-    "cleanupPurgeRequireConfirm": "清除需要确认",
-    "cleanupHealthyDoneCompactDays": "健康 DONE 任务在多少天后压缩",
-    "cleanupProblemCompressDays": "问题任务在多少天后压缩",
-    "cleanupEditSettingsTitle": "保留控制",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "每次运行的最大任务数",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "任务清除",
-    "cleanupTaskPurgeHelp": "清除一个任务 ID 拥有的运行时工件。活动任务保护和共享状态修复保留在服务器端。",
-    "cleanupTaskId": "任务 ID",
-    "cleanupPurgeTask": "清除任务",
     "actionsTab": "操作",
     "noticeActionsEnabled": "任务详细信息根据需要从本地服务器加载。服务器绑定到 127.0.0.1，并在该 CLI 进程退出时停止。仅对允许列表中的命令启用受控操作。",
     "noticeActionsDisabled": "任务详细信息根据需要从本地服务器加载。服务器绑定到 127.0.0.1，并在该 CLI 进程退出时停止。除非服务器以 --actions 开头，否则受控操作将被禁用。",
@@ -268,13 +224,14 @@
     "existingArtifacts": "现有文物",
     "missingArtifacts": "遗失的文物",
     "artifactPath": "工件路径",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "普通文档",
+    "ordinaryDocsHelp": "普通文档是用户拥有的规划、changelog 或产品文档。这些路径的更改仍可审计，但不会自行触发额外的审查通道。",
+    "ordinaryDocsPath": "文档路径",
+    "ordinaryDocsEmpty": "未配置普通文档路径。",
+    "ordinaryDocsActionsDisabled": "普通文档编辑已禁用。请使用以下方式重启",
+    "addOrdinaryDoc": "添加文档",
+    "removeOrdinaryDoc": "移除",
+    "availableReviewTypes": "可用的审查类型"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -348,5 +305,15 @@
       "description": "已知风险、脆弱路径、安全说明和兼容性限制。"
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "初始化设置",
+      "body": "初始化设置选项卡显示当前答案、必需的代理 init 检查点、普通文档管理以及用于完成 onboarding 的 handoff 提示。"
+    },
+    "project-memory": {
+      "title": "项目记忆",
+      "body": "项目记忆选项卡显示当前维护模式和持久记忆文件。请按需打开每个文件，而不是将全部内容加载到仪表板中。"
+    }
+  }
 }

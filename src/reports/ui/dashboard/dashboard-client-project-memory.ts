@@ -5,6 +5,24 @@ export const UI_DASHBOARD_CLIENT_PROJECT_MEMORY = `function localizedMemoryFile(
     description: localizedField(projectMemoryTextPacks, file.path, 'description', file.purpose)
   };
 }
+function localizedMemoryStatusRow(row) {
+  return {
+    label: localizedField(projectMemoryStatusTextPacks, row.id, 'label', row.label),
+    description: localizedField(projectMemoryStatusTextPacks, row.id, 'description', row.description)
+  };
+}
+function renderMemoryValueTable(rows) {
+  if (!rows || rows.length === 0) {
+    return '<p class="empty">' + safe(t('noInitSettings')) + '</p>';
+  }
+  return '<div class="value-table"><table><thead><tr><th>' + safe(t('fieldColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('valueColumn')) + '</th></tr></thead><tbody>'
+    + rows.map(row => {
+      const localized = localizedMemoryStatusRow(row);
+      const valueOpenControl = row.file_path ? openFileButton(row.file_path, 'memory-file-content') : '';
+      return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(row.id) + '</code></td><td class="description-cell">' + inlineText(localized.description) + '</td><td><span class="value-with-open"><code class="current-value">' + safe(renderJsonValue(row.value)) + '</code>' + valueOpenControl + '</span></td></tr>';
+    }).join('')
+    + '</tbody></table></div>';
+}
 function renderProjectMemorySettings() {
   const tab = currentReport && currentReport.project_memory_tab ? currentReport.project_memory_tab : {};
   const reportSettings = (tab.settings || []).map(setting => Object.assign({}, setting, {
@@ -58,15 +76,19 @@ function wireProjectMemorySettings() {
 function renderProjectMemory(report) {
   const tab = report.project_memory_tab || {};
   const files = tab.files || [];
-  projectMemoryNode.innerHTML = '<section class="memory-section"><h3>' + safe(t('projectMemoryStatusTitle')) + '</h3>' + renderValueTable(tab.status || []) + '</section>'
+  setPanelConfigPath(projectMemoryConfigPathNode, [
+    tab.settings_config_path,
+    tab.memory_directory_path
+  ]);
+  projectMemoryNode.innerHTML = renderProjectMemorySettings()
+    + '<section class="memory-section"><h3>' + safe(t('projectMemoryStatusTitle')) + '</h3>' + renderMemoryValueTable(tab.status || []) + '</section>'
     + '<section class="memory-section"><h3>' + safe(t('projectMemoryFilesTitle')) + '</h3>'
     + (files.length === 0 ? '<p class="empty">' + safe(t('noProjectMemoryFiles')) + '</p>' : '<div class="memory-table"><table><thead><tr><th>' + safe(t('fileColumn')) + '</th><th>' + safe(t('purposeColumn')) + '</th><th>' + safe(t('sizeColumn')) + '</th></tr></thead><tbody>'
       + files.map(file => {
         const localized = localizedMemoryFile(file);
         return '<tr><td><strong>' + safe(localized.label) + '</strong><br><code>' + safe(file.path) + '</code>' + (file.exists ? '<div class="file-open-row">' + openFileButton(file.path, 'memory-file-content') + '</div>' : '<br><span class="empty">' + safe(t('missing')) + '</span>') + '</td><td class="description-cell">' + safe(localized.description) + '</td><td><code>' + safe(file.size_bytes === null ? '-' : file.size_bytes) + '</code></td></tr>';
       }).join('') + '</tbody></table></div>')
-    + '<section id="memory-file-content" class="memory-file-content" hidden></section></section>'
-    + renderProjectMemorySettings();
+    + '<section id="memory-file-content" class="memory-file-content" hidden></section></section>';
   wireFileButtons(projectMemoryNode);
   wireProjectMemorySettings();
 }

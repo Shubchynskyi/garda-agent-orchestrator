@@ -154,7 +154,6 @@ function createFakeDocument(): {
         'workflow',
         'workflow-config-path',
         'settings-editor',
-        'setting-status',
         'init-settings',
         'project-memory',
         'instructions',
@@ -721,7 +720,6 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, />OK</u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /workflow set --auto-backup-enabled/u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /verbose workflow output/u);
-        assert.doesNotMatch(fakeDocument.elements['setting-status'].innerHTML, /workflow set --auto-backup-enabled/u);
         assert.match(fakeDocument.elements['garda-switch-panel'].innerHTML, /Switch action is hidden/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-on"/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-off"/u);

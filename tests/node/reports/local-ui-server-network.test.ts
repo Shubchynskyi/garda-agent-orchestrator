@@ -154,7 +154,6 @@ function createFakeDocument(): {
         'workflow',
         'workflow-config-path',
         'settings-editor',
-        'setting-status',
         'init-settings',
         'project-memory',
         'instructions',

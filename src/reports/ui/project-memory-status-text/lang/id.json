@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Pemeliharaan memori aktif",
+    "description": "Apakah workflow memeriksa memori proyek persisten saat closeout."
+  },
+  "memory-mode": {
+    "label": "Mode pemeliharaan memori",
+    "description": "Mode workflow saat ini: off, check, update, atau strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Berjalan sebelum closeout akhir",
+    "description": "Apakah project-memory gate berjalan sebelum penyelesaian."
+  },
+  "memory-require-approval": {
+    "label": "Memerlukan persetujuan untuk menulis",
+    "description": "Apakah penulisan file project-memory memerlukan persetujuan pengguna."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Batas ukuran ringkasan ringkas",
+    "description": "Ukuran maksimum ringkasan ringkas memori proyek yang dihasilkan, dalam karakter."
+  },
+  "memory-read-strategy": {
+    "label": "Strategi membaca",
+    "description": "Bagaimana agen harus membaca memori proyek saat tugas dimulai."
+  },
+  "memory-impact-retention-days": {
+    "label": "Retensi artefak dampak",
+    "description": "Berapa hari artefak dampak project-memory disimpan."
+  },
+  "memory-initialized": {
+    "label": "Diinisialisasi oleh agent init",
+    "description": "Apakah agent-init mencatat inisialisasi memori proyek."
+  },
+  "memory-validated": {
+    "label": "Divalidasi oleh agent init",
+    "description": "Apakah agent-init mencatat validasi memori proyek yang berhasil."
+  },
+  "memory-dir": {
+    "label": "Direktori memori",
+    "description": "Direktori yang berisi file memori persisten milik pengguna."
+  },
+  "memory-read-first": {
+    "label": "File yang dibaca terlebih dahulu",
+    "description": "File yang harus dibaca agen sebelum file memori terfokus."
+  },
+  "memory-summary-rule": {
+    "label": "Aturan ringkasan yang dihasilkan",
+    "description": "File rule yang dihasilkan yang merangkum memori proyek untuk startup agen."
+  },
+  "memory-bootstrap-report": {
+    "label": "Laporan bootstrap",
+    "description": "Laporan runtime dari bootstrap atau validasi memori proyek."
+  }
+}

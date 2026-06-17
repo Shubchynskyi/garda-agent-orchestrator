@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Вкладка «Резервные копии» показывает снимки для отката из инвентаря, настройки автоматического резервного копирования из конфигурации рабочего процесса и защищённые действия восстановления, если UI-сервер запущен с `--actions`."
+  },
+  "inventory_title": {
+    "label": "Список резервных копий"
+  },
+  "empty": {
+    "label": "В списке нет резервных копий."
+  },
+  "snapshots_root": {
+    "label": "Корень снимков"
+  },
+  "root_present": {
+    "label": "есть"
+  },
+  "root_missing": {
+    "label": "нет"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Создан"
+  },
+  "size_column": {
+    "label": "Размер"
+  },
+  "reason_column": {
+    "label": "Причина"
+  },
+  "status_column": {
+    "label": "Состояние"
+  },
+  "restore_column": {
+    "label": "Восстановить"
+  },
+  "reason_update": {
+    "label": "обновление"
+  },
+  "reason_scheduled": {
+    "label": "по расписанию"
+  },
+  "health_available": {
+    "label": "Доступна"
+  },
+  "health_missing_records": {
+    "label": "Записи отсутствуют"
+  },
+  "health_invalid_records": {
+    "label": "Некорректные записи"
+  },
+  "actions_disabled": {
+    "label": "Управляемые действия отключены."
+  },
+  "restore_unavailable": {
+    "label": "Восстановление этой резервной копии недоступно."
+  },
+  "restore_backup": {
+    "label": "Восстановить резервную копию"
+  },
+  "auto_backup_title": {
+    "label": "Автоматическое резервное копирование"
+  },
+  "auto_backup_help": {
+    "description": "Плановые автоматические резервные копии используют проверенные настройки workflow. Сохранение требует подтверждения."
+  },
+  "auto_enabled": {
+    "label": "Включено"
+  },
+  "auto_interval_days": {
+    "label": "Интервал (дней)"
+  },
+  "auto_keep_latest": {
+    "label": "Хранить последние"
+  },
+  "restore_preview_help": {
+    "description": "Выберите резервную копию, чтобы восстановить её через защищённое действие отката."
+  }
+}

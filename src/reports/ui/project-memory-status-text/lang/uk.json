@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Обслуговування пам'яті увімкнено",
+    "description": "Чи перевіряє workflow стійку пам'ять проєкту під час closeout."
+  },
+  "memory-mode": {
+    "label": "Режим обслуговування пам'яті",
+    "description": "Поточний режим workflow: off, check, update або strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Запускається до фінального closeout",
+    "description": "Чи виконується project-memory gate перед завершенням."
+  },
+  "memory-require-approval": {
+    "label": "Потрібне підтвердження запису",
+    "description": "Чи потрібна згода користувача перед записом файлів project-memory."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Ліміт розміру компактного зведення",
+    "description": "Максимальний розмір згенерованого компактного зведення пам'яті проєкту в символах."
+  },
+  "memory-read-strategy": {
+    "label": "Стратегія читання",
+    "description": "Як агент має читати пам'ять проєкту на старті задачі."
+  },
+  "memory-impact-retention-days": {
+    "label": "Зберігання артефактів впливу",
+    "description": "Скільки днів зберігаються артефакти впливу project-memory."
+  },
+  "memory-initialized": {
+    "label": "Ініціалізовано в agent init",
+    "description": "Чи зафіксував agent-init ініціалізацію пам'яті проєкту."
+  },
+  "memory-validated": {
+    "label": "Перевірено в agent init",
+    "description": "Чи зафіксував agent-init успішну перевірку пам'яті проєкту."
+  },
+  "memory-dir": {
+    "label": "Каталог пам'яті",
+    "description": "Каталог з файлами стійкої пам'яті, що належать користувачу."
+  },
+  "memory-read-first": {
+    "label": "Читати першими",
+    "description": "Файли, які агент має читати перед цільовими файлами пам'яті."
+  },
+  "memory-summary-rule": {
+    "label": "Згенероване правило зведення",
+    "description": "Згенерований rule-файл зі зведенням пам'яті проєкту для старту агента."
+  },
+  "memory-bootstrap-report": {
+    "label": "Bootstrap-звіт",
+    "description": "Runtime-звіт з bootstrap або перевірки пам'яті проєкту."
+  }
+}

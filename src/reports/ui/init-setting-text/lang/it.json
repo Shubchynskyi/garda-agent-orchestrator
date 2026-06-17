@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Lingua dell'assistente",
+    "description": "Lingua che l'assistente deve usare per comunicare con l'operatore."
+  },
+  "AssistantBrevity": {
+    "label": "Verbosità dell'assistente",
+    "description": "Quanto dettagliate devono essere le risposte normali dell'assistente."
+  },
+  "SourceOfTruth": {
+    "label": "Proprietario delle istruzioni",
+    "description": "File provider canonico che possiede le istruzioni agente generate."
+  },
+  "ActiveAgentFiles": {
+    "label": "File agente attivi",
+    "description": "File entrypoint agente attualmente inclusi in questo progetto."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Niente commit automatici",
+    "description": "Impedisce agli agenti di fare commit senza approvazione esplicita dell'operatore (almeno ci prova)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Modalità accesso completo Claude",
+    "description": "Indica se le istruzioni orientate a Claude presuppongono accesso completo all'orchestratore."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Economia di token",
+    "description": "Mantiene le istruzioni generate compatte ed evita contesto non necessario."
+  },
+  "ProviderMinimalism": {
+    "label": "Minimalismo provider",
+    "description": "Mantiene gli entrypoint provider non canonici come reindirizzamenti quando possibile."
+  },
+  "OrchestratorVersion": {
+    "label": "Versione orchestratore",
+    "description": "Versione di Garda che ha scritto lo stato."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Lingua confermata",
+    "description": "Indica se il checkpoint della lingua dell'assistente è stato superato."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "File agente confermati",
+    "description": "Indica se i file agente attivi selezionati sono stati confermati esplicitamente."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Regole del progetto aggiornate",
+    "description": "Indica se le regole del progetto sono state esaminate o accettate durante l'inizializzazione dell'agente."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Prompt skills completato",
+    "description": "Indica se il checkpoint del prompt skills è stato completato."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Documenti ordinari confermati",
+    "description": "Indica se i percorsi di documentazione ordinaria sono stati confermati."
+  },
+  "VerificationPassed": {
+    "label": "Verifica superata",
+    "description": "Indica se la verifica post-init è stata superata."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest valido",
+    "description": "Indica se la validazione del manifest control-plane protetto è stata superata."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Comando compile impostato",
+    "description": "Comando di compilazione, build o type-check registrato nella configurazione del workflow durante l'inizializzazione."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Comando suite completa impostato",
+    "description": "Comando di test registrato nella configurazione del workflow durante l'inizializzazione."
+  },
+  "reinit": {
+    "title": "Reinizializza area di lavoro",
+    "description": "Rimaterializza i file generati da Garda dalle risposte di inizializzazione correnti. Usarlo dopo aver modificato le scelte di inizializzazione."
+  },
+  "agent-init": {
+    "title": "Passaggio del prompt agente",
+    "description": "Fornire all'agente AGENT_INIT_PROMPT.md e chiedergli di completare il flusso agent-init; il comando rigoroso funziona solo dopo che l'agente ha eseguito quei controlli."
+  }
+}

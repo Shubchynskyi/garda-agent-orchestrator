@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Toont rollback-snapshots uit het back-upinventaris. Beveiligd herstel en auto-backup-bewerkingen vereisen `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Back-uplijst"
+  },
+  "empty": {
+    "label": "Geen back-ups in de lijst."
+  },
+  "snapshots_root": {
+    "label": "Snapshot-root"
+  },
+  "root_present": {
+    "label": "aanwezig"
+  },
+  "root_missing": {
+    "label": "ontbreekt"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Aangemaakt"
+  },
+  "size_column": {
+    "label": "Grootte"
+  },
+  "reason_column": {
+    "label": "Reden"
+  },
+  "status_column": {
+    "label": "Status"
+  },
+  "restore_column": {
+    "label": "Herstellen"
+  },
+  "reason_update": {
+    "label": "update"
+  },
+  "reason_scheduled": {
+    "label": "gepland"
+  },
+  "health_available": {
+    "label": "Beschikbaar"
+  },
+  "health_missing_records": {
+    "label": "Records ontbreken"
+  },
+  "health_invalid_records": {
+    "label": "Ongeldige records"
+  },
+  "actions_disabled": {
+    "label": "Gecontroleerde acties zijn uitgeschakeld."
+  },
+  "restore_unavailable": {
+    "label": "Herstel niet beschikbaar voor deze back-up."
+  },
+  "restore_backup": {
+    "label": "Back-up herstellen"
+  },
+  "auto_backup_title": {
+    "label": "Automatische back-up"
+  },
+  "auto_backup_help": {
+    "description": "Geplande automatische back-ups gebruiken gecontroleerde workflow-instellingen. Opslaan vereist bevestiging."
+  },
+  "auto_enabled": {
+    "label": "Ingeschakeld"
+  },
+  "auto_interval_days": {
+    "label": "Interval (dagen)"
+  },
+  "auto_keep_latest": {
+    "label": "Laatste bewaren"
+  },
+  "restore_preview_help": {
+    "description": "Kies een back-up om deze via de beveiligde rollback-actie te herstellen."
+  }
+}

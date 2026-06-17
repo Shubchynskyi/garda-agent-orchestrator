@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Project-Memory-Wartung aktiv",
+    "description": "Ob der Workflow-Closeout dauerhaftes Project Memory prüft."
+  },
+  "memory-mode": {
+    "label": "Project-Memory-Modus",
+    "description": "Aktueller Workflow-Modus: off, check, update oder strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Vor finalem Closeout ausgeführt",
+    "description": "Ob das project-memory gate vor dem Abschluss ausgeführt wird."
+  },
+  "memory-require-approval": {
+    "label": "Bestätigung für Schreibvorgänge erforderlich",
+    "description": "Ob Schreibvorgänge in project-memory-Dateien eine Benutzerfreigabe erfordern."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Limit für kompakte Zusammenfassung",
+    "description": "Maximale Größe der generierten kompakten Project-Memory-Zusammenfassung in Zeichen."
+  },
+  "memory-read-strategy": {
+    "label": "Lesestrategie",
+    "description": "Wie Agenten beim Task-Start Project Memory lesen sollen."
+  },
+  "memory-impact-retention-days": {
+    "label": "Aufbewahrung Impact-Artefakte",
+    "description": "Wie viele Tage Project-Memory-Impact-Artefakte aufbewahrt werden."
+  },
+  "memory-initialized": {
+    "label": "Durch agent init initialisiert",
+    "description": "Ob agent-init die Project-Memory-Initialisierung erfasst hat."
+  },
+  "memory-validated": {
+    "label": "Durch agent init validiert",
+    "description": "Ob agent-init eine erfolgreiche Project-Memory-Validierung erfasst hat."
+  },
+  "memory-dir": {
+    "label": "Memory-Verzeichnis",
+    "description": "Verzeichnis mit benutzereigenen Dateien der dauerhaften Memory."
+  },
+  "memory-read-first": {
+    "label": "Zuerst lesende Dateien",
+    "description": "Dateien, die Agenten vor focused Memory-Dateien lesen sollen."
+  },
+  "memory-summary-rule": {
+    "label": "Generierte Zusammenfassungsregel",
+    "description": "Generierte Rule-Datei, die Project Memory für den Agentenstart zusammenfasst."
+  },
+  "memory-bootstrap-report": {
+    "label": "Bootstrap-Bericht",
+    "description": "Runtime-Bericht aus project-memory Bootstrap oder Validierung."
+  }
+}

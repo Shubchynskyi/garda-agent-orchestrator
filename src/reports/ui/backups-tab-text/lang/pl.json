@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Wyświetla migawki rollback z inwentarza kopii. Ochronione przywracanie i edycja auto-backup wymagają `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Lista kopii"
+  },
+  "empty": {
+    "label": "Brak kopii na liście."
+  },
+  "snapshots_root": {
+    "label": "Katalog migawek"
+  },
+  "root_present": {
+    "label": "jest"
+  },
+  "root_missing": {
+    "label": "brak"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Utworzono"
+  },
+  "size_column": {
+    "label": "Rozmiar"
+  },
+  "reason_column": {
+    "label": "Powód"
+  },
+  "status_column": {
+    "label": "Stan"
+  },
+  "restore_column": {
+    "label": "Przywróć"
+  },
+  "reason_update": {
+    "label": "aktualizacja"
+  },
+  "reason_scheduled": {
+    "label": "zaplanowane"
+  },
+  "health_available": {
+    "label": "Dostępna"
+  },
+  "health_missing_records": {
+    "label": "Brak rekordów"
+  },
+  "health_invalid_records": {
+    "label": "Nieprawidłowe rekordy"
+  },
+  "actions_disabled": {
+    "label": "Kontrolowane akcje są wyłączone."
+  },
+  "restore_unavailable": {
+    "label": "Przywracanie niedostępne dla tej kopii."
+  },
+  "restore_backup": {
+    "label": "Przywróć kopię"
+  },
+  "auto_backup_title": {
+    "label": "Automatyczna kopia zapasowa"
+  },
+  "auto_backup_help": {
+    "description": "Zaplanowane automatyczne kopie używają sprawdzonych ustawień workflow. Zapisanie wymaga potwierdzenia."
+  },
+  "auto_enabled": {
+    "label": "Włączone"
+  },
+  "auto_interval_days": {
+    "label": "Interwał (dni)"
+  },
+  "auto_keep_latest": {
+    "label": "Zachowaj najnowsze"
+  },
+  "restore_preview_help": {
+    "description": "Wybierz kopię, aby przywrócić ją za pomocą chronionej akcji rollback."
+  }
+}

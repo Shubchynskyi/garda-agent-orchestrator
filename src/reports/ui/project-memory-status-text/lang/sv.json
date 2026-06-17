@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "Minnesunderhåll aktiverat",
+    "description": "Om workflow kontrollerar beständigt projektminne vid closeout."
+  },
+  "memory-mode": {
+    "label": "Läge för minnesunderhåll",
+    "description": "Aktuellt workflow-läge: off, check, update eller strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "Körs före slutlig closeout",
+    "description": "Om project-memory gate körs före slutförande."
+  },
+  "memory-require-approval": {
+    "label": "Kräver godkännande för skrivning",
+    "description": "Om skrivning till project-memory-filer kräver användargodkännande."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "Storleksgräns för kompakt sammanfattning",
+    "description": "Maximal storlek för genererad kompakt projektminnessammanfattning, i tecken."
+  },
+  "memory-read-strategy": {
+    "label": "Lässtrategi",
+    "description": "Hur agenter ska läsa projektminnet vid uppgiftsstart."
+  },
+  "memory-impact-retention-days": {
+    "label": "Kvarhållning av påverkansartefakter",
+    "description": "Hur många dagar project-memory påverkansartefakter behålls."
+  },
+  "memory-initialized": {
+    "label": "Initierat av agent init",
+    "description": "Om agent-init registrerade initiering av projektminnet."
+  },
+  "memory-validated": {
+    "label": "Validerat av agent init",
+    "description": "Om agent-init registrerade lyckad validering av projektminnet."
+  },
+  "memory-dir": {
+    "label": "Minneskatalog",
+    "description": "Katalog som innehåller användarägda beständiga minnesfiler."
+  },
+  "memory-read-first": {
+    "label": "Filer att läsa först",
+    "description": "Filer som agenter bör läsa före fokuserade minnesfiler."
+  },
+  "memory-summary-rule": {
+    "label": "Genererad sammanfattningsregel",
+    "description": "Genererad regelfil som sammanfattar projektminnet för agentstart."
+  },
+  "memory-bootstrap-report": {
+    "label": "Bootstrap-rapport",
+    "description": "Runtime-rapport från bootstrap eller validering av projektminne."
+  }
+}

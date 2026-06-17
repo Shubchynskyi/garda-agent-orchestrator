@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Язык ассистента",
+    "description": "На каком языке агент должен общаться с оператором."
+  },
+  "AssistantBrevity": {
+    "label": "Подробность ответов",
+    "description": "Насколько подробно агент отвечает в обычных сообщениях."
+  },
+  "SourceOfTruth": {
+    "label": "Главный файл инструкций",
+    "description": "Какой provider-файл считается каноническим источником инструкций."
+  },
+  "ActiveAgentFiles": {
+    "label": "Активные файлы агента",
+    "description": "Файлы entrypoint, которые включены в этом проекте."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Запрет auto-commit",
+    "description": "Не даёт агенту делать commit без явного разрешения оператора (во всяком случае пытается)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude full access",
+    "description": "Настройка для Claude-oriented инструкций про полный доступ к оркестратору."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Экономия токенов",
+    "description": "Делает generated instructions компактнее и уменьшает лишний контекст."
+  },
+  "ProviderMinimalism": {
+    "label": "Минимализм provider-файлов",
+    "description": "Оставляет неканонические provider entrypoints редиректами, когда это возможно."
+  },
+  "OrchestratorVersion": {
+    "label": "Версия оркестратора",
+    "description": "Версия Garda, которая записала состояние."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Язык подтверждён",
+    "description": "Пройден ли checkpoint языка ассистента."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Файлы агента подтверждены",
+    "description": "Был ли явно подтверждён набор активных файлов агента."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Правила проекта подтверждены",
+    "description": "Были ли правила проекта просмотрены или приняты во время инициализации агента."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Подсказка по skills завершена",
+    "description": "Пройден ли checkpoint с подсказкой по skills."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Обычные документы подтверждены",
+    "description": "Подтверждены ли пользовательские документы, которые не считаются сгенерированными правилами."
+  },
+  "VerificationPassed": {
+    "label": "Проверка пройдена",
+    "description": "Прошла ли post-init проверка рабочей области."
+  },
+  "ManifestValidationPassed": {
+    "label": "Манифест валиден",
+    "description": "Прошла ли проверка защищённого control-plane manifest."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Заданная команда компиляционного гейта",
+    "description": "Команда сборки, компиляции или проверки типов, записанная в конфигурацию рабочего процесса во время инициализации."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Заданная команда полной проверки",
+    "description": "Тестовая команда, записанная в конфигурацию рабочего процесса во время инициализации."
+  },
+  "reinit": {
+    "title": "Повторная инициализация рабочей области",
+    "description": "Пересобирает сгенерированные файлы Garda из текущих ответов инициализации. Используется после изменения вариантов инициализации."
+  },
+  "agent-init": {
+    "title": "Агентский init",
+    "description": "Скормите агенту AGENT_INIT_PROMPT.md и попросите выполнить агентский init; жёсткая команда сработает только после агентских проверок."
+  }
+}

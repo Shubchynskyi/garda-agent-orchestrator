@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "मेमोरी रखरखाव सक्षम",
+    "description": "क्या workflow closeout पर स्थायी परियोजना-मेमोरी की जाँच करता है।"
+  },
+  "memory-mode": {
+    "label": "मेमोरी रखरखाव मोड",
+    "description": "वर्तमान workflow मोड: off, check, update या strict।"
+  },
+  "memory-run-before-closeout": {
+    "label": "अंतिम closeout से पहले चलता है",
+    "description": "क्या project-memory gate पूर्णता से पहले चलता है।"
+  },
+  "memory-require-approval": {
+    "label": "लेखन के लिए अनुमोदन आवश्यक",
+    "description": "क्या project-memory फ़ाइलों में लिखने के लिए उपयोगकर्ता अनुमोदन आवश्यक है।"
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "संक्षिप्त सारांश आकार सीमा",
+    "description": "उत्पन्न संक्षिप्त परियोजना-मेमोरी सारांश का अधिकतम आकार, वर्णों में।"
+  },
+  "memory-read-strategy": {
+    "label": "पढ़ने की रणनीति",
+    "description": "कार्य शुरू होने पर एजेंटों को परियोजना-मेमोरी कैसे पढ़नी चाहिए।"
+  },
+  "memory-impact-retention-days": {
+    "label": "प्रभाव आर्टिफ़ैक्ट प्रतिधारण",
+    "description": "project-memory प्रभाव आर्टिफ़ैक्ट कितने दिनों तक रखे जाते हैं।"
+  },
+  "memory-initialized": {
+    "label": "agent init द्वारा प्रारंभ",
+    "description": "क्या agent-init ने परियोजना-मेमोरी प्रारंभिकरण दर्ज किया।"
+  },
+  "memory-validated": {
+    "label": "agent init द्वारा सत्यापित",
+    "description": "क्या agent-init ने सफल परियोजना-मेमोरी सत्यापन दर्ज किया।"
+  },
+  "memory-dir": {
+    "label": "मेमोरी निर्देशिका",
+    "description": "उपयोगकर्ता-स्वामित्व वाली स्थायी मेमोरी फ़ाइलों वाली निर्देशिका।"
+  },
+  "memory-read-first": {
+    "label": "पहले पढ़ने वाली फ़ाइलें",
+    "description": "फ़ोकस्ड मेमोरी फ़ाइलों से पहले एजेंटों द्वारा पढ़ी जाने वाली फ़ाइलें।"
+  },
+  "memory-summary-rule": {
+    "label": "उत्पन्न सारांश नियम",
+    "description": "एजेंट स्टार्टअप के लिए परियोजना-मेमोरी का सारांश देने वाली उत्पन्न rule फ़ाइल।"
+  },
+  "memory-bootstrap-report": {
+    "label": "Bootstrap रिपोर्ट",
+    "description": "परियोजना-मेमोरी bootstrap या सत्यापन की runtime रिपोर्ट।"
+  }
+}

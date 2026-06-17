@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "অ্যাসিস্ট্যান্ট ভাষা",
+    "description": "অপারেটরের সাথে যোগাযোগে অ্যাসিস্ট্যান্ট যে ভাষা ব্যবহার করবে।"
+  },
+  "AssistantBrevity": {
+    "label": "অ্যাসিস্ট্যান্টের বিস্তারিত মাত্রা",
+    "description": "সাধারণ অ্যাসিস্ট্যান্ট উত্তর কতটা বিস্তারিত হওয়া উচিত।"
+  },
+  "SourceOfTruth": {
+    "label": "নির্দেশনার মালিক",
+    "description": "উৎপাদিত এজেন্ট নির্দেশনার মালিকানাধীন ক্যাননিক্যাল provider ফাইল।"
+  },
+  "ActiveAgentFiles": {
+    "label": "সক্রিয় এজেন্ট ফাইল",
+    "description": "এই প্রকল্পে বর্তমানে অন্তর্ভুক্ত এজেন্ট entrypoint ফাইল।"
+  },
+  "EnforceNoAutoCommit": {
+    "label": "স্বয়ংক্রিয় commit নিষিদ্ধ",
+    "description": "অপারেটরের স্পষ্ট অনুমতি ছাড়া এজেন্টদের commit করা থেকে বিরত রাখে (অন্তত চেষ্টা করে)।"
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude পূর্ণ অ্যাক্সেস মোড",
+    "description": "Claude-ভিত্তিক নির্দেশনা অর্কেস্ট্রেটরের পূর্ণ অ্যাক্সেস ধরে নেয় কিনা।"
+  },
+  "TokenEconomyEnabled": {
+    "label": "টোকেন সাশ্রয়",
+    "description": "উৎপাদিত নির্দেশনা সংক্ষিপ্ত রাখে এবং অপ্রয়োজনীয় প্রসঙ্গ এড়ায়।"
+  },
+  "ProviderMinimalism": {
+    "label": "প্রোভাইডার মিনিমালিজম",
+    "description": "সম্ভব হলে অ-ক্যাননিক্যাল provider entrypoint রিডাইরেক্ট হিসেবে রাখে।"
+  },
+  "OrchestratorVersion": {
+    "label": "অর্কেস্ট্রেটর সংস্করণ",
+    "description": "যে Garda সংস্করণ অবস্থা লিখেছে।"
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "ভাষা নিশ্চিত",
+    "description": "অ্যাসিস্ট্যান্ট ভাষার চেকপয়েন্ট পাস হয়েছে কিনা।"
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "এজেন্ট ফাইল নিশ্চিত",
+    "description": "নির্বাচিত সক্রিয় এজেন্ট ফাইল স্পষ্টভাবে নিশ্চিত হয়েছে কিনা।"
+  },
+  "ProjectRulesUpdated": {
+    "label": "প্রকল্প নিয়ম আপডেট",
+    "description": "এজেন্ট init-এর সময় প্রকল্প নিয়ম পর্যালোচনা বা গ্রহণ হয়েছে কিনা।"
+  },
+  "SkillsPromptCompleted": {
+    "label": "skills প্রম্পট সম্পন্ন",
+    "description": "skills প্রম্পট চেকপয়েন্ট সম্পন্ন হয়েছে কিনা।"
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "সাধারণ ডকুমেন্ট নিশ্চিত",
+    "description": "সাধারণ ডকুমেন্ট পাথ নিশ্চিত হয়েছে কিনা।"
+  },
+  "VerificationPassed": {
+    "label": "যাচাই পাস",
+    "description": "init-পরবর্তী যাচাই পাস হয়েছে কিনা।"
+  },
+  "ManifestValidationPassed": {
+    "label": "ম্যানিফেস্ট বৈধ",
+    "description": "সুরক্ষিত control-plane manifest যাচাই পাস হয়েছে কিনা।"
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "সিড করা কম্পাইল কমান্ড",
+    "description": "ইনিশিয়ালাইজেশনের সময় workflow কনফিগে লেখা কম্পাইল/বিল্ড/টাইপ-চেক কমান্ড।"
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "সিড করা ফুল-স্যুট কমান্ড",
+    "description": "ইনিশিয়ালাইজেশনের সময় workflow কনফিগে লেখা টেস্ট কমান্ড।"
+  },
+  "reinit": {
+    "title": "ওয়ার্কস্পেস পুনরায় ইনিশিয়ালাইজ",
+    "description": "বর্তমান init উত্তর থেকে Garda-উৎপাদিত ফাইল পুনরায় তৈরি করে। init বিকল্প পরিবর্তনের পর ব্যবহার করুন।"
+  },
+  "agent-init": {
+    "title": "এজেন্ট প্রম্পট হ্যান্ডঅফ",
+    "description": "AGENT_INIT_PROMPT.md এজেন্টকে দিন এবং agent-init ফ্লো সম্পন্ন করতে বলুন; কঠোর কমান্ড কেবল এজেন্ট সেই যাচাই সম্পন্ন করার পর কাজ করে।"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "`runtime-retention.json` içindeki runtime saklama politikası: zamanlanmış bakım eşikleri, sıkıştırma kuralları ve korumalı manuel temizlik işlemleri."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Günlük bakım",
+    "description": "Zamanlanmış günlük bakımı açar veya kapatır. Etkinleştirildiğinde orkestratör, manuel müdahale olmadan programa göre sınırlı sayıda uygun görevi işleyebilir."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Bakım çalıştırması başına en fazla görev",
+    "description": "Günlük bakımın tek bir çalıştırmada işleyeceği uygun görev sayısının üst sınırı. Eşikler yanlış yapılandırılmışsa etki alanını sınırlar."
+  },
+  "eligible_older_than_days": {
+    "label": "Görevin asgari yaşı (gün)",
+    "description": "Bakım veya manuel temizlik bir görevin runtime artefaktlarına dokunmadan önce görev en az bu kadar günlük olmalıdır. Etkin ve daha yeni görevler korunur."
+  },
+  "keep_latest_tasks": {
+    "label": "En yeni görevleri koru (adet)",
+    "description": "Yaş eşiğini aşsalar bile en az bu sayıdaki en yeni görevi her zaman korur. Yalnızca yaşa ve etkin görev korumasına güvenmek için 0 ayarlayın."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Günlük bakım dry-run",
+    "description": "Değer true olduğunda zamanlanmış günlük bakım yalnızca adayları listeler ve denetim çıktısı yazar; artefaktları silmez veya sıkıştırmaz. Eşikleri ayarlarken true kullanın, uygulamak için sonra false yapın."
+  },
+  "purge_require_confirm": {
+    "label": "Purge için onay zorunlu",
+    "description": "Değer true olduğunda yıkıcı purge ve cleanup komutları, sunucu bunları çalıştırmadan önce açıkça yazılmış bir onay ifadesi gerektirir."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Sağlıklı DONE görevlerini şu kadar gün sonra sıkıştır",
+    "description": "Bu kadar gün sonra başarıyla tamamlanan görevler (DONE), ledger kanıtı doğrulandıktan sonra yalnızca ledger geçmişine sıkıştırılabilir."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Sorunlu görevleri şu kadar gün sonra sıkıştır",
+    "description": "Bu kadar gün sonra başarısız veya takılı kalmış görevlerin ağır adli artefaktları, kurtarma için okunabilir kanıt korunarak sıkıştırılabilir."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Manuel runtime temizliği",
+    "description": "Yukarıdaki satırlardaki yaş ve en-yenileri-koru değerleriyle `garda cleanup` komutunu bir kez çalıştırır. Önizleme yalnızca adayları gösterir; Uygula politikaya göre siler veya sıkıştırır ve onay ister."
+  },
+  "task_purge": {
+    "label": "Görev purge",
+    "description": "Tek bir görev kimliğine ait runtime artefaktlarını siler ve paylaşılan dizinleri onarır. Tüm paylaşılan dosyaları kaldırmaz; etkin görev koruması sunucuda geçerli olmaya devam eder."
+  },
+  "task_id": {
+    "label": "Görev kimliği"
+  },
+  "purge_task_button": {
+    "label": "Görevi temizle"
+  },
+  "run_preview": {
+    "label": "Önizleme"
+  },
+  "value_true": {
+    "label": "true — etkin"
+  },
+  "value_false": {
+    "label": "false — devre dışı"
+  }
+}

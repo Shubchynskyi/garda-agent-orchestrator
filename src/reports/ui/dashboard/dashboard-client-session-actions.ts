@@ -146,6 +146,39 @@ function renderGardaSwitch(payload) {
     wireActionButtons(gardaSwitchNode, actions);
   }
 }
+function configFileStatusClass(status) {
+  if (status === 'present') return 'data-full';
+  if (status === 'missing' || status === 'invalid') return 'data-blockers';
+  return 'data-compact';
+}
+function configFileStatusLabel(status) {
+  if (status === 'present') return t('initStatusPresent');
+  if (status === 'missing') return t('initStatusMissing');
+  if (status === 'invalid') return t('initStatusInvalid');
+  return String(status || '-');
+}
+function renderSystemState(report) {
+  const node = document.getElementById('system-state-panel');
+  if (!node || !report) {
+    return;
+  }
+  const init = report.init_settings_tab || {};
+  const workflow = report.workflow_config_tab || {};
+  const ordinary = init.ordinary_docs || {};
+  const entries = [
+    { path: init.init_answers_path, status: init.init_answers_status },
+    { path: init.agent_init_state_path, status: init.agent_init_state_status },
+    { path: ordinary.config_path, status: ordinary.status },
+    { path: workflow.config_path, status: workflow.status }
+  ].filter(entry => entry.path);
+  if (entries.length === 0) {
+    node.innerHTML = '';
+    return;
+  }
+  node.innerHTML = '<div class="value-table"><table><thead><tr><th>' + safe(t('fileColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th></tr></thead><tbody>'
+    + entries.map(entry => '<tr><td><code>' + safe(entry.path) + '</code></td><td><span class="badge ' + safe(configFileStatusClass(entry.status)) + '">' + safe(configFileStatusLabel(entry.status)) + '</span></td></tr>').join('')
+    + '</tbody></table></div>';
+}
 function renderActions(payload) {
   currentActionsPayload = payload;
   renderGardaSwitch(payload);

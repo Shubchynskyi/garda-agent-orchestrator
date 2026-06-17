@@ -12,52 +12,8 @@
     "initSettingsTab": "Cài đặt ban đầu",
     "projectMemoryTab": "Bộ nhớ dự án",
     "backupsTab": "Sao lưu",
-    "backupsTabIntro": "Liệt kê snapshot rollback từ kho sao lưu. Khôi phục được bảo vệ và chỉnh sửa auto-backup cần `garda ui --actions`.",
-    "backupsInventoryTitle": "Kho sao lưu",
-    "backupsEmpty": "Không có bản sao lưu trong kho.",
-    "backupsSnapshotsRoot": "Gốc snapshot",
-    "backupRootPresent": "có",
-    "backupRootMissing": "không",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Tạo lúc",
-    "backupSizeColumn": "Kích thước",
-    "backupReasonColumn": "Lý do",
-    "backupStatusColumn": "Trạng thái",
-    "backupRestoreColumn": "Khôi phục",
-    "backupReasonUpdate": "cập nhật",
-    "backupReasonScheduled": "theo lịch",
-    "backupsActionsDisabled": "Hành động được kiểm soát đã tắt.",
-    "backupRestoreUnavailable": "Không thể khôi phục bản sao lưu này.",
-    "restoreBackup": "Khôi phục sao lưu",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Bật",
-    "backupAutoIntervalDays": "Chu kỳ (ngày)",
-    "backupAutoKeepLatest": "Giữ mới nhất",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Hướng dẫn",
     "cleanupSettingsTab": "Cài đặt dọn dẹp",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Chính sách hiệu lực",
-    "cleanupEffectivePolicyHelp": "Bằng chứng theo phạm vi tác vụ và aggregate dùng chung được tách bởi bản đồ sở hữu runtime; purge tác vụ xóa artifact thuộc sở hữu của tác vụ và sửa trạng thái dùng chung thay vì xóa toàn bộ file dùng chung.",
-    "cleanupPolicyPath": "Đường dẫn chính sách",
-    "cleanupDailyEnabled": "Bảo trì hằng ngày bật",
-    "cleanupDailyDryRun": "Bảo trì hằng ngày dry-run",
-    "cleanupOlderThanDays": "Đủ điều kiện nếu cũ hơn số ngày",
-    "cleanupKeepLatestTasks": "Giữ các tác vụ mới nhất",
-    "cleanupPurgeRequireConfirm": "Purge yêu cầu xác nhận",
-    "cleanupHealthyDoneCompactDays": "Compact DONE khỏe sau số ngày",
-    "cleanupProblemCompressDays": "Compress tác vụ có vấn đề sau số ngày",
-    "cleanupEditSettingsTitle": "Điều khiển lưu giữ",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Tối đa tác vụ mỗi lần chạy",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge tác vụ",
-    "cleanupTaskPurgeHelp": "Purge artifact runtime thuộc một task id. Bảo vệ tác vụ đang hoạt động và sửa trạng thái dùng chung vẫn ở phía máy chủ.",
-    "cleanupTaskId": "ID tác vụ",
-    "cleanupPurgeTask": "Purge tác vụ",
     "actionsTab": "Thao tác",
     "noticeActionsEnabled": "Chi tiết nhiệm vụ được tải theo yêu cầu từ máy chủ cục bộ. Máy chủ gắn với 127.0.0.1 và dừng khi tiến trình CLI này kết thúc. Hành động được kiểm soát chỉ bật cho các lệnh trong danh sách cho phép.",
     "noticeActionsDisabled": "Chi tiết nhiệm vụ được tải theo yêu cầu từ máy chủ cục bộ. Máy chủ gắn với 127.0.0.1 và dừng khi tiến trình CLI này kết thúc. Hành động được kiểm soát tắt trừ khi máy chủ khởi động với --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Hiện vật hiện có",
     "missingArtifacts": "Hiện vật bị thiếu",
     "artifactPath": "Đường dẫn artefact",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Tài liệu thường",
+    "ordinaryDocsHelp": "Tài liệu thường là tài liệu lập kế hoạch, changelog hoặc sản phẩm do người dùng sở hữu. Thay đổi các đường dẫn này vẫn có thể kiểm toán nhưng không tự kích hoạt làn review bổ sung.",
+    "ordinaryDocsPath": "Đường dẫn tài liệu",
+    "ordinaryDocsEmpty": "Chưa cấu hình đường dẫn tài liệu thường.",
+    "ordinaryDocsActionsDisabled": "Chỉnh sửa tài liệu thường bị tắt. Khởi động lại với",
+    "addOrdinaryDoc": "Thêm tài liệu",
+    "removeOrdinaryDoc": "Xóa",
+    "availableReviewTypes": "Các loại review khả dụng"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "Rủi ro đã biết, đường dẫn mong manh, ghi chú bảo mật và ràng buộc tương thích."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Cài đặt ban đầu",
+      "body": "Tab cài đặt ban đầu hiển thị câu trả lời hiện tại, các checkpoint init agent bắt buộc, quản lý tài liệu thường và prompt handoff để hoàn tất onboarding."
+    },
+    "project-memory": {
+      "title": "Bộ nhớ dự án",
+      "body": "Tab bộ nhớ dự án hiển thị chế độ bảo trì hiện tại và các tệp bộ nhớ bền vững. Mở từng tệp theo yêu cầu thay vì tải toàn bộ nội dung vào bảng điều khiển."
+    }
+  }
 }

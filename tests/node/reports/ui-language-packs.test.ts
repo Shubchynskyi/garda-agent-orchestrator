@@ -54,7 +54,7 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command-fallback'].description || '', /блокируется/u);
     assert.match(getLocalUiText('ru').backupsTabIntro, /конфигурации рабочего процесса/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['auto-backup-enabled'].description || '', /ежедневному обслуживанию/u);
-    assert.match(LOCAL_UI_SETTING_TEXT.uk['auto-backup-enabled'].description || '', /daily maintenance/u);
+    assert.match(LOCAL_UI_SETTING_TEXT.uk['auto-backup-enabled'].description || '', /щоденн/u);
     assert.equal(LOCAL_UI_INIT_SETTING_TEXT.ru['CollectedVia'], undefined);
     assert.equal(LOCAL_UI_INIT_SETTING_TEXT.uk['CollectedVia'], undefined);
     assert.equal(LOCAL_UI_INIT_SETTING_TEXT.ru['UpdatedAt'], undefined);

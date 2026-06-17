@@ -12,53 +12,9 @@
     "initSettingsTab": "Параметри ініціалізації",
     "projectMemoryTab": "Пам'ять проєкту",
     "backupsTab": "Резервні копії",
-    "backupsTabIntro": "Вкладка резервних копій показує rollback-знімки з інвентарю, налаштування auto-backup з конфігурації робочого процесу та захищені дії відновлення, коли UI-сервер запущено з `--actions`.",
-    "backupsInventoryTitle": "Інвентар резервних копій",
-    "backupsEmpty": "У інвентарі немає резервних копій.",
-    "backupsSnapshotsRoot": "Корінь знімків",
-    "backupRootPresent": "є",
-    "backupRootMissing": "немає",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Створено",
-    "backupSizeColumn": "Розмір",
-    "backupReasonColumn": "Причина",
-    "backupStatusColumn": "Стан",
-    "backupRestoreColumn": "Відновлення",
-    "backupReasonUpdate": "оновлення",
-    "backupReasonScheduled": "за розкладом",
-    "backupsActionsDisabled": "Керовані дії вимкнено.",
-    "backupRestoreUnavailable": "Відновлення для цієї копії недоступне.",
-    "restoreBackup": "Відновити резервну копію",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Увімкнено",
-    "backupAutoIntervalDays": "Інтервал (днів)",
-    "backupAutoKeepLatest": "Зберігати останні",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Інструкції",
     "cleanupSettingsTab": "Налаштування очищення",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Чинна політика",
-    "cleanupEffectivePolicyHelp": "Артефакти задачі та спільні агрегати розділяються картою володіння runtime; purge задачі видаляє належні їй артефакти й ремонтує спільний стан, а не видаляє спільні файли цілком.",
-    "cleanupPolicyPath": "Шлях політики",
-    "cleanupDailyEnabled": "Щоденне обслуговування увімкнено",
-    "cleanupDailyDryRun": "Щоденне обслуговування у dry-run",
-    "cleanupOlderThanDays": "Придатне, якщо старше за днів",
-    "cleanupKeepLatestTasks": "Зберігати останні задачі",
-    "cleanupPurgeRequireConfirm": "Purge потребує підтвердження",
-    "cleanupHealthyDoneCompactDays": "Стискати здорові DONE через днів",
-    "cleanupProblemCompressDays": "Стискати проблемні задачі через днів",
-    "cleanupEditSettingsTitle": "Параметри зберігання",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Максимум задач за запуск",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge задачі",
-    "cleanupTaskPurgeHelp": "Видаляє runtime-артефакти, що належать одному ID задачі. Захист активної задачі та ремонт спільного стану лишаються на сервері.",
-    "cleanupTaskId": "ID задачі",
-    "cleanupPurgeTask": "Очистити задачу",
-    "actionsTab": "Дії",
+    "actionsTab": "Стан системи",
     "noticeActionsEnabled": "Деталі завдання завантажуються на вимогу з локального сервера. Сервер прив’язаний до 127.0.0.1 і зупиняється, коли завершується процес CLI. Керовані дії доступні лише для дозволених команд.",
     "noticeActionsDisabled": "Деталі завдання завантажуються на вимогу з локального сервера. Сервер прив’язаний до 127.0.0.1 і зупиняється, коли завершується процес CLI. Керовані дії вимкнено, якщо сервер не запускається з --actions.",
     "languageTitle": "Мова",
@@ -268,28 +224,16 @@
     "existingArtifacts": "Наявні артефакти",
     "missingArtifacts": "Відсутні артефакти",
     "artifactPath": "Шлях артефакту",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Звичайні документи",
+    "ordinaryDocsHelp": "Звичайні документи — це користувацькі planning, changelog або product docs. Зміни цих шляхів залишаються перевірюваними, але самі по собі не запускають зайві види ревʼю.",
+    "ordinaryDocsPath": "Шлях до документа",
+    "ordinaryDocsEmpty": "Звичайні документи не налаштовані.",
+    "ordinaryDocsActionsDisabled": "Редагування звичайних документів вимкнено. Перезапустіть з",
+    "addOrdinaryDoc": "Додати документ",
+    "removeOrdinaryDoc": "Видалити",
+    "availableReviewTypes": "Доступні типи ревʼю"
   },
-  "LOCAL_UI_SETTING_TEXT": {
-    "auto-backup-enabled": {
-      "label": "Планові auto-backup",
-      "description": "Дозволяє daily maintenance створювати планові rollback backups після настання інтервалу."
-    },
-    "auto-backup-interval-days": {
-      "label": "Інтервал auto-backup",
-      "description": "Мінімальна кількість днів між успішними плановими backups."
-    },
-    "auto-backup-keep-latest": {
-      "label": "Зберігання auto-backup",
-      "description": "Скільки останніх backups залишати після створення планового backup."
-    }
-  },
+  "LOCAL_UI_SETTING_TEXT": {},
   "LOCAL_UI_INIT_SETTING_TEXT": {},
   "LOCAL_UI_INSTRUCTION_TEXT": {
     "backups": {
@@ -299,6 +243,14 @@
     "workspace-actions": {
       "title": "Дії workspace",
       "body": "Workspace actions are shown in their domain tabs: task commands in the selected task detail, backup restore commands in Backups, cleanup controls in Cleanup settings, and Garda switch controls in the top status strip."
+    },
+    "init-settings": {
+      "title": "Параметри ініціалізації",
+      "body": "Вкладка параметрів ініціалізації показує поточні відповіді, обовʼязкові checkpoint-и agent init, керування звичайними документами та handoff prompt для завершення onboarding."
+    },
+    "project-memory": {
+      "title": "Памʼять проєкту",
+      "body": "Вкладка памʼяті проєкту показує поточний режим обслуговування та файли стійкої памʼяті. Повний файл відкривається за запитом, а не завантажується цілком у dashboard."
     }
   },
   "LOCAL_UI_ACTION_TEXT": {

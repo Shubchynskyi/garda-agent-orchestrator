@@ -12,52 +12,8 @@
     "initSettingsTab": "Instellingen starten",
     "projectMemoryTab": "Projectgeheugen",
     "backupsTab": "Back-ups",
-    "backupsTabIntro": "Toont rollback-snapshots uit het back-upinventaris. Beveiligd herstel en auto-backup-bewerkingen vereisen `garda ui --actions`.",
-    "backupsInventoryTitle": "Back-upinventaris",
-    "backupsEmpty": "Geen back-ups in het inventaris.",
-    "backupsSnapshotsRoot": "Snapshot-root",
-    "backupRootPresent": "aanwezig",
-    "backupRootMissing": "ontbreekt",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Aangemaakt",
-    "backupSizeColumn": "Grootte",
-    "backupReasonColumn": "Reden",
-    "backupStatusColumn": "Status",
-    "backupRestoreColumn": "Herstellen",
-    "backupReasonUpdate": "update",
-    "backupReasonScheduled": "gepland",
-    "backupsActionsDisabled": "Gecontroleerde acties zijn uitgeschakeld.",
-    "backupRestoreUnavailable": "Herstel niet beschikbaar voor deze back-up.",
-    "restoreBackup": "Back-up herstellen",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Ingeschakeld",
-    "backupAutoIntervalDays": "Interval (dagen)",
-    "backupAutoKeepLatest": "Laatste bewaren",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Instructies",
     "cleanupSettingsTab": "Opschooninstellingen",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Effectief beleid",
-    "cleanupEffectivePolicyHelp": "Taakgebonden bewijs en gedeelde aggregaten worden gescheiden door de runtime-eigenaarskaart; taak-purge verwijdert eigen artefacten en herstelt gedeelde status in plaats van gedeelde bestanden volledig te verwijderen.",
-    "cleanupPolicyPath": "Beleidspad",
-    "cleanupDailyEnabled": "Dagelijks onderhoud ingeschakeld",
-    "cleanupDailyDryRun": "Dagelijks onderhoud als dry-run",
-    "cleanupOlderThanDays": "Geschikt indien ouder dan dagen",
-    "cleanupKeepLatestTasks": "Nieuwste taken behouden",
-    "cleanupPurgeRequireConfirm": "Purge vereist bevestiging",
-    "cleanupHealthyDoneCompactDays": "Gezonde DONE comprimeren na dagen",
-    "cleanupProblemCompressDays": "Probleemtaken comprimeren na dagen",
-    "cleanupEditSettingsTitle": "Retentiebeheer",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Max. taken per run",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Taak-purge",
-    "cleanupTaskPurgeHelp": "Verwijdert runtime-artefacten die eigendom zijn van één taak-ID. Actieve taakbescherming en herstel van gedeelde status blijven server-side.",
-    "cleanupTaskId": "Taak-ID",
-    "cleanupPurgeTask": "Taak purgen",
     "actionsTab": "Acties",
     "noticeActionsEnabled": "Taakdetails worden op verzoek van de lokale server geladen. De server is gebonden aan 127.0.0.1 en stopt wanneer dit CLI-proces eindigt. Gecontroleerde acties zijn alleen ingeschakeld voor toegestane commando’s.",
     "noticeActionsDisabled": "Taakdetails worden op verzoek van de lokale server geladen. De server is gebonden aan 127.0.0.1 en stopt wanneer dit CLI-proces eindigt. Gecontroleerde acties zijn uitgeschakeld tenzij de server start met --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Bestaande artefacten",
     "missingArtifacts": "Ontbrekende artefacten",
     "artifactPath": "Artefactpad",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Gewone documenten",
+    "ordinaryDocsHelp": "Gewone documenten zijn door de gebruiker beheerde planning-, changelog- of productdocumenten. Wijzigingen aan deze paden blijven controleerbaar maar activeren op zichzelf geen extra reviewlanes.",
+    "ordinaryDocsPath": "Documentpad",
+    "ordinaryDocsEmpty": "Geen paden voor gewone documenten geconfigureerd.",
+    "ordinaryDocsActionsDisabled": "Bewerken van gewone documenten is uitgeschakeld. Herstart met",
+    "addOrdinaryDoc": "Document toevoegen",
+    "removeOrdinaryDoc": "Verwijderen",
+    "availableReviewTypes": "Beschikbare reviewtypen"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "Bekende risico's, fragiele paden, beveiligingsnotities en compatibiliteitsgrenzen."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Instellingen starten",
+      "body": "Het tabblad init-instellingen toont huidige antwoorden, verplichte agent-init-checkpoints, beheer van gewone documenten en de handoff-prompt om onboarding af te ronden."
+    },
+    "project-memory": {
+      "title": "Projectgeheugen",
+      "body": "Het tabblad projectgeheugen toont de huidige onderhoudsmodus en duurzame geheugenbestanden. Open elk bestand op aanvraag in plaats van de volledige inhoud in het dashboard te laden."
+    }
+  }
 }

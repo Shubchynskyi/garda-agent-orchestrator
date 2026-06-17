@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Lista snapshots de rollback do inventário de backups. Restauração protegida e edições de auto-backup exigem `garda ui --actions`."
+  },
+  "inventory_title": {
+    "label": "Lista de backups"
+  },
+  "empty": {
+    "label": "Não há backups na lista."
+  },
+  "snapshots_root": {
+    "label": "Raiz dos snapshots"
+  },
+  "root_present": {
+    "label": "presente"
+  },
+  "root_missing": {
+    "label": "ausente"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Criado"
+  },
+  "size_column": {
+    "label": "Tamanho"
+  },
+  "reason_column": {
+    "label": "Motivo"
+  },
+  "status_column": {
+    "label": "Status"
+  },
+  "restore_column": {
+    "label": "Restaurar"
+  },
+  "reason_update": {
+    "label": "atualização"
+  },
+  "reason_scheduled": {
+    "label": "agendado"
+  },
+  "health_available": {
+    "label": "Disponível"
+  },
+  "health_missing_records": {
+    "label": "Registros ausentes"
+  },
+  "health_invalid_records": {
+    "label": "Registros inválidos"
+  },
+  "actions_disabled": {
+    "label": "Ações controladas estão desativadas."
+  },
+  "restore_unavailable": {
+    "label": "Restauração indisponível para este backup."
+  },
+  "restore_backup": {
+    "label": "Restaurar backup"
+  },
+  "auto_backup_title": {
+    "label": "Backup automático"
+  },
+  "auto_backup_help": {
+    "description": "Backups automáticos agendados usam configurações de workflow auditadas. Salvar exige confirmação."
+  },
+  "auto_enabled": {
+    "label": "Ativado"
+  },
+  "auto_interval_days": {
+    "label": "Intervalo (dias)"
+  },
+  "auto_keep_latest": {
+    "label": "Manter os mais recentes"
+  },
+  "restore_preview_help": {
+    "description": "Escolha um backup para restaurá-lo por meio da ação protegida de rollback."
+  }
+}

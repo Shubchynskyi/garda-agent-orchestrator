@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "Вкладка резервних копій показує rollback-знімки з інвентарю, налаштування auto-backup з конфігурації робочого процесу та захищені дії відновлення, коли UI-сервер запущено з `--actions`."
+  },
+  "inventory_title": {
+    "label": "Список резервних копій"
+  },
+  "empty": {
+    "label": "У списку немає резервних копій."
+  },
+  "snapshots_root": {
+    "label": "Корінь знімків"
+  },
+  "root_present": {
+    "label": "є"
+  },
+  "root_missing": {
+    "label": "немає"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "Створено"
+  },
+  "size_column": {
+    "label": "Розмір"
+  },
+  "reason_column": {
+    "label": "Причина"
+  },
+  "status_column": {
+    "label": "Стан"
+  },
+  "restore_column": {
+    "label": "Відновлення"
+  },
+  "reason_update": {
+    "label": "оновлення"
+  },
+  "reason_scheduled": {
+    "label": "за розкладом"
+  },
+  "health_available": {
+    "label": "Доступна"
+  },
+  "health_missing_records": {
+    "label": "Записи відсутні"
+  },
+  "health_invalid_records": {
+    "label": "Некоректні записи"
+  },
+  "actions_disabled": {
+    "label": "Керовані дії вимкнено."
+  },
+  "restore_unavailable": {
+    "label": "Відновлення для цієї копії недоступне."
+  },
+  "restore_backup": {
+    "label": "Відновити резервну копію"
+  },
+  "auto_backup_title": {
+    "label": "Автоматичне резервне копіювання"
+  },
+  "auto_backup_help": {
+    "description": "Заплановані автоматичні резервні копії використовують перевірені налаштування workflow. Збереження вимагає підтвердження."
+  },
+  "auto_enabled": {
+    "label": "Увімкнено"
+  },
+  "auto_interval_days": {
+    "label": "Інтервал (днів)"
+  },
+  "auto_keep_latest": {
+    "label": "Зберігати останні"
+  },
+  "restore_preview_help": {
+    "description": "Виберіть резервну копію, щоб відновити її через захищену дію відкату."
+  }
+}

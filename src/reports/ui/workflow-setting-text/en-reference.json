@@ -1,0 +1,327 @@
+{
+  "compile-gate-command-fallback": {
+    "description": "Not set in workflow-config; compile-gate fails closed until a project-specific command is configured."
+  },
+  "compile-gate-command": {
+    "label": "Compile-gate command",
+    "description": "Command compile-gate runs for compile/build/type-check validation. When unconfigured, compile-gate fails closed until a project-specific command is configured."
+  },
+  "full-suite-enabled": {
+    "label": "Mandatory full-suite validation",
+    "description": "Controls whether the configured full-suite test command is part of the task lifecycle.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "The configured full-suite command is required in the task lifecycle."
+      },
+      "false": {
+        "label": "Off",
+        "description": "The full-suite gate is skipped unless another workflow path requires it."
+      }
+    }
+  },
+  "full-suite-command": {
+    "label": "Full-suite command",
+    "description": "Command the full-suite gate runs when mandatory full-suite validation is enabled."
+  },
+  "full-suite-timeout-ms": {
+    "label": "Full-suite timeout",
+    "description": "Maximum runtime for the full-suite command, in milliseconds."
+  },
+  "full-suite-green-summary-max-lines": {
+    "label": "Green full-suite summary length",
+    "description": "How many successful full-suite output lines stay visible in compact task evidence."
+  },
+  "full-suite-red-failure-chunk-lines": {
+    "label": "Failure output chunk length",
+    "description": "How many failing full-suite lines are kept per compact failure chunk."
+  },
+  "full-suite-out-of-scope-failure-policy": {
+    "label": "Out-of-scope failure handling",
+    "description": "What the workflow does when full-suite output shows a failure outside the current task scope.",
+    "options": {
+      "AUDIT_AND_BLOCK": {
+        "label": "Audit and block",
+        "description": "Records the out-of-scope failure and stops the workflow until it is resolved."
+      },
+      "AUDIT_AND_WARN": {
+        "label": "Audit and warn",
+        "description": "Records the out-of-scope failure but allows the workflow to continue with a warning."
+      }
+    }
+  },
+  "full-suite-placement": {
+    "label": "Full-suite placement",
+    "description": "Where the mandatory full-suite gate runs in the task lifecycle.",
+    "options": {
+      "after_compile_before_reviews": {
+        "label": "After compile, before reviews",
+        "description": "Runs the full suite after compile passes and before reviewer work starts."
+      },
+      "before_test_review": {
+        "label": "Before test review",
+        "description": "Runs the full suite immediately before the test-review lane needs its evidence."
+      },
+      "before_completion": {
+        "label": "Before completion",
+        "description": "Defers the full suite until the final completion path."
+      }
+    }
+  },
+  "review-execution-policy": {
+    "label": "Review execution mode",
+    "description": "Controls whether required review lanes run in parallel, wait for code review, or run sequentially.",
+    "options": {
+      "parallel_all": {
+        "label": "parallel all",
+        "description": "All review types may be prepared independently; no upstream launch dependencies apply."
+      },
+      "test_after_code": {
+        "label": "test after code",
+        "description": "Only test waits for a current-cycle code PASS; other review types stay independent."
+      },
+      "code_first_optional": {
+        "label": "code first optional",
+        "description": "API, performance, infra, and dependency wait for code PASS; test remains downstream of all required upstream reviews."
+      },
+      "strict_sequential": {
+        "label": "strict sequential",
+        "description": "All required reviews follow the canonical review order one by one for the current cycle."
+      }
+    }
+  },
+  "scope-budget-enabled": {
+    "label": "Scope budget guard",
+    "description": "Warns or blocks when a task is too large for the configured profile budget.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Scope budget checks warn or block when a task exceeds the configured profile budget."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Scope budget limits are not enforced for task-size decisions."
+      }
+    }
+  },
+  "scope-budget-action": {
+    "label": "Scope budget action",
+    "description": "What happens when the scope budget is exceeded.",
+    "options": {
+      "BLOCK_FOR_SPLIT": {
+        "label": "Block for split",
+        "description": "Stops oversized work and asks the operator or agent to split it."
+      },
+      "WARN_ONLY": {
+        "label": "Warn only",
+        "description": "Shows the scope warning but does not stop the next lifecycle step."
+      }
+    }
+  },
+  "scope-budget-profiles": {
+    "label": "Scope budget profiles",
+    "description": "Task profiles where the scope budget guard applies. Unknown legacy values are shown explicitly instead of being dropped."
+  },
+  "scope-budget-max-files": {
+    "label": "Scope budget file limit",
+    "description": "Maximum changed-file count before the scope budget guard reacts."
+  },
+  "scope-budget-max-changed-lines": {
+    "label": "Scope budget changed-line limit",
+    "description": "Maximum changed-line count before the scope budget guard reacts."
+  },
+  "scope-budget-max-required-reviews": {
+    "label": "Scope budget review-lane limit",
+    "description": "Maximum required review-lane count before the scope budget guard reacts."
+  },
+  "scope-budget-max-review-tokens": {
+    "label": "Scope budget review-token forecast",
+    "description": "Maximum estimated review-token budget before the scope budget guard reacts."
+  },
+  "review-cycle-enabled": {
+    "label": "Review-cycle guard",
+    "description": "Detects repeated non-test review loops before they consume too much work.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Repeated non-test review loops are detected before closeout continues."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Review-cycle pressure is not checked by this guard."
+      }
+    }
+  },
+  "review-cycle-action": {
+    "label": "Review-cycle action",
+    "description": "What happens when repeated review attempts exceed configured limits.",
+    "options": {
+      "BLOCK_FOR_OPERATOR_DECISION": {
+        "label": "Block for operator decision",
+        "description": "Stops repeated review loops until an operator chooses the recovery path."
+      },
+      "WARN_ONLY": {
+        "label": "Warn only",
+        "description": "Reports review-cycle pressure but lets the workflow continue."
+      }
+    }
+  },
+  "review-cycle-max-failed-non-test-reviews": {
+    "label": "Failed non-test review limit",
+    "description": "Maximum failed non-test review attempts before the review-cycle guard reacts."
+  },
+  "review-cycle-max-total-non-test-reviews": {
+    "label": "Total non-test review limit",
+    "description": "Maximum total non-test review attempts before the review-cycle guard reacts."
+  },
+  "review-cycle-excluded-review-types": {
+    "label": "Excluded review types",
+    "description": "Review lanes ignored by the review-cycle guard. Values are selected from known review contract keys and current capability config."
+  },
+  "review-cycle-auto-split-enabled": {
+    "label": "Automatic review-cycle split prompt",
+    "description": "Allows review-cycle pressure to emit an auto-split prompt when the action is BLOCK_FOR_OPERATOR_DECISION. It has no blocking effect while action is WARN_ONLY.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Review-cycle pressure can emit the auto-split prompt when the action is BLOCK_FOR_OPERATOR_DECISION."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Review-cycle pressure never emits the auto-split prompt."
+      }
+    }
+  },
+  "project-memory-enabled": {
+    "label": "Project-memory maintenance",
+    "description": "Controls whether closeout checks project-memory impact.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Closeout checks whether project-memory impact evidence is needed."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Closeout does not run project-memory maintenance checks."
+      }
+    }
+  },
+  "project-memory-mode": {
+    "label": "Project-memory mode",
+    "description": "How strongly the workflow enforces project-memory impact work.",
+    "options": {
+      "off": {
+        "label": "Off",
+        "description": "Do not run project-memory maintenance during closeout."
+      },
+      "check": {
+        "label": "Check",
+        "description": "Check whether memory updates are needed without writing them."
+      },
+      "update": {
+        "label": "Update",
+        "description": "Allow the workflow to update focused project-memory files when needed."
+      },
+      "strict": {
+        "label": "Strict",
+        "description": "Require memory evidence before closeout can pass."
+      }
+    }
+  },
+  "project-memory-run-before-final-closeout": {
+    "label": "Run memory check before final closeout",
+    "description": "Runs project-memory maintenance before the final completion step.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Project-memory maintenance runs before the final completion step."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Project-memory maintenance is not inserted before final closeout."
+      }
+    }
+  },
+  "project-memory-require-user-approval-for-writes": {
+    "label": "Require user approval for memory writes",
+    "description": "Requires explicit user approval before the workflow writes project-memory files.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Project-memory writes require explicit user approval before the workflow writes files."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Project-memory writes can proceed under the configured maintenance mode without an extra approval step."
+      }
+    }
+  },
+  "project-memory-max-compact-summary-chars": {
+    "label": "Project-memory compact summary size",
+    "description": "Maximum generated compact project-memory summary size, in characters."
+  },
+  "project-memory-read-strategy": {
+    "label": "Project-memory read strategy",
+    "description": "How agents should read durable memory at task start.",
+    "options": {
+      "index_first": {
+        "label": "index first",
+        "description": "Read the memory index first and open detailed files only when the index points to them."
+      }
+    }
+  },
+  "project-memory-impact-retention-days": {
+    "label": "Project-memory impact retention",
+    "description": "How many days project-memory impact artifacts are retained."
+  },
+  "task-reset-enabled": {
+    "label": "Task reset commands",
+    "description": "Allows confirmed task reset/discard mutations.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Confirmed task reset and discard commands are available through guarded paths."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Task reset and discard mutations are unavailable."
+      }
+    }
+  },
+  "auto-backup-enabled": {
+    "label": "Scheduled auto-backups",
+    "description": "Allows the daily maintenance trigger to create scheduled rollback backups when due.",
+    "options": {
+      "true": {
+        "label": "On",
+        "description": "Daily maintenance may create scheduled rollback backups when the interval is due."
+      },
+      "false": {
+        "label": "Off",
+        "description": "Daily maintenance will not create scheduled rollback backups."
+      }
+    }
+  },
+  "auto-backup-interval-days": {
+    "label": "Auto-backup interval",
+    "description": "Minimum number of days between successful scheduled backups."
+  },
+  "auto-backup-keep-latest": {
+    "label": "Auto-backup retention",
+    "description": "Number of latest backups to keep after a scheduled backup is created."
+  },
+  "garda-self-guard": {
+    "label": "Garda self-guard",
+    "description": "Controls whether agents may directly enter protected Garda control-plane work.",
+    "options": {
+      "deny_agent_entry": {
+        "label": "On",
+        "description": "Agents cannot enter protected control-plane work without the operator-owned path."
+      },
+      "require_operator_confirmation": {
+        "label": "Operator confirmation",
+        "description": "Protected control-plane entry requires explicit operator confirmation."
+      }
+    }
+  }
+}

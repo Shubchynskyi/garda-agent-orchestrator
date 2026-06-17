@@ -12,52 +12,8 @@
     "initSettingsTab": "初期設定",
     "projectMemoryTab": "プロジェクトメモリ",
     "backupsTab": "バックアップ",
-    "backupsTabIntro": "バックアップインベントリの rollback スナップショットを表示します。保護された復元と auto-backup の編集には `garda ui --actions` が必要です。",
-    "backupsInventoryTitle": "バックアップ一覧",
-    "backupsEmpty": "インベントリにバックアップがありません。",
-    "backupsSnapshotsRoot": "スナップショットルート",
-    "backupRootPresent": "あり",
-    "backupRootMissing": "なし",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "作成日時",
-    "backupSizeColumn": "サイズ",
-    "backupReasonColumn": "理由",
-    "backupStatusColumn": "状態",
-    "backupRestoreColumn": "復元",
-    "backupReasonUpdate": "更新",
-    "backupReasonScheduled": "スケジュール",
-    "backupsActionsDisabled": "制御されたアクションは無効です。",
-    "backupRestoreUnavailable": "このバックアップは復元できません。",
-    "restoreBackup": "バックアップを復元",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "有効",
-    "backupAutoIntervalDays": "間隔（日）",
-    "backupAutoKeepLatest": "最新を保持",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "説明書",
     "cleanupSettingsTab": "クリーンアップ設定",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "有効なポリシー",
-    "cleanupEffectivePolicyHelp": "ランタイム所有権マップにより、タスク範囲の証跡と共有集約は分離されます。タスク削除は共有ファイル全体を削除せず、所有するアーティファクトを削除し共有状態を修復します。",
-    "cleanupPolicyPath": "ポリシーパス",
-    "cleanupDailyEnabled": "日次メンテナンス有効",
-    "cleanupDailyDryRun": "日次メンテナンスのドライラン",
-    "cleanupOlderThanDays": "対象となる経過日数",
-    "cleanupKeepLatestTasks": "最新タスクを保持",
-    "cleanupPurgeRequireConfirm": "削除には確認が必要",
-    "cleanupHealthyDoneCompactDays": "正常な DONE を圧縮する日数",
-    "cleanupProblemCompressDays": "問題タスクを圧縮する日数",
-    "cleanupEditSettingsTitle": "保持コントロール",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "1回あたりの最大タスク数",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "タスク削除",
-    "cleanupTaskPurgeHelp": "1つのタスクIDが所有するランタイムアーティファクトを削除します。アクティブタスク保護と共有状態の修復はサーバー側に残ります。",
-    "cleanupTaskId": "タスクID",
-    "cleanupPurgeTask": "タスクを削除",
     "actionsTab": "アクション",
     "noticeActionsEnabled": "タスクの詳細は、オンデマンドでローカル サーバーからロードされます。サーバーは 127.0.0.1 にバインドされており、この CLI プロセスが終了すると停止します。制御されたアクションは、許可リストに登録されたコマンドに対してのみ有効になります。",
     "noticeActionsDisabled": "タスクの詳細は、オンデマンドでローカル サーバーからロードされます。サーバーは 127.0.0.1 にバインドされており、この CLI プロセスが終了すると停止します。サーバーが --actions で起動しない限り、制御されたアクションは無効になります。",
@@ -268,13 +224,14 @@
     "existingArtifacts": "既存の成果物",
     "missingArtifacts": "欠落したアーティファクト",
     "artifactPath": "アーティファクトのパス",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "通常ドキュメント",
+    "ordinaryDocsHelp": "通常ドキュメントはユーザー所有の計画・changelog・プロダクト文書です。これらのパスへの変更は監査可能ですが、それ自体では追加のレビューレーンをトリガーしません。",
+    "ordinaryDocsPath": "ドキュメントパス",
+    "ordinaryDocsEmpty": "通常ドキュメントのパスが設定されていません。",
+    "ordinaryDocsActionsDisabled": "通常ドキュメントの編集は無効です。次で再起動してください",
+    "addOrdinaryDoc": "ドキュメントを追加",
+    "removeOrdinaryDoc": "削除",
+    "availableReviewTypes": "利用可能なレビュータイプ"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -348,5 +305,15 @@
       "description": "既知のリスク、脆弱なパス、セキュリティ注意、互換性制約。"
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "初期設定",
+      "body": "初期設定タブには現在の回答、必須のエージェント init チェックポイント、通常ドキュメント管理、オンボーディング完了用の handoff プロンプトが表示されます。"
+    },
+    "project-memory": {
+      "title": "プロジェクトメモリ",
+      "body": "プロジェクトメモリタブには現在のメンテナンスモードと永続的なメモリファイルが表示されます。ダッシュボードに全文を読み込まず、必要に応じて各ファイルを開いてください。"
+    }
+  }
 }

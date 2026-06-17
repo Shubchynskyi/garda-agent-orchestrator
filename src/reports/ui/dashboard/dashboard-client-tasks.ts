@@ -36,6 +36,7 @@ function taskDataBadge(task) {
 }
 function renderTasks(report) {
   currentReport = report;
+  setPanelConfigPath(tasksConfigPathNode, report.tasks_tab && report.tasks_tab.source_path);
   metaNode.textContent = t('metaRepo') + ': ' + report.repo_root + ' | ' + t('metaTasks') + ': ' + report.tasks_tab.rows.length + ' | ' + t('metaWarnings') + ': ' + report.unavailable.length;
   if (report.unavailable.length > 0) {
     warningsNode.hidden = false;
@@ -53,6 +54,7 @@ function renderTasks(report) {
   renderProjectMemory(report);
   renderBackups(report);
   renderInstructions(report);
+  renderSystemState(report);
 }
 function renderTaskRows() {
   const rows = currentReport ? currentReport.tasks_tab.rows.filter(matchesFilters) : [];

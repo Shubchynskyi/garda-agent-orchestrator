@@ -96,11 +96,16 @@ tr.selected { background: #eef8f6; }
 .task-action-unavailable { color: var(--muted); font-size: 12px; }
 .instruction-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .instruction-links button { flex: 0 0 136px; width: 136px; }
-.workflow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.tab-head, .workflow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .config-path { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; text-align: right; }
-.workflow-state { margin-bottom: 12px; padding: 8px 10px; border-left: 4px solid var(--accent); background: #f3fbf8; color: #145447; }
-.workflow-top-grid, .actions-top-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, .85fr); gap: 14px; align-items: start; }
-.workflow-top-grid .detail, .actions-top-grid .detail { min-height: 156px; }
+.tab-body { padding: 14px; }
+.tab-messages { margin-bottom: 12px; }
+.tab-messages[hidden] { display: none !important; }
+.workflow-state { margin: 0; padding: 8px 10px; border-left: 4px solid var(--accent); background: #f3fbf8; color: #145447; }
+.setting-status:empty, .action-status:empty { display: none; margin: 0; padding: 0; }
+.setting-status:not(:empty) { margin-bottom: 12px; }
+.tab-body > .workflow-group:first-child,
+#settings-editor > .workflow-group:first-child { margin-top: 0; }
 .workflow-group { margin-top: 16px; }
 .cleanup-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }
 .cleanup-section { display: grid; gap: 8px; min-width: 0; }
@@ -119,6 +124,23 @@ tr.selected { background: #eef8f6; }
 .workflow-table th:nth-child(3) { width: 14%; }
 .workflow-table th:nth-child(4) { width: 18%; }
 .workflow-table th:nth-child(5) { width: 18%; }
+.backups-table .workflow-table { overflow-x: auto; }
+.backups-table .workflow-table th:nth-child(1) { width: 26%; }
+.backups-table .workflow-table th:nth-child(2) { width: 18%; }
+.backups-table .workflow-table th:nth-child(3) { width: 8%; }
+.backups-table .workflow-table th:nth-child(4) { width: 10%; }
+.backups-table .workflow-table th:nth-child(5) { width: 14%; }
+.backups-table .workflow-table th:nth-child(6) { width: 24%; }
+.backups-table .workflow-table td:last-child .action-buttons { margin-top: 0; }
+.backups-table .workflow-table td:last-child .empty { display: block; line-height: 1.35; }
+.cleanup-settings-table th:nth-child(1) { width: 22%; }
+.cleanup-settings-table th:nth-child(2) { width: 28%; }
+.cleanup-settings-table th:nth-child(3) { width: 16%; }
+.cleanup-settings-table th:nth-child(4) { width: 34%; }
+.cleanup-settings-table td:last-child .setting-buttons { margin-top: 6px; }
+.cleanup-settings-table .setting-control select,
+.cleanup-settings-table .setting-control input[type="number"],
+.cleanup-settings-table .setting-control input[type="text"] { width: 100%; max-width: 220px; min-height: 34px; }
 .workflow-table tbody tr:nth-child(even), .instruction-table tbody tr:nth-child(even), .action-table tbody tr:nth-child(even) { background: #fbfcfe; }
 .workflow-table td:first-child, .instruction-table td:first-child, .action-table td:first-child { border-left: 4px solid #c7d7f2; background: #f7f9fc; }
 .setting-title { display: grid; gap: 4px; }
@@ -137,7 +159,7 @@ tr.selected { background: #eef8f6; }
 .setting-options li { margin-bottom: 5px; }
 .setting-buttons, .action-buttons, .switch-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .setting-buttons button, .action-buttons button, .switch-buttons button, #tasks button[data-task-id] { flex: 0 0 138px; width: 138px; height: 42px; overflow: hidden; }
-.setting-status, .action-status { margin-top: 12px; }
+.setting-status, .action-status { margin-top: 0; }
 .action-section { margin-top: 12px; }
 .action-table th:nth-child(1) { width: 20%; }
 .action-table th:nth-child(2) { width: 30%; }
@@ -168,6 +190,10 @@ tr.selected { background: #eef8f6; }
 .memory-file-content pre { max-height: 55vh; }
 .file-open-row { margin-top: 7px; }
 .file-open-row button { min-width: 104px; }
+.value-with-open { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; }
+button.file-open-inline, .file-open-inline { min-width: auto; width: auto; min-height: 24px; padding: 2px 8px; font-size: 12px; line-height: 1.2; }
+.system-state-panel { margin-bottom: 14px; }
+.system-state-panel:empty { display: none; margin: 0; }
 .ordinary-doc-row { display: grid; grid-template-columns: 20px 1fr; gap: 8px; align-items: start; }
 .duration-control { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .duration-control label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
@@ -188,6 +214,6 @@ tr.selected { background: #eef8f6; }
 .switch-strip .badge { min-width: 156px; }
 @media (max-width: 1060px) { .tasks-layout { grid-template-columns: 1fr; } .header-row { display: grid; grid-template-columns: 1fr 180px; } }
 @media (max-width: 1160px) { nav { flex-wrap: wrap; } .session-compact { margin-left: 0; } }
-@media (max-width: 860px) { .command-preview-meta, .workflow-top-grid, .actions-top-grid, .cleanup-grid, .cleanup-policy-list, .plan-meta { grid-template-columns: 1fr; } .cleanup-section:first-child { grid-column: auto; } }
+@media (max-width: 860px) { .command-preview-meta, .cleanup-grid, .cleanup-policy-list, .plan-meta { grid-template-columns: 1fr; } .cleanup-section:first-child { grid-column: auto; } }
 @media (max-width: 760px) { .overview { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .toolbar { grid-template-columns: 1fr; } .session-compact { flex: 1 1 100%; max-width: none; width: 100%; min-width: 0; margin-left: 0; } .switch-strip { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 640px) { header, main, nav { padding-left: 14px; padding-right: 14px; } th, td { padding: 8px; } .tab-buttons { flex: 1 1 100%; width: 100%; } .metrics { grid-template-columns: 1fr; } .header-row { grid-template-columns: 1fr; } .top-controls { justify-content: flex-end; justify-self: end; } }`;

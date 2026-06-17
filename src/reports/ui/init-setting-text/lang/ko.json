@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "어시스턴트 언어",
+    "description": "어시스턴트가 운영자와 소통할 때 사용해야 하는 언어입니다."
+  },
+  "AssistantBrevity": {
+    "label": "어시스턴트 상세도",
+    "description": "일반적인 어시스턴트 답변이 얼마나 자세해야 하는지를 나타냅니다."
+  },
+  "SourceOfTruth": {
+    "label": "지시문 소유자",
+    "description": "생성된 에이전트 지시문을 소유하는 정규 provider 파일입니다."
+  },
+  "ActiveAgentFiles": {
+    "label": "활성 에이전트 파일",
+    "description": "이 프로젝트에 현재 포함된 에이전트 entrypoint 파일입니다."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "자동 commit 금지",
+    "description": "운영자의 명시적 승인 없이 에이전트가 commit하는 것을 방지합니다(적어도 그렇게 동작하려고 합니다)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Claude 전체 액세스 모드",
+    "description": "Claude 중심 지시문이 오케스트레이터 전체 액세스를 가정하는지 여부입니다."
+  },
+  "TokenEconomyEnabled": {
+    "label": "토큰 절약",
+    "description": "생성된 지시문을 간결하게 유지하고 불필요한 컨텍스트를 피합니다."
+  },
+  "ProviderMinimalism": {
+    "label": "프로바이더 미니멀리즘",
+    "description": "가능한 경우 비정규 provider entrypoint를 리디렉션으로 유지합니다."
+  },
+  "OrchestratorVersion": {
+    "label": "오케스트레이터 버전",
+    "description": "상태를 기록한 Garda 버전입니다."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "언어 확인됨",
+    "description": "어시스턴트 언어 체크포인트를 통과했는지 여부입니다."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "에이전트 파일 확인됨",
+    "description": "선택한 활성 에이전트 파일이 명시적으로 확인되었는지 여부입니다."
+  },
+  "ProjectRulesUpdated": {
+    "label": "프ро젝트 규칙 업데이트됨",
+    "description": "에이전트 초기화 중 프로젝트 규칙을 검토하거나 수락했는지 여부입니다."
+  },
+  "SkillsPromptCompleted": {
+    "label": "skills 프롬프트 완료",
+    "description": "skills 프롬프트 체크포인트가 완료되었는지 여부입니다."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "일반 문서 확인됨",
+    "description": "일반 문서 경로가 확인되었는지 여부입니다."
+  },
+  "VerificationPassed": {
+    "label": "검증 통과",
+    "description": "초기화 후 검증을 통과했는지 여부입니다."
+  },
+  "ManifestValidationPassed": {
+    "label": "매니페스트 유효",
+    "description": "보호된 control-plane manifest 검증을 통과했는지 여부입니다."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "시드된 컴파일 명령",
+    "description": "초기화 중 workflow 구성에 기록된 컴파일/빌드/타입 검사 명령입니다."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "시드된 전체 스위트 명령",
+    "description": "초기화 중 workflow 구성에 기록된 테스트 명령입니다."
+  },
+  "reinit": {
+    "title": "워크스페이스 재초기화",
+    "description": "현재 초기화 응답에서 Garda 생성 파일을 다시 구성합니다. 초기화 선택을 변경한 후 사용하세요."
+  },
+  "agent-init": {
+    "title": "에이전트 프롬프트 인계",
+    "description": "AGENT_INIT_PROMPT.md를 에이전트에 제공하고 agent-init 흐름을 완료하도록 요청하세요. 엄격한 명령은 에이전트가 해당 검사를 수행한 후에만 동작합니다."
+  }
+}

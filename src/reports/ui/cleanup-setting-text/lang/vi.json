@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Chính sách lưu giữ runtime trong `runtime-retention.json`: ngưỡng bảo trì theo lịch, quy tắc nén gọn và các thao tác dọn dẹp thủ công có bảo vệ."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Bảo trì hằng ngày",
+    "description": "Bật hoặc tắt chế độ bảo trì hằng ngày theo lịch. Khi được bật, bộ điều phối có thể xử lý theo lịch một lô giới hạn các tác vụ đủ điều kiện mà không cần can thiệp thủ công."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Số tác vụ tối đa mỗi lần bảo trì",
+    "description": "Giới hạn trên về số tác vụ đủ điều kiện mà bảo trì hằng ngày xử lý trong một lần chạy. Giảm phạm vi ảnh hưởng nếu các ngưỡng bị cấu hình sai."
+  },
+  "eligible_older_than_days": {
+    "label": "Tuổi tối thiểu của tác vụ (ngày)",
+    "description": "Một tác vụ phải cũ ít nhất chừng này ngày trước khi bảo trì hoặc dọn dẹp thủ công được phép chạm vào các artefact runtime của nó. Các tác vụ đang hoạt động và mới hơn vẫn được bảo vệ."
+  },
+  "keep_latest_tasks": {
+    "label": "Giữ lại các tác vụ mới nhất (số lượng)",
+    "description": "Luôn giữ lại ít nhất chừng này tác vụ mới nhất ngay cả khi chúng cũ hơn ngưỡng tuổi. Đặt 0 để chỉ dựa vào tuổi và cơ chế bảo vệ tác vụ đang hoạt động."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run bảo trì hằng ngày",
+    "description": "Khi giá trị là true, bảo trì hằng ngày theo lịch chỉ liệt kê các ứng viên và ghi đầu ra kiểm toán; không xóa hoặc nén artefact nào. Dùng true khi tinh chỉnh ngưỡng, rồi chuyển sang false để áp dụng."
+  },
+  "purge_require_confirm": {
+    "label": "Yêu cầu xác nhận khi purge",
+    "description": "Khi giá trị là true, các lệnh purge và cleanup mang tính phá hủy yêu cầu một cụm xác nhận được gõ rõ ràng trước khi máy chủ thực thi."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Nén gọn DONE lành mạnh sau (ngày)",
+    "description": "Sau chừng này ngày, các tác vụ hoàn tất thành công (DONE) có thể được nén gọn thành lịch sử chỉ còn ledger sau khi bằng chứng ledger đã được xác minh."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Nén các tác vụ có vấn đề sau (ngày)",
+    "description": "Sau chừng này ngày, các artefact điều tra lớn của các tác vụ thất bại hoặc bị kẹt có thể được nén lại, trong khi vẫn giữ bằng chứng có thể đọc được để phục hồi."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Dọn dẹp runtime thủ công",
+    "description": "Chạy `garda cleanup` một lần với các giá trị tuổi và giữ-lại-mới-nhất từ các dòng phía trên. Xem trước chỉ hiển thị ứng viên; Áp dụng sẽ xóa hoặc nén theo chính sách và yêu cầu xác nhận."
+  },
+  "task_purge": {
+    "label": "Purge tác vụ",
+    "description": "Xóa các artefact runtime thuộc về một ID tác vụ và sửa các chỉ mục dùng chung. Không xóa toàn bộ các tệp dùng chung; cơ chế bảo vệ tác vụ đang hoạt động vẫn được áp dụng ở máy chủ."
+  },
+  "task_id": {
+    "label": "ID tác vụ"
+  },
+  "purge_task_button": {
+    "label": "Purge tác vụ"
+  },
+  "run_preview": {
+    "label": "Xem trước"
+  },
+  "value_true": {
+    "label": "true — bật"
+  },
+  "value_false": {
+    "label": "false — tắt"
+  }
+}

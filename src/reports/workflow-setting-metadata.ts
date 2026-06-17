@@ -7,6 +7,7 @@ import { REVIEW_EXECUTION_POLICY_MODES, describeReviewExecutionPolicy } from '..
 import { SCOPE_BUDGET_GUARD_ACTIONS } from '../core/scope-budget-guard';
 import { REVIEW_CYCLE_GUARD_ACTIONS } from '../core/review-cycle-guard';
 import { OUT_OF_SCOPE_FAILURE_POLICIES } from '../gates/full-suite/full-suite-validation';
+import { EXCLUDED_REVIEW_TYPES_SETTING_DESCRIPTION } from './review-type-setting-text';
 
 export type WorkflowSettingValueType = 'boolean' | 'enum' | 'enum_list' | 'integer' | 'string' | 'string_list';
 
@@ -389,7 +390,7 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'review-cycle-excluded-review-types',
         key: 'review_cycle_guard.excluded_review_types',
         label: 'Excluded review types',
-        description: 'Review lanes ignored by the review-cycle guard. Values are selected from known review contract keys and current capability config.',
+        description: EXCLUDED_REVIEW_TYPES_SETTING_DESCRIPTION,
         flag: '--review-cycle-excluded-review-types',
         value_type: 'enum_list',
         options: [],

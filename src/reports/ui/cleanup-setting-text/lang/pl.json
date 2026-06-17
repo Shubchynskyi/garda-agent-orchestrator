@@ -1,0 +1,60 @@
+{
+  "tab_intro": {
+    "description": "Polityka retencji runtime w `runtime-retention.json`: progi zaplanowanej konserwacji, reguły kompaktowania i chronione ręczne akcje czyszczenia."
+  },
+  "daily_maintenance_enabled": {
+    "label": "Codzienna konserwacja",
+    "description": "Włącza lub wyłącza zaplanowaną codzienną konserwację. Gdy jest włączona, orkiestrator może według harmonogramu przetwarzać ograniczoną partię kwalifikujących się zadań bez ręcznej interwencji."
+  },
+  "daily_maintenance_max_tasks_per_run": {
+    "label": "Maksymalna liczba zadań na jedno uruchomienie",
+    "description": "Górny limit liczby kwalifikujących się zadań przetwarzanych przez codzienną konserwację w jednym przebiegu. Ogranicza skalę skutków, jeśli progi są źle skonfigurowane."
+  },
+  "eligible_older_than_days": {
+    "label": "Minimalny wiek zadania (dni)",
+    "description": "Zadanie musi mieć co najmniej tyle dni, zanim konserwacja lub ręczne czyszczenie będą mogły dotknąć jego artefaktów runtime. Aktywne i nowsze zadania pozostają chronione."
+  },
+  "keep_latest_tasks": {
+    "label": "Zachowaj najnowsze zadania (liczba)",
+    "description": "Zawsze zachowuje co najmniej tyle najnowszych zadań, nawet jeśli są starsze niż próg wieku. Ustaw 0, aby polegać wyłącznie na wieku i ochronie aktywnych zadań."
+  },
+  "daily_maintenance_dry_run": {
+    "label": "Dry-run codziennej konserwacji",
+    "description": "Gdy wartość to true, zaplanowana codzienna konserwacja tylko wypisuje kandydatów i zapisuje dane audytowe; nie usuwa ani nie kompresuje artefaktów. Użyj true podczas strojenia progów, a potem przełącz na false, aby zastosować."
+  },
+  "purge_require_confirm": {
+    "label": "Wymagaj potwierdzenia purge",
+    "description": "Gdy wartość to true, destrukcyjne polecenia purge i cleanup wymagają jawnie wpisanej frazy potwierdzającej, zanim serwer je wykona."
+  },
+  "healthy_done_compact_after_days": {
+    "label": "Kompaktuj zdrowe DONE po (dniach)",
+    "description": "Po tylu dniach pomyślnie zakończone zadania (DONE) mogą zostać skompaktowane do historii tylko w ledgerze, gdy dowód ledgera zostanie zweryfikowany."
+  },
+  "problem_tasks_compress_after_days": {
+    "label": "Kompresuj problematyczne zadania po (dniach)",
+    "description": "Po tylu dniach ciężkie artefakty śledcze zadań nieudanych lub zablokowanych mogą zostać skompresowane przy zachowaniu czytelnych dowodów potrzebnych do odzyskiwania."
+  },
+  "manual_runtime_cleanup": {
+    "label": "Ręczne czyszczenie runtime",
+    "description": "Uruchamia `garda cleanup` jeden raz z wartościami wieku i liczby najnowszych zadań z wierszy powyżej. Podgląd pokazuje tylko kandydatów; Zastosuj usuwa lub kompresuje zgodnie z polityką i wymaga potwierdzenia."
+  },
+  "task_purge": {
+    "label": "Purge zadania",
+    "description": "Usuwa artefakty runtime należące do jednego identyfikatora zadania i naprawia współdzielone indeksy. Nie usuwa całych współdzielonych plików; ochrona aktywnych zadań nadal obowiązuje po stronie serwera."
+  },
+  "task_id": {
+    "label": "ID zadania"
+  },
+  "purge_task_button": {
+    "label": "Wyczyść zadanie"
+  },
+  "run_preview": {
+    "label": "Podgląd"
+  },
+  "value_true": {
+    "label": "true — włączone"
+  },
+  "value_false": {
+    "label": "false — wyłączone"
+  }
+}

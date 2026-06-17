@@ -12,52 +12,8 @@
     "initSettingsTab": "Ustawienia początkowe",
     "projectMemoryTab": "Pamięć projektu",
     "backupsTab": "Kopie zapasowe",
-    "backupsTabIntro": "Wyświetla migawki rollback z inwentarza kopii. Ochronione przywracanie i edycja auto-backup wymagają `garda ui --actions`.",
-    "backupsInventoryTitle": "Inwentarz kopii",
-    "backupsEmpty": "Brak kopii w inwentarzu.",
-    "backupsSnapshotsRoot": "Katalog migawek",
-    "backupRootPresent": "jest",
-    "backupRootMissing": "brak",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Utworzono",
-    "backupSizeColumn": "Rozmiar",
-    "backupReasonColumn": "Powód",
-    "backupStatusColumn": "Stan",
-    "backupRestoreColumn": "Przywróć",
-    "backupReasonUpdate": "aktualizacja",
-    "backupReasonScheduled": "zaplanowane",
-    "backupsActionsDisabled": "Kontrolowane akcje są wyłączone.",
-    "backupRestoreUnavailable": "Przywracanie niedostępne dla tej kopii.",
-    "restoreBackup": "Przywróć kopię",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Włączone",
-    "backupAutoIntervalDays": "Interwał (dni)",
-    "backupAutoKeepLatest": "Zachowaj najnowsze",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Instrukcje",
     "cleanupSettingsTab": "Ustawienia czyszczenia",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Skuteczna polityka",
-    "cleanupEffectivePolicyHelp": "Dowody przypisane do zadania i współdzielone agregaty są rozdzielone przez mapę własności runtime; purge zadania usuwa własne artefakty i naprawia stan współdzielony zamiast usuwać całe pliki współdzielone.",
-    "cleanupPolicyPath": "Ścieżka polityki",
-    "cleanupDailyEnabled": "Codzienna konserwacja włączona",
-    "cleanupDailyDryRun": "Codzienna konserwacja jako dry-run",
-    "cleanupOlderThanDays": "Kwalifikuje się, gdy starsze niż dni",
-    "cleanupKeepLatestTasks": "Zachowaj najnowsze zadania",
-    "cleanupPurgeRequireConfirm": "Purge wymaga potwierdzenia",
-    "cleanupHealthyDoneCompactDays": "Kompaktuj zdrowe DONE po dniach",
-    "cleanupProblemCompressDays": "Kompresuj problemowe zadania po dniach",
-    "cleanupEditSettingsTitle": "Kontrola retencji",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Maks. zadań na uruchomienie",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Purge zadania",
-    "cleanupTaskPurgeHelp": "Czyści artefakty runtime należące do jednego ID zadania. Ochrona aktywnego zadania i naprawa stanu współdzielonego pozostają po stronie serwera.",
-    "cleanupTaskId": "ID zadania",
-    "cleanupPurgeTask": "Wyczyść zadanie",
     "actionsTab": "Akcje",
     "noticeActionsEnabled": "Szczegóły zadań są ładowane na żądanie z lokalnego serwera. Serwer jest powiązany z 127.0.0.1 i zatrzymuje się po zakończeniu tego procesu CLI. Kontrolowane akcje są włączone tylko dla dozwolonych poleceń.",
     "noticeActionsDisabled": "Szczegóły zadań są ładowane na żądanie z lokalnego serwera. Serwer jest powiązany z 127.0.0.1 i zatrzymuje się po zakończeniu tego procesu CLI. Kontrolowane akcje są wyłączone, chyba że serwer uruchomi się z --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Istniejące artefakty",
     "missingArtifacts": "Brakujące artefakty",
     "artifactPath": "Ścieżka artefaktu",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Zwykłe dokumenty",
+    "ordinaryDocsHelp": "Zwykłe dokumenty to należące do użytkownika dokumenty planowania, changelog lub produktu. Zmiany tych ścieżek pozostają audytowalne, ale same w sobie nie uruchamiają dodatkowych ścieżek review.",
+    "ordinaryDocsPath": "Ścieżka dokumentu",
+    "ordinaryDocsEmpty": "Brak skonfigurowanych ścieżek zwykłych dokumentów.",
+    "ordinaryDocsActionsDisabled": "Edycja zwykłych dokumentów jest wyłączona. Uruchom ponownie z",
+    "addOrdinaryDoc": "Dodaj dokument",
+    "removeOrdinaryDoc": "Usuń",
+    "availableReviewTypes": "Dostępne typy review"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "Znane ryzyka, kruche ścieżki, uwagi bezpieczeństwa i ograniczenia zgodności."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Ustawienia początkowe",
+      "body": "Karta ustawień początkowych pokazuje bieżące odpowiedzi, wymagane checkpointy init agenta, zarządzanie zwykłymi dokumentami oraz prompt handoff do zakończenia onboardingu."
+    },
+    "project-memory": {
+      "title": "Pamięć projektu",
+      "body": "Karta pamięci projektu pokazuje bieżący tryb konserwacji i trwałe pliki pamięci. Otwieraj każdy plik na żądanie zamiast ładować całą zawartość do panelu."
+    }
+  }
 }

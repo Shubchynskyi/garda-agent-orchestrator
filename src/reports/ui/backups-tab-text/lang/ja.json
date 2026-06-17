@@ -1,0 +1,80 @@
+{
+  "tab_intro": {
+    "description": "バックアップインベントリの rollback スナップショットを表示します。保護された復元と auto-backup の編集には `garda ui --actions` が必要です。"
+  },
+  "inventory_title": {
+    "label": "バックアップ一覧"
+  },
+  "empty": {
+    "label": "一覧にバックアップがありません。"
+  },
+  "snapshots_root": {
+    "label": "スナップショットルート"
+  },
+  "root_present": {
+    "label": "あり"
+  },
+  "root_missing": {
+    "label": "なし"
+  },
+  "id_column": {
+    "label": "ID"
+  },
+  "created_column": {
+    "label": "作成日時"
+  },
+  "size_column": {
+    "label": "サイズ"
+  },
+  "reason_column": {
+    "label": "理由"
+  },
+  "status_column": {
+    "label": "状態"
+  },
+  "restore_column": {
+    "label": "復元"
+  },
+  "reason_update": {
+    "label": "更新"
+  },
+  "reason_scheduled": {
+    "label": "スケジュール"
+  },
+  "health_available": {
+    "label": "利用可能"
+  },
+  "health_missing_records": {
+    "label": "レコード欠落"
+  },
+  "health_invalid_records": {
+    "label": "無効なレコード"
+  },
+  "actions_disabled": {
+    "label": "制御されたアクションは無効です。"
+  },
+  "restore_unavailable": {
+    "label": "このバックアップは復元できません。"
+  },
+  "restore_backup": {
+    "label": "バックアップを復元"
+  },
+  "auto_backup_title": {
+    "label": "自動バックアップ"
+  },
+  "auto_backup_help": {
+    "description": "スケジュールされた自動バックアップは監査済みの workflow 設定を使用します。保存には確認が必要です。"
+  },
+  "auto_enabled": {
+    "label": "有効"
+  },
+  "auto_interval_days": {
+    "label": "間隔（日）"
+  },
+  "auto_keep_latest": {
+    "label": "最新を保持"
+  },
+  "restore_preview_help": {
+    "description": "保護されたロールバック操作で復元するバックアップを選択してください。"
+  }
+}

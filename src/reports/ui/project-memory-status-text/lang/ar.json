@@ -1,0 +1,54 @@
+{
+  "memory-enabled": {
+    "label": "صيانة الذاكرة مفعّلة",
+    "description": "ما إذا كان workflow يتحقق من ذاكرة المشروع الدائمة قبل الإغلاق."
+  },
+  "memory-mode": {
+    "label": "وضع صيانة الذاكرة",
+    "description": "وضع workflow الحالي: off أو check أو update أو strict."
+  },
+  "memory-run-before-closeout": {
+    "label": "يعمل قبل الإغلاق النهائي",
+    "description": "ما إذا كان project-memory gate يعمل قبل الإكمال."
+  },
+  "memory-require-approval": {
+    "label": "يتطلب الموافقة على الكتابة",
+    "description": "ما إذا كانت كتابة ملفات project-memory تتطلب موافقة المستخدم."
+  },
+  "memory-max-compact-summary-chars": {
+    "label": "حد حجم الملخص المختصر",
+    "description": "الحد الأقصى لحجم الملخص المختصر المُولَّد لذاكرة المشروع، بالأحرف."
+  },
+  "memory-read-strategy": {
+    "label": "استراتيجية القراءة",
+    "description": "كيف يجب على الوكلاء قراءة ذاكرة المشروع عند بدء المهمة."
+  },
+  "memory-impact-retention-days": {
+    "label": "الاحتفاظ بأثر الذاكرة",
+    "description": "عدد الأيام التي تُحفَظ فيها مخرجات أثر project-memory."
+  },
+  "memory-initialized": {
+    "label": "تمت التهيئة في agent init",
+    "description": "ما إذا كان agent-init قد سجّل تهيئة ذاكرة المشروع."
+  },
+  "memory-validated": {
+    "label": "تم التحقق في agent init",
+    "description": "ما إذا كان agent-init قد سجّل تحققًا ناجحًا من ذاكرة المشروع."
+  },
+  "memory-dir": {
+    "label": "مجلد الذاكرة",
+    "description": "المجلد الذي يحتوي على ملفات الذاكرة الدائمة المملوكة للمستخدم."
+  },
+  "memory-read-first": {
+    "label": "ملفات القراءة أولًا",
+    "description": "الملفات التي يجب على الوكلاء قراءتها قبل ملفات الذاكرة المحددة."
+  },
+  "memory-summary-rule": {
+    "label": "قاعدة الملخص المُولَّد",
+    "description": "ملف القاعدة المُولَّد الذي يلخص ذاكرة المشروع لبدء تشغيل الوكيل."
+  },
+  "memory-bootstrap-report": {
+    "label": "تقرير bootstrap",
+    "description": "تقرير runtime من bootstrap أو التحقق من ذاكرة المشروع."
+  }
+}

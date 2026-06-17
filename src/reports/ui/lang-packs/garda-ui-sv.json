@@ -12,52 +12,8 @@
     "initSettingsTab": "Initiera inställningar",
     "projectMemoryTab": "Projektminne",
     "backupsTab": "Säkerhetskopior",
-    "backupsTabIntro": "Visar rollback-ögonblicksbilder från säkerhetskopieinventariet. Skyddad återställning och auto-backup-redigering kräver `garda ui --actions`.",
-    "backupsInventoryTitle": "Säkerhetskopieinventarium",
-    "backupsEmpty": "Inga säkerhetskopior i inventariet.",
-    "backupsSnapshotsRoot": "Ögonblicksbildsrot",
-    "backupRootPresent": "finns",
-    "backupRootMissing": "saknas",
-    "backupIdColumn": "ID",
-    "backupCreatedColumn": "Skapad",
-    "backupSizeColumn": "Storlek",
-    "backupReasonColumn": "Orsak",
-    "backupStatusColumn": "Status",
-    "backupRestoreColumn": "Återställ",
-    "backupReasonUpdate": "uppdatering",
-    "backupReasonScheduled": "schemalagd",
-    "backupsActionsDisabled": "Kontrollerade åtgärder är inaktiverade.",
-    "backupRestoreUnavailable": "Återställning är inte tillgänglig för denna säkerhetskopia.",
-    "restoreBackup": "Återställ säkerhetskopia",
-    "backupsAutoBackupTitle": "Auto-backup",
-    "backupAutoEnabled": "Aktiverad",
-    "backupAutoIntervalDays": "Intervall (dagar)",
-    "backupAutoKeepLatest": "Behåll senaste",
-    "backupsAutoBackupHelp": "Scheduled auto-backups use audited workflow settings. Saving requires confirmation.",
-    "backupsRestorePreviewHelp": "Choose a backup to restore it through the guarded rollback action.",
     "instructionsTab": "Instruktioner",
     "cleanupSettingsTab": "Rensningsinställningar",
-    "cleanupSettingsIntro": "Cleanup settings show effective runtime retention policy, guarded retention edits, dry-run/apply cleanup commands, and explicit per-task runtime purge controls.",
-    "cleanupPreviewHelp": "Use these guarded controls for cleanup settings, runtime cleanup, and explicit per-task purge actions.",
-    "cleanupEffectivePolicyTitle": "Effektiv policy",
-    "cleanupEffectivePolicyHelp": "Uppgiftsspecifika bevis och delade aggregat separeras av runtime-ägarkartan; task purge tar bort ägda artefakter och reparerar delat tillstånd i stället för att radera delade filer helt.",
-    "cleanupPolicyPath": "Policysökväg",
-    "cleanupDailyEnabled": "Dagligt underhåll aktiverat",
-    "cleanupDailyDryRun": "Dagligt underhåll som dry-run",
-    "cleanupOlderThanDays": "Berättigad om äldre än dagar",
-    "cleanupKeepLatestTasks": "Behåll senaste uppgifter",
-    "cleanupPurgeRequireConfirm": "Purge kräver bekräftelse",
-    "cleanupHealthyDoneCompactDays": "Kompaktera friska DONE efter dagar",
-    "cleanupProblemCompressDays": "Komprimera problemuppgifter efter dagar",
-    "cleanupEditSettingsTitle": "Retentionskontroller",
-    "cleanupEditSettingsHelp": "Persist daily cleanup controls to runtime-retention.json. Save requires typed confirmation.",
-    "cleanupMaxTasksPerRun": "Max uppgifter per körning",
-    "cleanupRunTitle": "Dry-run and apply",
-    "cleanupRunHelp": "Run runtime cleanup with explicit age and count bounds. Dry-run checks candidates without deleting them; Apply requires confirmation.",
-    "cleanupTaskPurgeTitle": "Uppgiftsrensning",
-    "cleanupTaskPurgeHelp": "Rensar runtime-artefakter som ägs av ett task-id. Skydd för aktiv uppgift och reparation av delat tillstånd stannar på serversidan.",
-    "cleanupTaskId": "Task-id",
-    "cleanupPurgeTask": "Purge uppgift",
     "actionsTab": "Åtgärder",
     "noticeActionsEnabled": "Uppgiftsdetaljer laddas på begäran från den lokala servern. Servern är bunden till 127.0.0.1 och stoppas när denna CLI-process avslutas. Kontrollerade åtgärder är aktiverade endast för tillåtna kommandon.",
     "noticeActionsDisabled": "Uppgiftsdetaljer laddas på begäran från den lokala servern. Servern är bunden till 127.0.0.1 och stoppas när denna CLI-process avslutas. Kontrollerade åtgärder är inaktiverade om inte servern startar med --actions.",
@@ -268,13 +224,14 @@
     "existingArtifacts": "Befintliga artefakter",
     "missingArtifacts": "Saknade artefakter",
     "artifactPath": "Artefaktsökväg",
-    "ordinaryDocsTitle": "Ordinary documents",
-    "ordinaryDocsHelp": "Ordinary documents are user-owned planning, changelog, or product docs. Changes to these paths remain auditable but do not trigger extra review lanes by themselves.",
-    "ordinaryDocsPath": "Document path",
-    "ordinaryDocsEmpty": "No ordinary document paths configured.",
-    "ordinaryDocsActionsDisabled": "Ordinary document edits are disabled. Restart with",
-    "addOrdinaryDoc": "Add document",
-    "removeOrdinaryDoc": "Remove"
+    "ordinaryDocsTitle": "Vanliga dokument",
+    "ordinaryDocsHelp": "Vanliga dokument är användarägda planerings-, changelog- eller produktdokument. Ändringar av dessa sökvägar förblir granskningsbara men utlöser inte extra review-lanes av sig själva.",
+    "ordinaryDocsPath": "Dokumentsökväg",
+    "ordinaryDocsEmpty": "Inga sökvägar för vanliga dokument är konfigurerade.",
+    "ordinaryDocsActionsDisabled": "Redigering av vanliga dokument är inaktiverad. Starta om med",
+    "addOrdinaryDoc": "Lägg till dokument",
+    "removeOrdinaryDoc": "Ta bort",
+    "availableReviewTypes": "Tillgängliga review-typer"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -318,5 +275,15 @@
       "description": "Kända risker, sköra sökvägar, säkerhetsanteckningar och kompatibilitetsgränser."
     }
   },
-  "LOCAL_UI_INIT_SETTING_TEXT": {}
+  "LOCAL_UI_INIT_SETTING_TEXT": {},
+  "LOCAL_UI_INSTRUCTION_TEXT": {
+    "init-settings": {
+      "title": "Initiera inställningar",
+      "body": "Fliken init-inställningar visar aktuella svar, obligatoriska agent-init-checkpoints, hantering av vanliga dokument och handoff-prompten för att slutföra onboarding."
+    },
+    "project-memory": {
+      "title": "Projektminne",
+      "body": "Fliken projektminne visar aktuellt underhållsläge och beständiga minnesfiler. Öppna varje fil på begäran i stället för att ladda hela innehållet i instrumentpanelen."
+    }
+  }
 }

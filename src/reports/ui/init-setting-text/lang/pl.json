@@ -1,0 +1,82 @@
+{
+  "AssistantLanguage": {
+    "label": "Język asystenta",
+    "description": "Język, którego asystent powinien używać w rozmowie z operatorem."
+  },
+  "AssistantBrevity": {
+    "label": "Szczegółowość odpowiedzi",
+    "description": "Jak szczegółowe powinny być zwykłe odpowiedzi asystenta."
+  },
+  "SourceOfTruth": {
+    "label": "Główny plik instrukcji",
+    "description": "Kanoniczny plik providera, który zawiera wygenerowane instrukcje agenta."
+  },
+  "ActiveAgentFiles": {
+    "label": "Aktywne pliki agenta",
+    "description": "Pliki entrypoint agenta aktualnie uwzględnione w tym projekcie."
+  },
+  "EnforceNoAutoCommit": {
+    "label": "Brak automatycznych commitów",
+    "description": "Zapobiega commitom przez agentów bez wyraźnej zgody operatora (przynajmniej próbuje)."
+  },
+  "ClaudeOrchestratorFullAccess": {
+    "label": "Tryb pełnego dostępu Claude",
+    "description": "Czy instrukcje skierowane do Claude zakładają pełny dostęp do orchestratora."
+  },
+  "TokenEconomyEnabled": {
+    "label": "Oszczędzanie tokenów",
+    "description": "Utrzymuje wygenerowane instrukcje zwięzłe i unika niepotrzebnego kontekstu."
+  },
+  "ProviderMinimalism": {
+    "label": "Minimalizm providerów",
+    "description": "Utrzymuje niekanoniczne entrypointy providerów jako przekierowania, gdy to możliwe."
+  },
+  "OrchestratorVersion": {
+    "label": "Wersja orchestratora",
+    "description": "Wersja Garda, która zapisała stan."
+  },
+  "AssistantLanguageConfirmed": {
+    "label": "Język potwierdzony",
+    "description": "Czy checkpoint języka asystenta został zaliczony."
+  },
+  "ActiveAgentFilesConfirmed": {
+    "label": "Pliki agenta potwierdzone",
+    "description": "Czy wybrane aktywne pliki agenta zostały wyraźnie potwierdzone."
+  },
+  "ProjectRulesUpdated": {
+    "label": "Reguły projektu zaktualizowane",
+    "description": "Czy reguły projektu zostały przejrzane lub zaakceptowane podczas inicjalizacji agenta."
+  },
+  "SkillsPromptCompleted": {
+    "label": "Monit o skills ukończony",
+    "description": "Czy checkpoint monitu o skills został ukończony."
+  },
+  "OrdinaryDocPathsConfirmed": {
+    "label": "Zwykła dokumentacja potwierdzona",
+    "description": "Czy ścieżki zwykłej dokumentacji zostały potwierdzone."
+  },
+  "VerificationPassed": {
+    "label": "Weryfikacja zaliczona",
+    "description": "Czy weryfikacja po inicjalizacji przeszła pomyślnie."
+  },
+  "ManifestValidationPassed": {
+    "label": "Manifest poprawny",
+    "description": "Czy walidacja chronionego manifestu control-plane przeszła pomyślnie."
+  },
+  "LastSeededCompileGateCommand": {
+    "label": "Zapisane polecenie kompilacji",
+    "description": "Polecenie kompilacji, buildu lub type-check zapisane w konfiguracji workflow podczas inicjalizacji."
+  },
+  "LastSeededFullSuiteCommand": {
+    "label": "Zapisane polecenie pełnej walidacji",
+    "description": "Polecenie testowe zapisane w konfiguracji workflow podczas inicjalizacji."
+  },
+  "reinit": {
+    "title": "Ponowna inicjalizacja obszaru roboczego",
+    "description": "Ponownie materializuje wygenerowane pliki Garda na podstawie bieżących odpowiedzi inicjalizacji. Użyj po zmianie wyborów inicjalizacji."
+  },
+  "agent-init": {
+    "title": "Przekazanie promptu agentowi",
+    "description": "Przekaż agentowi AGENT_INIT_PROMPT.md i poproś o ukończenie przepływu agent-init; sztywne polecenie zadziała dopiero po wykonaniu tych kontroli przez agenta."
+  }
+}
