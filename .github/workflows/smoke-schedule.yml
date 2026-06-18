@@ -59,6 +59,13 @@ jobs:
           CLI="node ${GITHUB_WORKSPACE}/bin/garda.js"
 
           echo "::group::1. Setup (built source checkout)"
+          # T-806 makes compile_gate.command fail closed when project discovery
+          # cannot prove a compile/build/type-check command. The smoke workspace
+          # is synthetic, so seed a tiny project-specific build script before
+          # setup and let normal discovery materialize `npm run build`.
+          cat > "$SMOKE_DIR/package.json" <<'JSON'
+          {"private":true,"scripts":{"build":"node --version"}}
+          JSON
           GIT_URL="file://${GITHUB_WORKSPACE}"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             GIT_URL="file:///${GITHUB_WORKSPACE//\\//}"
