@@ -189,7 +189,11 @@ function isMetricsLockStale(lockPath: string): boolean {
 function acquireMetricsFileLock(metricsPath: string): string | null {
     const lockPath = metricsLockPath(metricsPath);
     const startedAt = Date.now();
-    fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+    try {
+        fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+    } catch {
+        return null;
+    }
     while (Date.now() - startedAt <= METRICS_LOCK_WAIT_MS) {
         try {
             fs.mkdirSync(lockPath);
@@ -742,6 +746,10 @@ export function pruneMetricsFile(
     maxLines: number = DEFAULT_METRICS_MAX_LINES,
     knownLineCount?: number
 ): { pruned: boolean; linesBefore: number; linesAfter: number } {
+    if (!fs.existsSync(metricsPath)) {
+        return { pruned: false, linesBefore: 0, linesAfter: 0 };
+    }
+
     return withMetricsFileLock(
         metricsPath,
         { pruned: false, linesBefore: 0, linesAfter: 0 },
