@@ -197,6 +197,7 @@ function configureWorkflow(bundleRoot: string): void {
     config.full_suite_validation.enabled = true;
     config.full_suite_validation.command = 'npm test';
     config.full_suite_validation.timeout_ms = 120000;
+    (config as typeof config & { compile_gate: { command?: string } }).compile_gate.command = 'npm run build';
     config.project_memory_maintenance.enabled = true;
     config.project_memory_maintenance.mode = 'check';
     config.project_memory_maintenance.run_before_final_closeout = true;

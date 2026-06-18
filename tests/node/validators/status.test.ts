@@ -16,6 +16,7 @@ import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 
 const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
+const TEST_COMPILE_GATE_COMMAND = 'npm run build';
 
 function writeStatusFixtureFile(filePath: string, content: string) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -111,6 +112,19 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
         ? options.taskMdContent
         : '# Tasks\n');
     writeStatusFixtureFile(path.join(liveRulesPath, '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
+    if (options.workflowConfig !== false) {
+        const workflowConfig = options.workflowConfig && typeof options.workflowConfig === 'object'
+            ? options.workflowConfig
+            : {
+                compile_gate: {
+                    command: TEST_COMPILE_GATE_COMMAND
+                }
+            };
+        writeStatusFixtureFile(
+            path.join(bundlePath, 'live', 'config', 'workflow-config.json'),
+            JSON.stringify(workflowConfig, null, 2)
+        );
+    }
 
     // Create entrypoint files and shared router for compliance checks.
     writeStatusFixtureFile(
@@ -131,6 +145,7 @@ function seedInitializedWorkspace(tmpDir: string, collectedVia: string, options:
         const agentInitState = {
             OrdinaryDocPathsConfirmed: true,
             OrdinaryDocPaths: ['CHANGELOG.md'],
+            LastSeededCompileGateCommand: null,
             LastSeededFullSuiteCommand: null,
             ProjectMemoryInitialized: true,
             ProjectMemoryValidated: true,
@@ -344,6 +359,9 @@ test('getStatusSnapshot prefers confirmed agent-init language while still exposi
         writeStatusFixtureFile(
             path.join(bundlePath, 'live', 'config', 'workflow-config.json'),
             JSON.stringify({
+                compile_gate: {
+                    command: TEST_COMPILE_GATE_COMMAND
+                },
                 full_suite_validation: {
                     enabled: true,
                     command: 'npm test'
@@ -399,6 +417,8 @@ test('buildAgentInitOutput renders compact report labels in English while preser
             skillsPromptCompleted: true,
             verifyPassed: true,
             manifestPassed: true,
+            compileGateCommand: 'python -m compileall .',
+            compileGateCommandConfigured: true,
             ordinaryDocPaths: ['CHANGELOG.md', 'docs/plan.md'],
             ordinaryDocPathsDiscovered: ['CHANGELOG.md', 'docs/plan.md'],
             ordinaryDocPathsConfirmed: true,
@@ -512,12 +532,78 @@ test('getStatusSnapshot marks workspace ready only after AGENT_INIT_PROMPT initi
                 ActiveAgentFiles: ['AGENTS.md']
             }
         });
+
         const snapshot = getStatusSnapshot(tmpDir);
         assert.equal(snapshot.primaryInitializationComplete, true);
         assert.equal(snapshot.agentInitializationComplete, true);
         assert.equal(snapshot.readyForTasks, true);
         assert.equal(snapshot.agentInitializationPendingReason, null);
         assert.equal(snapshot.recommendedNextCommand, 'Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator; when independent review is required, launch a sub-agent using your internal tools.');
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('getStatusSnapshot blocks ready state when compile gate command remains unconfigured', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+        writeStatusFixtureFile(
+            path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            JSON.stringify({
+                compile_gate: {
+                    command: '__COMPILE_GATE_COMMAND_UNCONFIGURED__'
+                }
+            }, null, 2)
+        );
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'PROJECT_COMMANDS_PENDING');
+        assert.equal(snapshot.agentInitializationComplete, false);
+        assert.equal(snapshot.readyForTasks, false);
+        assert.deepEqual(snapshot.missingProjectCommands, ['compile_gate.command']);
+    } finally {
+        cleanupStatusTempDir(tmpDir);
+    }
+});
+
+test('getStatusSnapshot blocks ready state when workflow config is missing compile gate command source', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
+    try {
+        seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            workflowConfig: false,
+            agentInitState: {
+                Version: 1,
+                AssistantLanguage: 'English',
+                SourceOfTruth: 'Codex',
+                AssistantLanguageConfirmed: true,
+                ActiveAgentFilesConfirmed: true,
+                ProjectRulesUpdated: true,
+                SkillsPromptCompleted: true,
+                VerificationPassed: true,
+                ManifestValidationPassed: true,
+                ActiveAgentFiles: ['AGENTS.md']
+            }
+        });
+
+        const snapshot = getStatusSnapshot(tmpDir);
+        assert.equal(snapshot.agentInitializationPendingReason, 'PROJECT_COMMANDS_PENDING');
+        assert.equal(snapshot.agentInitializationComplete, false);
+        assert.equal(snapshot.readyForTasks, false);
+        assert.deepEqual(snapshot.missingProjectCommands, ['compile_gate.command']);
     } finally {
         cleanupStatusTempDir(tmpDir);
     }
@@ -1011,6 +1097,9 @@ test('formatStatusSnapshot prints mandatory full-suite performance guidance when
         writeStatusFixtureFile(
             path.join(bundlePath, 'live', 'config', 'workflow-config.json'),
             JSON.stringify({
+                compile_gate: {
+                    command: TEST_COMPILE_GATE_COMMAND
+                },
                 full_suite_validation: {
                     enabled: true,
                     command: 'npm run test:sharded'

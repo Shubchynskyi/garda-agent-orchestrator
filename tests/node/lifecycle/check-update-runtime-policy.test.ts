@@ -26,6 +26,7 @@ import {
 } from '../../../src/lifecycle/common';
 const FIRST_NPM_RELEASE_PACKAGE_SPEC = process.env.GARDA_FIRST_NPM_RELEASE_PACKAGE_SPEC || 'garda-agent-orchestrator@1.0.0';
 const NEXT_RELEASE_TEST_VERSION = process.env.GARDA_NEXT_RELEASE_TEST_VERSION || '1.0.1';
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -59,6 +60,16 @@ function seedBundleSyncSurface(sourceRoot: string, bundleRoot: string) {
         }
         copyPathRecursive(sourceItemPath, path.join(bundleRoot, item));
     }
+}
+
+function seedWorkflowConfigCompileGateCommand(bundleRoot: string, command: string = TEST_COMPILE_GATE_COMMAND) {
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+        compile_gate: {
+            command
+        }
+    }, null, 2), 'utf8');
 }
 
 function quoteWindowsArgument(argument: string): string {
@@ -338,6 +349,7 @@ function setupCheckUpdateWorkspace(
 
     // Create runtime dir
     fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
+    seedWorkflowConfigCompileGateCommand(bundle);
     fs.writeFileSync(path.join(bundle, 'runtime', 'init-answers.json'), JSON.stringify({
         AssistantLanguage: 'English',
         AssistantBrevity: 'concise',

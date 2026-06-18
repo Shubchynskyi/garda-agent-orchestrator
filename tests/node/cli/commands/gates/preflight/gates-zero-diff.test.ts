@@ -22,6 +22,8 @@ import {
     initializeGitRepo
 } from '../../gate-test-seed-helpers';
 
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+
 function createTempRepo(): string {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-gates-'));
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
@@ -31,6 +33,7 @@ function createTempRepo(): string {
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
     const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
     workflowConfig.full_suite_validation.enabled = false;
     workflowConfig.full_suite_validation.command = 'npm test';
     workflowConfig.review_execution_policy = { mode: 'code_first_optional' };

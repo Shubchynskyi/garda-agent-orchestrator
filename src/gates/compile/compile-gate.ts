@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../core/constants';
 import { stringSha256, normalizePath, joinOrchestratorPath } from '../shared/helpers';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { isGeneratedOrchestratorLockPath } from '../locks/generated-lock-paths';
@@ -70,6 +71,7 @@ export interface CompileCommandContractOptions {
     fullSuiteCommand?: string | null;
     allowFullTestCompileCommand?: boolean;
     allowFullTestCompileCommandReason?: string | null;
+    allowUnconfiguredSentinel?: boolean;
 }
 
 function normalizeCompileCommandForContract(command: string): string {
@@ -285,6 +287,12 @@ export function validateCompileGateCommand(
     const trimmedCommand = String(command || '').trim();
     if (!trimmedCommand) {
         throw new Error(`Compile command is missing in ${sourceLabel}.`);
+    }
+    if (trimmedCommand === UNCONFIGURED_COMPILE_GATE_COMMAND) {
+        if (options.allowUnconfiguredSentinel) {
+            return;
+        }
+        throw new Error(`Compile command is unconfigured in ${sourceLabel}: ${UNCONFIGURED_COMPILE_GATE_COMMAND}`);
     }
     if (/^\s*<[^>]+>\s*$/.test(trimmedCommand)) {
         throw new Error(`Compile command placeholder is unresolved in ${sourceLabel}: ${trimmedCommand}`);

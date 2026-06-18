@@ -179,7 +179,7 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'compile-gate-command',
         key: 'compile_gate.command',
         label: 'Compile-gate command',
-        description: 'Command compile-gate runs for compile/build/type-check validation. When unconfigured, compile-gate falls back to the legacy 40-commands.md block.',
+        description: 'Command compile-gate runs for compile/build/type-check validation. When unconfigured, compile-gate fails closed instead of falling back to 40-commands.md.',
         flag: '--compile-gate-command',
         value_type: 'string',
         options: [],

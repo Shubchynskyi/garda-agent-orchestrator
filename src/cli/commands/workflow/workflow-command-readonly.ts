@@ -56,7 +56,7 @@ export function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResu
         action: 'explain',
         topic: 'workflow-guards',
         explanation: [
-            'Compile gate command: workflow-config compile_gate.command is used when configured; otherwise compile-gate falls back to the legacy 40-commands.md Compile Gate block.',
+            'Compile gate command: workflow-config compile_gate.command is the executable compile-gate source; missing or sentinel values fail closed instead of falling back to 40-commands.md.',
             'Compile gate command changes are validated as compile/build/type-check commands and must not match the configured full-suite validation command.',
             'Scope budget guard: stops large configured-profile tasks before compile/review loops.',
             'Scope budget guard compares changed file count, changed line count, required review lanes, and estimated review tokens against workflow-config.json limits.',

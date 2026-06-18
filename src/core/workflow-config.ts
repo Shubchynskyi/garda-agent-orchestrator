@@ -207,6 +207,11 @@ export function buildDefaultWorkflowConfig(): WorkflowConfigData {
     return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG);
 }
 
+export function isConfiguredCompileGateCommand(command: unknown): command is string {
+    const value = typeof command === 'string' ? command.trim() : '';
+    return Boolean(value) && value !== UNCONFIGURED_COMPILE_GATE_COMMAND;
+}
+
 export function normalizeCompileGateConfig(input: unknown): CompileGateConfig {
     if (!isPlainObject(input)) {
         return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.compile_gate);

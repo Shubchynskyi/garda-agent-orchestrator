@@ -23,7 +23,7 @@ import {
     createTempRepo,
     writeBudgetOutputFilters,
     seedTaskQueue,
-    seedInitAnswers,
+    seedInitAnswers as seedBaseInitAnswers,
     getReviewsRoot,
     getOrchestratorRoot,
     runEnterTaskMode,
@@ -52,6 +52,20 @@ function writeWorkflowConfig(repoRoot: string, overrides: Record<string, unknown
     };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+}
+
+function seedInitAnswers(repoRoot: string, sourceOfTruth?: string): void {
+    seedBaseInitAnswers(repoRoot, sourceOfTruth);
+    const configPath = path.join(getOrchestratorRoot(repoRoot), 'live', 'config', 'workflow-config.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+        compile_gate: {
+            command: 'node -e "console.log(\'build ok\')"'
+        },
+        project_memory_maintenance: {
+            enabled: false
+        }
+    }, null, 2), 'utf8');
 }
 
 function seedNodeBackendOptionalSkillFixture(repoRoot: string, policyMode: 'advisory' | 'required' | 'strict' | 'off' = 'advisory') {
@@ -147,7 +161,7 @@ describe('cli/commands/gates compile and post-preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('uses workflow-config compile gate command before legacy commands file fallback', async () => {
+    it('uses workflow-config compile gate command and ignores the legacy commands file block', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-901-configured-compile-command';
         seedTaskQueue(repoRoot, taskId);
@@ -197,9 +211,9 @@ describe('cli/commands/gates compile and post-preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('falls back to legacy commands file when workflow compile gate command is unconfigured', async () => {
+    it('fails closed instead of falling back to a legacy commands file when workflow compile gate command is unconfigured', async () => {
         const repoRoot = createTempRepo();
-        const taskId = 'T-901-legacy-compile-fallback';
+        const taskId = 'T-901-unconfigured-compile-command';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
         writeWorkflowConfig(repoRoot, {
@@ -212,14 +226,14 @@ describe('cli/commands/gates compile and post-preflight', () => {
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',
-            'node -e "console.log(\'legacy fallback build ok\')"',
+            'node -e "console.log(\'legacy fallback must not run\')"',
             '```'
         ].join('\n'), 'utf8');
 
         const taskModeResult = runEnterTaskMode({
             repoRoot,
             taskId,
-            taskSummary: 'Use legacy compile fallback'
+            taskSummary: 'Fail closed for unconfigured compile command'
         });
         assert.equal(taskModeResult.exitCode, 0);
         assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
@@ -237,11 +251,16 @@ describe('cli/commands/gates compile and post-preflight', () => {
 
         const evidencePath = path.join(getReviewsRoot(repoRoot), `${taskId}-compile-gate.json`);
         const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
-        assert.equal(result.exitCode, 0);
-        assert.equal(evidence.status, 'PASSED');
-        assert.equal(evidence.compile_command_source, 'commands_file');
-        assert.equal(evidence.compile_commands[0], 'node -e "console.log(\'legacy fallback build ok\')"');
-        assert.match(evidence.commands_path, /commands-legacy-fallback\.md$/);
+        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
+        assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
+        assert.ok(result.outputLines.some((line) => line.includes('Compile-gate is fail-closed')));
+        assert.ok(result.outputLines.some((line) => line.includes('will not read 40-commands.md as a fallback')));
+        assert.ok(result.outputLines.some((line) => line.includes(`CompileSummary: FAILED`) && line.includes(`exit_code=${EXIT_GATE_FAILURE}`)));
+        assert.equal(evidence.status, 'FAILED');
+        assert.equal(evidence.exit_code, EXIT_GATE_FAILURE);
+        assert.equal(evidence.compile_command_source, 'unconfigured');
+        assert.deepEqual(evidence.compile_commands, []);
+        assert.equal(evidence.commands_path, null);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -307,6 +326,11 @@ describe('cli/commands/gates compile and post-preflight', () => {
         const taskId = 'T-901-compile-contract';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        writeWorkflowConfig(repoRoot, {
+            compile_gate: {
+                command: 'npm test'
+            }
+        });
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands.md');
         fs.writeFileSync(commandsPath, [
@@ -649,6 +673,11 @@ describe('cli/commands/gates compile and post-preflight', () => {
         const taskId = 'T-901-compile-fail-retention';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        writeWorkflowConfig(repoRoot, {
+            compile_gate: {
+                command: 'node -e "console.error(\'compile failed detail\'); process.exit(2)"'
+            }
+        });
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-compile-fail-retention.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -699,6 +728,11 @@ describe('cli/commands/gates compile and post-preflight', () => {
         const taskId = 'T-901-compile-infra-hint';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        writeWorkflowConfig(repoRoot, {
+            compile_gate: {
+                command: 'node -e "console.error(\'org.testcontainers.containers.ContainerFetchException: Could not find a valid Docker environment\'); process.exit(2)"'
+            }
+        });
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-compile-infra-hint.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -768,6 +802,11 @@ describe('cli/commands/gates compile and post-preflight', () => {
             try {
                 seedTaskQueue(repoRoot, testCase.taskId);
                 seedInitAnswers(repoRoot);
+                writeWorkflowConfig(repoRoot, {
+                    compile_gate: {
+                        command: `node -e "console.error('${testCase.message}'); process.exit(2)"`
+                    }
+                });
                 const preflightPath = writePreflight(repoRoot, testCase.taskId);
                 const commandsPath = path.join(repoRoot, `${testCase.taskId}-commands.md`);
                 const outputFiltersPath = path.resolve('live/config/output-filters.json');
@@ -815,6 +854,11 @@ describe('cli/commands/gates compile and post-preflight', () => {
         const taskId = 'T-901-compile-generic-failure';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        writeWorkflowConfig(repoRoot, {
+            compile_gate: {
+                command: 'node -e "console.error(\'src/app.ts(1,1): error TS1005: expected\'); process.exit(2)"'
+            }
+        });
         const preflightPath = writePreflight(repoRoot, taskId);
         const commandsPath = path.join(repoRoot, 'commands-compile-generic-failure.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');

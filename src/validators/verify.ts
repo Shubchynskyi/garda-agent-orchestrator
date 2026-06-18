@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import {
     BOOLEAN_FALSE_VALUES,
     BOOLEAN_TRUE_VALUES,
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
     getBundleCliCommand,
     getLegacyBundleCliCommand,
     getLegacySourceCliCommand,
@@ -10,6 +11,7 @@ import {
 } from '../core/constants';
 import { pathExists, readTextFile } from '../core/filesystem';
 import { isPathInsideRoot } from '../core/paths';
+import { getWorkflowConfigPath, isConfiguredCompileGateCommand } from '../core/workflow-config';
 import { getManagedGitignoreEntries } from '../materialization/common';
 import { validateSkillPacks, validateSkillsIndex } from '../runtime/skills';
 import { getTaskModeRuleSectionMigrations } from '../materialization/rule-contracts';
@@ -288,7 +290,7 @@ export function detectCommandsViolations(targetRoot: string): string[] {
         }
     }
     try {
-        getCompileCommands(commandsPath);
+        getCompileCommands(commandsPath, { allowUnconfiguredSentinel: true });
     } catch (error) {
         violations.push('40-commands.md compile gate command contract violation: ' + (error instanceof Error ? error.message : String(error)));
     }
@@ -511,6 +513,36 @@ function isManagedConfigMapped(targetRoot: string, configName: string): boolean 
     }
 }
 
+function detectWorkflowCompileGateCommandViolations(targetRoot: string): string[] {
+    const bundlePath = path.join(targetRoot, resolveBundleName());
+    const workflowConfigPath = getWorkflowConfigPath(bundlePath);
+    const relativeWorkflowConfigPath = path.relative(targetRoot, workflowConfigPath).replace(/\\/g, '/');
+    if (!pathExists(workflowConfigPath)) {
+        return [`${relativeWorkflowConfigPath} is missing compile_gate.command; PROJECT_COMMANDS_PENDING until agent-init or workflow set records a project-specific command.`];
+    }
+
+    try {
+        const parsed = JSON.parse(readTextFile(workflowConfigPath)) as Record<string, unknown>;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return [];
+        }
+        const rawSection = parsed.compile_gate;
+        if (!rawSection || typeof rawSection !== 'object' || Array.isArray(rawSection)) {
+            return [`${relativeWorkflowConfigPath} must include compile_gate.command; PROJECT_COMMANDS_PENDING until agent-init or workflow set records a project-specific command.`];
+        }
+        const section = rawSection as Record<string, unknown>;
+        const command = typeof section.command === 'string' && section.command.trim()
+            ? section.command.trim()
+            : UNCONFIGURED_COMPILE_GATE_COMMAND;
+        if (!isConfiguredCompileGateCommand(command)) {
+            return [`${relativeWorkflowConfigPath} compile_gate.command is unconfigured; PROJECT_COMMANDS_PENDING until agent-init or workflow set records a project-specific command.`];
+        }
+    } catch {
+        return [];
+    }
+    return [];
+}
+
 export function runVerify(options: RunVerifyOptions): VerifyResult {
     const targetRoot = path.resolve(options.targetRoot);
     const sourceOfTruth = options.sourceOfTruth.trim();
@@ -540,6 +572,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
     const ruleFileResult = detectRuleFileViolations(targetRoot);
     const taskModeViolations = detectTaskModeRuleContractViolations(targetRoot);
     const commandsViolations = detectCommandsViolations(targetRoot);
+    const workflowCompileGateCommandViolations = detectWorkflowCompileGateCommandViolations(targetRoot);
     const coreRuleViolations = detectCoreRuleViolations(targetRoot, initAnswers.assistantLanguage, initAnswers.assistantBrevity);
     const taskViolations = detectTaskViolations(targetRoot, canonicalEntrypoint);
     const entrypointViolations = detectEntrypointViolations(targetRoot, canonicalEntrypoint);
@@ -565,7 +598,7 @@ export function runVerify(options: RunVerifyOptions): VerifyResult {
         skillsIndexConfigContractViolations: skillsIndexConfigViolations,
         ruleFileViolations: ruleFileResult.ruleFileViolations.concat(taskModeViolations),
         templatePlaceholderViolations: ruleFileResult.templatePlaceholderViolations,
-        commandsContractViolations: commandsViolations,
+        commandsContractViolations: commandsViolations.concat(workflowCompileGateCommandViolations),
         manifestContractViolations: manifestViolations.concat(
             optionalSkillSelectionPolicyViolations,
             isolationModeViolations,

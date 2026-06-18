@@ -164,7 +164,7 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         ]),
         hints: Object.freeze([
             'Default mode: workflow with no subcommand behaves like workflow show.',
-            'compile_gate.command overrides the legacy 40-commands.md Compile Gate block when configured; unconfigured workspaces keep the legacy fallback.',
+            'compile_gate.command is the executable compile-gate source; unconfigured workspaces fail closed instead of falling back to 40-commands.md.',
             'Compile-gate command changes must stay compile/build/type-check commands and must not match the configured full-suite command.',
             'Review execution policy modes: parallel_all, test_after_code, code_first_optional, strict_sequential.',
             'Scope budget guard actions: BLOCK_FOR_SPLIT, WARN_ONLY.',

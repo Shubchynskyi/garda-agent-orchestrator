@@ -13,6 +13,7 @@ import {
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../src/core/constants';
 
 describe('gates/compile-gate', () => {
     describe('getCompileCommandProfile', () => {
@@ -164,6 +165,24 @@ describe('gates/compile-gate', () => {
             ].join('\n'), 'utf8');
 
             assert.throws(() => getCompileCommands(filePath), /placeholder.*unresolved/i);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('rejects unconfigured sentinel unless explicitly allowed for human-visible contract validation', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'compile-gate-'));
+            const filePath = path.join(tmpDir, 'commands.md');
+            fs.writeFileSync(filePath, [
+                '### Compile Gate (Mandatory)',
+                '```',
+                UNCONFIGURED_COMPILE_GATE_COMMAND,
+                '```',
+            ].join('\n'), 'utf8');
+
+            assert.throws(() => getCompileCommands(filePath), /Compile command is unconfigured/i);
+            assert.deepEqual(
+                getCompileCommands(filePath, { allowUnconfiguredSentinel: true }),
+                [UNCONFIGURED_COMPILE_GATE_COMMAND]
+            );
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 

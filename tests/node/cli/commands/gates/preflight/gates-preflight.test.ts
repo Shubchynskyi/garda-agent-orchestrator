@@ -17,6 +17,7 @@ import {
     runCliWithCapturedOutput
 } from '../../gate-test-helpers';
 import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
+import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
 import {
     captureExpectedError,
     createTempRepo,
@@ -33,8 +34,18 @@ import {
     writeHandshakeArtifact
 } from './gates-preflight-fixtures';
 
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+
 function computeTaskTextSha256(taskText: string): string {
     return createHash('sha256').update(taskText.trim(), 'utf8').digest('hex');
+}
+
+function writeConfiguredCompileGate(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
 }
 
 function seedNodeBackendOptionalSkillFixture(
@@ -1966,9 +1977,11 @@ describe('cli/commands/gates — preflight', () => {
         const taskId = 'T-149-compile-required-optional-skill';
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        writeConfiguredCompileGate(repoRoot);
         fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
         fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const order = 1;\n', 'utf8');
         seedNodeBackendOptionalSkillFixture(repoRoot, 'required');
+        initializeGitRepo(repoRoot);
 
         const commandsPath = path.join(repoRoot, 'commands-optional-skill-required.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');

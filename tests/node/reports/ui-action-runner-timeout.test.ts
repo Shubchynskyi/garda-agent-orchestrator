@@ -15,6 +15,26 @@ function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isProcessAlive(pid: number): boolean {
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function waitForProcessExit(pid: number, timeoutMs = 5000): Promise<boolean> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+        if (!isProcessAlive(pid)) {
+            return true;
+        }
+        await delay(100);
+    }
+    return !isProcessAlive(pid);
+}
+
 function makeTmpDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-ui-action-timeout-'));
 }
@@ -23,8 +43,10 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
     const repoRoot = makeTmpDir();
     try {
         const markerPath = path.join(repoRoot, 'child-survived.txt');
+        const childPidPath = path.join(repoRoot, 'child.pid');
         const childScript = [
-            `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'alive'), 1200);`,
+            `require('node:fs').writeFileSync(${JSON.stringify(childPidPath)}, String(process.pid));`,
+            `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'alive'), 4000);`,
             'setTimeout(() => {}, 10000);'
         ].join('');
         const parentScript = [
@@ -42,7 +64,7 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
             unavailable_reason: null,
             requires_confirmation: false,
             confirmation_phrase: null,
-            timeout_ms: 250,
+            timeout_ms: 1000,
             command: {
                 executable: process.execPath,
                 args: ['-e', parentScript],
@@ -51,13 +73,20 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
         };
 
         const result = await runUiActionCommand(action, repoRoot);
-        await delay(1800);
 
         assert.equal(result.timed_out, true);
-        assert.equal(result.timeout_ms, 250);
+        assert.equal(result.timeout_ms, 1000);
         assert.notEqual(result.exit_code, 0);
-        assert.match(result.stderr, /Process timed out after 250 ms/u);
-        assert.match(result.stderr, new RegExp(formatUiActionTimeoutMessage(250).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+        assert.match(result.stderr, /Process timed out after 1000 ms/u);
+        assert.match(result.stderr, new RegExp(formatUiActionTimeoutMessage(1000).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
+        assert.equal(fs.existsSync(childPidPath), true, 'child process pid should be captured before timeout cleanup');
+        const childPid = Number(fs.readFileSync(childPidPath, 'utf8'));
+        assert.ok(Number.isInteger(childPid) && childPid > 0);
+        assert.equal(
+            await waitForProcessExit(childPid),
+            true,
+            `child process ${childPid} should not survive UI action timeout cleanup`
+        );
         assert.equal(fs.existsSync(markerPath), false, 'child process should not survive UI action timeout cleanup');
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });

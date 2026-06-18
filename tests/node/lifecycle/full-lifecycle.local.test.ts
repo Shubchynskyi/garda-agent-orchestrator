@@ -18,6 +18,8 @@ import { runVerify } from '../../../src/validators/verify';
 import { validateManifest } from '../../../src/validators/validate-manifest';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+
 function findRepoRoot(): string {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
@@ -84,6 +86,17 @@ function materializeProjectMemory(bundleRoot: string) {
             ].join('\n')
         );
     }
+}
+
+function configureCompileGateCommand(bundleRoot: string) {
+    const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    const workflowConfig = readJson(workflowConfigPath);
+    const compileGate = workflowConfig.compile_gate;
+    workflowConfig.compile_gate = {
+        ...(compileGate && typeof compileGate === 'object' && !Array.isArray(compileGate) ? compileGate : {}),
+        command: TEST_COMPILE_GATE_COMMAND
+    };
+    fs.writeFileSync(workflowConfigPath, `${JSON.stringify(workflowConfig, null, 2)}\n`, 'utf8');
 }
 
 function listChildDirectories(parentDir: string) {
@@ -240,6 +253,7 @@ describe('full local lifecycle', () => {
             assert.ok(!setupOutput.includes('Workspace is ready.'));
 
             materializeProjectCommands(bundleRoot);
+            configureCompileGateCommand(bundleRoot);
             materializeProjectMemory(bundleRoot);
             const agentInitResult = runAgentInit({
                 targetRoot: workspaceRoot,

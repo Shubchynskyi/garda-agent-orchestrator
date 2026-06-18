@@ -86,9 +86,9 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('GARDA_WORKFLOW'));
         assert.ok(output.includes('Action: show'));
         assert.ok(output.includes('Scope: repo-local'));
-        assert.ok(output.includes('Compile gate command: legacy 40-commands.md fallback'));
+        assert.ok(output.includes('Compile gate command: unconfigured (fail-closed)'));
         assert.ok(output.includes(`CompileGateCommand: ${UNCONFIGURED_COMPILE_GATE_COMMAND}`));
-        assert.ok(output.includes('CompileGateCommandSource: legacy-40-commands-fallback'));
+        assert.ok(output.includes('CompileGateCommandSource: unconfigured-fail-closed'));
         assert.ok(output.includes('Mandatory full-suite: false'));
         assert.ok(output.includes('Review execution policy: code_first_optional'));
         assert.ok(output.includes('FullSuiteCommand: npm test'));
@@ -635,7 +635,8 @@ test('workflow help describes project-memory update as the default policy', () =
 
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
     assert.ok(helpText.includes('workflow set --compile-gate-command "npm run build"'));
-    assert.ok(helpText.includes('compile_gate.command overrides the legacy 40-commands.md Compile Gate block'));
+    assert.ok(helpText.includes('compile_gate.command is the executable compile-gate source'));
+    assert.ok(helpText.includes('unconfigured workspaces fail closed instead of falling back to 40-commands.md'));
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
     assert.ok(helpText.includes('workflow set --full-suite on --operator-confirmed yes --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('workflow set --full-suite-placement before_test_review'));
@@ -706,7 +707,7 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.action, 'show');
         assert.equal(parsed.scope, 'repo-local');
         assert.equal(parsed.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
-        assert.equal(parsed.compile_gate_summary_line, 'Compile gate command: legacy 40-commands.md fallback');
+        assert.equal(parsed.compile_gate_summary_line, 'Compile gate command: unconfigured (fail-closed)');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.full_suite_validation.placement, 'before_test_review');
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');

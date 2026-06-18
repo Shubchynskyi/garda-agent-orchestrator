@@ -76,6 +76,19 @@ export function readConfiguredCompileGateCommandForCompileGate(repoRoot: string)
     return { command, configPath: workflowConfigPath };
 }
 
+export function buildUnconfiguredCompileGateCommandMessage(repoRoot: string, configPath: string): string {
+    const cliPrefix = gateHelpers.isOrchestratorSourceCheckout(repoRoot)
+        ? getSourceCliCommand()
+        : getBundleCliCommand(resolveBundleNameForTarget(repoRoot));
+    const normalizedConfigPath = gateHelpers.normalizePath(configPath);
+    return [
+        `Compile gate command is unconfigured in ${normalizedConfigPath}.`,
+        'Compile-gate is fail-closed and will not read 40-commands.md as a fallback because compile/build/type-check commands are project-specific.',
+        `Set a real compile/build/type-check command with: ${cliPrefix} workflow set --compile-gate-command "<command>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root ".".`,
+        'If this workspace has not been initialized, rerun agent-init/project discovery so it can record the project-specific compile-gate command.'
+    ].join(' ');
+}
+
 export function hasArrayEntries(value: unknown): boolean {
     return Array.isArray(value) && value.length > 0;
 }

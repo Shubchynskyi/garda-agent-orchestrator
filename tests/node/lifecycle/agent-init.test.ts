@@ -10,8 +10,10 @@ import { runAgentInit } from '../../../src/lifecycle/agent-init';
 import { getStatusSnapshot } from '../../../src/validators/status';
 import { resolveInitAnswersRelativePath } from '../../../src/core/constants';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 
 const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
 
 const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
@@ -30,6 +32,12 @@ function readWorkflowConfig(bundleRoot: string): Record<string, unknown> {
     return JSON.parse(
         fs.readFileSync(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), 'utf8')
     ) as Record<string, unknown>;
+}
+
+function writeConfiguredWorkflowConfig(bundleRoot: string): void {
+    const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
+    writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), workflowConfig);
 }
 
 function seedProjectMemoryTemplates(bundleRoot: string) {
@@ -745,6 +753,7 @@ test('setup/status/agent-init handoff keeps ActiveAgentFiles as a single pending
         writeText(path.join(bundleRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2));
         writeText(path.join(bundleRoot, 'live', 'USAGE.md'), '# Usage\n');
         writeText(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'npm install\nnpm test\nnpm run lint\n');
+        writeConfiguredWorkflowConfig(bundleRoot);
         writeText(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
         writeText(path.join(workspaceRoot, '.agents', 'workflows', 'start-task.md'), [MANAGED_START, '# Start Task', 'Shared router.', MANAGED_END].join('\n'));
         writeText(path.join(workspaceRoot, 'AGENTS.md'), makeCompliantEntrypoint('AGENTS.md'));

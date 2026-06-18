@@ -909,7 +909,13 @@ describe('gates/full-suite-validation', () => {
             const helperScript = path.join(tempDir, 'pass-after-configured-timeout.js');
             fs.writeFileSync(
                 helperScript,
-                'setTimeout(() => { process.stdout.write("forecast timeout pass\\n"); process.exit(0); }, 250);',
+                [
+                    'const buildScriptsTimeout = Number(process.env.GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS);',
+                    'const shardTimeout = Number(process.env.GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS);',
+                    'if (!Number.isSafeInteger(buildScriptsTimeout) || buildScriptsTimeout <= 100) process.exit(41);',
+                    'if (!Number.isSafeInteger(shardTimeout) || shardTimeout <= 100) process.exit(42);',
+                    'setTimeout(() => { process.stdout.write(`forecast timeout pass ${buildScriptsTimeout} ${shardTimeout}\\n`); process.exit(0); }, 250);'
+                ].join('\n'),
                 'utf8'
             );
             fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
@@ -952,6 +958,7 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'PASSED');
             assert.equal(artifact.timed_out, false);
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('forecast timeout pass')));
             assert.equal(artifact.timeout_forecast.recommendation_source, 'history');
             assert.ok(artifact.timeout_forecast.recommended_timeout_seconds > 1);
             const history = fs.readFileSync(resolveFullSuiteDurationHistoryPath(tempDir), 'utf8');

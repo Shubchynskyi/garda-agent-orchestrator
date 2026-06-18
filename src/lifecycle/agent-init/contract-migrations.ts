@@ -1,6 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { resolveBundleName } from '../../core/constants';
 import { pathExists, readTextFile } from '../../core/filesystem';
+import { isPlainObject } from '../../core/config-merge';
+import { writeJsonFile } from '../../core/json';
+import {
+    getWorkflowConfigPath,
+    isConfiguredCompileGateCommand,
+    readWorkflowConfigForMerge
+} from '../../core/workflow-config';
 import { getTaskModeRuleSectionMigrations, RuleContractSectionMigration } from '../../materialization/rule-contracts';
 import { validateCompileGateCommand } from '../../gates/compile/compile-gate';
 
@@ -174,6 +182,31 @@ function applyCompileGateCommandToSection(sectionContent: string, command: strin
     return sectionContent.replace(sectionPattern, `$1${normalizedCommand}$3`);
 }
 
+function syncWorkflowConfigCompileGateCommand(rootPath: string, command: string | null): void {
+    const normalizedCommand = normalizePreservableCompileGateCommand(command, 'workflow-config.compile_gate.command');
+    if (!normalizedCommand) {
+        return;
+    }
+
+    const workflowConfigPath = getWorkflowConfigPath(path.join(rootPath, resolveBundleName()));
+    const readResult = readWorkflowConfigForMerge(workflowConfigPath);
+    if (!readResult.config) {
+        return;
+    }
+
+    const nextConfig = readResult.config;
+    const compileGate = isPlainObject(nextConfig.compile_gate)
+        ? { ...nextConfig.compile_gate }
+        : {};
+    if (isConfiguredCompileGateCommand(compileGate.command)) {
+        return;
+    }
+
+    compileGate.command = normalizedCommand;
+    nextConfig.compile_gate = compileGate;
+    writeJsonFile(workflowConfigPath, nextConfig);
+}
+
 function replaceOrAppendSection(content: string, heading: string, replacement: string, newline: string): string {
     const normalizedReplacement = normalizeNewlines(replacement, newline).trimEnd();
     const bounds = getSectionBounds(content, heading);
@@ -219,6 +252,7 @@ function applySectionMigration(
         const preservedCommand = normalizePreservableCompileGateCommand(preservedCompileGateCommand, livePath)
             ?? getPreservableCompileGateCommand(currentContent, migration, livePath);
         if (preservedCommand) {
+            syncWorkflowConfigCompileGateCommand(rootPath, preservedCommand);
             templateSection = applyCompileGateCommandToSection(templateSection, preservedCommand);
         }
     }

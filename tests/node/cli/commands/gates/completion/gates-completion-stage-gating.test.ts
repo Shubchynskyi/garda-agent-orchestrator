@@ -404,7 +404,6 @@ describe('cli/commands/gates', () => {
         assert.ok(completionResult.stage_sequence_evidence.violations.some((item) => item.includes("Do not backfill 'COMPILE_GATE_PASSED' from an older execution cycle.")));
         assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), /restart-coherent-cycle/);
         assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), new RegExp(escapeRegExp(taskId)));
-        assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), new RegExp(escapeRegExp(commandsPath.replace(/\\/g, '/'))));
         assert.match(String((completionResult as Record<string, unknown>).coherent_cycle_restart_command || ''), new RegExp(escapeRegExp(outputFiltersPath.replace(/\\/g, '/'))));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });

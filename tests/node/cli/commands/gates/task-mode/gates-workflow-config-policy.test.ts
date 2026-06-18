@@ -12,6 +12,7 @@ import {
 import { WORKFLOW_CONFIG_TASK_OWNERSHIP_PHRASE } from '../../../../../../src/cli/commands/gate-flows/task-mode/task-mode-flow';
 import { runCompileGateCommand } from '../../../../../../src/cli/commands/gate-flows/compile/compile-flow';
 import { runFullSuiteValidationCommand } from '../../../../../../src/cli/commands/gate-flows/full-suite/full-suite-validation-flow';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../../../src/core/constants';
 import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { isWorkflowConfigControlPlanePath, writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
 import { getTaskModeEvidence } from '../../../../../../src/gates/task-mode';
@@ -169,6 +170,18 @@ function enableProjectMemoryMaintenancePolicy(repoRoot: string): void {
     config.project_memory_maintenance.mode = 'update';
     config.project_memory_maintenance.run_before_final_closeout = true;
     config.project_memory_maintenance.require_user_approval_for_writes = true;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function resetCompileGateCommandToUnconfigured(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        compile_gate?: { command?: string };
+    };
+    config.compile_gate = {
+        ...(config.compile_gate || {}),
+        command: UNCONFIGURED_COMPILE_GATE_COMMAND
+    };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 }
 
@@ -460,6 +473,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             enableProjectMemoryMaintenancePolicy(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
             initializeGitRepo(repoRoot);
 
             assert.throws(
@@ -550,6 +564,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             enableProjectMemoryMaintenancePolicy(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
             initializeGitRepo(repoRoot);
             weakenOutOfScopePolicy(repoRoot);
 
@@ -580,6 +595,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             enableProjectMemoryMaintenancePolicy(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
             initializeGitRepo(repoRoot);
             writeProtectedControlPlaneManifest(repoRoot);
             weakenOutOfScopePolicy(repoRoot);
@@ -611,6 +627,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             enableProjectMemoryMaintenancePolicy(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
             initializeGitRepo(repoRoot);
 
             const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
@@ -645,6 +662,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             writeBaselineAgentEntrypoint(repoRoot);
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
             initializeGitRepo(repoRoot);
 
             const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
@@ -674,6 +692,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             seedTaskQueue(repoRoot, taskId);
             seedInitAnswers(repoRoot);
             enableProjectMemoryMaintenancePolicy(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
             initializeGitRepo(repoRoot);
             removeReviewExecutionPolicy(repoRoot);
 

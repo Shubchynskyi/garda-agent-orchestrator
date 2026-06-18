@@ -20,6 +20,7 @@ import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project
 import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
 
 const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
+const TEST_COMPILE_GATE_COMMAND = 'npm run build';
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
@@ -67,6 +68,15 @@ function materializeProjectCommands(bundleRoot: string): void {
     }
 
     fs.writeFileSync(commandsPath, content, 'utf8');
+
+    const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
+    const compileGate = workflowConfig.compile_gate && typeof workflowConfig.compile_gate === 'object' && !Array.isArray(workflowConfig.compile_gate)
+        ? { ...workflowConfig.compile_gate as Record<string, unknown> }
+        : {};
+    compileGate.command = TEST_COMPILE_GATE_COMMAND;
+    workflowConfig.compile_gate = compileGate;
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
 }
 
 function extractMarkdownSection(content: string, heading: string): string {

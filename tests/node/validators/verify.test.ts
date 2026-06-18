@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../src/core/constants';
 import {
     parseBooleanLike,
     readVerifyInitAnswers,
@@ -33,6 +34,23 @@ function writeInitAnswersFixture(targetRoot: string) {
         }),
         'utf8'
     );
+}
+
+function requiredCommandContractSnippets(): string[] {
+    return [
+        'node garda-agent-orchestrator/bin/garda.js gate enter-task-mode',
+        'node garda-agent-orchestrator/bin/garda.js gate load-rule-pack',
+        'node garda-agent-orchestrator/bin/garda.js gate classify-change',
+        'node garda-agent-orchestrator/bin/garda.js gate compile-gate',
+        'node garda-agent-orchestrator/bin/garda.js gate required-reviews-check',
+        'node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate',
+        'node garda-agent-orchestrator/bin/garda.js gate completion-gate',
+        'node garda-agent-orchestrator/bin/garda.js gate log-task-event',
+        'node garda-agent-orchestrator/bin/garda.js gate task-events-summary',
+        'node garda-agent-orchestrator/bin/garda.js gate build-scoped-diff',
+        'node garda-agent-orchestrator/bin/garda.js gate build-review-context',
+        'node garda-agent-orchestrator/bin/garda.js gate validate-manifest'
+    ];
 }
 
 test('parseBooleanLike handles true values', () => {
@@ -190,23 +208,68 @@ test('detectCommandsViolations rejects test command in compile gate section', ()
         'npm test',
         '```',
         '',
-        'node garda-agent-orchestrator/bin/garda.js gate enter-task-mode',
-        'node garda-agent-orchestrator/bin/garda.js gate load-rule-pack',
-        'node garda-agent-orchestrator/bin/garda.js gate classify-change',
-        'node garda-agent-orchestrator/bin/garda.js gate compile-gate',
-        'node garda-agent-orchestrator/bin/garda.js gate required-reviews-check',
-        'node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate',
-        'node garda-agent-orchestrator/bin/garda.js gate completion-gate',
-        'node garda-agent-orchestrator/bin/garda.js gate log-task-event',
-        'node garda-agent-orchestrator/bin/garda.js gate task-events-summary',
-        'node garda-agent-orchestrator/bin/garda.js gate build-scoped-diff',
-        'node garda-agent-orchestrator/bin/garda.js gate build-review-context',
-        'node garda-agent-orchestrator/bin/garda.js gate validate-manifest'
+        ...requiredCommandContractSnippets()
     ].join('\n'), 'utf8');
 
     try {
         const violations = detectCommandsViolations(tmpDir);
         assert.ok(violations.some((violation) => /must not run the full test suite/i.test(violation)));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectCommandsViolations allows unconfigured compile-gate sentinel in human-visible commands file', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    const rulesDir = path.join(
+        tmpDir,
+        'garda-agent-orchestrator', 'live', 'docs', 'agent-rules'
+    );
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, '40-commands.md'), [
+        '# Commands',
+        '',
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        '__COMPILE_GATE_COMMAND_UNCONFIGURED__',
+        '```',
+        '',
+        ...requiredCommandContractSnippets()
+    ].join('\n'), 'utf8');
+
+    try {
+        const violations = detectCommandsViolations(tmpDir);
+        assert.deepEqual(violations, []);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('runVerify reports project commands pending when workflow compile gate command is unconfigured', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-test-'));
+    try {
+        writeInitAnswersFixture(tmpDir);
+        const configDir = path.join(tmpDir, 'garda-agent-orchestrator', 'live', 'config');
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+            compile_gate: {
+                command: UNCONFIGURED_COMPILE_GATE_COMMAND
+            }
+        }, null, 2), 'utf8');
+
+        const result = runVerify({
+            targetRoot: tmpDir,
+            sourceOfTruth: 'Claude',
+            initAnswersPath: 'garda-agent-orchestrator/runtime/init-answers.json'
+        });
+
+        assert.equal(result.passed, false);
+        assert.ok(
+            result.violations.commandsContractViolations.some(
+                (violation) => violation.includes('compile_gate.command is unconfigured') &&
+                    violation.includes('PROJECT_COMMANDS_PENDING')
+            )
+        );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

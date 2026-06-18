@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
     resolveAgentInitStateRelativePathForTarget,
     resolveInitAnswersRelativePathForTarget
 } from '../core/constants';
@@ -27,6 +28,7 @@ import { assessProtectedManifest } from './protected-manifest-assessment';
 import { readTaskQueueStatusMap } from './task-status-map';
 import { buildRecommendedNextCommand } from './status/status-recommendations';
 import { formatFullSuitePerformanceGuidance } from '../gates/full-suite/full-suite-validation';
+import { getWorkflowConfigPath, isConfiguredCompileGateCommand } from '../core/workflow-config';
 import type {
     AgentInitializationPendingReason,
     AgentInitState,
@@ -78,6 +80,31 @@ function readMandatoryFullSuiteConfig(bundlePath: string): {
         };
     } catch {
         return { enabled: null, command: null, performance: null };
+    }
+}
+
+function readCompileGateCommandStatus(bundlePath: string): { configured: boolean; command: string | null } {
+    const workflowConfigPath = getWorkflowConfigPath(bundlePath);
+    if (!pathExists(workflowConfigPath)) {
+        return { configured: false, command: null };
+    }
+
+    try {
+        const parsed = JSON.parse(readTextFile(workflowConfigPath)) as Record<string, unknown>;
+        const rawSection = parsed.compile_gate;
+        if (!rawSection || typeof rawSection !== 'object' || Array.isArray(rawSection)) {
+            return { configured: false, command: null };
+        }
+        const section = rawSection as Record<string, unknown>;
+        const command = typeof section.command === 'string' && section.command.trim()
+            ? section.command.trim()
+            : UNCONFIGURED_COMPILE_GATE_COMMAND;
+        return {
+            configured: isConfiguredCompileGateCommand(command),
+            command
+        };
+    } catch {
+        return { configured: false, command: null };
     }
 }
 
@@ -430,7 +457,11 @@ export function getStatusSnapshot(targetRoot: string, initAnswersPath?: string):
     const usagePath = path.join(livePath, 'USAGE.md');
     const commandsRulePath = getCommandsRulePath(bundlePath);
     const commandsContent = readUtf8IfExists(commandsRulePath);
+    const compileGateStatus = readCompileGateCommandStatus(bundlePath);
     const missingProjectCommands = getMissingProjectCommands(commandsContent || '');
+    if (bundlePresent && !compileGateStatus.configured) {
+        missingProjectCommands.push('compile_gate.command');
+    }
     const agentInitStateResult: AgentInitStateResult = bundlePresent
         ? readAgentInitStateSafe(
             resolvedTargetRoot,

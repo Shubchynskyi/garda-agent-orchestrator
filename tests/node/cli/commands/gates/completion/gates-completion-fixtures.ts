@@ -33,6 +33,7 @@ import { writeProtectedControlPlaneManifest } from '../../../../../../src/gates/
 
 const GIT_INIT_RETRY_DELAYS_MS = [0, 25, 100];
 const RETRYABLE_GIT_INIT_PATTERNS = /\b(?:EACCES|EBUSY|ENOTEMPTY|EPERM|Permission denied)\b/i;
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -105,6 +106,9 @@ function seedProjectMemoryOffWorkflowConfig(repoRoot: string): void {
     const configDir = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config');
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+        compile_gate: {
+            command: TEST_COMPILE_GATE_COMMAND
+        },
         full_suite_validation: {
             enabled: false,
             command: 'npm test',

@@ -901,6 +901,9 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.writeFileSync(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
             JSON.stringify({
+                compile_gate: {
+                    command: 'node -e "console.log(\'build ok\')"'
+                },
                 full_suite_validation: {
                     enabled: false,
                     command: 'npm test',

@@ -37,6 +37,8 @@ import { resolveReviewerRoutingPolicy } from '../../../../../../src/gates/review
 import { buildDefaultWorkflowConfig } from '../../../../../../src/core/workflow-config';
 import { computeProtectedSnapshotDigest, writeProtectedControlPlaneManifest } from '../../../../../../src/gates/shared/helpers';
 
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+
 function createReviewerRoutingFixture(
     sourceOfTruth: string,
     executionProviderSource: 'provider_entrypoint' | 'provider_bridge' = 'provider_entrypoint',
@@ -86,6 +88,7 @@ function createTempRepo(): string {
     fs.writeFileSync(path.join(root, 'src', 'app.ts'), 'const a = 1;\nconst b = 2;\nconsole.log(a + b);\n', 'utf8');
     seedRuleFiles(root);
     const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
     workflowConfig.full_suite_validation.enabled = false;
     workflowConfig.full_suite_validation.command = 'npm test';
     workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
@@ -98,6 +101,13 @@ function createTempRepo(): string {
     );
     writeProtectedControlPlaneManifest(root);
     return root;
+}
+
+function writeCompileGateCommand(repoRoot: string, command: string): void {
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    workflowConfig.compile_gate.command = command;
+    fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2) + '\n', 'utf8');
 }
 
 const PROVIDER_ENTRYPOINT_BY_SOURCE: Record<string, string> = {
@@ -1667,9 +1677,11 @@ describe('cli/commands/gates', () => {
         const taskId = 'T-901-post-compile-drift';
         const generatedFile = 'garda-agent-orchestrator/live/docs/agent-rules/generated-rule.md';
         const generatedFileAbs = path.join(repoRoot, ...generatedFile.split('/'));
+        const compileScript = `require('node:fs').writeFileSync('${generatedFile}', '# modified by compile')`;
 
         seedTaskQueue(repoRoot, taskId);
         seedInitAnswers(repoRoot);
+        writeCompileGateCommand(repoRoot, `node -e "${compileScript}"`);
 
         fs.mkdirSync(path.dirname(generatedFileAbs), { recursive: true });
         fs.writeFileSync(generatedFileAbs, '# initial content\n', 'utf8');
@@ -1693,7 +1705,6 @@ describe('cli/commands/gates', () => {
 
         const commandsPath = path.join(repoRoot, 'commands-post-compile-drift.md');
         const outputFiltersPath = path.resolve('live/config/output-filters.json');
-        const compileScript = `require('node:fs').writeFileSync('${generatedFile}', '# modified by compile')`;
         fs.writeFileSync(commandsPath, [
             '### Compile Gate (Mandatory)',
             '```bash',

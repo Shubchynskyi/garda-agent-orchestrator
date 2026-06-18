@@ -57,6 +57,8 @@ import {
     findLastTimelineEventIndex
 } from '../../gate-test-helpers';
 
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -188,6 +190,9 @@ function writeWorkflowConfig(
     const configPath = path.join(configDir, 'workflow-config.json');
     fs.mkdirSync(configDir, { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify({
+        compile_gate: {
+            command: TEST_COMPILE_GATE_COMMAND
+        },
         full_suite_validation: {
             enabled: false,
             command: 'npm test',

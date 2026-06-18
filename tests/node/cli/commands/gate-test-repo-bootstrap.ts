@@ -17,6 +17,7 @@ const TRANSIENT_CLEANUP_ERROR_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'ENOT
 const DEFAULT_CLEANUP_RETRY_DELAYS_MS = [25, 50, 100, 200];
 const DEFAULT_GIT_SETUP_RETRY_DELAYS_MS = [0, 25, 100];
 const RETRYABLE_GIT_SETUP_PATTERN = /\b(?:EACCES|EBUSY|ENOTEMPTY|EPERM|Permission denied)\b|\.git[\\/]+config|could not set ['"]?core\./iu;
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
 
 interface RemoveTempRepoOptions {
     readonly rmSync?: typeof fs.rmSync;
@@ -127,6 +128,7 @@ export function createTempRepo(): string {
     
     seedRuleFiles(root);
     const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.compile_gate.command = TEST_COMPILE_GATE_COMMAND;
     workflowConfig.full_suite_validation.enabled = false;
     workflowConfig.full_suite_validation.command = 'npm test';
     workflowConfig.review_execution_policy = { mode: 'code_first_optional' };

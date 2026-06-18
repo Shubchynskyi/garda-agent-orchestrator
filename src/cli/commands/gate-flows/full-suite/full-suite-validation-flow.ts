@@ -66,11 +66,36 @@ export type {
     FullSuiteValidationCommandResult
 } from './full-suite-validation-flow-types';
 
-function buildFullSuiteValidationCommandEnv(): NodeJS.ProcessEnv {
+const BUILD_SCRIPTS_PROCESS_TIMEOUT_MS_ENV = 'GARDA_BUILD_SCRIPTS_PROCESS_TIMEOUT_MS';
+const NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV = 'GARDA_NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS';
+
+function readPositiveIntegerEnv(name: string): number | null {
+    const rawValue = String(process.env[name] || '').trim();
+    if (!rawValue) {
+        return null;
+    }
+    const parsedValue = Number(rawValue);
+    return Number.isSafeInteger(parsedValue) && parsedValue > 0 ? parsedValue : null;
+}
+
+function resolvePropagatedTimeoutEnvValue(name: string, timeoutMs: number): string {
+    const inheritedTimeoutMs = readPositiveIntegerEnv(name);
+    return String(Math.max(timeoutMs, inheritedTimeoutMs || 0));
+}
+
+function buildFullSuiteValidationCommandEnv(timeoutMs: number): NodeJS.ProcessEnv {
     return {
         GARDA_BUNDLE_NAME: undefined,
         GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME: '1',
-        GARDA_NODE_FOUNDATION_TEST_PREBUILT: '1'
+        GARDA_NODE_FOUNDATION_TEST_PREBUILT: '1',
+        [BUILD_SCRIPTS_PROCESS_TIMEOUT_MS_ENV]: resolvePropagatedTimeoutEnvValue(
+            BUILD_SCRIPTS_PROCESS_TIMEOUT_MS_ENV,
+            timeoutMs
+        ),
+        [NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV]: resolvePropagatedTimeoutEnvValue(
+            NODE_FOUNDATION_TEST_SHARD_TIMEOUT_MS_ENV,
+            timeoutMs
+        )
     };
 }
 
@@ -302,7 +327,7 @@ export async function runFullSuiteValidationCommand(
     try {
         const execution = await executeCommandAsync(config.command, {
             cwd: repoRoot,
-            env: buildFullSuiteValidationCommandEnv(),
+            env: buildFullSuiteValidationCommandEnv(executionConfig.timeout_ms),
             timeoutMs: executionConfig.timeout_ms,
             onSpawn: (child) => updateFullSuiteValidationRunMarkerChildProcess(repoRoot, taskId, child)
         });

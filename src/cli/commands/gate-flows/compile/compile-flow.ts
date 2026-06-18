@@ -13,7 +13,6 @@ import {
 import type { CommandCompactnessAudit } from '../../../../gates/task-events-summary/task-events-summary';
 import {
     getCompileCommandProfile,
-    getCompileCommands,
     getPreflightContext,
     getWorkspaceSnapshot,
     validateCompileGateCommand
@@ -28,7 +27,6 @@ import {
 import {
     buildDomainScopeFingerprints
 } from '../../../../gates/scope/domain-scope-fingerprints';
-import { resolveGateExecutionPath } from '../../../../gates/isolation/isolation-sandbox';
 import {
     detectProtectedDirtyWorkspaceDrift,
     getProtectedDirtyWorkspaceScopeFromPreflight
@@ -89,6 +87,7 @@ import {
 } from './compile-flow-execution-retention';
 import {
     appendNextStepRecoveryHint,
+    buildUnconfiguredCompileGateCommandMessage,
     buildClassifyChangeOrchestratorWorkRestartCommand,
     readConfiguredCompileGateCommandForCompileGate,
     readConfiguredFullSuiteCommandForCompileGate,
@@ -151,7 +150,7 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
 
     let resolvedCommandsPath: string | null = null;
     let compileCommands: string[] = [];
-    let compileCommandSource: 'workflow_config' | 'commands_file' = 'commands_file';
+    let compileCommandSource: 'workflow_config' | 'unconfigured' = 'unconfigured';
     let compileWorkflowConfigPath: string | null = null;
     let resolvedPreflightPath: string | null = null;
     let preflightHash: string | null = null;
@@ -183,9 +182,6 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
         const fullSuiteCommand = readConfiguredFullSuiteCommandForCompileGate(repoRoot);
         const configuredCompileGateCommand = readConfiguredCompileGateCommandForCompileGate(repoRoot);
         compileWorkflowConfigPath = configuredCompileGateCommand.configPath;
-        const commandsPathValue = options.commandsPath
-            ? options.commandsPath
-            : resolveGateExecutionPath(repoRoot, path.join('live', 'docs', 'agent-rules', '40-commands.md'));
         if (configuredCompileGateCommand.command) {
             compileCommandSource = 'workflow_config';
             validateCompileGateCommand(configuredCompileGateCommand.command, configuredCompileGateCommand.configPath, {
@@ -195,16 +191,13 @@ export async function runCompileGateCommand(options: CompileGateCommandOptions):
             });
             compileCommands = [configuredCompileGateCommand.command];
         } else {
-            resolvedCommandsPath = requireResolvedPath(
-                gateHelpers.resolvePathInsideRepo(commandsPathValue, repoRoot),
-                'CommandsPath'
+            compileCommands = [];
+            compileCommandSource = 'unconfigured';
+            exitCode = EXIT_GATE_FAILURE;
+            exceptionMessage = buildUnconfiguredCompileGateCommandMessage(
+                repoRoot,
+                configuredCompileGateCommand.configPath
             );
-            compileCommands = getCompileCommands(resolvedCommandsPath, {
-                fullSuiteCommand,
-                allowFullTestCompileCommand,
-                allowFullTestCompileCommandReason
-            });
-            compileCommandSource = 'commands_file';
         }
         resolvedPreflightPath = resolvePreflightPath(repoRoot, options.preflightPath || '', resolvedTaskId);
         preflightContext = getPreflightContext(resolvedPreflightPath, resolvedTaskId);

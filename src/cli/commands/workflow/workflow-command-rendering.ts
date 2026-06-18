@@ -66,7 +66,11 @@ export function buildCompileGateLine(config: { compile_gate?: CompileGateConfig 
     const command = config.compile_gate?.command || UNCONFIGURED_COMPILE_GATE_COMMAND;
     return isConfiguredCompileGateCommand(command)
         ? `Compile gate command: configured (${command})`
-        : 'Compile gate command: legacy 40-commands.md fallback';
+        : 'Compile gate command: unconfigured (fail-closed)';
+}
+
+export function buildCompileGateCommandSource(command: unknown): string {
+    return isConfiguredCompileGateCommand(command) ? 'workflow-config' : 'unconfigured-fail-closed';
 }
 
 export function buildReviewExecutionPolicyView(state: WorkflowConfigState): WorkflowReviewExecutionPolicyView {
@@ -237,7 +241,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('');
     lines.push('Compile gate');
     lines.push(`CompileGateCommand: ${compileGate.command}`);
-    lines.push(`CompileGateCommandSource: ${isConfiguredCompileGateCommand(compileGate.command) ? 'workflow-config' : 'legacy-40-commands-fallback'}`);
+    lines.push(`CompileGateCommandSource: ${buildCompileGateCommandSource(compileGate.command)}`);
     lines.push('');
     lines.push('Full suite validation');
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);

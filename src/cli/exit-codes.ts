@@ -71,8 +71,8 @@ export function classifyErrorExitCode(error: unknown): number {
 
     if (matchesAny(message, LOCK_CONTENTION_PATTERNS)) return EXIT_LOCK_CONTENTION;
     if (matchesAny(message, OFFLINE_BLOCKED_PATTERNS))  return EXIT_OFFLINE_BLOCKED;
-    if (matchesAny(message, USAGE_PATTERNS))            return EXIT_USAGE_ERROR;
     if (matchesAny(message, PRECONDITION_PATTERNS))     return EXIT_PRECONDITION_FAILURE;
+    if (matchesAny(message, USAGE_PATTERNS))            return EXIT_USAGE_ERROR;
     if (matchesAny(message, VALIDATION_PATTERNS))       return EXIT_VALIDATION_FAILURE;
 
     return EXIT_GENERAL_FAILURE;

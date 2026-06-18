@@ -18,6 +18,8 @@ type CapturedMaterializationOptions = {
     activeAgentFilesSeed?: string | null;
 };
 
+const TEST_COMPILE_GATE_COMMAND = 'node -e "console.log(\'build ok\')"';
+
 function findRepoRoot() {
     let dir = __dirname;
     while (dir !== path.dirname(dir)) {
@@ -105,6 +107,16 @@ function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: 
     return lockPath;
 }
 
+function seedWorkflowConfigCompileGateCommand(bundleRoot: string, command: string = TEST_COMPILE_GATE_COMMAND) {
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+        compile_gate: {
+            command
+        }
+    }, null, 2), 'utf8');
+}
+
 function seedOffModeState(bundleRoot: string) {
     const switchRoot = path.join(bundleRoot, 'runtime', 'switch');
     fs.mkdirSync(switchRoot, { recursive: true });
@@ -152,6 +164,7 @@ function setupUpdateWorkspace(repoRoot: string) {
     // Create live dir
     fs.mkdirSync(path.join(bundle, 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(bundle, 'live', 'docs', 'agent-rules'), { recursive: true });
+    seedWorkflowConfigCompileGateCommand(bundle);
 
     // Create runtime dir
     fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
@@ -207,6 +220,7 @@ function setupSyncedUpdateWorkspace(repoRoot: string) {
 
     fs.mkdirSync(path.join(bundle, 'live', 'config'), { recursive: true });
     fs.mkdirSync(path.join(bundle, 'live', 'docs', 'agent-rules'), { recursive: true });
+    seedWorkflowConfigCompileGateCommand(bundle);
     fs.mkdirSync(path.join(bundle, 'runtime'), { recursive: true });
     fs.mkdirSync(path.join(tmpDir, '.git', 'hooks'), { recursive: true });
 
@@ -1031,6 +1045,7 @@ describe('runUpdate', () => {
                 'Rules:',
                 '- First non-empty non-comment line from this block is the compile gate command.'
             ].join('\n'), 'utf8');
+            seedWorkflowConfigCompileGateCommand(bundleRoot, '__COMPILE_GATE_COMMAND_UNCONFIGURED__');
 
             const result = runUpdate({
                 targetRoot: projectRoot,
@@ -1058,7 +1073,7 @@ describe('runUpdate', () => {
             const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8')) as Record<string, unknown>;
             const compileGate = workflowConfig.compile_gate as Record<string, unknown>;
-            assert.equal(compileGate.command, '__COMPILE_GATE_COMMAND_UNCONFIGURED__');
+            assert.equal(compileGate.command, '.\\gradlew.bat clean testClasses --console=plain');
         } finally {
             removePathRecursive(projectRoot);
         }
