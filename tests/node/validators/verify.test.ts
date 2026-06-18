@@ -19,6 +19,15 @@ import {
     detectQwenSettingsViolations
 } from '../../../src/validators';
 
+function cleanupVerifyTempDir(tmpDir: string): void {
+    fs.rmSync(tmpDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100
+    });
+}
+
 function writeInitAnswersFixture(targetRoot: string) {
     const answersDir = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime');
     fs.mkdirSync(answersDir, { recursive: true });
@@ -86,7 +95,7 @@ test('readVerifyInitAnswers reports missing file', () => {
         );
         assert.ok(result.violations.some(v => v.includes('missing')));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -121,7 +130,7 @@ test('readVerifyInitAnswers validates fields', () => {
         assert.equal(result.claudeOrchestratorFullAccess, false);
         assert.equal(result.tokenEconomyEnabled, true);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -150,7 +159,7 @@ test('readVerifyInitAnswers catches source-of-truth mismatch', () => {
         );
         assert.ok(result.violations.some(v => v.includes('does not match')));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -179,7 +188,7 @@ test('readVerifyInitAnswers catches invalid brevity', () => {
         );
         assert.ok(result.violations.some(v => v.includes('AssistantBrevity')));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -189,7 +198,7 @@ test('detectCommandsViolations returns empty for missing file', () => {
         const violations = detectCommandsViolations(tmpDir);
         assert.deepEqual(violations, []);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -215,7 +224,7 @@ test('detectCommandsViolations rejects test command in compile gate section', ()
         const violations = detectCommandsViolations(tmpDir);
         assert.ok(violations.some((violation) => /must not run the full test suite/i.test(violation)));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -241,7 +250,7 @@ test('detectCommandsViolations allows unconfigured compile-gate sentinel in huma
         const violations = detectCommandsViolations(tmpDir);
         assert.deepEqual(violations, []);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -271,7 +280,7 @@ test('runVerify reports project commands pending when workflow compile gate comm
             )
         );
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -299,7 +308,7 @@ test('detectTaskModeRuleContractViolations reports stale task-mode rule snippets
         assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet '## Integrity Priority Rules'")));
         assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.'")));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -339,7 +348,7 @@ test('detectTaskModeRuleContractViolations rejects duplicated snippets outside t
         assert.ok(violations.some(v => v.includes("80-task-workflow.md must include task-mode contract snippet 'Mandatory gate failure means stop or `BLOCKED`; never workaround the gate, script around it, or claim progress that depends on missing evidence.'")));
         assert.ok(violations.some(v => v.includes("90-skill-catalog.md must include task-mode contract snippet 'Skill routing, optional skills, and token-economy settings never authorize skipping mandatory gates or synthesizing workflow evidence.'")));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -402,7 +411,7 @@ test('detectTaskModeRuleContractViolations rejects exact section drift when temp
         assert.ok(violations.some(v => v.includes("80-task-workflow.md section '## Integrity Priority Rules' must stay synchronized with template source.")));
         assert.ok(violations.some(v => v.includes("90-skill-catalog.md section '## Integrity Priority Rules' must stay synchronized with template source.")));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -517,7 +526,7 @@ test('detectTaskModeRuleContractViolations accepts current task-mode contract sn
         const violations = detectTaskModeRuleContractViolations(tmpDir);
         assert.deepEqual(violations, []);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -527,7 +536,7 @@ test('detectCoreRuleViolations catches missing file', () => {
         const violations = detectCoreRuleViolations(tmpDir, null, null);
         assert.ok(violations.some(v => v.includes('00-core.md missing')));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -548,7 +557,7 @@ test('detectCoreRuleViolations validates language and brevity lines', () => {
         const violations = detectCoreRuleViolations(tmpDir, 'English', 'concise');
         assert.equal(violations.length, 0);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -569,7 +578,7 @@ test('detectCoreRuleViolations catches language mismatch', () => {
         const violations = detectCoreRuleViolations(tmpDir, 'Russian', 'concise');
         assert.ok(violations.some(v => v.includes('language does not match')));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -579,7 +588,7 @@ test('detectTaskViolations catches missing TASK.md', () => {
         const violations = detectTaskViolations(tmpDir, 'CLAUDE.md');
         assert.ok(violations.some(v => v.includes('TASK.md missing')));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -600,7 +609,7 @@ test('detectTaskViolations accepts Profile column header', () => {
         const violations = detectTaskViolations(tmpDir, 'CLAUDE.md');
         assert.ok(!violations.some(v => v.includes('Profile')), 'Should accept Profile column');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -621,7 +630,7 @@ test('detectTaskViolations rejects legacy Depth column header', () => {
         const violations = detectTaskViolations(tmpDir, 'CLAUDE.md');
         assert.ok(violations.some(v => v.includes('Profile')), 'Should reject legacy Depth column');
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -631,7 +640,7 @@ test('detectEntrypointViolations catches missing entrypoint', () => {
         const violations = detectEntrypointViolations(tmpDir, 'CLAUDE.md');
         assert.ok(violations.some(v => v.includes('Canonical entrypoint missing')));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -641,7 +650,7 @@ test('detectEntrypointViolations returns empty for null entrypoint', () => {
         const violations = detectEntrypointViolations(tmpDir, null);
         assert.deepEqual(violations, []);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -651,7 +660,7 @@ test('detectQwenSettingsViolations returns empty for missing file', () => {
         const violations = detectQwenSettingsViolations(tmpDir, 'CLAUDE.md');
         assert.deepEqual(violations, []);
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -671,7 +680,7 @@ test('runVerify returns failed result for empty workspace', () => {
         assert.ok(!result.violations.gitignoreMissing.includes('.review-temp/'));
         assert.ok(result.violations.gitignoreMissing.includes('AGENTS.md'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -692,7 +701,7 @@ test('runVerify reports missing garda.config.json in manifest contract violation
             )
         );
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -713,7 +722,7 @@ test('runVerify reports missing runtime-retention.json in manifest contract viol
             )
         );
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -734,7 +743,7 @@ test('runVerify tolerates missing optional-skill-selection-policy.json for backw
             )
         );
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -763,7 +772,7 @@ test('runVerify reports missing optional-skill-selection-policy.json when root c
             )
         );
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -787,7 +796,7 @@ test('runVerify reports invalid garda.config.json content in manifest contract v
             )
         );
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 
@@ -805,7 +814,7 @@ test('formatVerifyResult includes diagnostic markers', () => {
         assert.ok(output.includes('MissingPathCount:'));
         assert.ok(output.includes('Verification failed'));
     } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupVerifyTempDir(tmpDir);
     }
 });
 

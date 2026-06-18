@@ -56,6 +56,8 @@ test('workflow settings editor renders unconfigured compile-gate through localiz
         fallbackLanguage: 'en',
         initialLanguage: 'ru',
         settingsEditorNode,
+        workflowNode: { innerHTML: '', hidden: false },
+        workflowPanelTitleNode: { textContent: '' },
         settingStatusNode: { innerHTML: '' },
         currentSettingsPayload: null,
         currentSettingResult: null,
