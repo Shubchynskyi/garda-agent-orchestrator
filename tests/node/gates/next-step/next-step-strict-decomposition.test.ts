@@ -1358,6 +1358,50 @@ describe('gates/next-step strict decomposition', () => {
         assert.equal(result.commands[0].command.includes('record-strict-decomposition-decision'), false);
     });
 
+    it('routes broad strict multi-domain tasks with localization wording before classify-change', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | ui/checks-memory-backups-reset-i18n | Surface full-suite timing, memory prompt, manual backups, reset readiness, and localization audit in UI | gpt-5.4 | 2026-05-20 | strict | Scope: Checks tab timing; Project Memory prompt path; Backup UI manual action; Task reset readiness; all affected language packs. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-strict-decomposition-decision');
+        assert.ok(result.reason.includes('task_text:broad-domains='));
+        assert.ok(result.reason.includes('task_text:broad-enumerated-scope'));
+        assert.ok(result.reason.includes('i18n'));
+        assert.ok(result.commands[0].command.includes('gate record-strict-decomposition-decision'));
+        assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('does not let low-risk copy wording exempt broad strict multi-domain tasks', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | ui/settings-memory-backup-reset-i18n | Copy UI settings, memory backup, reset, and localization audit guidance | gpt-5.4 | 2026-05-20 | strict | Scope crosses UI, configuration, project memory, backup, reset, and language-pack audit behavior. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-strict-decomposition-decision');
+        assert.ok(result.reason.includes('task_text:broad-domains='));
+        assert.ok(result.commands[0].command.includes('gate record-strict-decomposition-decision'));
+    });
+
     it('accepts current single-cycle decomposition evidence before classify-change', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [

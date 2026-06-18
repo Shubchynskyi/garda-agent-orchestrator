@@ -57,9 +57,27 @@ const STRICT_DECOMPOSITION_LOW_RISK_TERMS = Object.freeze([
     'wording',
     'copy'
 ]);
+const STRICT_DECOMPOSITION_BROAD_DOMAIN_TERMS = Object.freeze([
+    { key: 'api', aliases: ['api'] },
+    { key: 'audit', aliases: ['audit', 'audits'] },
+    { key: 'backup', aliases: ['backup', 'backups'] },
+    { key: 'checks', aliases: ['checks', 'validation', 'validations'] },
+    { key: 'config', aliases: ['config', 'configuration', 'settings'] },
+    { key: 'docs', aliases: ['docs', 'documentation', 'changelog'] },
+    { key: 'full-suite', aliases: ['full-suite', 'full suite', 'full tests'] },
+    { key: 'i18n', aliases: ['i18n', 'translation', 'translations', 'localization', 'language pack'] },
+    { key: 'init', aliases: ['init', 'setup', 'materialization'] },
+    { key: 'memory', aliases: ['memory', 'project memory'] },
+    { key: 'protected', aliases: ['protected', 'control-plane'] },
+    { key: 'reset', aliases: ['reset', 'task reset', 'discard'] },
+    { key: 'review', aliases: ['review', 'reviews', 'reviewer'] },
+    { key: 'ui', aliases: ['ui', 'dashboard', 'report', 'reports'] },
+    { key: 'workflow', aliases: ['workflow', 'gate', 'gates', 'next step'] }
+]);
 const STRICT_DECOMPOSITION_CHANGED_FILE_THRESHOLD = 3;
 const STRICT_DECOMPOSITION_CHANGED_LINE_THRESHOLD = 120;
 const STRICT_DECOMPOSITION_REVIEW_COUNT_THRESHOLD = 2;
+const STRICT_DECOMPOSITION_BROAD_DOMAIN_THRESHOLD = 3;
 
 export interface StrictDecompositionDecisionRequirement {
     required: boolean;
@@ -102,6 +120,21 @@ function normalizeStrictDecompositionSearchText(...values: Array<string | null |
 
 function containsStrictDecompositionTerm(text: string, term: string): boolean {
     return text.includes(term);
+}
+
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsStrictDecompositionDelimitedTerm(text: string, term: string): boolean {
+    return new RegExp(`(^|[^a-z0-9])${escapeRegex(term)}([^a-z0-9]|$)`).test(text);
+}
+
+function containsStrictDecompositionBroadAlias(text: string, alias: string): boolean {
+    if (/^[a-z0-9-]+$/.test(alias) && alias.length <= 4) {
+        return new RegExp(`(^|[^a-z0-9])${escapeRegex(alias)}([^a-z0-9]|$)`).test(text);
+    }
+    return containsStrictDecompositionTerm(text, alias);
 }
 
 function getStrictDecompositionDecisionTaskSummary(
@@ -152,6 +185,28 @@ function collectStrictDecompositionTaskRiskSignals(
     return STRICT_DECOMPOSITION_STRONG_RISK_TERMS
         .filter((term) => containsStrictDecompositionTerm(text, term))
         .map((term) => `task_text:${term}`);
+}
+
+function collectStrictDecompositionBroadTaskRiskSignals(
+    taskEntry: TaskQueueEntry | null,
+    taskMode: Record<string, unknown> | null
+): string[] {
+    const text = taskEntry
+        ? normalizeStrictDecompositionSearchText(taskEntry.area, taskEntry.title, taskEntry.notes)
+        : normalizeStrictDecompositionSearchText(getStringField(taskMode, 'task_summary', ''));
+    const matchedDomains = STRICT_DECOMPOSITION_BROAD_DOMAIN_TERMS
+        .filter((domain) => domain.aliases.some((alias) => containsStrictDecompositionBroadAlias(text, alias)))
+        .map((domain) => domain.key);
+    if (matchedDomains.length < STRICT_DECOMPOSITION_BROAD_DOMAIN_THRESHOLD) {
+        return [];
+    }
+
+    const signals = [`task_text:broad-domains=${matchedDomains.join('+')}`];
+    const separatorCount = (text.match(/[;,]/g) || []).length;
+    if (separatorCount >= 4) {
+        signals.push('task_text:broad-enumerated-scope');
+    }
+    return signals;
 }
 
 function collectStrictDecompositionPreflightRiskSignals(
@@ -208,7 +263,7 @@ function hasTinyStrictDecompositionExemption(
     const text = taskEntry
         ? normalizeStrictDecompositionSearchText(taskEntry.area, taskEntry.title, taskEntry.notes)
         : normalizeStrictDecompositionSearchText(getStringField(taskMode, 'task_summary', ''));
-    const hasLowRiskTerm = STRICT_DECOMPOSITION_LOW_RISK_TERMS.some((term) => containsStrictDecompositionTerm(text, term));
+    const hasLowRiskTerm = STRICT_DECOMPOSITION_LOW_RISK_TERMS.some((term) => containsStrictDecompositionDelimitedTerm(text, term));
     if (!hasLowRiskTerm) {
         return false;
     }
@@ -237,7 +292,8 @@ export function buildStrictDecompositionDecisionRequirement(params: {
         };
     }
 
-    const taskRiskSignals = collectStrictDecompositionTaskRiskSignals(params.taskEntry, params.taskMode);
+    const strongTaskRiskSignals = collectStrictDecompositionTaskRiskSignals(params.taskEntry, params.taskMode);
+    const broadTaskRiskSignals = collectStrictDecompositionBroadTaskRiskSignals(params.taskEntry, params.taskMode);
     const preflightRiskSignals = collectStrictDecompositionPreflightRiskSignals(params.preflight, params.requiredReviewTypes);
     if (
         hasTinyStrictDecompositionExemption(
@@ -245,7 +301,7 @@ export function buildStrictDecompositionDecisionRequirement(params: {
             params.taskMode,
             params.preflight,
             params.requiredReviewTypes,
-            taskRiskSignals
+            [...strongTaskRiskSignals, ...broadTaskRiskSignals]
         )
     ) {
         return {
@@ -255,7 +311,7 @@ export function buildStrictDecompositionDecisionRequirement(params: {
         };
     }
 
-    const riskSignals = [...new Set([...taskRiskSignals, ...preflightRiskSignals])].sort();
+    const riskSignals = [...new Set([...strongTaskRiskSignals, ...broadTaskRiskSignals, ...preflightRiskSignals])].sort();
     return {
         required: riskSignals.length > 0,
         taskSummary,
