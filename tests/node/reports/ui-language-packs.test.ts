@@ -8,6 +8,7 @@ import {
 } from '../../../src/core/project-memory';
 import {
     LOCAL_UI_LANGUAGES,
+    LOCAL_UI_BACKUPS_TAB_TEXT,
     LOCAL_UI_INIT_SETTING_TEXT,
     LOCAL_UI_PROJECT_MEMORY_TEXT,
     LOCAL_UI_SETTING_TEXT,
@@ -52,7 +53,7 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].description || '', /не берёт fallback из 40-commands\.md/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command-fallback'].description || '', /workflow-config/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command-fallback'].description || '', /блокируется/u);
-    assert.match(getLocalUiText('ru').backupsTabIntro, /конфигурации рабочего процесса/u);
+    assert.match(LOCAL_UI_BACKUPS_TAB_TEXT.ru.tab_intro.description || '', /конфигурации рабочего процесса/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['auto-backup-enabled'].description || '', /ежедневному обслуживанию/u);
     assert.match(LOCAL_UI_SETTING_TEXT.uk['auto-backup-enabled'].description || '', /щоденн/u);
     assert.equal(LOCAL_UI_INIT_SETTING_TEXT.ru['CollectedVia'], undefined);
