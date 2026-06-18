@@ -73,6 +73,12 @@ export function buildCompileGateCommandSource(command: unknown): string {
     return isConfiguredCompileGateCommand(command) ? 'workflow-config' : 'unconfigured-fail-closed';
 }
 
+export function buildCompileGateRemediationLine(command: unknown): string {
+    return isConfiguredCompileGateCommand(command)
+        ? 'CompileGateRemediation: none'
+        : 'CompileGateRemediation: Set workflow-config compile_gate.command with workflow set --compile-gate-command "<compile/build/type-check command>" --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>';
+}
+
 export function buildReviewExecutionPolicyView(state: WorkflowConfigState): WorkflowReviewExecutionPolicyView {
     if (state.missingReviewExecutionPolicyMode) {
         const mode = state.missingReviewExecutionPolicyMode;
@@ -242,6 +248,8 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Compile gate');
     lines.push(`CompileGateCommand: ${compileGate.command}`);
     lines.push(`CompileGateCommandSource: ${buildCompileGateCommandSource(compileGate.command)}`);
+    lines.push('CompileGateFallback: disabled');
+    lines.push(buildCompileGateRemediationLine(compileGate.command));
     lines.push('');
     lines.push('Full suite validation');
     lines.push(`FullSuiteEnabled: ${fullSuiteValidation.enabled}`);
@@ -294,6 +302,8 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(`OrchestratorWorkPolicy: ${orchestratorWorkPolicy.mode}`);
     lines.push('');
     lines.push('Hints');
+    lines.push('Tip: compile-gate executes workflow-config compile_gate.command only; unconfigured workspaces fail closed and do not fall back to 40-commands.md.');
+    lines.push('Tip: run "workflow set --compile-gate-command \"<compile/build/type-check command>\" --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" after operator approval to set the compile gate command.');
     lines.push('Tip: run "workflow set --full-suite on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
     lines.push('Tip: run "workflow set --scope-budget on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');

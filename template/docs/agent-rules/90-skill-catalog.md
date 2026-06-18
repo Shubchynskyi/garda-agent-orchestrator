@@ -67,7 +67,7 @@ Primary entry point: selected source-of-truth entrypoint for this workspace.
 - Review launch dependencies come from `preflight.review_execution_policy`; prepare `test` only after every required upstream dependency for the active policy is already recorded as PASS.
 - On pure test-scope reruns, if the active policy keeps `test` downstream of `code`, run `build-review-context` for reusable upstream `code` review first so the current-cycle reuse receipt exists before launching `test` review.
 - Compile gate is mandatory after implementation and before `IN_REVIEW`:
-  `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md"`
+  `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"`
 - Preflight artifact is the only source for:
   - `path_mode` (`FAST_PATH` / `FULL_PATH`)
   - `required_reviews.code`

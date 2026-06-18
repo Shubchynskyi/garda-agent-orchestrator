@@ -119,7 +119,7 @@ function settingCurrentDisplay(setting) {
       settingTextPacks,
       'compile-gate-command-fallback',
       'description',
-      'Not set in workflow-config; compile-gate uses the command from 40-commands.md.'
+      'Not set in workflow-config; compile-gate fails closed until workflow set records a project-specific compile/build/type-check command.'
     );
   }
   return isDurationMsSetting(setting) ? formatDurationMs(setting.current_value) : JSON.stringify(setting.current_value);

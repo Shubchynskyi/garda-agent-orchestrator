@@ -251,8 +251,10 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(compileGate);
     assert.equal(compileGate.label, 'Compile-gate command');
     assert.equal(compileGate.value_type, 'string');
-    assert.match(compileGate.command, /garda workflow set --compile-gate-command <value>/);
-    assert.match(compileGate.description, /40-commands\.md/);
+    assert.equal(compileGate.placeholder, 'compile/build/type-check command');
+    assert.match(compileGate.command, /garda workflow set --compile-gate-command <compile\/build\/type-check command>/);
+    assert.match(compileGate.description, /fails closed/);
+    assert.match(compileGate.description, /never falls back to 40-commands\.md/);
     const fullSuite = tab.settings.find((setting) => setting.key === 'full_suite_validation.enabled');
     assert.ok(fullSuite);
     assert.equal(fullSuite.value, true);

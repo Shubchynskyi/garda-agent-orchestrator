@@ -138,6 +138,11 @@ test('formatExplainResult renders title and remediation steps for found entry', 
     assert.ok(output.includes('Description:'));
     assert.ok(output.includes('Remediation steps:'));
     assert.ok(output.includes('1.'));
+    assert.ok(output.includes('configured compile/build/type-check command'));
+    assert.ok(output.includes('gate compile-gate --preflight-path'));
+    assert.ok(output.includes('<task-id>-preflight.json'));
+    assert.doesNotMatch(output, /npm run build/u);
+    assert.doesNotMatch(output, /--commands-path/u);
 });
 
 test('formatExplainResult renders not-found message with available IDs', () => {

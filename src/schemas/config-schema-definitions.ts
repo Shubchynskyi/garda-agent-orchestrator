@@ -317,7 +317,7 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
     properties: {
         compile_gate: {
             type: 'object',
-            description: 'Compile-gate validation command. When unconfigured or omitted, compile-gate fails closed instead of falling back to 40-commands.md.',
+            description: 'Compile-gate validation command. When command is omitted or equals __COMPILE_GATE_COMMAND_UNCONFIGURED__, compile-gate fails closed instead of falling back to 40-commands.md.',
             properties: {
                 command: { type: 'string', minLength: 1, description: 'Command to run for compile-gate validation.' }
             },

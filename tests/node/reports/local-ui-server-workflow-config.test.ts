@@ -346,7 +346,7 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         const compilePreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
             headers: actionHeaders,
-            body: JSON.stringify({ setting_id: 'compile-gate-command', mode: 'preview', value: 'npm run build' })
+            body: JSON.stringify({ setting_id: 'compile-gate-command', mode: 'preview', value: 'npm run typecheck' })
         });
         assert.equal(compilePreviewResponse.status, 200);
         const compilePreview = await compilePreviewResponse.json() as {
@@ -356,9 +356,9 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             changed_keys: string[];
         };
         assert.equal(compilePreview.key, 'compile_gate.command');
-        assert.equal(compilePreview.proposed_value, 'npm run build');
+        assert.equal(compilePreview.proposed_value, 'npm run typecheck');
         assert.deepEqual(compilePreview.changed_keys, ['compile_gate.command']);
-        assert.match(compilePreview.command, /workflow set --compile-gate-command "npm run build"/u);
+        assert.match(compilePreview.command, /workflow set --compile-gate-command "npm run typecheck"/u);
 
         const enumListPreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',

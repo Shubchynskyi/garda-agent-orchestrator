@@ -236,8 +236,8 @@ function getExplainDatabase(): readonly ExplainEntry[] {
         description: 'The build step raised errors. The task cannot move to IN_REVIEW until the compile gate passes.',
         remediation: [
             "Fix all TypeScript or build errors shown in the compile output.",
-            "Run 'npm run build' locally to confirm the build succeeds.",
-            `Re-run: ${getBundleCliCommand(bn)} gate compile-gate --task-id "<task-id>" --commands-path "${bn}/live/docs/agent-rules/40-commands.md"`
+            'Run the configured compile/build/type-check command locally only if a focused debug pass is needed.',
+            `Re-run: ${getBundleCliCommand(bn)} gate compile-gate --preflight-path "${bn}/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>"`
         ]
     },
     {

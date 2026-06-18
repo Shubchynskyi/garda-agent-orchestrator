@@ -47,6 +47,11 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.equal(getLocalUiText('ru').initSettingsTab, 'Настройки инициализации');
     assert.equal(getLocalUiText('ru').taskQueueStatus, 'Статус в очереди');
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-enabled'].label, 'Обязательная полная проверка');
+    assert.equal(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].label, 'Команда compile-gate');
+    assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].description || '', /compile-gate блокируется/u);
+    assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].description || '', /не берёт fallback из 40-commands\.md/u);
+    assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command-fallback'].description || '', /workflow-config/u);
+    assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command-fallback'].description || '', /блокируется/u);
     assert.match(getLocalUiText('ru').backupsTabIntro, /конфигурации рабочего процесса/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['auto-backup-enabled'].description || '', /ежедневному обслуживанию/u);
     assert.match(LOCAL_UI_SETTING_TEXT.uk['auto-backup-enabled'].description || '', /daily maintenance/u);

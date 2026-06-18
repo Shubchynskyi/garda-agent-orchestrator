@@ -148,7 +148,7 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} workflow`,
-            `${PRIMARY_CLI_NAME} workflow set --compile-gate-command "npm run build" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
+            `${PRIMARY_CLI_NAME} workflow set --compile-gate-command "<compile/build/type-check command>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
             `${PRIMARY_CLI_NAME} workflow set --full-suite on --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
             `${PRIMARY_CLI_NAME} workflow set --full-suite-enabled true --full-suite-command "npm test" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,
             `${PRIMARY_CLI_NAME} workflow set --full-suite-placement before_test_review --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`,

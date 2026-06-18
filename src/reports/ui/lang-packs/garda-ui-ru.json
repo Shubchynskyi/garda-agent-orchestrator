@@ -279,10 +279,10 @@
   "LOCAL_UI_SETTING_TEXT": {
     "compile-gate-command": {
       "label": "Команда compile-gate",
-      "description": "Команда для compile/build/type-check проверки. Если в workflow-config она не задана, compile-gate использует legacy-блок из 40-commands.md."
+      "description": "Исполняемая команда compile/build/type-check для compile-gate. Если значение равно __COMPILE_GATE_COMMAND_UNCONFIGURED__, compile-gate блокируется и не берёт fallback из 40-commands.md."
     },
     "compile-gate-command-fallback": {
-      "description": "Не задано в workflow-config; используется команда из 40-commands.md."
+      "description": "Не задано в workflow-config; compile-gate блокируется, пока `workflow set` не запишет проектную команду compile/build/type-check."
     },
     "full-suite-enabled": {
       "label": "Обязательная полная проверка",

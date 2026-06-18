@@ -631,6 +631,53 @@ test('getWhyBlocked reports full-suite failures as failed gates instead of missi
     }
 });
 
+test('getWhyBlocked renders compile-gate remediation without stale fallback commands', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'why-blocked-compile-gate-test-'));
+    const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+    const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+
+    try {
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'TASK.md'),
+            makeTaskMd(['| T-018 | 🟨 IN_PROGRESS | P1 | runtime | Compile failed task | me | 2026-01-01 | strict | Notes |']),
+            'utf8'
+        );
+
+        const events = [
+            'TASK_MODE_ENTERED',
+            'RULE_PACK_LOADED',
+            'HANDSHAKE_DIAGNOSTICS_RECORDED',
+            'SHELL_SMOKE_PREFLIGHT_RECORDED',
+            'PREFLIGHT_CLASSIFIED',
+            'IMPLEMENTATION_STARTED',
+            'COMPILE_GATE_FAILED'
+        ];
+        const lines = events.map(function (eventType) {
+            return JSON.stringify({
+                timestamp_utc: new Date().toISOString(),
+                task_id: 'T-018',
+                event_type: eventType,
+                outcome: eventType === 'COMPILE_GATE_FAILED' ? 'FAIL' : 'PASS',
+                actor: 'gate',
+                message: 'Test'
+            });
+        });
+        fs.writeFileSync(path.join(eventsDir, 'T-018.jsonl'), lines.join('\n') + '\n', 'utf8');
+
+        const result = getWhyBlocked(tmpDir);
+        assert.equal(result.in_progress_tasks.length, 1);
+        const compileGateReason = result.in_progress_tasks[0].blocking_reasons.find((reason) => reason.reason_code === 'COMPILE_GATE_FAILED');
+        assert.ok(compileGateReason);
+        assert.match(compileGateReason.remediation, /configured compile\/build\/type-check command/u);
+        assert.match(compileGateReason.remediation, /gate compile-gate --task-id "T-018" --preflight-path "garda-agent-orchestrator\/runtime\/reviews\/T-018-preflight\.json"/u);
+        assert.doesNotMatch(compileGateReason.remediation, /npm run build/u);
+        assert.doesNotMatch(compileGateReason.remediation, /--commands-path/u);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ── formatWhyBlockedResult ────────────────────────────────────────────────────
 
 test('formatWhyBlockedResult says no blocked tasks when result is clean', () => {

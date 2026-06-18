@@ -39,6 +39,10 @@ function makeTmpDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'garda-ui-action-timeout-'));
 }
 
+function cleanupTmpDir(tmpDir: string): void {
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
 test('runUiActionCommand reports timeout and kills the subprocess tree', async () => {
     const repoRoot = makeTmpDir();
     try {
@@ -89,7 +93,7 @@ test('runUiActionCommand reports timeout and kills the subprocess tree', async (
         );
         assert.equal(fs.existsSync(markerPath), false, 'child process should not survive UI action timeout cleanup');
     } finally {
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        cleanupTmpDir(repoRoot);
     }
 });
 
@@ -102,7 +106,7 @@ test('workspace UI actions only expose visible switch controls with default time
         assert.deepEqual(actionIds, ['garda-off', 'garda-on']);
         assert.ok(actions.every((action) => action.timeout_ms === UI_ACTION_DEFAULT_TIMEOUT_MS));
     } finally {
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        cleanupTmpDir(repoRoot);
     }
 });
 
@@ -141,6 +145,6 @@ test('runUiActionCommand uses the UI allowlisted environment instead of inheriti
         } else {
             process.env[secretEnvKey] = previousSecret;
         }
-        fs.rmSync(repoRoot, { recursive: true, force: true });
+        cleanupTmpDir(repoRoot);
     }
 });

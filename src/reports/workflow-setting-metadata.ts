@@ -179,11 +179,11 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'compile-gate-command',
         key: 'compile_gate.command',
         label: 'Compile-gate command',
-        description: 'Command compile-gate runs for compile/build/type-check validation. When unconfigured, compile-gate fails closed instead of falling back to 40-commands.md.',
+        description: 'Executable compile/build/type-check command used by compile-gate. When the value is __COMPILE_GATE_COMMAND_UNCONFIGURED__, compile-gate fails closed and never falls back to 40-commands.md.',
         flag: '--compile-gate-command',
         value_type: 'string',
         options: [],
-        placeholder: 'npm run build'
+        placeholder: 'compile/build/type-check command'
     },
     {
         id: 'full-suite-enabled',

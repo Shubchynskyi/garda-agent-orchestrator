@@ -174,7 +174,7 @@ function detectBlockingReasons(
         reasons.push({
             reason_code: 'COMPILE_GATE_FAILED',
             description: 'Build failed during compile gate.',
-            remediation: 'Fix compile errors, run npm run build, then rerun compile-gate.'
+            remediation: `Fix compile errors, run the configured compile/build/type-check command if a local debug pass is needed, then rerun: ${getBundleCliCommand()} gate compile-gate --task-id "${task.id}" --preflight-path "${resolveBundleName()}/runtime/reviews/${task.id}-preflight.json".`
         });
     }
 

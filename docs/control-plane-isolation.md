@@ -93,7 +93,7 @@ Default configuration (isolation disabled):
    - `getRulePackRulesRoot()` → `live/docs/agent-rules/`
    - `buildReviewContext()` → `live/docs/agent-rules/` (rule file content)
    - `resolveOutputFiltersPath()` → `live/config/output-filters.json`
-   - compile-gate commands → `live/docs/agent-rules/40-commands.md`
+   - compile-gate command selection → `live/config/workflow-config.json` (`compile_gate.command`)
    - token economy config → `live/config/token-economy.json`
    - scoped-diff paths config → `live/config/paths.json`
    - skill path resolution → `live/skills/*/SKILL.md`

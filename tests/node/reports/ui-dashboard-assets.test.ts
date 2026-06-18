@@ -2,7 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import * as vm from 'node:vm';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../src/core/constants';
+import { UI_DASHBOARD_CLIENT_CORE } from '../../../src/reports/ui/dashboard/dashboard-client-core';
+import { UI_DASHBOARD_CLIENT_WORKFLOW } from '../../../src/reports/ui/dashboard/dashboard-client-workflow';
 import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
+import {
+    LOCAL_UI_LANGUAGES,
+    LOCAL_UI_SETTING_TEXT,
+    LOCAL_UI_TEXT
+} from '../../../src/reports/ui/ui-i18n';
 
 const DASHBOARD_ASSET_DIR = join(process.cwd(), 'src/reports/ui/dashboard');
 
@@ -27,4 +36,52 @@ test('dashboard asset modules are readable template literals, not escaped string
     for (const source of assetSources) {
         assert.doesNotMatch(source, /export const [A-Z0-9_]+ = "(?:\\\\n|[^"]){200,}";/u);
     }
+});
+
+test('workflow settings editor renders unconfigured compile-gate through localized fallback text', () => {
+    const settingsEditorNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => []
+        },
+        window: {
+            localStorage: null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage: 'ru',
+        settingsEditorNode,
+        settingStatusNode: { innerHTML: '' },
+        currentSettingsPayload: null,
+        currentSettingResult: null,
+        currentWorkflowSettingGroup: 'validation'
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\nrenderSettingsEditor({
+  enabled: true,
+  settings: [{
+    id: 'compile-gate-command',
+    key: 'compile_gate.command',
+    label: 'Compile-gate command',
+    description: 'Executable compile/build/type-check command used by compile-gate.',
+    current_value: '${UNCONFIGURED_COMPILE_GATE_COMMAND}',
+    value_type: 'string',
+    options: [],
+    flag: '--compile-gate-command',
+    placeholder: 'compile/build/type-check command',
+    confirmation_phrase: 'APPLY GARDA SETTING'
+  }]
+});`, context);
+
+    assert.match(settingsEditorNode.innerHTML, /Команда compile-gate/u);
+    assert.match(settingsEditorNode.innerHTML, /Не задано в workflow-config/u);
+    assert.match(settingsEditorNode.innerHTML, /compile-gate блокируется/u);
+    const currentValue = settingsEditorNode.innerHTML.match(/<code class="current-value">([^<]+)<\/code>/u)?.[1] || '';
+    assert.match(currentValue, /Не задано в workflow-config/u);
+    assert.doesNotMatch(currentValue, /__COMPILE_GATE_COMMAND_UNCONFIGURED__/u);
 });

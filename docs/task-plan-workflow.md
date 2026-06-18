@@ -178,7 +178,7 @@ At compile-gate time, the orchestrator compares actual changed files against the
 ```bash
 node bin/garda.js gate compile-gate \
   --task-id "T-048" \
-  --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" \
+  --preflight-path "garda-agent-orchestrator/runtime/reviews/T-048-preflight.json" \
   --allow-plan-drift \
   --allow-plan-drift-reason "Added missing test helper that was not anticipated in the plan"
 ```

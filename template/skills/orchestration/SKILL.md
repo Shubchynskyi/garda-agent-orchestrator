@@ -138,7 +138,7 @@ Default task navigator is `node garda-agent-orchestrator/bin/garda.js next-step 
 14. Run compile gate (mandatory) before review phase only when `next-step` reports `NextGate: compile-gate`:
    - Resolve `fail_tail_lines` from `garda-agent-orchestrator/live/config/token-economy.json`; when missing/invalid, fallback to `50`.
    - Gate output filter profiles are loaded from `garda-agent-orchestrator/live/config/output-filters.json`; invalid config must warn and fall back to passthrough output.
-   - Node: `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --fail-tail-lines "<fail_tail_lines>"`
+   - Node: `node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --fail-tail-lines "<fail_tail_lines>"`
    - Compile gate auto-emits `IMPLEMENTATION_STARTED` before execution and then writes `COMPILE_GATE_PASSED` or `COMPILE_GATE_FAILED`.
    - Compile gate is strict about preflight scope freshness and fails on scope drift; rerun `next-step` and follow its refresh sequence when scope changes.
    - A newer `PREFLIGHT_CLASSIFIED` also invalidates older post-preflight rule-pack evidence; rerun downstream gates sequentially instead of overlapping the same task cycle.

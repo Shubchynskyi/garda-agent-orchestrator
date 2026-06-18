@@ -89,6 +89,8 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Compile gate command: unconfigured (fail-closed)'));
         assert.ok(output.includes(`CompileGateCommand: ${UNCONFIGURED_COMPILE_GATE_COMMAND}`));
         assert.ok(output.includes('CompileGateCommandSource: unconfigured-fail-closed'));
+        assert.ok(output.includes('CompileGateFallback: disabled'));
+        assert.ok(output.includes('CompileGateRemediation: Set workflow-config compile_gate.command with workflow set --compile-gate-command "<compile/build/type-check command>"'));
         assert.ok(output.includes('Mandatory full-suite: false'));
         assert.ok(output.includes('Review execution policy: code_first_optional'));
         assert.ok(output.includes('FullSuiteCommand: npm test'));
@@ -115,17 +117,23 @@ test('workflow set updates compile-gate command and validates full-suite separat
         const { result, output } = captureConsole(() => handleWorkflow([
             'set',
             '--bundle-root', bundleRoot,
-            '--compile-gate-command', 'npm run build',
+            '--compile-gate-command', 'npm run typecheck',
             ...buildOperatorConfirmationArgs()
         ], PACKAGE_JSON));
         assert.ok(result && result.action === 'set');
         assert.equal(result.status, 'CHANGED');
-        assert.equal(result.compile_gate.command, 'npm run build');
+        assert.equal(result.compile_gate.command, 'npm run typecheck');
         assert.ok(result.changed_fields.includes('compile_gate.command'));
-        assert.ok(output.includes('Compile gate command: configured (npm run build)'));
+        assert.ok(output.includes('Compile gate command: configured (npm run typecheck)'));
 
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        assert.equal(parsedConfig.compile_gate.command, 'npm run build');
+        assert.equal(parsedConfig.compile_gate.command, 'npm run typecheck');
+
+        const { output: showOutput } = captureConsole(() => handleWorkflow(['show', '--bundle-root', bundleRoot], PACKAGE_JSON));
+        assert.ok(showOutput.includes('CompileGateCommand: npm run typecheck'));
+        assert.ok(showOutput.includes('CompileGateCommandSource: workflow-config'));
+        assert.ok(showOutput.includes('CompileGateFallback: disabled'));
+        assert.ok(showOutput.includes('CompileGateRemediation: none'));
 
         assert.throws(
             () => handleWorkflow([
@@ -140,7 +148,7 @@ test('workflow set updates compile-gate command and validates full-suite separat
             () => handleWorkflow([
                 'set',
                 '--bundle-root', bundleRoot,
-                '--full-suite-command', 'npm run build',
+                '--full-suite-command', 'npm run typecheck',
                 ...buildOperatorConfirmationArgs()
             ], PACKAGE_JSON),
             /matches the configured full-suite validation command/i
@@ -634,7 +642,7 @@ test('workflow help describes project-memory update as the default policy', () =
     const helpText = stripAnsi(buildGuardedCommandHelpText('workflow'));
 
     assert.ok(helpText.includes('Project memory maintenance defaults to update mode'));
-    assert.ok(helpText.includes('workflow set --compile-gate-command "npm run build"'));
+    assert.ok(helpText.includes('workflow set --compile-gate-command "<compile/build/type-check command>"'));
     assert.ok(helpText.includes('compile_gate.command is the executable compile-gate source'));
     assert.ok(helpText.includes('unconfigured workspaces fail closed instead of falling back to 40-commands.md'));
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
@@ -675,6 +683,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(explainOutput.includes('Topic: workflow-guards'));
         assert.ok(explainOutput.includes('before compile/review loops'));
         assert.ok(explainOutput.includes('Review cycle guard: stops runaway non-test review cycles'));
+        assert.ok(explainOutput.includes('40-commands.md is human guidance only'));
         assert.ok(explainOutput.includes('15 failed non-test reviews and 30 total non-test reviews'));
         assert.ok(explainOutput.includes('BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(explainOutput.includes('auto_split_enabled is true'));

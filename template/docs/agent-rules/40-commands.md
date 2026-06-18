@@ -22,7 +22,7 @@ Example (materialized/deployed workspace):
 <project test command>
 
 # OK Mandatory gate - always execute when required:
-node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "T-042" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md"
+node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "T-042" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-042-preflight.json"
 # compile-gate may run a configured project build/type-check command; that is allowed because it is gate-driven, not ad-hoc.
 ```
 
@@ -262,7 +262,7 @@ node garda-agent-orchestrator/bin/garda.js gate classify-change --use-staged --t
 node garda-agent-orchestrator/bin/garda.js gate classify-change --task-id "<task-id>" --task-mode-path "garda-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json" --changed-file "src/<example-file>" --task-intent "<task summary>" --output-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
 node garda-agent-orchestrator/bin/garda.js gate load-rule-pack --task-id "<task-id>" --stage "POST_PREFLIGHT" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/80-task-workflow.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/90-skill-catalog.md" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/35-strict-coding-rules.md"
 node garda-agent-orchestrator/bin/garda.js gate bind-rule-pack-to-preflight --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-mode-path "garda-agent-orchestrator/runtime/reviews/<task-id>-task-mode.json"
-node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --commands-path "garda-agent-orchestrator/live/docs/agent-rules/40-commands.md"
+node garda-agent-orchestrator/bin/garda.js gate compile-gate --task-id "<task-id>" --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json"
 node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "<verdict>" --db-review-verdict "<verdict>" --security-review-verdict "<verdict>" --refactor-review-verdict "<verdict>" --api-review-verdict "<verdict>" --test-review-verdict "<verdict>" --performance-review-verdict "<verdict>" --infra-review-verdict "<verdict>" --dependency-review-verdict "<verdict>"
 node garda-agent-orchestrator/bin/garda.js gate required-reviews-check --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --code-review-verdict "SKIPPED_BY_OVERRIDE" --skip-reviews "code" --skip-reason "1-line config hotfix; rollback plan exists"
 node garda-agent-orchestrator/bin/garda.js gate doc-impact-gate --preflight-path "garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json" --task-id "<task-id>" --decision "NO_DOC_UPDATES" --behavior-changed false --changelog-updated false --rationale "No behavior/contract/ops-doc impact."

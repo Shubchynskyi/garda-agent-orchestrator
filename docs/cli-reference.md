@@ -532,7 +532,7 @@ Show or change repo-local workflow configuration.
 ```text
 garda workflow --target-root "."
 garda workflow show --target-root "." --json
-garda workflow set --target-root "." --compile-gate-command "npm run build" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+garda workflow set --target-root "." --compile-gate-command "<compile/build/type-check command>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --full-suite-enabled true --full-suite-placement before_test_review --full-suite-command "npm test" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --review-execution-policy strict_sequential --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
 garda workflow set --target-root "." --scope-budget-enabled true --scope-budget-max-review-tokens 50000 --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
@@ -548,7 +548,7 @@ garda workflow explain --target-root "."
 Notes:
 - `workflow` with no subcommand behaves like `workflow show`.
 - The current surface manages repo-local `compile_gate`, `full_suite_validation`, `review_execution_policy`, `scope_budget_guard`, `review_cycle_guard`, `task_reset`, and `auto_backup` settings in `live/config/workflow-config.json`.
-- `compile_gate.command` overrides the legacy `40-commands.md` Compile Gate block when it is configured. Missing or unconfigured values keep the legacy fallback for existing workspaces.
+- `compile_gate.command` is the executable compile-gate source. Missing values or `__COMPILE_GATE_COMMAND_UNCONFIGURED__` fail closed instead of falling back to `40-commands.md`.
 - `--compile-gate-command` must stay a compile/build/type-check command and must not match the configured full-suite validation command.
 - Scheduled auto-backups are disabled by default and run only through the existing daily maintenance trigger when enabled; configure them with `--auto-backup-enabled`, `--auto-backup-interval-days`, and `--auto-backup-keep-latest`.
 - `workflow set` requires explicit operator approval with `--operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"`; agents must not approve workflow-config mutations for themselves.
@@ -691,7 +691,7 @@ Canonical gate surface is `garda gate <name>` or `node bin/garda.js gate <name>`
 | Load rule pack | `garda gate load-rule-pack --task-id "T-001" --stage "TASK_ENTRY" --loaded-rule-file "garda-agent-orchestrator/live/docs/agent-rules/00-core.md"` |
 | Bind rule pack to preflight | `garda gate bind-rule-pack-to-preflight --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Classify change | `garda gate classify-change --use-staged --task-id "T-001" --task-intent "..."` |
-| Compile gate | `garda gate compile-gate --task-id "T-001"` |
+| Compile gate | `garda gate compile-gate --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Optional skill activation | `garda gate activate-optional-skill --task-id "T-001" --skill-id "<selected-skill-id>"` |
 | Review gate | `garda gate required-reviews-check --task-id "T-001" --preflight-path "garda-agent-orchestrator/runtime/reviews/T-001-preflight.json"` |
 | Audited no-op | `garda gate record-no-op --task-id "T-001" --reason "Already implemented in current branch"` |

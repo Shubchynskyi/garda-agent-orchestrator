@@ -141,7 +141,12 @@ function buildWorkflowSettingOptions(repoRoot: string, key: string, currentValue
     return [...fallbackOptions];
 }
 
-function buildWorkflowCommand(flag: string, valueType: WorkflowSettingValueType, options: WorkflowSettingOption[]): string {
+function buildWorkflowCommand(
+    flag: string,
+    valueType: WorkflowSettingValueType,
+    options: WorkflowSettingOption[],
+    placeholder?: string
+): string {
     const valueHint = flag === '--garda-self-guard'
         ? '<on|off>'
         : options.length > 0
@@ -152,7 +157,9 @@ function buildWorkflowCommand(flag: string, valueType: WorkflowSettingValueType,
             ? '<number>'
             : valueType === 'string_list'
                 ? '<comma-separated values>'
-                : '<value>';
+                : placeholder
+                    ? `<${placeholder}>`
+                    : '<value>';
     return [
         'garda workflow set',
         flag,
@@ -190,7 +197,7 @@ function buildWorkflowSetting(repoRoot: string, config: WorkflowConfigData, rawC
         value_type: definition.value_type,
         options,
         flag: definition.flag,
-        command: buildWorkflowCommand(definition.flag, definition.value_type, options),
+        command: buildWorkflowCommand(definition.flag, definition.value_type, options, definition.placeholder),
         description: definition.description,
         editable: definition.editable !== false,
         min: definition.min,
