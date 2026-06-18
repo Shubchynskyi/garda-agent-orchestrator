@@ -907,6 +907,18 @@ test('runAgentInit seeds workflow-config full-suite command from project stack w
                 out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
             }
         });
+        writeText(
+            path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+            [
+                '# Commands',
+                '',
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                '__COMPILE_GATE_COMMAND_UNCONFIGURED__',
+                '```',
+                ''
+            ].join('\n')
+        );
         writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
 
         const result = runAgentInit({
@@ -927,9 +939,15 @@ test('runAgentInit seeds workflow-config full-suite command from project stack w
         assert.equal(result.readyForTasks, true);
         const workflowConfig = readWorkflowConfig(bundleRoot);
         const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+        const compileGate = workflowConfig.compile_gate as Record<string, unknown>;
         assert.equal(fullSuiteValidation.enabled, false);
         assert.equal(fullSuiteValidation.command, 'pytest');
+        assert.equal(compileGate.command, 'python -m compileall .');
         assert.equal(Object.prototype.hasOwnProperty.call(workflowConfig, 'review_execution_policy'), false);
+        assert.match(
+            fs.readFileSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'utf8'),
+            /### Compile Gate \(Mandatory\)\r?\n```bash\r?\npython -m compileall \.\r?\n```/
+        );
 
         const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
         assert.equal(persistedState.LastSeededFullSuiteCommand, 'pytest');
@@ -1011,8 +1029,12 @@ test('runAgentInit preserves manual full-suite command overrides when they diffe
                 green_summary_max_lines: 5,
                 red_failure_chunk_lines: 50,
                 out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            },
+            compile_gate: {
+                command: 'python -m py_compile app.py'
             }
         });
+        writeText(path.join(workspaceRoot, 'app.py'), 'print("ok")\n');
         writeJson(path.join(bundleRoot, 'runtime', 'agent-init-state.json'), {
             Version: 1,
             UpdatedAt: new Date().toISOString(),
@@ -1048,7 +1070,9 @@ test('runAgentInit preserves manual full-suite command overrides when they diffe
         assert.equal(result.readyForTasks, true);
         const workflowConfig = readWorkflowConfig(bundleRoot);
         const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+        const compileGate = workflowConfig.compile_gate as Record<string, unknown>;
         assert.equal(fullSuiteValidation.command, 'python -m pytest -q');
+        assert.equal(compileGate.command, 'python -m py_compile app.py');
 
         const persistedState = JSON.parse(fs.readFileSync(result.agentInitStatePath, 'utf8'));
         assert.equal(persistedState.LastSeededFullSuiteCommand, 'pytest');
@@ -1156,6 +1180,9 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
         writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
         seedReadyProjectMemory(bundleRoot);
         writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
+            compile_gate: {
+                command: TEST_COMPILE_GATE_COMMAND
+            },
             full_suite_validation: {
                 enabled: true,
                 command: '__FULL_SUITE_COMMAND_UNCONFIGURED__',
@@ -1169,6 +1196,18 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
                 mode: 'strict_sequential'
             }
         });
+        writeText(
+            path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+            [
+                '# Commands',
+                '',
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                '__COMPILE_GATE_COMMAND_UNCONFIGURED__',
+                '```',
+                ''
+            ].join('\n')
+        );
         writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
 
         runAgentInit({
@@ -1187,7 +1226,9 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
         });
 
         const workflowConfig = readWorkflowConfig(bundleRoot);
+        const compileGate = workflowConfig.compile_gate as Record<string, unknown>;
         const fullSuiteValidation = workflowConfig.full_suite_validation as Record<string, unknown>;
+        assert.equal(compileGate.command, TEST_COMPILE_GATE_COMMAND);
         assert.equal(fullSuiteValidation.enabled, true);
         assert.equal(fullSuiteValidation.command, 'pytest');
         assert.equal(fullSuiteValidation.out_of_scope_failure_policy, 'AUDIT_AND_WARN');
@@ -1195,6 +1236,10 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
         assert.deepEqual(workflowConfig.review_execution_policy, {
             mode: 'strict_sequential'
         });
+        assert.match(
+            fs.readFileSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'utf8'),
+            /### Compile Gate \(Mandatory\)\r?\n```bash\r?\nnode -e "console\.log\('build ok'\)"\r?\n```/
+        );
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

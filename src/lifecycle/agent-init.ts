@@ -1,27 +1,30 @@
 import * as path from 'node:path';
 import {
     LEGACY_FULL_SUITE_VALIDATION_COMMAND,
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
     UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
     resolveBundleName
 } from '../core/constants';
 import { pathExists, readTextFile, writeTextFile } from '../core/filesystem';
 import { readJsonFile, writeJsonFile } from '../core/json';
 import { isPlainObject } from '../core/config-merge';
-import { getWorkflowConfigPath, syncWorkflowConfigWithTemplate } from '../core/workflow-config';
+import { getWorkflowConfigPath, isConfiguredCompileGateCommand, syncWorkflowConfigWithTemplate } from '../core/workflow-config';
 import { validateInitAnswers, serializeInitAnswers } from '../schemas/init-answers';
 import { convertActiveAgentEntrypointFilesToString, getActiveAgentEntrypointFiles } from '../materialization/common';
-import { resolveSuggestedFullSuiteValidationCommand } from '../materialization/project-discovery';
+import { resolveSuggestedCompileGateCommands, resolveSuggestedFullSuiteValidationCommand } from '../materialization/project-discovery';
 import { runInstall } from '../materialization/install';
 import {
     seedProjectMemoryFromTemplate,
     validateSeededProjectMemory,
     writeProjectMemoryBootstrapReport
 } from '../materialization/project-memory-builder';
-import { generateProjectMemorySummary } from '../materialization/rule-materialization';
+import { applyCompileGateCommandDefaults, generateProjectMemorySummary } from '../materialization/rule-materialization';
 import { runVerify } from '../validators/verify';
 import { validateManifest } from '../validators/validate-manifest';
 import { createAgentInitState, readAgentInitStateSafe, writeAgentInitState } from '../runtime/agent-init-state';
 import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
+import { validateCompileGateCommand } from '../gates/compile/compile-gate';
+import { readPreservableCompileGateCommandFromFile } from './agent-init/contract-migrations';
 import {
     PROJECT_MEMORY_READ_FIRST_FILE_NAMES,
     PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,
@@ -126,6 +129,76 @@ export interface AgentInitResult {
 function normalizeOptionalCommand(value: unknown): string | null {
     const text = String(value || '').trim();
     return text || null;
+}
+
+function normalizeCompileGateCommandCandidate(command: unknown, sourceLabel: string): string | null {
+    const normalized = String(command || '').trim();
+    if (!normalized || normalized === UNCONFIGURED_COMPILE_GATE_COMMAND) {
+        return null;
+    }
+    try {
+        validateCompileGateCommand(normalized, sourceLabel);
+        return normalized;
+    } catch {
+        return null;
+    }
+}
+
+function resolveDetectedCompileGateCommand(targetRoot: string): string | null {
+    for (const candidate of resolveSuggestedCompileGateCommands(targetRoot)) {
+        const command = normalizeCompileGateCommandCandidate(candidate, 'agent-init project discovery');
+        if (command) {
+            return command;
+        }
+    }
+    return null;
+}
+
+function syncCompileGateCommandGuidance(bundleRoot: string, command: string): void {
+    const commandsRulePath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md');
+    if (!pathExists(commandsRulePath)) {
+        return;
+    }
+    const currentContent = readTextFile(commandsRulePath);
+    const updatedContent = applyCompileGateCommandDefaults(currentContent, '40-commands.md', [command]);
+    if (updatedContent !== currentContent) {
+        writeTextFile(commandsRulePath, updatedContent);
+    }
+}
+
+function seedWorkflowConfigCompileGateCommand(targetRoot: string, bundleRoot: string): void {
+    const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
+    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot, {
+        preserveLegacyReviewExecutionPolicyOmission: true
+    });
+    const existingSection = isPlainObject(rawConfig.compile_gate)
+        ? rawConfig.compile_gate as Record<string, unknown>
+        : {};
+    if (isConfiguredCompileGateCommand(existingSection.command)) {
+        syncCompileGateCommandGuidance(bundleRoot, String(existingSection.command));
+        return;
+    }
+
+    const preservedCommand = readPreservableCompileGateCommandFromFile(path.join(
+        bundleRoot,
+        'live',
+        'docs',
+        'agent-rules',
+        '40-commands.md'
+    ));
+    const detectedCommand = normalizeCompileGateCommandCandidate(
+        preservedCommand,
+        'agent-init preserved compile-gate command'
+    ) || resolveDetectedCompileGateCommand(targetRoot);
+    const nextConfig = {
+        ...rawConfig,
+        compile_gate: {
+            ...existingSection,
+            command: detectedCommand || UNCONFIGURED_COMPILE_GATE_COMMAND
+        }
+    };
+    writeJsonFile(workflowConfigPath, nextConfig);
+    syncCompileGateCommandGuidance(bundleRoot, detectedCommand || UNCONFIGURED_COMPILE_GATE_COMMAND);
 }
 
 function seedWorkflowConfigFullSuiteCommand(
@@ -402,6 +475,7 @@ export function runAgentInit(options: RunAgentInitOptions): AgentInitResult {
         initAnswersPath: resolvedInitAnswersPath
     });
 
+    seedWorkflowConfigCompileGateCommand(normalizedTargetRoot, normalizedBundleRoot);
     const seededFullSuiteCommand = seedWorkflowConfigFullSuiteCommand(
         normalizedTargetRoot,
         normalizedBundleRoot,

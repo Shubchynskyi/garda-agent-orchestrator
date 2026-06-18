@@ -46,6 +46,7 @@ export interface MaterializationRunnerOptions {
     providerMinimalism: boolean;
     activeAgentFilesSeed: string | null;
     preserveLegacyReviewExecutionPolicyOmission?: boolean;
+    preservedCompileGateCommand?: string | null;
     lifecycleLockAlreadyHeld?: boolean;
 }
 
@@ -291,6 +292,7 @@ export function executeUpdatePipelineStages(options: {
                     providerMinimalism: sources.providerMinimalism,
                     activeAgentFilesSeed: sources.activeAgentFilesSeed,
                     preserveLegacyReviewExecutionPolicyOmission: true,
+                    preservedCompileGateCommand,
                     lifecycleLockAlreadyHeld
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(materializationResult);
@@ -318,6 +320,7 @@ export function executeUpdatePipelineStages(options: {
                     providerMinimalism: sources.providerMinimalism,
                     activeAgentFilesSeed: sources.activeAgentFilesSeed,
                     preserveLegacyReviewExecutionPolicyOmission: true,
+                    preservedCompileGateCommand,
                     lifecycleLockAlreadyHeld
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(initResult);

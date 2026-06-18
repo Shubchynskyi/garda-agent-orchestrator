@@ -31,7 +31,9 @@ describe('getProjectDiscovery', () => {
     it('discovers stack signals from filesystem', () => {
         const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-'));
         try {
-            fs.writeFileSync(path.join(tmpDir, 'package.json'), '{}');
+            fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
+                scripts: { build: 'vite build' }
+            }));
             fs.writeFileSync(path.join(tmpDir, 'go.mod'), 'module test');
             fs.mkdirSync(path.join(tmpDir, 'src'));
             fs.writeFileSync(path.join(tmpDir, 'src', 'main.go'), '');
@@ -223,6 +225,21 @@ describe('resolveSuggestedCompileGateCommands', () => {
             assert.ok(result.includes('pnpm run build'));
             assert.ok(result.includes('pnpm run typecheck'));
             assert.ok(!result.includes('pnpm test'));
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not invent npm build for Node workspaces without compile scripts', () => {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-discovery-node-no-build-'));
+        try {
+            fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({
+                scripts: { test: 'vitest run' }
+            }), 'utf8');
+
+            const result = resolveSuggestedCompileGateCommands(tmpDir);
+            assert.ok(!result.includes('npm run build'));
+            assert.deepEqual(result, []);
         } finally {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         }

@@ -13,6 +13,7 @@ import {
 } from '../cli-helpers';
 import { formatKeyValueOutput, type ParsedOptionsRecord } from '../shared-command-utils';
 import { hasMaterializedWorkflowConfigBaseline } from '../../../core/workflow-config';
+import { readPreservableCompileGateCommandFromFile } from '../../../lifecycle/agent-init/contract-migrations';
 import {
     handleStandardFlags,
     resolveInitAnswersPath,
@@ -44,6 +45,15 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
         await withLifecycleOperationLockAsync(targetRoot, 'install', async () => {
             const bundlePath = getBundlePath(targetRoot);
             const bundleHadMaterializedLiveBeforeInstall = hasMaterializedWorkflowConfigBaseline(bundlePath);
+            const preservedCompileGateCommand = options.dryRun
+                ? null
+                : readPreservableCompileGateCommandFromFile(path.join(
+                    bundlePath,
+                    'live',
+                    'docs',
+                    'agent-rules',
+                    '40-commands.md'
+                ));
             const sourceResolved = path.resolve(source.sourceRoot);
             const bundleResolved = path.resolve(bundlePath);
             if (sourceResolved.toLowerCase() !== bundleResolved.toLowerCase() && !options.dryRun) {
@@ -65,7 +75,8 @@ export async function handleInstall(commandArgv: string[], packageJson: PackageJ
                     return runInit({
                         ...initOptions,
                         bundleRoot: effectiveBundlePath,
-                        preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeInstall
+                        preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeInstall,
+                        preservedCompileGateCommand
                     });
                 }
             }) as Record<string, unknown>;
@@ -94,6 +105,15 @@ export function handleInit(commandArgv: string[], packageJson: PackageJsonLike):
     if (handleStandardFlags(options, packageJson)) return;
 
     const { targetRoot, bundlePath, answers } = resolveWorkspaceContext(options.targetRoot, options.initAnswersPath, 'init');
+    const preservedCompileGateCommand = options.dryRun
+        ? null
+        : readPreservableCompileGateCommandFromFile(path.join(
+            bundlePath,
+            'live',
+            'docs',
+            'agent-rules',
+            '40-commands.md'
+        ));
 
     const initResult = runInit({
         targetRoot,
@@ -107,6 +127,7 @@ export function handleInit(commandArgv: string[], packageJson: PackageJsonLike):
         providerMinimalism: answers.providerMinimalism,
         activeAgentFilesSeed: answers.activeAgentFiles,
         preserveLegacyReviewExecutionPolicyOmission: hasMaterializedWorkflowConfigBaseline(bundlePath),
+        preservedCompileGateCommand,
         dryRun: options.dryRun === true
     }) as Record<string, unknown>;
     console.log('Init: PASSED');

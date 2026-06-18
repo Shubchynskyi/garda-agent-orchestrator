@@ -4,6 +4,7 @@ import { pathExists } from '../core/filesystem';
 import { normalizeRelativePath } from '../core/paths';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../core/subprocess';
 import {
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
     UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
     resolveBundleName
 } from '../core/constants';
@@ -144,11 +145,11 @@ function resolveNodeCompileGateCommands(targetRoot: string): string[] {
     const packageJson = readRootPackageJsonSafe(targetRoot);
     const runner = detectNodePackageManager(targetRoot, packageJson);
     const scripts = getPackageJsonScripts(packageJson);
-    const preferredScripts = ['build', 'compile', 'typecheck', 'type-check', 'check'];
+    const preferredScripts = ['build', 'compile', 'typecheck', 'type-check'];
     const commands = preferredScripts
         .filter((scriptName) => typeof scripts[scriptName] === 'string')
         .map((scriptName) => `${runner} run ${scriptName}`);
-    return commands.length > 0 ? commands : [`${runner} run build`];
+    return commands;
 }
 
 function resolveNodeFullSuiteValidationCommand(targetRoot: string): string | null {
@@ -600,9 +601,9 @@ export function buildProjectDiscoveryLines(discovery: ProjectDiscovery, timestam
 
     lines.push('', '## Suggested Compile Gate Commands (Heuristic)');
     if (!Array.isArray(discovery.suggestedCompileGateCommands) || discovery.suggestedCompileGateCommands.length === 0) {
-        lines.push('- No compile-gate command suggestions from discovery. Populate `40-commands.md` with a compile/build/type-check command manually; do not use the full test suite here.');
+        lines.push(`- No deterministic compile-gate command detected. Keep workflow config at \`${UNCONFIGURED_COMPILE_GATE_COMMAND}\` until an operator or agent-init records a project-specific compile/build/type-check command.`);
     } else {
-        lines.push('- Use these only for `### Compile Gate (Mandatory)` in `40-commands.md`; full test suites belong in full-suite validation.');
+        lines.push('- Use these only for `workflow-config.compile_gate.command`; `40-commands.md` is human guidance. Full test suites belong in full-suite validation.');
         for (const cmd of discovery.suggestedCompileGateCommands) {
             lines.push(`- ${tick}${cmd}${tick}`);
         }

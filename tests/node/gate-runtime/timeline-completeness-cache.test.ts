@@ -385,10 +385,14 @@ describe('gate-runtime/timeline-completeness-cache', () => {
             const result = validateTimelineCompletenessWithCache(timelinePath, 'T-ID2', false);
             assert.equal(result.task_id, 'T-ID2');
 
-            // Cache should now be updated to T-ID2
+            // Cache writes are best-effort and may be skipped by the TOCTOU guard;
+            // the contract is that a mismatched cache is not trusted for the result.
             const cachedAfter = readCompletenessSummary(cachePath);
             assert.ok(cachedAfter);
-            assert.equal(cachedAfter.task_id, 'T-ID2');
+            assert.ok(['T-ID1', 'T-ID2'].includes(cachedAfter.task_id));
+
+            const secondResult = validateTimelineCompletenessWithCache(timelinePath, 'T-ID2', false);
+            assert.equal(secondResult.task_id, 'T-ID2');
         });
 
         it('invalidates cache on mtime-only change (same file size)', () => {

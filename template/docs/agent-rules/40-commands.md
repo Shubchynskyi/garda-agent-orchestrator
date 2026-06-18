@@ -121,7 +121,7 @@ Rules:
 
 ### Compile Gate (Mandatory)
 ```bash
-npm run build
+__COMPILE_GATE_COMMAND_UNCONFIGURED__
 ```
 
 Rules:

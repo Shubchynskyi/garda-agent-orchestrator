@@ -457,7 +457,8 @@ export async function handleSetup(
             initRunner: function (initOptions: Omit<Parameters<typeof runInit>[0], 'bundleRoot'>) {
                 return runInit(Object.assign({
                     bundleRoot: effectiveBundlePath,
-                    preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeSetup
+                    preserveLegacyReviewExecutionPolicyOmission: bundleHadMaterializedLiveBeforeSetup,
+                    preservedCompileGateCommand
                 }, initOptions));
             }
         }) as Record<string, unknown>;

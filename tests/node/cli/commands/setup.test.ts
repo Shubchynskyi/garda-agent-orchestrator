@@ -15,7 +15,11 @@ import { evaluateProtectedControlPlaneManifest } from '../../../../src/gates/sha
 import { runVerify } from '../../../../src/validators/verify';
 import type { StatusSnapshot } from '../../../../src/validators/status';
 
-import { DEFAULT_BUNDLE_NAME, resolveInitAnswersRelativePath } from '../../../../src/core/constants';
+import {
+    DEFAULT_BUNDLE_NAME,
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
+    resolveInitAnswersRelativePath
+} from '../../../../src/core/constants';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
 
@@ -520,7 +524,12 @@ test('handleSetup preserves project-specific compile gate command during contrac
 
         const commandsContent = fs.readFileSync(commandsPath, 'utf8');
         const compileSection = extractMarkdownSection(commandsContent, '### Compile Gate (Mandatory)');
+        const workflowConfig = JSON.parse(fs.readFileSync(
+            path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+            'utf8'
+        ));
         assert.ok(compileSection.includes('.\\gradlew.bat clean testClasses --console=plain'));
+        assert.equal(workflowConfig.compile_gate.command, '.\\gradlew.bat clean testClasses --console=plain');
         assert.ok(!/```bash\r?\nnpm run build\r?\n```/.test(compileSection));
         assert.ok(compileSection.includes('must be a compile/build/type-check command'));
         assert.ok(compileSection.includes('Do not use full-suite test commands here'));
@@ -927,6 +936,7 @@ test('handleSetup materializes code_first_optional review_execution_policy for a
         assert.deepEqual(workflowConfig.review_execution_policy, {
             mode: 'code_first_optional'
         });
+        assert.equal(workflowConfig.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
         assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
     } finally {

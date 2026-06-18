@@ -102,3 +102,45 @@ test('handleInit materializes code_first_optional review_execution_policy when b
         fs.rmSync(projectRoot, { recursive: true, force: true });
     }
 });
+
+test('handleInit preserves legacy compile-gate command into workflow config', () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const { projectRoot, bundleRoot } = setupWorkspace(repoRoot);
+    const answersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+    const commandsPath = path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md');
+    const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    const compileCommand = 'python -m py_compile app.py';
+    fs.mkdirSync(path.dirname(commandsPath), { recursive: true });
+    fs.writeFileSync(answersPath, JSON.stringify({
+        AssistantLanguage: 'English',
+        AssistantBrevity: 'concise',
+        SourceOfTruth: 'Codex',
+        EnforceNoAutoCommit: 'false',
+        ClaudeOrchestratorFullAccess: 'false',
+        TokenEconomyEnabled: 'true',
+        ProviderMinimalism: 'true',
+        CollectedVia: 'CLI_NONINTERACTIVE',
+        ActiveAgentFiles: 'AGENTS.md'
+    }, null, 2), 'utf8');
+    fs.writeFileSync(commandsPath, [
+        '# Commands',
+        '',
+        '### Compile Gate (Mandatory)',
+        '```bash',
+        compileCommand,
+        '```'
+    ].join('\n'), 'utf8');
+
+    const originalConsoleLog = console.log;
+    console.log = () => undefined;
+    try {
+        handleInit(['--target-root', projectRoot], { name: 'garda-agent-orchestrator', version: '1.0.0' });
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        const commandsContent = fs.readFileSync(commandsPath, 'utf8');
+        assert.equal(workflowConfig.compile_gate.command, compileCommand);
+        assert.ok(commandsContent.includes(compileCommand));
+    } finally {
+        console.log = originalConsoleLog;
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+});

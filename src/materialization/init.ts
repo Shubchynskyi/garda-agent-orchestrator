@@ -8,6 +8,7 @@ import {
     readWorkflowConfigForMerge,
     buildDefaultWorkflowConfig,
     buildWorkflowConfigReviewCycleLimitDiagnostic,
+    isConfiguredCompileGateCommand,
     type WorkflowConfigReadStatus,
     type WorkflowConfigData
 } from '../core/workflow-config';
@@ -26,6 +27,7 @@ import {
     DEFAULT_ASSISTANT_BREVITY,
     DEFAULT_ASSISTANT_LANGUAGE,
     DEFAULT_SOURCE_OF_TRUTH,
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
     resolveBundleName
 } from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
@@ -64,6 +66,7 @@ import {
     type ProjectMemoryBootstrapReport
 } from './project-memory/project-memory-builder';
 import { withLifecycleOperationLock } from '../lifecycle/common';
+import { validateCompileGateCommand } from '../gates/compile/compile-gate';
 export { mergeConfig } from '../core/config-merge';
 
 interface RunInitOptions {
@@ -79,6 +82,7 @@ interface RunInitOptions {
     providerMinimalism?: boolean;
     activeAgentFilesSeed?: string | null;
     preserveLegacyReviewExecutionPolicyOmission?: boolean;
+    preservedCompileGateCommand?: string | null;
     lifecycleLockAlreadyHeld?: boolean;
 }
 
@@ -152,6 +156,106 @@ function buildWorkflowConfigMergeStatus(
     return `live_config_${readStatus}_template_applied ${suffix}`;
 }
 
+function normalizeCompileGateCommandCandidate(command: unknown, sourceLabel: string): string | null {
+    const normalized = String(command || '').trim();
+    if (!normalized || normalized === UNCONFIGURED_COMPILE_GATE_COMMAND) {
+        return null;
+    }
+    try {
+        validateCompileGateCommand(normalized, sourceLabel);
+        return normalized;
+    } catch {
+        return null;
+    }
+}
+
+function selectDiscoveredCompileGateCommand(commands: readonly string[]): string | null {
+    for (const candidate of commands) {
+        const command = normalizeCompileGateCommandCandidate(candidate, 'project-discovery compile-gate suggestion');
+        if (command) {
+            return command;
+        }
+    }
+    return null;
+}
+
+function isDiscoveredCompileGateCommand(command: string, discovery: ProjectDiscovery): boolean {
+    return discovery.suggestedCompileGateCommands.some((candidate) => (
+        normalizeCompileGateCommandCandidate(candidate, 'project-discovery compile-gate suggestion') === command
+    ));
+}
+
+function selectCompileGateCommand(
+    existingCommand: string | null,
+    discovery: ProjectDiscovery,
+    preservedCompileGateCommand: string | null
+): string {
+    const preservedCommand = normalizeCompileGateCommandCandidate(
+        preservedCompileGateCommand,
+        'preserved compile-gate command'
+    );
+    if (preservedCommand && (!existingCommand || isDiscoveredCompileGateCommand(existingCommand, discovery))) {
+        return preservedCommand;
+    }
+    if (existingCommand) {
+        return existingCommand;
+    }
+    return preservedCommand
+        || selectDiscoveredCompileGateCommand(discovery.suggestedCompileGateCommands)
+        || UNCONFIGURED_COMPILE_GATE_COMMAND;
+}
+
+function readConfiguredCompileGateCommandForGuidance(workflowConfigPath: string): string | null {
+    if (!pathExists(workflowConfigPath)) {
+        return null;
+    }
+    try {
+        const parsed = readJsonFile(workflowConfigPath);
+        if (!isPlainObject(parsed) || !isPlainObject(parsed.compile_gate)) {
+            return null;
+        }
+        return normalizeCompileGateCommandCandidate(
+            parsed.compile_gate.command,
+            'existing workflow-config compile-gate command'
+        );
+    } catch {
+        return null;
+    }
+}
+
+function selectCompileGateCommandForGuidance(
+    workflowConfigPath: string,
+    discovery: ProjectDiscovery,
+    preservedCompileGateCommand: string | null
+): string {
+    const existingCommand = readConfiguredCompileGateCommandForGuidance(workflowConfigPath);
+    return selectCompileGateCommand(existingCommand, discovery, preservedCompileGateCommand);
+}
+
+function applyDiscoveredCompileGateCommand(
+    workflowConfig: Record<string, unknown>,
+    discovery: ProjectDiscovery,
+    preservedCompileGateCommand: string | null
+): Record<string, unknown> {
+    const compileGate = isPlainObject(workflowConfig.compile_gate)
+        ? { ...workflowConfig.compile_gate }
+        : {};
+    const existingCommand = normalizeCompileGateCommandCandidate(
+        compileGate.command,
+        'existing workflow-config compile-gate command'
+    );
+    const selectedCommand = selectCompileGateCommand(existingCommand, discovery, preservedCompileGateCommand);
+    if (existingCommand === selectedCommand && isConfiguredCompileGateCommand(compileGate.command)) {
+        return workflowConfig;
+    }
+
+    compileGate.command = selectedCommand;
+    return {
+        ...workflowConfig,
+        compile_gate: compileGate
+    };
+}
+
 interface BuildInitReportOptions {
     timestampIso: string;
     projectName: string;
@@ -203,6 +307,7 @@ export function runInit(options: RunInitOptions) {
         providerMinimalism = true,
         activeAgentFilesSeed = null,
         preserveLegacyReviewExecutionPolicyOmission = false,
+        preservedCompileGateCommand = null,
         lifecycleLockAlreadyHeld = false
     } = options;
 
@@ -262,6 +367,11 @@ export function runInit(options: RunInitOptions) {
     const discovery = getProjectDiscovery(targetRoot);
     const discoveryLines = buildProjectDiscoveryLines(discovery, timestampIso);
     const discoveryOverlay = buildDiscoveryOverlaySection(discovery);
+    const compileGateCommandForGuidance = selectCompileGateCommandForGuidance(
+        workflowConfigPath,
+        discovery,
+        preservedCompileGateCommand
+    );
 
     // Seed project-memory from template and add later missing seed files without overwriting user content.
     const projectMemorySeed = seedProjectMemoryFromTemplate({ templateRoot, liveRoot, dryRun });
@@ -308,8 +418,8 @@ export function runInit(options: RunInitOptions) {
         // Apply template-specific context overlay
         if (source.origin === 'template') {
             content = applyContextDefaults(content, ruleFile, discoveryOverlay);
-            content = applyCompileGateCommandDefaults(content, ruleFile, discovery.suggestedCompileGateCommands);
         }
+        content = applyCompileGateCommandDefaults(content, ruleFile, [compileGateCommandForGuidance]);
 
         // Apply assistant defaults (language/brevity) to 00-core.md
         content = applyAssistantDefaults(content, ruleFile, lang, brevity);
@@ -457,9 +567,9 @@ export function runInit(options: RunInitOptions) {
             const materializedConfig = replaceWithCanonicalTemplate
                 ? cloneJsonValue(templateConfig)
                 : configName === 'workflow-config'
-                    ? mergeWorkflowConfigWithTemplate(templateConfig as WorkflowConfigData, existingConfig, {
+                    ? applyDiscoveredCompileGateCommand(mergeWorkflowConfigWithTemplate(templateConfig as WorkflowConfigData, existingConfig, {
                         preserveLegacyReviewExecutionPolicyOmission: preserveLegacyWorkflowConfigOmission
-                    })
+                    }), discovery, preservedCompileGateCommand)
                     : mergeConfig(templateConfig, existingConfig);
 
             // Apply token economy enabled flag

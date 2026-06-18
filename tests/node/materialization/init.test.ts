@@ -7,7 +7,10 @@ import * as os from 'node:os';
 import { runInit, mergeConfig, USAGE_CONTRACT_MARKERS } from '../../../src/materialization/init';
 import { getLifecycleOperationLockPath } from '../../../src/lifecycle/common';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../src/core/project-memory-rollout';
-import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../src/core/constants';
+import {
+    UNCONFIGURED_COMPILE_GATE_COMMAND,
+    UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND
+} from '../../../src/core/constants';
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -574,6 +577,10 @@ describe('runInit', () => {
 
             assert.equal(workflowConfig.full_suite_validation.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
             assert.equal(workflowConfig.full_suite_validation.enabled, false);
+            assert.equal(
+                workflowConfig.compile_gate.command,
+                process.platform === 'win32' ? '.\\gradlew.bat assemble' : './gradlew assemble'
+            );
             assert.ok(discovery.includes('Java or JVM'));
             assert.ok(discovery.includes('`build.gradle.kts`'));
             assert.ok(fullSuiteSection.includes('`' + (process.platform === 'win32' ? '.\\gradlew.bat test' : './gradlew test') + '`'));
@@ -608,7 +615,66 @@ describe('runInit', () => {
 
             assert.equal(workflowConfig.full_suite_validation.command, UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND);
             assert.equal(workflowConfig.full_suite_validation.enabled, false);
+            assert.equal(workflowConfig.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
             assert.ok(discovery.includes('No deterministic full-suite command detected yet.'));
+            const commands = fs.readFileSync(
+                path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+                'utf8'
+            );
+            assert.ok(commands.includes(UNCONFIGURED_COMPILE_GATE_COMMAND));
+            assert.equal(/### Compile Gate \(Mandatory\)\r?\n```bash\r?\nnpm run build\r?\n```/.test(commands), false);
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('syncs configured workflow compile command into template command guidance', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const configuredCommand = 'tsc --noEmit';
+            fs.writeFileSync(path.join(projectRoot, 'README.md'), '# Unknown project\n', 'utf8');
+            fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+            fs.writeFileSync(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), JSON.stringify({
+                compile_gate: {
+                    command: configuredCommand
+                }
+            }, null, 2), 'utf8');
+            fs.mkdirSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules'), { recursive: true });
+            fs.writeFileSync(
+                path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+                [
+                    '# Commands',
+                    '',
+                    '### Compile Gate (Mandatory)',
+                    '```bash',
+                    UNCONFIGURED_COMPILE_GATE_COMMAND,
+                    '```',
+                    ''
+                ].join('\n'),
+                'utf8'
+            );
+
+            runInit({
+                targetRoot: projectRoot,
+                bundleRoot,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude'
+            });
+
+            const workflowConfig = JSON.parse(fs.readFileSync(
+                path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+                'utf8'
+            ));
+            const commands = fs.readFileSync(
+                path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+                'utf8'
+            );
+            assert.equal(workflowConfig.compile_gate.command, configuredCommand);
+            assert.match(
+                commands,
+                /### Compile Gate \(Mandatory\)\r?\n```bash\r?\ntsc --noEmit\r?\n```/
+            );
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

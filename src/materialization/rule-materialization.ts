@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathExists, readTextFile } from '../core/filesystem';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../core/constants';
 import {
     DEFAULT_PROJECT_MEMORY_GENERATED_SUMMARY_MAX_CHARS,
     PROJECT_MEMORY_FILE_DEFINITIONS,
@@ -304,12 +305,19 @@ export function applyContextDefaults(content: string, ruleFile: string, discover
     return updated + '\r\n\r\n' + discoveryOverlay + '\r\n';
 }
 
+function isTemplateCompileGateCommand(command: string): boolean {
+    const normalized = command.trim();
+    return normalized === 'npm run build'
+        || normalized === UNCONFIGURED_COMPILE_GATE_COMMAND
+        || /^<[^>]+>$/.test(normalized);
+}
+
 export function applyCompileGateCommandDefaults(content: string, ruleFile: string, suggestedCompileGateCommands: readonly string[]): string {
-    if (ruleFile !== '40-commands.md' || suggestedCompileGateCommands.length === 0) {
+    if (ruleFile !== '40-commands.md') {
         return content;
     }
 
-    const command = String(suggestedCompileGateCommands[0] || '').trim();
+    const command = String(suggestedCompileGateCommands[0] || '').trim() || UNCONFIGURED_COMPILE_GATE_COMMAND;
     if (!command) {
         return content;
     }
@@ -322,7 +330,7 @@ export function applyCompileGateCommandDefaults(content: string, ruleFile: strin
 
     const bodyLines = match[2].split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     const firstCommand = bodyLines.find((line) => !line.startsWith('#')) || '';
-    if (firstCommand && firstCommand !== 'npm run build' && !/^<[^>]+>$/.test(firstCommand)) {
+    if (firstCommand && !isTemplateCompileGateCommand(firstCommand)) {
         return content;
     }
 
