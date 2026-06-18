@@ -267,10 +267,13 @@ export function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
         `--repo-root ${quotePowerShellCliValue(path.resolve(params.repoRoot))}`,
         `--task-id ${quotePowerShellCliValue(params.taskId)}`,
         `--entry-mode ${quotePowerShellCliValue(params.taskModeEvidence.entry_mode || 'EXPLICIT_TASK_EXECUTION')}`,
-        `--requested-depth ${quotePowerShellCliValue(String(params.taskModeEvidence.requested_depth || 2))}`,
         `--task-summary ${quotePowerShellCliValue(params.taskSummary || params.taskModeEvidence.task_summary || '')}`,
         '--orchestrator-work'
     ];
+    const requestedDepth = params.taskModeEvidence.requested_depth;
+    if (requestedDepth) {
+        parts.splice(4, 0, `--requested-depth ${quotePowerShellCliValue(String(requestedDepth || 2))}`);
+    }
     const includeWorkflowConfigWork = params.taskModeEvidence.workflow_config_work === true
         || getWorkflowConfigChangedFiles([
             ...(params.taskModeEvidence.planned_changed_files || []),
@@ -283,7 +286,12 @@ export function buildClassifyChangeOrchestratorWorkRestartCommand(params: {
     if (params.taskModeEvidence.start_banner) {
         parts.push(`--start-banner ${quotePowerShellCliValue(params.taskModeEvidence.start_banner)}`);
     }
-    if (params.taskModeEvidence.effective_depth) {
+    const effectiveDepth = params.taskModeEvidence.effective_depth;
+    const shouldPreserveEffectiveDepth = Boolean(effectiveDepth) && (
+        params.taskModeEvidence.effective_depth_source === 'explicit'
+        || (!params.taskModeEvidence.effective_depth_source && requestedDepth !== effectiveDepth)
+    );
+    if (shouldPreserveEffectiveDepth) {
         parts.push(`--effective-depth ${quotePowerShellCliValue(String(params.taskModeEvidence.effective_depth))}`);
     }
     if (params.taskModeEvidence.provider) {

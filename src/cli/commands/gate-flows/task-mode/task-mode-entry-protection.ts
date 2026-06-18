@@ -73,15 +73,18 @@ export function buildOrchestratorWorkHandoffCommand(
     plannedChangedFiles: string[],
     includeWorkflowConfigWork = false
 ): string {
+    const requestedDepthRaw = String(options.requestedDepth || '').trim();
     const parts: string[] = [
         `${buildGateCommandPrefix(repoRoot)} gate enter-task-mode`,
         `--repo-root ${quotePowerShellCliValue(path.resolve(repoRoot))}`,
         `--task-id ${quotePowerShellCliValue(taskId)}`,
         `--entry-mode ${quotePowerShellCliValue(normalizeTaskModeEntryMode(options.entryMode || 'EXPLICIT_TASK_EXECUTION'))}`,
-        `--requested-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)))}`,
         `--task-summary ${quotePowerShellCliValue(String(options.taskSummary || '').trim())}`,
         '--orchestrator-work'
     ];
+    if (requestedDepthRaw) {
+        parts.splice(4, 0, `--requested-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(requestedDepthRaw, 'RequestedDepth', 2)))}`);
+    }
     if (includeWorkflowConfigWork) {
         parts.push('--workflow-config-work');
     }
@@ -93,7 +96,10 @@ export function buildOrchestratorWorkHandoffCommand(
 
     const effectiveDepthRaw = String(options.effectiveDepth || '').trim();
     if (effectiveDepthRaw) {
-        parts.push(`--effective-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(effectiveDepthRaw, 'EffectiveDepth', 2)))}`);
+        const effectiveDepthFallback = requestedDepthRaw
+            ? parseTaskModeDepth(requestedDepthRaw, 'RequestedDepth', 2)
+            : 2;
+        parts.push(`--effective-depth ${quotePowerShellCliValue(String(parseTaskModeDepth(effectiveDepthRaw, 'EffectiveDepth', effectiveDepthFallback)))}`);
     }
     const provider = String(options.provider || '').trim();
     if (provider) {

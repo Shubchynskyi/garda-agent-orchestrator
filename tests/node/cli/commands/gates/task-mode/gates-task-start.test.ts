@@ -312,6 +312,50 @@ describe('cli/commands/gates — task-start', () => {
         );
         assert.ok(error.message.includes('--operator-confirmed yes'));
         assert.ok(error.message.includes('--operator-confirmed-at-utc "<ISO-8601 timestamp>"'));
+        assert.ok(!error.message.includes('--requested-depth'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('preserves explicit requested depth in orchestrator-work handoff commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-explicit-depth';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2), 'utf8');
+
+        const error = captureExpectedError(() => runEnterTaskMode({
+                repoRoot,
+                taskId,
+                requestedDepth: 3,
+                taskSummary: 'Preserve explicit requested depth in protected handoff',
+                plannedChangedFiles: ['src/cli/main.ts']
+            }));
+        assert.match(error.message, /Suggested command: node bin\/garda\.js gate enter-task-mode/);
+        assert.ok(error.message.includes("--requested-depth '3'"));
+        assert.ok(error.message.includes('--orchestrator-work'));
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('preserves explicit effective depth without inventing requested depth in orchestrator-work handoff commands', () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-900planned-protected-explicit-effective-depth';
+        seedTaskQueue(repoRoot, taskId);
+        seedInitAnswers(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'package.json'), JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2), 'utf8');
+
+        const error = captureExpectedError(() => runEnterTaskMode({
+                repoRoot,
+                taskId,
+                effectiveDepth: 3,
+                taskSummary: 'Preserve explicit effective depth in protected handoff',
+                plannedChangedFiles: ['src/cli/main.ts']
+            }));
+        assert.match(error.message, /Suggested command: node bin\/garda\.js gate enter-task-mode/);
+        assert.ok(!error.message.includes('--requested-depth'));
+        assert.ok(error.message.includes("--effective-depth '3'"));
+        assert.ok(error.message.includes('--orchestrator-work'));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

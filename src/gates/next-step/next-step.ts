@@ -1930,7 +1930,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const startupRoute = resolveNextStepStartupRoute({
         enterTaskModePassed: isGatePassed(summary, 'enter-task-mode'),
         defaultExecutionProvider,
-        enterTaskModeCommand: buildEnterTaskModeCommand(cliPrefix, taskId, taskEntry, defaultExecutionProvider),
+        enterTaskModeCommand: buildEnterTaskModeCommand(repoRoot, cliPrefix, taskId, taskEntry, defaultExecutionProvider),
         startupCycleReadiness,
         loadRulePackPassed: isGatePassed(summary, 'load-rule-pack'),
         rulePackStage: resolveRulePackStage(rulePack),

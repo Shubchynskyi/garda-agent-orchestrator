@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 
 import {
+    buildGateCommandOverviewText,
     buildGateHelpText,
     buildTaskIdSyntaxRemediationMessage
 } from '../../../../../../src/cli/commands/gate-command-help';
@@ -247,6 +248,21 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         const remediationOutput = remediationResult.errors.join('\n');
         assert.ok(remediationOutput.includes('Suggested command: node bin/garda.js gate enter-task-mode --task-id "T-008"'));
         assert.ok(!remediationOutput.includes('Suggested command: node garda-agent-orchestrator/bin/garda.js'));
+    });
+
+    it('documents requested depth as a profile-driven optional override', async () => {
+        const helpResult = await runCliWithCapturedOutput(
+            ['gate', 'enter-task-mode', '--help'],
+            { cwd: getSourceCheckoutNestedCwd() }
+        );
+        assert.equal(helpResult.exitCode, 0);
+        const helpOutput = stripAnsi(helpResult.logs.join('\n'));
+        assert.ok(helpOutput.includes('[--requested-depth "<1|2|3>"]'));
+        assert.ok(helpOutput.includes('omit --requested-depth to use the selected task profile depth'));
+
+        const overviewOutput = stripAnsi(buildGateCommandOverviewText(path.resolve('.')));
+        assert.ok(!overviewOutput.includes('--requested-depth "2"'));
+        assert.ok(overviewOutput.includes('gate enter-task-mode --task-id "T-178" --entry-mode "EXPLICIT_TASK_EXECUTION" --task-summary'));
     });
 
     it('uses deployed-workspace CLI prefixes for help and remediation outside a source checkout', () => {

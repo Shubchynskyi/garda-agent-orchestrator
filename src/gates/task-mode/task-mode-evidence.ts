@@ -106,6 +106,8 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
         entry_mode: null,
         requested_depth: null,
         effective_depth: null,
+        requested_depth_source: null,
+        effective_depth_source: null,
         task_summary: null,
         orchestrator_work: null,
         workflow_config_work: null,
@@ -257,6 +259,18 @@ export function getTaskModeEvidence(repoRoot: string, taskId: string | null, art
     const effectiveDepth = artifactObject.effective_depth;
     if (typeof effectiveDepth === 'number' && Number.isInteger(effectiveDepth)) {
         result.effective_depth = effectiveDepth;
+    }
+    const requestedDepthSource = String(artifactObject.requested_depth_source || '').trim();
+    if (
+        requestedDepthSource === 'explicit'
+        || requestedDepthSource === 'profile_default'
+        || requestedDepthSource === 'legacy_default'
+    ) {
+        result.requested_depth_source = requestedDepthSource;
+    }
+    const effectiveDepthSource = String(artifactObject.effective_depth_source || '').trim();
+    if (effectiveDepthSource === 'explicit' || effectiveDepthSource === 'requested_depth') {
+        result.effective_depth_source = effectiveDepthSource;
     }
 
     if (result.evidence_task_id !== resolvedTaskId) {

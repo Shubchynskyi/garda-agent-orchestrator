@@ -203,6 +203,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     let profileSource: 'built_in' | 'user' | null = null;
     let runtimeActiveProfile: string | null = null;
     let runtimeProfileSource: 'built_in' | 'user' | null = null;
+    let defaultTaskModeDepth = 2;
+    let defaultTaskModeDepthResolvedFromProfile = false;
     const profilesConfigPath = path.join(orchestratorRoot, 'live', 'config', 'profiles.json');
     try {
         if (fs.existsSync(profilesConfigPath) && fs.statSync(profilesConfigPath).isFile()) {
@@ -213,6 +215,14 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
             profileSource = resolvedProfile.selection.effective_profile_source;
             runtimeActiveProfile = resolvedProfile.selection.runtime_active_profile;
             runtimeProfileSource = resolvedProfile.selection.runtime_profile_source;
+            if (
+                Number.isInteger(resolvedProfile.effective_policy.depth)
+                && resolvedProfile.effective_policy.depth >= 1
+                && resolvedProfile.effective_policy.depth <= 3
+            ) {
+                defaultTaskModeDepth = resolvedProfile.effective_policy.depth;
+                defaultTaskModeDepthResolvedFromProfile = true;
+            }
         } else if (String(rawTaskProfile || '').trim() && String(rawTaskProfile || '').trim().toLowerCase() !== 'default') {
             throw new Error(
                 `Task profile '${String(rawTaskProfile).trim()}' cannot be resolved because profiles config is missing: ${gateHelpers.normalizePath(profilesConfigPath)}`
@@ -225,11 +235,22 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
     }
 
     const reviewerRoutingFields = resolveTaskModeReviewerRoutingFields(routingDecision.provider);
+    const requestedDepthWasExplicit = String(options.requestedDepth || '').trim() !== '';
+    const effectiveDepthWasExplicit = String(options.effectiveDepth || '').trim() !== '';
+    const requestedDepthSource = requestedDepthWasExplicit
+        ? 'explicit'
+        : defaultTaskModeDepthResolvedFromProfile ? 'profile_default' : 'legacy_default';
     const taskModeArtifact = buildTaskModeArtifact({
         taskId,
         entryMode: options.entryMode,
-        requestedDepth: parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2),
-        effectiveDepth: parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2)),
+        requestedDepth: parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', defaultTaskModeDepth),
+        effectiveDepth: parseTaskModeDepth(
+            options.effectiveDepth,
+            'EffectiveDepth',
+            parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', defaultTaskModeDepth)
+        ),
+        requestedDepthSource,
+        effectiveDepthSource: effectiveDepthWasExplicit ? 'explicit' : 'requested_depth',
         taskSummary: String(options.taskSummary || ''),
         orchestratorWork,
         workflowConfigWork,

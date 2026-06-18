@@ -1364,6 +1364,59 @@ describe('gates/next-step startup routing', () => {
         assert.ok(text.includes('AfterCommand: rerun'));
     });
 
+    it('uses task profile depth for fresh task-mode command defaults', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow | Strict profile depth routing | gpt-5.5 | 2026-06-17 | strict | Test queue entry. |`,
+            ''
+        ].join('\n'), 'utf8');
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                strict: {
+                    description: 'Strict',
+                    depth: 3,
+                    review_policy: { code: true, db: true, security: true, refactor: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: false,
+                        strip_code_blocks: false,
+                        scoped_diffs: true,
+                        compact_reviewer_output: false
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        });
+
+        const result = withProviderEnv({ GARDA_EXECUTION_PROVIDER: 'Codex' }, () => (
+            resolveNextStep({ taskId: TASK_ID, repoRoot })
+        ));
+
+        assert.equal(result.next_gate, 'enter-task-mode');
+        assert.ok(result.commands[0].command.includes('--requested-depth "3"'));
+        assert.ok(result.commands[0].command.includes('--provider "Codex"'));
+    });
+
     it('prefers GitHub Copilot runtime markers over a Claude source-of-truth default', () => {
         const repoRoot = makeTempRepo();
         writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json'), {
@@ -1533,6 +1586,108 @@ describe('gates/next-step startup routing', () => {
         assert.ok(command.includes('--operator-confirmed yes'));
         assert.ok(command.includes('--planned-changed-file "src/gates/next-step/next-step.ts"'));
         assert.equal(text.includes('gate classify-change'), false);
+    });
+
+    it('preserves task-mode snapshot depth in protected source restart commands', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+            'utf8'
+        );
+        const protectedPath = path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts');
+        fs.mkdirSync(path.dirname(protectedPath), { recursive: true });
+        fs.writeFileSync(protectedPath, 'export const protectedBaseline = true;\n', 'utf8');
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'profiles.json'), {
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: { description: 'Balanced', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true } },
+                strict: { description: 'Strict changed later', depth: 2, review_policy: { code: true }, token_economy: { enabled: true }, skills: { auto_suggest: true } }
+            },
+            user_profiles: {}
+        });
+        initGitRepo(repoRoot);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 3,
+            effectiveDepth: 3,
+            requestedDepthSource: 'profile_default',
+            effectiveDepthSource: 'explicit',
+            taskSummary: 'Seeded strict profile depth before profile drift',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(protectedPath, 'export const protectedChange = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.ok(command.includes('--requested-depth "3"'));
+        assert.ok(command.includes('--effective-depth "3"'));
+    });
+
+    it('preserves legacy effective-depth overrides in protected source restart commands', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(
+            path.join(repoRoot, 'package.json'),
+            JSON.stringify({ name: 'garda-agent-orchestrator' }, null, 2) + '\n',
+            'utf8'
+        );
+        const protectedPath = path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts');
+        fs.mkdirSync(path.dirname(protectedPath), { recursive: true });
+        fs.writeFileSync(protectedPath, 'export const protectedBaseline = true;\n', 'utf8');
+        const workflowConfig = buildDefaultWorkflowConfig();
+        workflowConfig.full_suite_validation.enabled = false;
+        workflowConfig.review_execution_policy = { mode: 'code_first_optional' };
+        workflowConfig.project_memory_maintenance.enabled = false;
+        workflowConfig.orchestrator_work_policy = { mode: 'require_operator_confirmation' };
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), workflowConfig);
+        initGitRepo(repoRoot);
+        const taskModePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`);
+        writeJson(taskModePath, buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 3,
+            taskSummary: 'Legacy effective depth override before depth source fields',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        const legacyTaskMode = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as Record<string, unknown>;
+        delete legacyTaskMode.requested_depth_source;
+        delete legacyTaskMode.effective_depth_source;
+        writeJson(taskModePath, legacyTaskMode);
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(protectedPath, 'export const protectedChange = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0]?.command || '';
+
+        assert.equal(result.next_gate, 'enter-task-mode', result.reason);
+        assert.ok(command.includes('--requested-depth "2"'));
+        assert.ok(command.includes('--effective-depth "3"'));
     });
 
     it('routes stale preflight with new protected source changes to task-mode restart before classify-change', () => {

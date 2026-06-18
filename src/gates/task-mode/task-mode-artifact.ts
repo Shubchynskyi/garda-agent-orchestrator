@@ -91,6 +91,15 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
     const entryMode = normalizeTaskModeEntryMode(options.entryMode);
     const requestedDepth = parseTaskModeDepth(options.requestedDepth, 'RequestedDepth', 2);
     const effectiveDepth = parseTaskModeDepth(options.effectiveDepth, 'EffectiveDepth', requestedDepth);
+    const requestedDepthSource = options.requestedDepthSource === 'explicit'
+        || options.requestedDepthSource === 'profile_default'
+        || options.requestedDepthSource === 'legacy_default'
+        ? options.requestedDepthSource
+        : undefined;
+    const effectiveDepthSource = options.effectiveDepthSource === 'explicit'
+        || options.effectiveDepthSource === 'requested_depth'
+        ? options.effectiveDepthSource
+        : undefined;
     const taskSummary = String(options.taskSummary || '').trim();
     if (taskSummary.length < 8) {
         throw new Error('TaskSummary is required (>= 8 characters).');
@@ -138,6 +147,8 @@ export function buildTaskModeArtifact(options: BuildTaskModeArtifactOptions): Ta
         entry_mode: entryMode,
         requested_depth: requestedDepth,
         effective_depth: effectiveDepth,
+        ...(requestedDepthSource ? { requested_depth_source: requestedDepthSource } : {}),
+        ...(effectiveDepthSource ? { effective_depth_source: effectiveDepthSource } : {}),
         task_summary: taskSummary,
         orchestrator_work: !!options.orchestratorWork,
         workflow_config_work: !!options.workflowConfigWork,

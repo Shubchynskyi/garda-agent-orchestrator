@@ -1361,6 +1361,142 @@ test('runEnterTaskModeCommand records task-selected and runtime profiles separat
         assert.equal(artifact.profile_source, 'built_in');
         assert.equal(artifact.runtime_active_profile, 'balanced');
         assert.equal(artifact.runtime_profile_source, 'built_in');
+        assert.equal(artifact.requested_depth_source, 'explicit');
+        assert.equal(artifact.effective_depth_source, 'explicit');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand defaults missing depth from selected task profile', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Strict profile routing test | gpt-5.5 | 2026-06-17 | strict | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                },
+                strict: {
+                    description: 'Strict',
+                    depth: 3,
+                    review_policy: { code: true, db: true, security: true, refactor: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: false,
+                        strip_code_blocks: false,
+                        scoped_diffs: true,
+                        compact_reviewer_output: false
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }), 'utf8');
+
+        const result = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            taskSummary: 'Strict profile routing test',
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, 0);
+        assert.ok(result.outputLines.some(l => l.includes('TaskProfile: strict (task_queue)')));
+        assert.ok(result.outputLines.some(l => l.includes('ActiveProfile: strict (built_in)')));
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(artifact.requested_depth, 3);
+        assert.equal(artifact.effective_depth, 3);
+        assert.equal(artifact.requested_depth_source, 'profile_default');
+        assert.equal(artifact.effective_depth_source, 'requested_depth');
+        assert.equal(artifact.runtime_active_profile, 'balanced');
+    } finally {
+        cleanupDir(tmpDir);
+    }
+});
+
+test('runEnterTaskModeCommand marks omitted depth-2 profile defaults as profile-derived', () => {
+    const tmpDir = makeTempDir();
+    try {
+        const bundleDir = path.join(tmpDir, 'garda-agent-orchestrator');
+        const reviewsDir = path.join(bundleDir, 'runtime', 'reviews');
+        const eventsDir = path.join(bundleDir, 'runtime', 'task-events');
+        const configDir = path.join(bundleDir, 'live', 'config');
+        fs.mkdirSync(reviewsDir, { recursive: true });
+        fs.mkdirSync(eventsDir, { recursive: true });
+        fs.mkdirSync(configDir, { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-100 | TODO | P1 | orchestration | Balanced profile routing test | gpt-5.5 | 2026-06-17 | balanced | fixture |',
+            ''
+        ].join('\n'), 'utf8');
+        fs.writeFileSync(path.join(configDir, 'profiles.json'), JSON.stringify({
+            version: 1,
+            active_profile: 'balanced',
+            built_in_profiles: {
+                balanced: {
+                    description: 'Balanced',
+                    depth: 2,
+                    review_policy: { code: true, test: 'auto' },
+                    token_economy: {
+                        enabled: true,
+                        strip_examples: true,
+                        strip_code_blocks: true,
+                        scoped_diffs: true,
+                        compact_reviewer_output: true
+                    },
+                    skills: { auto_suggest: true }
+                }
+            },
+            user_profiles: {}
+        }), 'utf8');
+
+        const result = runEnterTaskModeWithDefaultRouting({
+            repoRoot: tmpDir,
+            taskId: 'T-100',
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            taskSummary: 'Balanced profile routing test',
+            emitMetrics: false
+        });
+        assert.equal(result.exitCode, 0);
+
+        const artifactPath = path.join(reviewsDir, 'T-100-task-mode.json');
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(artifact.requested_depth, 2);
+        assert.equal(artifact.effective_depth, 2);
+        assert.equal(artifact.requested_depth_source, 'profile_default');
+        assert.equal(artifact.effective_depth_source, 'requested_depth');
     } finally {
         cleanupDir(tmpDir);
     }

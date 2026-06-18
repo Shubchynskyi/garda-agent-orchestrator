@@ -21,17 +21,51 @@ import {
 import {
     getPreflightChangedFiles
 } from './next-step-doc-closeout-readiness';
+import {
+    resolveTaskProfileSelection
+} from '../../policy/task-profile-selection';
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function resolveDefaultDepthFromTaskQueue(taskEntry: TaskQueueEntry | null): string {
-    const profile = String(taskEntry?.profile || '').trim().toLowerCase();
-    if (profile === 'fast' || profile === 'docs-only') {
-        return '1';
+function resolveDefaultDepthFromTaskQueue(repoRoot: string, taskEntry: TaskQueueEntry | null): string {
+    try {
+        const resolvedProfile = resolveTaskProfileSelection(
+            path.join(repoRoot, 'garda-agent-orchestrator'),
+            taskEntry?.profile || null
+        );
+        const depth = resolvedProfile.effective_policy.depth;
+        if (Number.isInteger(depth) && depth >= 1 && depth <= 3) {
+            return String(depth);
+        }
+    } catch {
+        // Fall back to legacy queue-name mapping when profile config is unavailable.
     }
+    const profile = String(taskEntry?.profile || '').trim().toLowerCase();
+    if (profile === 'fast' || profile === 'docs-only') return '1';
     return '2';
+}
+
+function resolveDefaultDepthFromTaskMode(taskMode: Record<string, unknown> | null): string {
+    // Restart commands must preserve the task-mode artifact snapshot. Fresh task
+    // entry resolves profile defaults; restart should not drift if profiles.json changes later.
+    return getNumberField(taskMode, 'requested_depth', '<1|2|3>');
+}
+
+function shouldPreserveEffectiveDepthForRestart(
+    taskMode: Record<string, unknown> | null,
+    requestedDepth: string,
+    effectiveDepth: string
+): boolean {
+    if (!effectiveDepth) {
+        return false;
+    }
+    const effectiveDepthSource = getStringField(taskMode, 'effective_depth_source', '');
+    if (effectiveDepthSource === 'explicit') {
+        return true;
+    }
+    return !effectiveDepthSource && requestedDepth !== effectiveDepth;
 }
 
 export function getStringField(source: Record<string, unknown> | null, field: string, fallback: string): string {
@@ -148,6 +182,7 @@ export function quoteProviderForCommand(provider: string | null): string {
 }
 
 export function buildEnterTaskModeCommand(
+    repoRoot: string,
     cliPrefix: string,
     taskId: string,
     taskEntry: TaskQueueEntry | null,
@@ -157,7 +192,7 @@ export function buildEnterTaskModeCommand(
         `${cliPrefix} gate enter-task-mode`,
         `--task-id ${quoteCommandValue(taskId)}`,
         '--entry-mode "EXPLICIT_TASK_EXECUTION"',
-        `--requested-depth ${quoteCommandValue(resolveDefaultDepthFromTaskQueue(taskEntry))}`,
+        `--requested-depth ${quoteCommandValue(resolveDefaultDepthFromTaskQueue(repoRoot, taskEntry))}`,
         `--task-summary ${quoteCommandValue(taskEntry?.title || taskId)}`
     ];
     parts.push(`--provider ${quoteProviderForCommand(provider)}`);
@@ -173,11 +208,12 @@ export function buildOrchestratorWorkRestartCommand(
     additionalPlannedChangedFiles: string[] = [],
     includeWorkflowConfigWork = false
 ): string {
+    const requestedDepth = resolveDefaultDepthFromTaskMode(taskMode);
     const parts = [
         `${cliPrefix} gate enter-task-mode`,
         `--task-id ${quoteCommandValue(taskId)}`,
         `--entry-mode ${quoteCommandValue(getStringField(taskMode, 'entry_mode', 'EXPLICIT_TASK_EXECUTION'))}`,
-        `--requested-depth ${quoteCommandValue(getNumberField(taskMode, 'requested_depth', '<1|2|3>'))}`,
+        `--requested-depth ${quoteCommandValue(requestedDepth)}`,
         `--task-summary ${quoteCommandValue(getStringField(taskMode, 'task_summary', '<TASK.md summary>'))}`,
         `--provider ${quoteCommandValue(getStringField(taskMode, 'provider', '<provider>'))}`
     ];
@@ -188,6 +224,10 @@ export function buildOrchestratorWorkRestartCommand(
     const routedTo = getStringField(taskMode, 'routed_to', '');
     if (routedTo) {
         parts.push(`--routed-to ${quoteCommandValue(routedTo)}`);
+    }
+    const effectiveDepth = getNumberField(taskMode, 'effective_depth', '');
+    if (shouldPreserveEffectiveDepthForRestart(taskMode, requestedDepth, effectiveDepth)) {
+        parts.push(`--effective-depth ${quoteCommandValue(effectiveDepth)}`);
     }
     parts.push('--orchestrator-work');
     if (includeWorkflowConfigWork) {

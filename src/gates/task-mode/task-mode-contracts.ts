@@ -42,6 +42,8 @@ export interface TaskModeArtifact {
     entry_mode: TaskModeEntryMode;
     requested_depth: number;
     effective_depth: number;
+    requested_depth_source?: 'explicit' | 'profile_default' | 'legacy_default';
+    effective_depth_source?: 'explicit' | 'requested_depth';
     task_summary: string;
     orchestrator_work: boolean;
     workflow_config_work: boolean;
@@ -80,6 +82,8 @@ export interface BuildTaskModeArtifactOptions {
     entryMode: unknown;
     requestedDepth: unknown;
     effectiveDepth: unknown;
+    requestedDepthSource?: 'explicit' | 'profile_default' | 'legacy_default' | null;
+    effectiveDepthSource?: 'explicit' | 'requested_depth' | null;
     taskSummary: string;
     orchestratorWork?: boolean;
     workflowConfigWork?: boolean;
@@ -130,6 +134,8 @@ export interface TaskModeEvidenceResult {
     entry_mode: string | null;
     requested_depth: number | null;
     effective_depth: number | null;
+    requested_depth_source?: 'explicit' | 'profile_default' | 'legacy_default' | null;
+    effective_depth_source?: 'explicit' | 'requested_depth' | null;
     task_summary: string | null;
     orchestrator_work: boolean | null;
     workflow_config_work: boolean | null;
