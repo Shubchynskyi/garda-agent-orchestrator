@@ -25,17 +25,25 @@ test('buildSourceCloneArgs preserves setup clone branch semantics', () => {
 });
 
 test('runProcess reports timeout with captured diagnostics', async () => {
+    const timeoutDiagnosticScript = [
+        "process.stdout.write('stdout diagnostic', () => {",
+        "  process.stderr.write('stderr diagnostic', () => {",
+        "    setInterval(() => {}, 1000);",
+        "  });",
+        "});"
+    ].join('\n');
+
     await assert.rejects(
         runProcess(process.execPath, [
             '-e',
-            "process.stdout.write('stdout diagnostic'); process.stderr.write('stderr diagnostic'); setInterval(() => {}, 1000);"
+            timeoutDiagnosticScript
         ], {
             description: 'node timeout diagnostic',
-            timeoutMs: 50
+            timeoutMs: 1000
         }),
         (error) => {
             const message = (error as Error).message;
-            assert.match(message, /node timeout diagnostic timed out after 50 ms/u);
+            assert.match(message, /node timeout diagnostic timed out after 1000 ms/u);
             assert.match(message, /stderr diagnostic/u);
             assert.match(message, /stdout diagnostic/u);
             return true;

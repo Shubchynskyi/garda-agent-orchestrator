@@ -12,6 +12,10 @@ import {
     resolveRuntimeCleanupStandardPaths
 } from '../../../src/lifecycle/cleanup';
 
+function tailPathSegment(value: string): string {
+    return value.split(/[\\/]/u).at(-1) || '';
+}
+
 describe('runtime cleanup ownership contract', () => {
     it('defines each required runtime cleanup area exactly once', () => {
         const entries = listRuntimeCleanupOwnershipEntries();
@@ -161,12 +165,12 @@ describe('runtime cleanup ownership contract', () => {
 
         assert.ok(sharedZones);
         assert.match(sharedZones.location, /\.test-scratch/);
-        assert.ok(standardPaths.testScratchDir.endsWith('\\.test-scratch'));
-        assert.ok(standardPaths.manualValidationDir.endsWith('\\manual-validation'));
-        assert.ok(standardPaths.reviewsDir.endsWith('\\reviews'));
-        assert.ok(standardPaths.taskEventsDir.endsWith('\\task-events'));
-        assert.ok(standardPaths.projectMemoryDir.endsWith('\\project-memory'));
-        assert.ok(standardPaths.taskLedgerDir.endsWith('\\task-ledger'));
-        assert.ok(standardPaths.tmpDir.endsWith('\\tmp'));
+        assert.equal(tailPathSegment(standardPaths.testScratchDir), '.test-scratch');
+        assert.equal(tailPathSegment(standardPaths.manualValidationDir), 'manual-validation');
+        assert.equal(tailPathSegment(standardPaths.reviewsDir), 'reviews');
+        assert.equal(tailPathSegment(standardPaths.taskEventsDir), 'task-events');
+        assert.equal(tailPathSegment(standardPaths.projectMemoryDir), 'project-memory');
+        assert.equal(tailPathSegment(standardPaths.taskLedgerDir), 'task-ledger');
+        assert.equal(tailPathSegment(standardPaths.tmpDir), 'tmp');
     });
 });
