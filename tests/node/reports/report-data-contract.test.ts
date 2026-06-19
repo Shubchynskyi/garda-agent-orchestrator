@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 import {
     buildBackupsTab,
     buildReportDataContract,
@@ -67,6 +68,41 @@ function writeProfilesConfig(repoRoot: string): void {
             'custom-review': {}
         }
     }, null, 2));
+}
+
+function writePartialTaskTimeline(repoRoot: string, taskId: string): void {
+    const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+    const taskModeEvent: Record<string, unknown> = {
+        timestamp_utc: '2026-05-16T00:00:00.000Z',
+        task_id: taskId,
+        event_type: 'TASK_MODE_ENTERED',
+        outcome: 'PASS',
+        actor: 'gate',
+        message: 'Task mode entered.',
+        details: {},
+        integrity: {
+            schema_version: 1,
+            task_sequence: 1,
+            prev_event_sha256: null,
+            event_sha256: ''
+        }
+    };
+    (taskModeEvent.integrity as Record<string, unknown>).event_sha256 = buildEventIntegrityHash(taskModeEvent);
+    fs.writeFileSync(timelinePath, `${JSON.stringify(taskModeEvent)}\n`, 'utf8');
+}
+
+function writeStaleTaskEventLock(repoRoot: string, taskId: string): void {
+    const lockPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `.${taskId}.lock`);
+    fs.mkdirSync(lockPath, { recursive: true });
+    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
+        lock_id: 'stale-lock',
+        pid: 99999999,
+        hostname: os.hostname(),
+        created_at_utc: '2026-03-30T10:00:00.000Z',
+        heartbeat_at_utc: '2026-03-30T10:00:00.000Z',
+        command: 'node bin/garda.js next-step'
+    }, null, 2), 'utf8');
 }
 
 function writeReviewCapabilities(repoRoot: string): void {
@@ -355,6 +391,20 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
 
     assert.equal(report.schema_version, 1);
     assert.equal(report.generated_at_utc, '2026-05-16T00:00:00.000Z');
+    assert.equal(report.system_state.overall.generated_at_utc, '2026-05-16T00:00:00.000Z');
+    assert.ok(['ok', 'attention', 'error', 'unknown'].includes(report.system_state.overall.status));
+    assert.equal(report.system_state.configuration_files.length, 4);
+    assert.ok(report.system_state.configuration_files.every((entry) => entry.role === 'secondary'));
+    assert.ok(report.system_state.configuration_files.some((entry) => entry.id === 'workflow-config' && entry.status === 'present'));
+    assert.equal(report.system_state.task_queue.counts.total, 2);
+    assert.equal(report.system_state.task_queue.next_task_id, 'T-100');
+    assert.equal(report.system_state.workflow.full_suite_enabled, true);
+    assert.equal(report.system_state.workflow.full_suite_command, 'npm test');
+    assert.match(report.system_state.workflow.full_suite_timeout_forecast_label || '', /Recommended full-suite command timeout/u);
+    assert.equal(report.system_state.workflow.task_reset_ready, false);
+    assert.equal(report.system_state.project_memory.status, 'ok');
+    assert.ok(report.system_state.signals.some((signal) => signal.id === 'protected-manifest'));
+    assert.ok(report.system_state.signals.some((signal) => signal.id === 'active-task-timelines' && signal.status === 'ok'));
     assert.equal(report.tasks_tab.parser, 'canonical_active_queue_9_columns');
     assert.deepEqual(report.tasks_tab.rows.map((row) => row.task_id), ['T-100', 'T-101']);
     assert.equal(report.tasks_tab.rows[0].detail.detail_status, 'skipped');
@@ -530,6 +580,102 @@ test('buildReportSnapshotFingerprint changes when workflow config audit log chan
     })}\n`, 'utf8');
     const after = buildReportSnapshotFingerprint(repoRoot);
     assert.notEqual(before, after);
+});
+
+test('buildReportSnapshotFingerprint changes when Garda switch state changes', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    fs.writeFileSync(path.join(repoRoot, 'AGENTS.md'), '# Agent instructions\n', 'utf8');
+
+    const before = buildReportSnapshotFingerprint(repoRoot);
+    const switchPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'switch', 'state.json');
+    fs.mkdirSync(path.dirname(switchPath), { recursive: true });
+    fs.writeFileSync(switchPath, JSON.stringify({ mode: 'off' }, null, 2), 'utf8');
+    const after = buildReportSnapshotFingerprint(repoRoot);
+
+    assert.notEqual(before, after);
+});
+
+test('buildReportSnapshotFingerprint changes when System State runtime evidence changes', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const before = buildReportSnapshotFingerprint(repoRoot);
+
+    const metricsPath = path.join(
+        repoRoot,
+        'garda-agent-orchestrator',
+        'runtime',
+        'metrics',
+        'full-suite-validation-duration-history.json'
+    );
+    fs.mkdirSync(path.dirname(metricsPath), { recursive: true });
+    fs.writeFileSync(metricsPath, JSON.stringify([{ duration_ms: 1000 }], null, 2), 'utf8');
+    const afterMetrics = buildReportSnapshotFingerprint(repoRoot);
+
+    const lockPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'locks', 'report.lock');
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, 'locked\n', 'utf8');
+    const afterLock = buildReportSnapshotFingerprint(repoRoot);
+
+    assert.notEqual(before, afterMetrics);
+    assert.notEqual(afterMetrics, afterLock);
+});
+
+test('buildReportSnapshotFingerprint and System State bound large runtime artifact scans', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    const eventsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', 'archive');
+    fs.mkdirSync(eventsRoot, { recursive: true });
+    for (let index = 0; index < 600; index += 1) {
+        fs.writeFileSync(path.join(eventsRoot, `event-${String(index).padStart(3, '0')}.jsonl`), '{}\n', 'utf8');
+    }
+
+    const fingerprint = buildReportSnapshotFingerprint(repoRoot);
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+    const runtimeValue = report.system_state.runtime.artifact_scan.value as {
+        scan_truncated?: boolean;
+        scan_limit?: number;
+    };
+
+    assert.match(fingerprint, /scan_truncated:512/u);
+    assert.equal(report.system_state.runtime.artifact_scan.status, 'attention');
+    assert.equal(runtimeValue.scan_truncated, true);
+    assert.equal(runtimeValue.scan_limit, 512);
+});
+
+test('buildReportDataContract classifies stale locks and incomplete timelines in System State', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    writeStaleTaskEventLock(repoRoot, 'T-100');
+    writePartialTaskTimeline(repoRoot, 'T-100');
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+    const lockValue = report.system_state.runtime.stale_locks.value as {
+        stale_count?: number;
+        stale_locks?: Array<{ task_id?: string | null; stale_reason?: string | null }>;
+    };
+    const timelineValue = report.system_state.runtime.incomplete_timeline.value as {
+        warnings?: string[];
+    };
+
+    assert.equal(report.system_state.runtime.stale_locks.status, 'attention');
+    assert.equal(lockValue.stale_count, 1);
+    assert.ok(lockValue.stale_locks?.some((lock) => lock.task_id === 'T-100' && lock.stale_reason === 'owner_dead'));
+    assert.equal(report.system_state.runtime.incomplete_timeline.status, 'attention');
+    assert.ok(timelineValue.warnings?.some((warning) => warning.includes('INCOMPLETE timeline: T-100.jsonl')));
+    assert.ok(['attention', 'error'].includes(report.system_state.overall.status));
 });
 
 test('buildReportTaskDetail surfaces timed-out full-suite failures without inventing duration', () => {

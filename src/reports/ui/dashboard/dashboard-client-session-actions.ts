@@ -157,27 +157,147 @@ function configFileStatusLabel(status) {
   if (status === 'invalid') return t('initStatusInvalid');
   return String(status || '-');
 }
+function systemHealthClass(status) {
+  if (status === 'ok') return 'data-full';
+  if (status === 'attention') return 'data-compact';
+  if (status === 'error') return 'data-blockers';
+  return 'status-TODO';
+}
+function systemHealthLabel(status, fallback) {
+  if (status === 'ok') return 'OK';
+  if (status === 'attention') return t('overviewWarnings');
+  if (status === 'error') return t('blockers');
+  return fallback || t('gardaSwitchStateUnknown');
+}
+function systemHealthRank(status) {
+  if (status === 'error') return 3;
+  if (status === 'attention') return 2;
+  if (status === 'ok') return 1;
+  return 0;
+}
+function systemWorstHealth(signals) {
+  const ranked = (signals || []).reduce((best, signal) => Math.max(best, systemHealthRank(signal && signal.status)), 0);
+  if (ranked === 3) return 'error';
+  if (ranked === 2) return 'attention';
+  if (ranked === 1) return 'ok';
+  return 'unknown';
+}
+function isPrimarySystemHealthSignal(signal) {
+  const id = signal && signal.id ? String(signal.id) : '';
+  return !id.startsWith('config-file-');
+}
+function systemOverallSummary(status, fallback) {
+  if (status === 'ok') return fallback || 'Core System State signals look healthy.';
+  if (status === 'unknown') return fallback || 'System State health is not available.';
+  return 'One or more System State signals need attention.';
+}
+function systemSignalLabel(signal) {
+  const id = signal && signal.id;
+  if (id === 'garda-switch') return t('gardaSwitchTitle');
+  if (id === 'ui-actions') return t('actionsTab');
+  if (id === 'task-queue') return t('taskQueueStatus');
+  if (id === 'workflow-readiness') return t('workflowTab');
+  if (id === 'project-memory') return t('projectMemoryTab');
+  if (id === 'protected-manifest') return t('workflowGroupSafety');
+  if (id === 'runtime-locks') return t('runtimeDiagnosticsTitle');
+  if (id === 'active-task-timelines' || id === 'incomplete-task-timelines') return t('gateTimeline');
+  return signal && signal.label ? signal.label : '-';
+}
+function systemConfigFileLabel(entry) {
+  if (entry.id === 'init-answers') return t('initBlockTitle');
+  if (entry.id === 'agent-init-state') return t('agentInitBlockTitle');
+  if (entry.id === 'ordinary-doc-paths') return t('ordinaryDocsTitle');
+  if (entry.id === 'workflow-config') return t('workflowConfigPath');
+  return entry.label || '-';
+}
+function enrichUiActionsSignal(signal) {
+  const payload = currentActionsPayload;
+  if (!payload || typeof payload.enabled !== 'boolean') {
+    return signal;
+  }
+  return {
+    ...(signal || {}),
+    id: 'ui-actions',
+    status: payload.enabled ? 'ok' : 'attention',
+    summary: payload.enabled
+      ? 'Guarded UI actions are enabled for this local session.'
+      : 'Guarded UI actions are disabled for this local session.',
+    remediation: payload.enabled ? null : 'Restart with garda ui --actions to expose allowlisted actions.',
+    value: { enabled: payload.enabled }
+  };
+}
+function enrichSystemSignals(signals) {
+  return (signals || []).map(signal => signal && signal.id === 'ui-actions' ? enrichUiActionsSignal(signal) : signal).filter(Boolean);
+}
+function mergeSystemSignals(primarySignals, allSignals) {
+  const seen = new Set();
+  const merged = [];
+  for (const signal of [...(primarySignals || []), ...(allSignals || [])]) {
+    if (!signal || !signal.id || seen.has(signal.id)) {
+      continue;
+    }
+    seen.add(signal.id);
+    merged.push(signal);
+  }
+  return merged;
+}
+function renderSystemSignal(signal) {
+  if (!signal) {
+    return '';
+  }
+  return '<div class="system-signal">'
+    + '<div><strong>' + safe(systemSignalLabel(signal)) + '</strong><span class="badge ' + safe(systemHealthClass(signal.status)) + '">' + safe(systemHealthLabel(signal.status, signal.status)) + '</span></div>'
+    + '<p>' + safe(signal.summary || '-') + '</p>'
+    + (signal.remediation ? '<p class="empty">' + inlineText(signal.remediation) + '</p>' : '')
+    + (signal.source_path ? '<code>' + safe(signal.source_path) + '</code>' : '')
+    + '</div>';
+}
+function renderSystemConfigurationFiles(entries) {
+  if (!entries || entries.length === 0) {
+    return '';
+  }
+  return '<section class="system-config-files"><h3>' + safe(t('workflowStatus')) + '</h3><div class="value-table"><table><thead><tr><th>' + safe(t('fileColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th></tr></thead><tbody>'
+    + entries.map(entry => '<tr><td><strong>' + safe(systemConfigFileLabel(entry)) + '</strong><br><code>' + safe(entry.path) + '</code></td><td><span class="badge ' + safe(configFileStatusClass(entry.status)) + '">' + safe(configFileStatusLabel(entry.status)) + '</span></td></tr>').join('')
+    + '</tbody></table></div></section>';
+}
 function renderSystemState(report) {
   const node = document.getElementById('system-state-panel');
   if (!node || !report) {
     return;
   }
-  const init = report.init_settings_tab || {};
-  const workflow = report.workflow_config_tab || {};
-  const ordinary = init.ordinary_docs || {};
-  const entries = [
-    { path: init.init_answers_path, status: init.init_answers_status },
-    { path: init.agent_init_state_path, status: init.agent_init_state_status },
-    { path: ordinary.config_path, status: ordinary.status },
-    { path: workflow.config_path, status: workflow.status }
-  ].filter(entry => entry.path);
-  if (entries.length === 0) {
+  const state = report.system_state;
+  if (!state) {
     node.innerHTML = '';
     return;
   }
-  node.innerHTML = '<div class="value-table"><table><thead><tr><th>' + safe(t('fileColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th></tr></thead><tbody>'
-    + entries.map(entry => '<tr><td><code>' + safe(entry.path) + '</code></td><td><span class="badge ' + safe(configFileStatusClass(entry.status)) + '">' + safe(configFileStatusLabel(entry.status)) + '</span></td></tr>').join('')
-    + '</tbody></table></div>';
+  const primarySignals = [
+    state.garda,
+    enrichUiActionsSignal(state.ui_actions),
+    state.task_queue,
+    state.workflow,
+    state.project_memory,
+    state.protected_manifest,
+    state.runtime && state.runtime.stale_locks,
+    state.runtime && state.runtime.incomplete_timeline
+  ].filter(Boolean);
+  const allSignals = enrichSystemSignals(state.signals && state.signals.length > 0 ? state.signals : primarySignals);
+  const signals = mergeSystemSignals(primarySignals, allSignals);
+  const renderedOverallStatus = systemWorstHealth(allSignals.filter(isPrimarySystemHealthSignal));
+  const renderedOverallLabel = systemHealthLabel(renderedOverallStatus, state.overall.label);
+  const renderedOverallSummary = systemOverallSummary(renderedOverallStatus, state.overall.summary);
+  const workflowDetails = state.workflow
+    ? '<div class="system-inline-details">'
+      + '<span>' + safe(t('fullSuiteCommand')) + ': <code>' + safe(state.workflow.full_suite_command || '-') + '</code></span>'
+      + '<span>' + safe(t('fullSuiteTimeoutForecast')) + ': ' + safe(state.workflow.full_suite_timeout_forecast_label || '-') + '</span>'
+      + '</div>'
+    : '';
+  node.innerHTML = '<section class="system-health-summary">'
+    + '<div><h3>' + safe(t('actionsTab')) + '</h3><p>' + safe(renderedOverallSummary || '-') + '</p><p class="empty">' + safe(state.overall.generated_at_utc || report.generated_at_utc || '-') + '</p></div>'
+    + '<span class="badge ' + safe(systemHealthClass(renderedOverallStatus)) + '">' + safe(renderedOverallLabel) + '</span>'
+    + '</section>'
+    + workflowDetails
+    + '<section class="system-signal-grid">' + signals.map(renderSystemSignal).join('') + '</section>'
+    + renderSystemConfigurationFiles(state.configuration_files || []);
 }
 function renderActions(payload) {
   currentActionsPayload = payload;

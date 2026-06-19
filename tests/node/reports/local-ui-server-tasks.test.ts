@@ -362,6 +362,113 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         const report = {
             repo_root: repoRoot,
             unavailable: [],
+            generated_at_utc: '2026-05-19T00:00:00.000Z',
+            system_state: {
+                overall: {
+                    status: 'attention',
+                    label: 'Needs attention',
+                    summary: 'One or more System State signals need attention.',
+                    generated_at_utc: '2026-05-19T00:00:00.000Z'
+                },
+                garda: {
+                    id: 'garda-switch',
+                    label: 'Garda enabled',
+                    status: 'ok',
+                    summary: 'Managed Garda instruction surfaces are active.',
+                    remediation: null,
+                    value: 'on',
+                    source_path: 'AGENTS.md'
+                },
+                ui_actions: {
+                    id: 'ui-actions',
+                    label: 'UI actions mode',
+                    status: 'unknown',
+                    summary: 'Action mode is provided by the local UI session payload; static reports remain read-only.',
+                    remediation: null,
+                    value: null,
+                    source_path: null
+                },
+                task_queue: {
+                    id: 'task-queue',
+                    label: 'Task queue readiness',
+                    status: 'ok',
+                    summary: 'Next executable task is T-100.',
+                    remediation: null,
+                    value: {},
+                    source_path: 'TASK.md',
+                    counts: {
+                        total: 2,
+                        active: 0,
+                        todo: 1,
+                        blocked: 0,
+                        done: 1,
+                        decomposed: 0
+                    },
+                    next_task_id: 'T-100'
+                },
+                workflow: {
+                    id: 'workflow-readiness',
+                    label: 'Workflow readiness',
+                    status: 'attention',
+                    summary: 'Task reset is enabled in config but audited readiness is missing.',
+                    remediation: 'garda workflow set --task-reset-enabled true',
+                    value: {},
+                    source_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
+                    compile_command: 'npm run build',
+                    full_suite_enabled: true,
+                    full_suite_command: 'npm test',
+                    full_suite_timeout_forecast_label: 'Recommended full-suite command timeout: 476s (last 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).',
+                    task_reset_ready: false
+                },
+                project_memory: {
+                    id: 'project-memory',
+                    label: 'Project memory',
+                    status: 'ok',
+                    summary: 'Project memory is initialized and validated.',
+                    remediation: null,
+                    value: {},
+                    source_path: 'garda-agent-orchestrator/live/docs/project-memory'
+                },
+                protected_manifest: {
+                    id: 'protected-manifest',
+                    label: 'Protected manifest',
+                    status: 'attention',
+                    summary: 'Protected manifest drift detected for 1 file(s).',
+                    remediation: 'If the drift is operator-approved, run repair protected-manifest with confirmation.',
+                    value: 'DRIFT',
+                    source_path: 'garda-agent-orchestrator/runtime/protected-control-plane-manifest.json',
+                    assessment_code: 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT',
+                    changed_files: ['dist/example.js']
+                },
+                runtime: {
+                    stale_locks: {
+                        id: 'runtime-locks',
+                        label: 'Runtime locks',
+                        status: 'ok',
+                        summary: 'No runtime lock files were found in common lock locations.',
+                        remediation: null,
+                        value: { lock_count: 0 },
+                        source_path: 'garda-agent-orchestrator/runtime'
+                    },
+                    incomplete_timeline: {
+                        id: 'incomplete-task-timelines',
+                        label: 'Incomplete task timelines',
+                        status: 'ok',
+                        summary: 'No active or blocked task status is visible in TASK.md.',
+                        remediation: null,
+                        value: { active_or_blocked_tasks: 0 },
+                        source_path: 'TASK.md'
+                    },
+                    artifact_signals: []
+                },
+                configuration_files: [
+                    { id: 'init-answers', label: 'Init answers', path: 'garda-agent-orchestrator/runtime/init-answers.json', status: 'present', role: 'secondary' },
+                    { id: 'agent-init-state', label: 'Agent-init state', path: 'garda-agent-orchestrator/runtime/agent-init-state.json', status: 'present', role: 'secondary' },
+                    { id: 'ordinary-doc-paths', label: 'Ordinary docs config', path: 'garda-agent-orchestrator/live/config/paths.json', status: 'present', role: 'secondary' },
+                    { id: 'workflow-config', label: 'Workflow config', path: 'garda-agent-orchestrator/live/config/workflow-config.json', status: 'present', role: 'secondary' }
+                ],
+                signals: []
+            },
             tasks_tab: {
                 rows: [
                     {
@@ -852,6 +959,13 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['garda-switch-panel'].innerHTML, /Switch action is hidden/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-on"/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-off"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /System state/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Queue status/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Protected controls/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Recommended full-suite command timeout/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Config state/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda-agent-orchestrator\/runtime\/init-answers\.json/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Shutdown in/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /15m/u);
         assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /16m/u);
@@ -932,6 +1046,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Рекомендуемый таймаут полной проверки/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /нет недавней истории длительности полной проверки/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Recommended full-suite command timeout/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Защищённые режимы/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
         const localizedManualBackupButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
             .find((button) => button.dataset.backupActionId === 'backup-create-manual' && button.dataset.actionMode === 'execute');
@@ -940,6 +1055,44 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await flushPromises();
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Создать резервную копию вручную/u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup-create-manual/u);
+
+        report.system_state.overall.status = 'ok';
+        report.system_state.overall.summary = 'Core System State signals look healthy.';
+        report.system_state.workflow.status = 'ok';
+        report.system_state.workflow.summary = 'Workflow config is readable and core lifecycle settings are available.';
+        report.system_state.workflow.remediation = '';
+        report.system_state.protected_manifest.status = 'ok';
+        report.system_state.protected_manifest.summary = 'Protected manifest status is MATCH.';
+        report.system_state.protected_manifest.remediation = '';
+        actions.enabled = false;
+        await fakeDocument.elements['language-select'].dispatch('change');
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Предупреждения/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Guarded UI actions are disabled/u);
+
+        actions.enabled = true;
+        (report.system_state.signals as unknown[]) = [
+            report.system_state.garda,
+            report.system_state.ui_actions,
+            report.system_state.task_queue,
+            report.system_state.workflow,
+            report.system_state.project_memory,
+            report.system_state.protected_manifest,
+            {
+                id: 'config-file-workflow-config',
+                label: 'Workflow config',
+                status: 'error',
+                summary: 'workflow-config.json is invalid.',
+                remediation: 'Open the owning tab or run doctor to inspect the file.',
+                value: 'invalid',
+                source_path: 'garda-agent-orchestrator/live/config/workflow-config.json'
+            }
+        ];
+        await fakeDocument.elements['language-select'].dispatch('change');
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Core System State signals look healthy/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /workflow-config\.json is invalid/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Open the owning tab or run doctor/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda-agent-orchestrator\/live\/config\/workflow-config\.json/u);
 
         sessionFetchFails = true;
         await fakeDocument.elements['session-activity'].dispatch('click');

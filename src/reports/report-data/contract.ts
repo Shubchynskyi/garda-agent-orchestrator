@@ -5,6 +5,7 @@ import { buildInitSettingsTab } from './init-settings-tab';
 import { buildInstructionEntries } from './instructions-tab';
 import { buildProjectMemoryTab } from './project-memory-tab';
 import { readCanonicalActiveQueueRows } from './task-queue';
+import { buildSystemStateReport } from './system-state';
 import {
     buildReportTaskDetail,
     buildSkippedTaskDetail,
@@ -24,6 +25,7 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
     const reviewsRoot = options.reviewsRoot
         ? path.resolve(options.reviewsRoot)
         : joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews'));
+    const generatedAtUtc = options.generatedAtUtc || new Date().toISOString();
     const queue = readCanonicalActiveQueueRows(repoRoot);
     const maxDetailedTasks = normalizeMaxDetailedTasks(options.maxDetailedTasks);
     const detailedTaskIds = selectDetailedTaskIds(queue.rows, maxDetailedTasks);
@@ -48,8 +50,16 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
 
     return {
         schema_version: REPORT_DATA_CONTRACT_SCHEMA_VERSION,
-        generated_at_utc: options.generatedAtUtc || new Date().toISOString(),
+        generated_at_utc: generatedAtUtc,
         repo_root: toPosix(repoRoot),
+        system_state: buildSystemStateReport({
+            repoRoot,
+            generatedAtUtc,
+            tasks,
+            workflowTab: workflowConfigTab,
+            initTab: initSettingsTab,
+            projectMemoryTab
+        }),
         tasks_tab: {
             source_path: queue.source_path,
             parser: 'canonical_active_queue_9_columns',

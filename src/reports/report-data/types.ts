@@ -245,10 +245,73 @@ export interface ReportBackupsTab {
     unavailable: ReportDataUnavailableEntry[];
 }
 
+export type ReportSystemStateHealth = 'ok' | 'attention' | 'error' | 'unknown';
+
+export interface ReportSystemStateSignal {
+    id: string;
+    label: string;
+    status: ReportSystemStateHealth;
+    summary: string;
+    remediation: string | null;
+    value: unknown;
+    source_path: string | null;
+}
+
+export interface ReportSystemStateConfigFile {
+    id: string;
+    label: string;
+    path: string;
+    status: 'present' | 'missing' | 'invalid';
+    role: 'primary' | 'secondary';
+}
+
+export interface ReportSystemState {
+    overall: {
+        status: ReportSystemStateHealth;
+        label: string;
+        summary: string;
+        generated_at_utc: string;
+    };
+    garda: ReportSystemStateSignal;
+    ui_actions: ReportSystemStateSignal;
+    task_queue: ReportSystemStateSignal & {
+        counts: {
+            total: number;
+            active: number;
+            todo: number;
+            blocked: number;
+            done: number;
+            decomposed: number;
+        };
+        next_task_id: string | null;
+    };
+    workflow: ReportSystemStateSignal & {
+        compile_command: string | null;
+        full_suite_enabled: boolean;
+        full_suite_command: string | null;
+        full_suite_timeout_forecast_label: string | null;
+        task_reset_ready: boolean;
+    };
+    project_memory: ReportSystemStateSignal;
+    protected_manifest: ReportSystemStateSignal & {
+        assessment_code: string | null;
+        changed_files: string[];
+    };
+    runtime: {
+        stale_locks: ReportSystemStateSignal;
+        incomplete_timeline: ReportSystemStateSignal;
+        artifact_scan: ReportSystemStateSignal;
+        artifact_signals: ReportSystemStateSignal[];
+    };
+    configuration_files: ReportSystemStateConfigFile[];
+    signals: ReportSystemStateSignal[];
+}
+
 export interface ReportDataContract {
     schema_version: typeof REPORT_DATA_CONTRACT_SCHEMA_VERSION;
     generated_at_utc: string;
     repo_root: string;
+    system_state: ReportSystemState;
     tasks_tab: {
         source_path: string;
         parser: 'canonical_active_queue_9_columns';

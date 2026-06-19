@@ -23,6 +23,10 @@ export type {
     ReportProjectMemoryTab,
     ReportBackupRow,
     ReportBackupsTab,
+    ReportSystemStateHealth,
+    ReportSystemStateSignal,
+    ReportSystemStateConfigFile,
+    ReportSystemState,
     ReportDataContract,
     BuildReportDataContractOptions,
     BuildReportTaskDetailOptions
@@ -32,6 +36,7 @@ export { buildWorkflowConfigTab } from './report-data/workflow-config-tab';
 export { buildInitSettingsTab } from './report-data/init-settings-tab';
 export { buildProjectMemoryTab } from './report-data/project-memory-tab';
 export { buildBackupsTab } from './report-data/backups-tab';
+export { buildSystemStateReport } from './report-data/system-state';
 export { buildReportSnapshotFingerprint } from './report-data/report-snapshot-fingerprint';
 export {
     buildReportTaskDetail,
