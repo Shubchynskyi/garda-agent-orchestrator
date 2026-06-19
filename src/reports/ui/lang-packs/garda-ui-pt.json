@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "O reset auditado da tarefa já está pronto.",
     "taskResetReady": "Reset auditado pronto",
     "taskResetNotReady": "Reset auditado não pronto",
-    "taskResetRemediation": "Correção:"
+    "taskResetRemediation": "Correção:",
+    "taskCommandDiscard": "Descartar tarefa",
+    "taskCommandDiscardDescription": "Descarta definitivamente esta tarefa pelo gate protegido task-reset, limpa artefactos de runtime e marca-a como DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Tempo limite recomendado para o comando full-suite:",
+    "fullSuiteTimeoutForecastRecentRuns": "ultimas",
+    "fullSuiteTimeoutForecastRunsAverage": "execucao(oes), media",
+    "fullSuiteTimeoutForecastMaximum": "maximo",
+    "fullSuiteTimeoutForecastSafetyMargin": "margem de seguranca acima do maximo",
+    "fullSuiteTimeoutForecastMinimum": "20%, mas pelo menos 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "sem historico recente correspondente de duracao full-suite; usando o tempo limite configurado"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "Memória do projeto",
       "body": "O separador de memória do projeto mostra o modo de manutenção atual e os ficheiros de memória durável. Abra cada ficheiro sob pedido em vez de carregar todo o conteúdo no painel."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "Criar backup manual",
+      "description": "Cria um snapshot manual de backup para rollback."
     }
   }
 }

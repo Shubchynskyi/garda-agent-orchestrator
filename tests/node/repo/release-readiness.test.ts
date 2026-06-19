@@ -102,15 +102,23 @@ function buildPackageJson(): string {
             'package.json',
             'MANIFEST.md',
             'SECURITY.md',
+            'docs/assets/garda-github-social-preview.png',
             'README.md',
             'HOW_TO.md',
             'CHANGELOG.md',
+            'docs/branch-protection.md',
             'docs/architecture.md',
             'docs/cli-reference.md',
+            'docs/compatibility-matrix.md',
             'docs/configuration.md',
+            'docs/control-plane-isolation.md',
+            'docs/node-runtime-contract.md',
             'docs/node-platform-foundation.md',
             'docs/operator-consistency-runbook.md',
+            'docs/orchestrator-work-and-isolation.md',
+            'docs/providers.md',
             'docs/release-readiness.md',
+            'docs/secret-scanning.md',
             'docs/sbom.md',
             'docs/threat-model.md',
             'docs/work-example.md',
@@ -218,14 +226,22 @@ function createReadinessFixture(openChecklistItem?: string): string {
             '- README.md',
             '- HOW_TO.md',
             '- CHANGELOG.md',
+            '- docs/assets/garda-github-social-preview.png',
             '- docs/architecture.md',
+            '- docs/branch-protection.md',
             '- docs/cli-reference.md',
+            '- docs/compatibility-matrix.md',
             '- docs/configuration.md',
+            '- docs/control-plane-isolation.md',
             '- docs/node-platform-foundation.md',
+            '- docs/node-runtime-contract.md',
             '- docs/operator-consistency-runbook.md',
+            '- docs/orchestrator-work-and-isolation.md',
+            '- docs/providers.md',
             '- docs/release-readiness.md',
             '- docs/work-example.md',
             '- docs/threat-model.md',
+            '- docs/secret-scanning.md',
             '- docs/sbom.md'
         ].join('\n')
     );
@@ -233,8 +249,16 @@ function createReadinessFixture(openChecklistItem?: string): string {
     writeFile(path.join(repoRoot, 'README.md'), '# Readme\n');
     writeFile(path.join(repoRoot, 'HOW_TO.md'), '# How To\n');
     writeFile(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n');
+    writeFile(path.join(repoRoot, 'docs', 'assets', 'garda-github-social-preview.png'), 'fixture image\n');
     writeFile(path.join(repoRoot, 'docs', 'architecture.md'), '# Architecture\n');
+    writeFile(path.join(repoRoot, 'docs', 'branch-protection.md'), '# Branch Protection\n');
+    writeFile(path.join(repoRoot, 'docs', 'compatibility-matrix.md'), '# Compatibility Matrix\n');
     writeFile(path.join(repoRoot, 'docs', 'configuration.md'), '# Configuration\n');
+    writeFile(path.join(repoRoot, 'docs', 'control-plane-isolation.md'), '# Control Plane Isolation\n');
+    writeFile(path.join(repoRoot, 'docs', 'node-runtime-contract.md'), '# Node Runtime Contract\n');
+    writeFile(path.join(repoRoot, 'docs', 'orchestrator-work-and-isolation.md'), '# Orchestrator Work And Isolation\n');
+    writeFile(path.join(repoRoot, 'docs', 'providers.md'), '# Providers\n');
+    writeFile(path.join(repoRoot, 'docs', 'secret-scanning.md'), '# Secret Scanning\n');
     writeFile(path.join(repoRoot, 'docs', 'work-example.md'), '# Work Example\n');
     writeFile(path.join(repoRoot, 'docs', 'threat-model.md'), '# Threat Model\n');
     writeFile(path.join(repoRoot, 'docs', 'sbom.md'), '# SBOM\n');

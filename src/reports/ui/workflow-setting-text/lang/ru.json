@@ -1,7 +1,7 @@
 {
   "compile-gate-command": {
     "label": "Команда compile-gate",
-    "description": "Команда для compile/build/type-check проверки. Если в workflow-config она не задана, compile-gate блокируется и не берёт fallback из 40-commands.md."
+    "description": "Команда для compile/build/type-check проверки. В локальном UI эта shell-команда доступна только для чтения; чтобы изменить её, используйте аудитируемый `garda workflow set` в терминале. Если в workflow-config она не задана, compile-gate блокируется и не берёт fallback из 40-commands.md."
   },
   "compile-gate-command-fallback": {
     "description": "Не задано в workflow-config; compile-gate блокируется, пока `workflow set` не запишет проектную команду compile/build/type-check."
@@ -22,7 +22,7 @@
   },
   "full-suite-command": {
     "label": "Команда полной проверки",
-    "description": "Команда, которую запускает gate полной проверки, когда обязательная полная проверка включена."
+    "description": "Команда, которую запускает gate полной проверки, когда обязательная полная проверка включена. В локальном UI эта shell-команда доступна только для чтения; чтобы изменить её, используйте аудитируемый `garda workflow set` в терминале."
   },
   "full-suite-timeout-ms": {
     "label": "Таймаут полной проверки",

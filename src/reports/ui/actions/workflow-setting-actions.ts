@@ -19,7 +19,8 @@ export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition
                 ...definition,
                 options: reportSetting?.options ?? definition.options,
                 current_value: reportSetting?.value,
-                confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE
+                confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE,
+                readiness: reportSetting?.readiness
             };
         });
 }

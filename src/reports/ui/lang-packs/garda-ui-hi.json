@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Audited task reset पहले से ready है।",
     "taskResetReady": "ऑडिटेड reset तैयार",
     "taskResetNotReady": "Audited reset ready नहीं है",
-    "taskResetRemediation": "उपाय:"
+    "taskResetRemediation": "उपाय:",
+    "taskCommandDiscard": "कार्य छोड़ें",
+    "taskCommandDiscardDescription": "सुरक्षित task-reset gate के जरिए इस task को अंतिम रूप से discard करता है, runtime artifacts हटाता है और इसे DONE चिह्नित करता है।",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "पूर्ण जांच कमांड का अनुशंसित टाइमआउट:",
+    "fullSuiteTimeoutForecastRecentRuns": "अंतिम",
+    "fullSuiteTimeoutForecastRunsAverage": "रन औसत",
+    "fullSuiteTimeoutForecastMaximum": "अधिकतम",
+    "fullSuiteTimeoutForecastSafetyMargin": "अधिकतम से ऊपर सुरक्षा मार्जिन",
+    "fullSuiteTimeoutForecastMinimum": "20%, लेकिन कम से कम 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "हाल का मेल खाता पूर्ण जांच अवधि इतिहास नहीं मिला; कॉन्फिगर किया गया टाइमआउट उपयोग हो रहा है"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "प्रोजेक्ट मेमोरी",
       "body": "प्रोजेक्ट मेमोरी टैब वर्तमान रखरखाव मोड और टिकाऊ मेमोरी फ़ाइलें दिखाता है। पूरा कंटेंट डैशबोर्ड में लोड करने के बजाय प्रत्येक फ़ाइल को मांग पर खोलें।"
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "मैनुअल बैकअप बनाएं",
+      "description": "मैनुअल rollback बैकअप स्नैपशॉट बनाएं।"
     }
   }
 }

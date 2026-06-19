@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Denetimli görev reseti zaten hazır.",
     "taskResetReady": "Denetimli reset hazır",
     "taskResetNotReady": "Denetimli reset hazır değil",
-    "taskResetRemediation": "Düzeltme:"
+    "taskResetRemediation": "Düzeltme:",
+    "taskCommandDiscard": "Görevi at",
+    "taskCommandDiscardDescription": "Bu görevi korunan task-reset kapısı üzerinden kalıcı olarak atar, runtime artefaktlarını temizler ve DONE olarak işaretler.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Onerilen full-suite komut zaman asimi:",
+    "fullSuiteTimeoutForecastRecentRuns": "son",
+    "fullSuiteTimeoutForecastRunsAverage": "calistirma ortalamasi",
+    "fullSuiteTimeoutForecastMaximum": "maksimum",
+    "fullSuiteTimeoutForecastSafetyMargin": "maksimum uzerinde guvenlik payi",
+    "fullSuiteTimeoutForecastMinimum": "20%, ancak en az 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "eslesen guncel full-suite sure gecmisi yok; yapilandirilmis zaman asimi kullaniliyor"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -276,6 +285,10 @@
     "garda-off": {
       "label": "Garda’yı kapat",
       "description": "Yönetilen Garda kök talimat dosyalarını `runtime/switch/off` konumuna taşır ve off-mode ignore bloğunu etkinleştirir."
+    },
+    "backup-create-manual": {
+      "label": "Manuel yedek olustur",
+      "description": "Manuel rollback yedek anlik goruntusu olusturur."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

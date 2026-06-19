@@ -43,6 +43,7 @@ function taskCommandList(taskId) {
   const commands = [
     { id: 'task-next-step', label: t('taskCommandNextStep'), description: t('taskCommandNextStepDescription'), command: 'garda next-step "' + taskId + '" --repo-root "."', mutates: true, disabled: false, unavailable: '' },
     { id: 'task-reset-reopen', label: t('taskCommandReset'), description: t('taskCommandResetDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --reopen --confirm --repo-root "."', mutates: true, disabled: !resetReady, unavailable: taskResetUnavailableText() },
+    { id: 'task-reset-discard', label: t('taskCommandDiscard'), description: t('taskCommandDiscardDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --discard --confirm --repo-root "."', mutates: true, disabled: !resetReady, unavailable: taskResetUnavailableText() },
     { id: 'task-reset-enable-audited', label: t('taskCommandEnableReset'), description: resetReadiness && resetReadiness.configured_enabled === true ? t('taskCommandEnableResetAuditDescription') : t('taskCommandEnableResetDescription'), command: resetRemediationCommand, mutates: true, disabled: resetReady, unavailable: t('taskResetAlreadyReady') },
     { id: 'task-stats', label: t('taskCommandStats'), description: t('taskCommandStatsDescription'), command: 'garda task "' + taskId + '" stats --target-root "."', mutates: false, disabled: false, unavailable: '' },
     { id: 'task-events', label: t('taskCommandEvents'), description: t('taskCommandEventsDescription'), command: 'garda task "' + taskId + '" events --target-root "."', mutates: false, disabled: false, unavailable: '' }
@@ -89,6 +90,7 @@ function wireTaskActionButtons(taskId) {
 function taskActionConfirmationPhrase(actionId) {
   if (actionId === 'task-next-step') return 'RUN TASK NEXT STEP';
   if (actionId === 'task-reset-reopen') return 'RESET TASK';
+  if (actionId === 'task-reset-discard') return 'DISCARD TASK';
   if (actionId === 'task-reset-enable-audited') return 'ENABLE TASK RESET';
   return null;
 }

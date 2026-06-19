@@ -802,6 +802,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.ok(manualBackupButton);
         await manualBackupButton.dispatch('click');
         await flushPromises();
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Create manual backup/u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup-create-manual/u);
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, />OK</u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup create --target-root/u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /verbose backup create output/u);
@@ -868,6 +870,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /2m 3\.5s/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Average duration/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /5m 43\.2s/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Recommended full-suite command timeout/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Recommended timeout/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /7m 56s/u);
         Object.assign(detail.full_suite_validation.timeout_forecast as Record<string, unknown>, {
@@ -896,6 +899,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-code\.md/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-next-step"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-reopen"/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-discard"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-enable-audited"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /TASK_RESET_DISABLED/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-stats"/u);
@@ -914,7 +918,17 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.deepEqual(storedLanguageCalls.at(-1), ['garda.ui.language', 'ru']);
         assert.match(fakeDocument.elements.detail.innerHTML, /События/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Статус полной проверки/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Рекомендуемый таймаут полной проверки/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /нет недавней истории длительности полной проверки/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Recommended full-suite command timeout/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
+        const localizedManualBackupButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
+            .find((button) => button.dataset.backupActionId === 'backup-create-manual' && button.dataset.actionMode === 'execute');
+        assert.ok(localizedManualBackupButton);
+        await localizedManualBackupButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Создать резервную копию вручную/u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup-create-manual/u);
 
         sessionFetchFails = true;
         await fakeDocument.elements['session-activity'].dispatch('click');

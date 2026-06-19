@@ -193,6 +193,44 @@ function assertNoConsumerInstallLifecycleScripts(packageJson: { scripts?: Record
     }
 }
 
+function packageFileIsPresent(packageRoot: string, relativePath: string): boolean {
+    const normalizedPath = relativePath.replace(/\\/gu, '/');
+    return fs.existsSync(path.join(packageRoot, normalizedPath));
+}
+
+function assertInstalledMarkdownRelativeLinks(packageRoot: string): void {
+    const packageJson = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+    const packageFiles: unknown[] = Array.isArray(packageJson.files) ? packageJson.files : [];
+    const markdownFiles = packageFiles
+        .filter((entry: unknown): entry is string => typeof entry === 'string' && entry.endsWith('.md'))
+        .filter((entry: string) => packageFileIsPresent(packageRoot, entry));
+    const markdownLinkPattern = /!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gu;
+    const missingLinks: string[] = [];
+
+    for (const markdownFile of markdownFiles) {
+        const source = fs.readFileSync(path.join(packageRoot, markdownFile), 'utf8');
+        for (const match of source.matchAll(markdownLinkPattern)) {
+            const rawTarget = match[1];
+            if (!rawTarget || /^(?:https?:|mailto:|#)/iu.test(rawTarget)) {
+                continue;
+            }
+            const targetWithoutAnchor = rawTarget.split('#')[0];
+            if (!targetWithoutAnchor || targetWithoutAnchor.startsWith('/')) {
+                continue;
+            }
+            const decodedTarget = decodeURIComponent(targetWithoutAnchor);
+            const resolvedTarget = path
+                .normalize(path.join(path.dirname(markdownFile), decodedTarget))
+                .replace(/\\/gu, '/');
+            if (!packageFileIsPresent(packageRoot, resolvedTarget)) {
+                missingLinks.push(`${markdownFile} -> ${rawTarget} (${resolvedTarget})`);
+            }
+        }
+    }
+
+    assert.deepEqual(missingLinks, [], 'installed package markdown must not contain broken relative links');
+}
+
 function npmPack(repoRoot: string): string {
     const legacyClaudeTemplatePath = path.join(repoRoot, 'template', 'CLAUDE.md');
     assert.ok(
@@ -301,6 +339,7 @@ test('npm pack -> install -> CLI invoke smoke test', () => {
             fs.existsSync(path.join(installedPackageRoot, 'docs', 'operator-consistency-runbook.md')),
             'runtime-referenced operator consistency runbook must exist in the installed package'
         );
+        assertInstalledMarkdownRelativeLinks(installedPackageRoot);
         const installedLegacyTemplatePath = path.join(installedPackageRoot, 'template', 'CLAUDE.md');
         assert.ok(
             fs.existsSync(installedLegacyTemplatePath),

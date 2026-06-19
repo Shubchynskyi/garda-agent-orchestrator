@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "已审计的任务重置已经就绪。",
     "taskResetReady": "已审计重置就绪",
     "taskResetNotReady": "已审计重置未就绪",
-    "taskResetRemediation": "修复:"
+    "taskResetRemediation": "修复:",
+    "taskCommandDiscard": "丢弃任务",
+    "taskCommandDiscardDescription": "通过受保护的 task-reset 门最终丢弃此任务，清理运行时产物，并将其标记为 DONE。",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "建议的完整检查命令超时:",
+    "fullSuiteTimeoutForecastRecentRuns": "最近",
+    "fullSuiteTimeoutForecastRunsAverage": "次运行平均",
+    "fullSuiteTimeoutForecastMaximum": "最大值",
+    "fullSuiteTimeoutForecastSafetyMargin": "高于最大值的安全余量",
+    "fullSuiteTimeoutForecastMinimum": "20%，但至少 30 秒",
+    "fullSuiteTimeoutForecastConfiguredReason": "没有最近匹配的完整检查耗时历史；使用已配置的超时"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -276,6 +285,10 @@
     "garda-off": {
       "label": "关闭 Garda",
       "description": "将受管的 Garda 根指令文件移动到 `runtime/switch/off`，并启用 off 模式 ignore 块。"
+    },
+    "backup-create-manual": {
+      "label": "创建手动备份",
+      "description": "创建用于回滚的手动备份快照。"
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "감사된 작업 reset이 이미 준비되었습니다.",
     "taskResetReady": "감사된 reset 준비됨",
     "taskResetNotReady": "감사된 reset 미준비",
-    "taskResetRemediation": "복구:"
+    "taskResetRemediation": "복구:",
+    "taskCommandDiscard": "작업 폐기",
+    "taskCommandDiscardDescription": "보호된 task-reset 게이트를 통해 이 작업을 최종 폐기하고 런타임 아티팩트를 지운 뒤 DONE으로 표시합니다.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "권장 full-suite 명령 시간 제한:",
+    "fullSuiteTimeoutForecastRecentRuns": "최근",
+    "fullSuiteTimeoutForecastRunsAverage": "회 실행 평균",
+    "fullSuiteTimeoutForecastMaximum": "최대",
+    "fullSuiteTimeoutForecastSafetyMargin": "최대값 위 안전 여유",
+    "fullSuiteTimeoutForecastMinimum": "20%, 단 최소 30초",
+    "fullSuiteTimeoutForecastConfiguredReason": "일치하는 최근 full-suite 지속 시간 기록이 없어 설정된 시간 제한을 사용합니다"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "프로젝트 메모리",
       "body": "프로젝트 메모리 탭에는 현재 유지보수 모드와 영구 메모리 파일이 표시됩니다. 대시보드에 전체 내용을 로드하지 말고 필요할 때 각 파일을 여세요."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "수동 백업 만들기",
+      "description": "수동 롤백 백업 스냅샷을 만듭니다."
     }
   }
 }

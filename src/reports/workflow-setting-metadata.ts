@@ -180,11 +180,12 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'compile-gate-command',
         key: 'compile_gate.command',
         label: 'Compile-gate command',
-        description: 'Executable compile/build/type-check command used by compile-gate. When the value is __COMPILE_GATE_COMMAND_UNCONFIGURED__, compile-gate fails closed and never falls back to 40-commands.md.',
+        description: 'Executable compile/build/type-check command used by compile-gate. This shell-command setting is CLI-only in the local UI; use audited `garda workflow set` from a terminal to change it. When the value is __COMPILE_GATE_COMMAND_UNCONFIGURED__, compile-gate fails closed and never falls back to 40-commands.md.',
         flag: '--compile-gate-command',
         value_type: 'string',
         options: [],
-        placeholder: 'compile/build/type-check command'
+        placeholder: 'compile/build/type-check command',
+        editable: false
     },
     {
         id: 'full-suite-enabled',
@@ -202,11 +203,12 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'full-suite-command',
         key: 'full_suite_validation.command',
         label: 'Full-suite command',
-        description: 'Command the full-suite gate runs when mandatory full-suite validation is enabled.',
+        description: 'Command the full-suite gate runs when mandatory full-suite validation is enabled. This shell-command setting is CLI-only in the local UI; use audited `garda workflow set` from a terminal to change it.',
         flag: '--full-suite-command',
         value_type: 'string',
         options: [],
-        placeholder: 'npm test'
+        placeholder: 'npm test',
+        editable: false
     },
     {
         id: 'full-suite-timeout-ms',

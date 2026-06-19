@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Проверяемый сброс задач уже готов.",
     "taskResetReady": "Проверяемый сброс готов",
     "taskResetNotReady": "Проверяемый сброс не готов",
-    "taskResetRemediation": "Исправление:"
+    "taskResetRemediation": "Исправление:",
+    "taskCommandDiscard": "Отбросить задачу",
+    "taskCommandDiscardDescription": "Завершает задачу как отброшенную через защищённый gate task-reset, очищает runtime-артефакты и помечает её как DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Рекомендуемый таймаут полной проверки:",
+    "fullSuiteTimeoutForecastRecentRuns": "последние",
+    "fullSuiteTimeoutForecastRunsAverage": "запуск(ов), среднее",
+    "fullSuiteTimeoutForecastMaximum": "максимум",
+    "fullSuiteTimeoutForecastSafetyMargin": "запас сверх максимума",
+    "fullSuiteTimeoutForecastMinimum": "20%, но не меньше 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "нет недавней истории длительности полной проверки; используется настроенный таймаут"
   },
   "LOCAL_UI_SETTING_TEXT": {},
   "LOCAL_UI_INIT_SETTING_TEXT": {},
@@ -320,6 +329,10 @@
     "garda-off": {
       "label": "Отключить Garda",
       "description": "Перемещает управляемые корневые instruction-файлы Garda в `runtime/switch/off` и включает блок игнорирования для off-режима."
+    },
+    "backup-create-manual": {
+      "label": "Создать резервную копию вручную",
+      "description": "Создаёт ручной снимок резервной копии для отката."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {

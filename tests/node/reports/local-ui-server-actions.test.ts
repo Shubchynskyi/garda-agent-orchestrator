@@ -1022,6 +1022,22 @@ test('local UI task actions support preview confirmation execution and audit', a
         assert.match(disabledReset.command, /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
         assert.deepEqual(executedCommands, []);
 
+        const disabledDiscardResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-discard', mode: 'preview' })
+        });
+        assert.equal(disabledDiscardResponse.status, 409);
+        const disabledDiscard = await disabledDiscardResponse.json() as {
+            status: string;
+            unavailable_reason: string;
+            command: string;
+        };
+        assert.equal(disabledDiscard.status, 'unavailable');
+        assert.match(disabledDiscard.unavailable_reason, /task_reset\.enabled/u);
+        assert.match(disabledDiscard.command, /gate task-reset --task-id T-100 --discard --confirm --repo-root/u);
+        assert.deepEqual(executedCommands, []);
+
         setTaskResetEnabled(repoRoot, true);
         const missingAuditResetResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
@@ -1103,6 +1119,35 @@ test('local UI task actions support preview confirmation execution and audit', a
         assert.equal(executedCommands.length, 2);
         assert.match(executedCommands[1], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
 
+        const discardPreviewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-discard', mode: 'preview' })
+        });
+        assert.equal(discardPreviewResponse.status, 200);
+        const discardPreview = await discardPreviewResponse.json() as {
+            status: string;
+            command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
+        };
+        assert.equal(discardPreview.status, 'previewed');
+        assert.match(discardPreview.command, /gate task-reset --task-id T-100 --discard --confirm --repo-root/u);
+        assert.equal(discardPreview.requires_confirmation, true);
+        assert.equal(discardPreview.confirmation_phrase, 'DISCARD TASK');
+
+        const discardExecuteResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-discard', mode: 'execute', confirmation: 'DISCARD TASK' })
+        });
+        assert.equal(discardExecuteResponse.status, 200);
+        const discardExecute = await discardExecuteResponse.json() as { status: string; stdout: string };
+        assert.equal(discardExecute.status, 'executed');
+        assert.equal(discardExecute.stdout, 'task ok');
+        assert.equal(executedCommands.length, 3);
+        assert.match(executedCommands[2], /gate task-reset --task-id T-100 --discard --confirm --repo-root/u);
+
         const statsResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
             headers: actionHeaders,
@@ -1112,8 +1157,8 @@ test('local UI task actions support preview confirmation execution and audit', a
         const stats = await statsResponse.json() as { status: string; stdout: string; audit_path: string };
         assert.equal(stats.status, 'executed');
         assert.equal(stats.stdout, 'task ok');
-        assert.equal(executedCommands.length, 3);
-        assert.match(executedCommands[2], /task T-100 stats --target-root/u);
+        assert.equal(executedCommands.length, 4);
+        assert.match(executedCommands[3], /task T-100 stats --target-root/u);
         const auditLines = fs.readFileSync(stats.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.match(auditLines[auditLines.length - 1], /"action_id":"T-100:task-stats"/u);
         assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);

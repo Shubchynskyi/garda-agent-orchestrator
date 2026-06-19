@@ -12,6 +12,7 @@ import {
 import {
     cleanupLocalUiTestResources,
     makeLocalUiTempRepo,
+    setLocalUiTaskResetEnabled,
     writeLocalUiRepoFixture
 } from './local-ui-test-helpers';
 
@@ -298,6 +299,7 @@ function closeNetServer(server: net.Server): Promise<void> {
 test('local UI settings use guarded workflow commands with preview confirmation and audit', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
+    setLocalUiTaskResetEnabled(repoRoot, true);
     const executedCommands: string[] = [];
     const server = await startLocalUiServer({
         repoRoot,
@@ -330,13 +332,31 @@ test('local UI settings use guarded workflow commands with preview confirmation 
                 current_value: unknown;
                 value_type: string;
                 options: Array<{ value: string }>;
+                readiness?: {
+                    ready?: boolean;
+                    configured_enabled?: boolean;
+                    audited_enablement?: boolean;
+                    disabled_reason?: string;
+                    remediation_command?: string;
+                    remediation_action_id?: string;
+                };
             }>;
         };
         assert.equal(list.enabled, true);
-        assert.ok(list.settings.some((setting) => setting.id === 'compile-gate-command'));
+        assert.ok(!list.settings.some((setting) => setting.id === 'compile-gate-command'));
+        assert.ok(!list.settings.some((setting) => setting.id === 'full-suite-command'));
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
         assert.ok(list.settings.some((setting) => setting.id === 'project-memory-max-compact-summary-chars'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
+        const taskResetSetting = list.settings.find((setting) => setting.key === 'task_reset.enabled');
+        assert.ok(taskResetSetting);
+        assert.equal(taskResetSetting.current_value, true);
+        assert.equal(taskResetSetting.readiness?.ready, false);
+        assert.equal(taskResetSetting.readiness?.configured_enabled, true);
+        assert.equal(taskResetSetting.readiness?.audited_enablement, false);
+        assert.match(taskResetSetting.readiness?.disabled_reason || '', /no matching audited workflow set record/u);
+        assert.match(taskResetSetting.readiness?.remediation_command || '', /workflow set --target-root "\." --task-reset-enabled true/u);
+        assert.equal(taskResetSetting.readiness?.remediation_action_id, 'task-reset-enable-audited');
         const scopeProfiles = list.settings.find((setting) => setting.id === 'scope-budget-profiles');
         assert.ok(scopeProfiles);
         assert.equal(scopeProfiles.value_type, 'enum_list');
@@ -347,17 +367,16 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             headers: actionHeaders,
             body: JSON.stringify({ setting_id: 'compile-gate-command', mode: 'preview', value: 'npm run typecheck' })
         });
-        assert.equal(compilePreviewResponse.status, 200);
-        const compilePreview = await compilePreviewResponse.json() as {
-            key: string;
-            proposed_value: string;
-            command: string;
-            changed_keys: string[];
-        };
-        assert.equal(compilePreview.key, 'compile_gate.command');
-        assert.equal(compilePreview.proposed_value, 'npm run typecheck');
-        assert.deepEqual(compilePreview.changed_keys, ['compile_gate.command']);
-        assert.match(compilePreview.command, /workflow set --compile-gate-command "npm run typecheck"/u);
+        assert.equal(compilePreviewResponse.status, 400);
+        assert.equal((await compilePreviewResponse.json() as { code: string }).code, 'unknown_setting');
+
+        const fullSuiteCommandPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'full-suite-command', mode: 'preview', value: 'npm test -- --runInBand' })
+        });
+        assert.equal(fullSuiteCommandPreviewResponse.status, 400);
+        assert.equal((await fullSuiteCommandPreviewResponse.json() as { code: string }).code, 'unknown_setting');
 
         const enumListPreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',

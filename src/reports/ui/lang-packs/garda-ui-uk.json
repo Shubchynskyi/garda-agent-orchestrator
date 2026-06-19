@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Перевірене скидання задач уже готове.",
     "taskResetReady": "Перевірене скидання готове",
     "taskResetNotReady": "Перевірене скидання не готове",
-    "taskResetRemediation": "Виправлення:"
+    "taskResetRemediation": "Виправлення:",
+    "taskCommandDiscard": "Відкинути завдання",
+    "taskCommandDiscardDescription": "Остаточно відкидає це завдання через захищений шлюз task-reset, очищає runtime-артефакти та позначає його як DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Рекомендований таймаут команди повної перевірки:",
+    "fullSuiteTimeoutForecastRecentRuns": "останні",
+    "fullSuiteTimeoutForecastRunsAverage": "запуск(ів), середнє",
+    "fullSuiteTimeoutForecastMaximum": "максимум",
+    "fullSuiteTimeoutForecastSafetyMargin": "запас понад максимум",
+    "fullSuiteTimeoutForecastMinimum": "20%, але щонайменше 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "немає нещодавньої відповідної історії тривалості повної перевірки; використовується налаштований таймаут"
   },
   "LOCAL_UI_SETTING_TEXT": {},
   "LOCAL_UI_INIT_SETTING_TEXT": {},
@@ -296,6 +305,10 @@
     "garda-off": {
       "label": "Вимкнути Garda",
       "description": "Переміщує керовані root instruction файли Garda в `runtime/switch/off` і вмикає off-mode ignore block."
+    },
+    "backup-create-manual": {
+      "label": "Створити резервну копію вручну",
+      "description": "Створює ручний знімок резервної копії для відкату."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

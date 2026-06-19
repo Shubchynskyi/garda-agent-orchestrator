@@ -35,6 +35,7 @@ export interface UiSettingDefinition {
     max?: number;
     placeholder?: string;
     confirmation_phrase: string;
+    readiness?: import('../../report-data/types').ReportWorkflowSetting['readiness'];
 }
 
 export interface UiActionRunnerResult {

@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Granskad task reset är redan redo.",
     "taskResetReady": "Granskad reset redo",
     "taskResetNotReady": "Granskad reset inte redo",
-    "taskResetRemediation": "Åtgärd:"
+    "taskResetRemediation": "Åtgärd:",
+    "taskCommandDiscard": "Kassera uppgift",
+    "taskCommandDiscardDescription": "Kasserar den här uppgiften slutgiltigt via den skyddade task-reset-gaten, rensar runtime-artefakter och markerar den som DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Rekommenderad timeout for full-suite-kommandot:",
+    "fullSuiteTimeoutForecastRecentRuns": "senaste",
+    "fullSuiteTimeoutForecastRunsAverage": "korning(ar) i snitt",
+    "fullSuiteTimeoutForecastMaximum": "hogsta varde",
+    "fullSuiteTimeoutForecastSafetyMargin": "sakerhetsmarginal over max",
+    "fullSuiteTimeoutForecastMinimum": "20%, men minst 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "ingen ny matchande full-suite-varaktighetshistorik; konfigurerad timeout anvands"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "Projektminne",
       "body": "Fliken projektminne visar aktuellt underhållsläge och beständiga minnesfiler. Öppna varje fil på begäran i stället för att ladda hela innehållet i instrumentpanelen."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "Skapa manuell backup",
+      "description": "Skapar en manuell rollback-backupsnapshot."
     }
   }
 }

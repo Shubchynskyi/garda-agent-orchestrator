@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Il reset task verificato è già pronto.",
     "taskResetReady": "Reset verificato pronto",
     "taskResetNotReady": "Reset verificato non pronto",
-    "taskResetRemediation": "Correzione:"
+    "taskResetRemediation": "Correzione:",
+    "taskCommandDiscard": "Scarta attività",
+    "taskCommandDiscardDescription": "Scarta definitivamente questa attività tramite il gate protetto task-reset, cancella gli artefatti di runtime e la marca come DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Timeout consigliato per il comando full-suite:",
+    "fullSuiteTimeoutForecastRecentRuns": "ultime",
+    "fullSuiteTimeoutForecastRunsAverage": "esecuzione/i, media",
+    "fullSuiteTimeoutForecastMaximum": "massimo",
+    "fullSuiteTimeoutForecastSafetyMargin": "margine di sicurezza sopra il massimo",
+    "fullSuiteTimeoutForecastMinimum": "20%, ma almeno 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "nessuna cronologia recente compatibile della durata full-suite; viene usato il timeout configurato"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "Memoria del progetto",
       "body": "La scheda memoria del progetto mostra la modalità di manutenzione corrente e i file di memoria durevole. Apri ogni file su richiesta invece di caricare l’intero contenuto nella dashboard."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "Crea backup manuale",
+      "description": "Crea uno snapshot di backup manuale per rollback."
     }
   }
 }

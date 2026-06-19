@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "A redefinição auditada da tarefa já está pronta.",
     "taskResetReady": "Redefinição auditada pronta",
     "taskResetNotReady": "Redefinição auditada não pronta",
-    "taskResetRemediation": "Correção:"
+    "taskResetRemediation": "Correção:",
+    "taskCommandDiscard": "Descartar tarefa",
+    "taskCommandDiscardDescription": "Descarta definitivamente esta tarefa pelo gate protegido task-reset, limpa artefatos de runtime e marca como DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Tempo limite recomendado para o comando full-suite:",
+    "fullSuiteTimeoutForecastRecentRuns": "ultimas",
+    "fullSuiteTimeoutForecastRunsAverage": "execucao(oes), media",
+    "fullSuiteTimeoutForecastMaximum": "maximo",
+    "fullSuiteTimeoutForecastSafetyMargin": "margem de seguranca acima do maximo",
+    "fullSuiteTimeoutForecastMinimum": "20%, mas pelo menos 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "sem historico recente correspondente de duracao full-suite; usando o tempo limite configurado"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -276,6 +285,10 @@
     "garda-off": {
       "label": "Desativar Garda",
       "description": "Move os arquivos de instrução raiz gerenciados do Garda para `runtime/switch/off` e ativa o bloco de ignore do modo off."
+    },
+    "backup-create-manual": {
+      "label": "Criar backup manual",
+      "description": "Cria um snapshot manual de backup para rollback."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

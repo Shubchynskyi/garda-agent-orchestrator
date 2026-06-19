@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Task reset teraudit sudah siap.",
     "taskResetReady": "Reset teraudit siap",
     "taskResetNotReady": "Reset teraudit belum siap",
-    "taskResetRemediation": "Perbaikan:"
+    "taskResetRemediation": "Perbaikan:",
+    "taskCommandDiscard": "Buang tugas",
+    "taskCommandDiscardDescription": "Membuang tugas ini secara terminal melalui gate task-reset yang dilindungi, membersihkan artefak runtime, dan menandainya DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Timeout perintah full-suite yang direkomendasikan:",
+    "fullSuiteTimeoutForecastRecentRuns": "terakhir",
+    "fullSuiteTimeoutForecastRunsAverage": "run rata-rata",
+    "fullSuiteTimeoutForecastMaximum": "maksimum",
+    "fullSuiteTimeoutForecastSafetyMargin": "margin keamanan di atas maksimum",
+    "fullSuiteTimeoutForecastMinimum": "20%, tetapi minimal 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "tidak ada riwayat durasi full-suite terbaru yang cocok; memakai timeout terkonfigurasi"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "Memori proyek",
       "body": "Tab memori proyek menampilkan mode pemeliharaan saat ini dan file memori tahan lama. Buka setiap file sesuai permintaan alih-alih memuat seluruh konten ke dashboard."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "Buat backup manual",
+      "description": "Membuat snapshot backup rollback manual."
     }
   }
 }

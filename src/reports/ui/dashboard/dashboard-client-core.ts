@@ -124,6 +124,25 @@ function fullSuiteForecastRows(forecast) {
     [t('fullSuiteRecommendedTimeout'), fullSuiteDurationSeconds(forecast.recommended_timeout_seconds)]
   ];
 }
+function fullSuiteTimeoutForecastText(forecast, fallbackLabel) {
+  if (!forecast || typeof forecast !== 'object') {
+    return fallbackLabel || '-';
+  }
+  const recommended = fullSuiteDurationSeconds(forecast.recommended_timeout_seconds);
+  if (forecast.recommendation_source === 'config_timeout' || Number(forecast.sample_count) <= 0 || forecast.average_duration_seconds === null || forecast.high_watermark_duration_seconds === null) {
+    return t('fullSuiteTimeoutForecastRecommendedPrefix') + ' ' + recommended + ' (' + t('fullSuiteTimeoutForecastConfiguredReason') + ').';
+  }
+  const sampleCount = Number(forecast.sample_count);
+  const average = fullSuiteDurationSeconds(forecast.average_duration_seconds);
+  const highWatermark = fullSuiteDurationSeconds(forecast.high_watermark_duration_seconds);
+  const safetyMargin = fullSuiteDurationSeconds(forecast.safety_margin_seconds);
+  return t('fullSuiteTimeoutForecastRecommendedPrefix') + ' ' + recommended
+    + ' (' + t('fullSuiteTimeoutForecastRecentRuns') + ' ' + (Number.isFinite(sampleCount) ? sampleCount : '-')
+    + ' ' + t('fullSuiteTimeoutForecastRunsAverage') + ' ' + average
+    + '; ' + t('fullSuiteTimeoutForecastMaximum') + ' ' + highWatermark
+    + '; ' + t('fullSuiteTimeoutForecastSafetyMargin') + ' +' + safetyMargin
+    + ' = ' + t('fullSuiteTimeoutForecastMinimum') + ').';
+}
 function fullSuiteSummary(fullSuite) {
   if (!fullSuite) {
     return '<p class="empty">-</p>';
@@ -132,7 +151,7 @@ function fullSuiteSummary(fullSuite) {
     [t('fullSuiteCommand'), fullSuite.command],
     [t('fullSuitePlacement'), fullSuite.placement],
     [t('fullSuiteFreshness'), fullSuite.freshness],
-    [t('fullSuiteTimeoutForecast'), fullSuite.timeout_forecast_label],
+    [t('fullSuiteTimeoutForecast'), fullSuiteTimeoutForecastText(fullSuite.timeout_forecast, fullSuite.timeout_forecast_label)],
     ...fullSuiteForecastRows(fullSuite.timeout_forecast),
     [t('fullSuiteArtifact'), fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (' + t('missing') + ')')],
     [t('fullSuiteOutput'), fullSuite.output_artifact_path]

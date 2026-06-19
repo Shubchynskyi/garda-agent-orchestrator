@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Audited task reset ইতিমধ্যে প্রস্তুত।",
     "taskResetReady": "Audited reset প্রস্তুত",
     "taskResetNotReady": "Audited reset প্রস্তুত নয়",
-    "taskResetRemediation": "সমাধান:"
+    "taskResetRemediation": "সমাধান:",
+    "taskCommandDiscard": "টাস্ক বাতিল করুন",
+    "taskCommandDiscardDescription": "সুরক্ষিত task-reset gate দিয়ে এই কাজটি চূড়ান্তভাবে বাতিল করে, runtime artifacts মুছে দেয় এবং DONE হিসেবে চিহ্নিত করে।",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "সুপারিশকৃত পূর্ণ পরীক্ষার কমান্ড টাইমআউট:",
+    "fullSuiteTimeoutForecastRecentRuns": "শেষ",
+    "fullSuiteTimeoutForecastRunsAverage": "রান গড়",
+    "fullSuiteTimeoutForecastMaximum": "সর্বোচ্চ",
+    "fullSuiteTimeoutForecastSafetyMargin": "সর্বোচ্চের ওপরে নিরাপত্তা মার্জিন",
+    "fullSuiteTimeoutForecastMinimum": "20%, তবে অন্তত 30 সেকেন্ড",
+    "fullSuiteTimeoutForecastConfiguredReason": "সাম্প্রতিক মিল থাকা পূর্ণ পরীক্ষার সময়ের ইতিহাস নেই; কনফিগার করা টাইমআউট ব্যবহার করা হচ্ছে"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "প্রকল্প মেমরি",
       "body": "প্রকল্প মেমরি ট্যাবে বর্তমান রক্ষণাবেক্ষণ মোড এবং স্থায়ী মেমরি ফাইল দেখায়। ড্যাশবোর্ডে পুরো কনটেন্ট লোড না করে প্রয়োজন অনুযায়ী প্রতিটি ফাইল খুলুন।"
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "ম্যানুয়াল ব্যাকআপ তৈরি করুন",
+      "description": "ম্যানুয়াল রোলব্যাক ব্যাকআপ স্ন্যাপশট তৈরি করুন।"
     }
   }
 }

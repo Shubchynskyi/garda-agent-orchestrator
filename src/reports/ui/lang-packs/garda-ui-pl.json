@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Audytowany reset zadania jest już gotowy.",
     "taskResetReady": "Audytowany reset gotowy",
     "taskResetNotReady": "Audytowany reset niegotowy",
-    "taskResetRemediation": "Naprawa:"
+    "taskResetRemediation": "Naprawa:",
+    "taskCommandDiscard": "Odrzuć zadanie",
+    "taskCommandDiscardDescription": "Końcowo odrzuca to zadanie przez chronioną bramkę task-reset, czyści artefakty runtime i oznacza je jako DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Zalecany limit czasu dla polecenia pelnego zestawu:",
+    "fullSuiteTimeoutForecastRecentRuns": "ostatnie",
+    "fullSuiteTimeoutForecastRunsAverage": "uruchomienie/a, srednia",
+    "fullSuiteTimeoutForecastMaximum": "maksimum",
+    "fullSuiteTimeoutForecastSafetyMargin": "margines bezpieczenstwa ponad maksimum",
+    "fullSuiteTimeoutForecastMinimum": "20%, ale co najmniej 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "brak ostatniej pasujacej historii czasu pelnego zestawu; uzywany jest skonfigurowany limit"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "Pamięć projektu",
       "body": "Karta pamięci projektu pokazuje bieżący tryb konserwacji i trwałe pliki pamięci. Otwieraj każdy plik na żądanie zamiast ładować całą zawartość do panelu."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "Utworz reczna kopie",
+      "description": "Tworzy reczny snapshot kopii zapasowej do rollbacku."
     }
   }
 }

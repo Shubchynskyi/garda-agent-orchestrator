@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Task reset đã kiểm toán đã sẵn sàng.",
     "taskResetReady": "Reset đã kiểm toán sẵn sàng",
     "taskResetNotReady": "Reset đã kiểm toán chưa sẵn sàng",
-    "taskResetRemediation": "Cách sửa:"
+    "taskResetRemediation": "Cách sửa:",
+    "taskCommandDiscard": "Loại bỏ nhiệm vụ",
+    "taskCommandDiscardDescription": "Loại bỏ nhiệm vụ này vĩnh viễn qua gate task-reset được bảo vệ, xóa runtime artifacts và đánh dấu DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Thoi gian cho lenh full-suite duoc de xuat:",
+    "fullSuiteTimeoutForecastRecentRuns": "gan nhat",
+    "fullSuiteTimeoutForecastRunsAverage": "lan chay trung binh",
+    "fullSuiteTimeoutForecastMaximum": "toi da",
+    "fullSuiteTimeoutForecastSafetyMargin": "bien an toan vuot muc toi da",
+    "fullSuiteTimeoutForecastMinimum": "20%, nhung toi thieu 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "khong co lich su thoi luong full-suite gan day phu hop; dung thoi gian cho da cau hinh"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "Bộ nhớ dự án",
       "body": "Tab bộ nhớ dự án hiển thị chế độ bảo trì hiện tại và các tệp bộ nhớ bền vững. Mở từng tệp theo yêu cầu thay vì tải toàn bộ nội dung vào bảng điều khiển."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "Tao ban sao luu thu cong",
+      "description": "Tao anh chup sao luu rollback thu cong."
     }
   }
 }

@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "إعادة تعيين المهمة المدققة جاهزة بالفعل.",
     "taskResetReady": "إعادة التعيين المدققة جاهزة",
     "taskResetNotReady": "إعادة التعيين المدققة غير جاهزة",
-    "taskResetRemediation": "الإصلاح:"
+    "taskResetRemediation": "الإصلاح:",
+    "taskCommandDiscard": "تجاهل المهمة",
+    "taskCommandDiscardDescription": "يتجاهل هذه المهمة نهائيًا عبر بوابة task-reset المحمية، ويمسح آثار التشغيل، ويضعها في حالة DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "مهلة أمر الاختبار الكامل الموصى بها:",
+    "fullSuiteTimeoutForecastRecentRuns": "آخر",
+    "fullSuiteTimeoutForecastRunsAverage": "تشغيلات، متوسط",
+    "fullSuiteTimeoutForecastMaximum": "الحد الأقصى",
+    "fullSuiteTimeoutForecastSafetyMargin": "هامش أمان فوق الحد الأقصى",
+    "fullSuiteTimeoutForecastMinimum": "20% ولكن 30 ثانية على الأقل",
+    "fullSuiteTimeoutForecastConfiguredReason": "لا يوجد سجل حديث مطابق لمدة الاختبار الكامل؛ يتم استخدام المهلة المضبوطة"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "ذاكرة المشروع",
       "body": "تعرض علامة تبويب ذاكرة المشروع وضع الصيانة الحالي وملفات الذاكرة الدائمة. افتح كل ملف عند الطلب بدلاً من تحميل المحتوى الكامل في لوحة المعلومات."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "إنشاء نسخة احتياطية يدوية",
+      "description": "إنشاء لقطة احتياطية يدوية للعودة إلى الحالة السابقة."
     }
   }
 }

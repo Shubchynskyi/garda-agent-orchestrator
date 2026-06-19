@@ -3,6 +3,7 @@ import { buildUiActionDefinition } from './action-common';
 import type { UiActionDefinition } from './types';
 
 const TASK_RESET_ENABLE_CONFIRMATION_PHRASE = 'ENABLE TASK RESET';
+const TASK_DISCARD_CONFIRMATION_PHRASE = 'DISCARD TASK';
 
 export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): UiActionDefinition[] {
     const taskResetAvailability = resolveTaskResetAvailability(repoRoot);
@@ -27,6 +28,20 @@ export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): 
             {
                 mutates: true,
                 confirmationPhrase: 'RESET TASK',
+                enabled: taskResetAvailability.enabled,
+                unavailableReason: `TASK_RESET_DISABLED: ${taskResetAvailability.disabledReason || 'Task reset is not ready.'} Run the audited enable action before confirmed reset/discard.`
+            }
+        ),
+        buildUiActionDefinition(
+            repoRoot,
+            'task-reset-discard',
+            'Task',
+            'Discard task',
+            'Terminally discard this task through the guarded task-reset gate and mark it DONE after clearing runtime artifacts.',
+            ['gate', 'task-reset', '--task-id', taskId, '--discard', '--confirm', '--repo-root', repoRoot],
+            {
+                mutates: true,
+                confirmationPhrase: TASK_DISCARD_CONFIRMATION_PHRASE,
                 enabled: taskResetAvailability.enabled,
                 unavailableReason: `TASK_RESET_DISABLED: ${taskResetAvailability.disabledReason || 'Task reset is not ready.'} Run the audited enable action before confirmed reset/discard.`
             }

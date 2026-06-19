@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "La réinitialisation auditée des tâches est déjà prête.",
     "taskResetReady": "Réinitialisation auditée prête",
     "taskResetNotReady": "Réinitialisation auditée non prête",
-    "taskResetRemediation": "Correction :"
+    "taskResetRemediation": "Correction :",
+    "taskCommandDiscard": "Abandonner la tâche",
+    "taskCommandDiscardDescription": "Abandonne définitivement cette tâche via la porte protégée task-reset, nettoie les artefacts d’exécution et la marque comme DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Delai recommande pour la commande de validation complete:",
+    "fullSuiteTimeoutForecastRecentRuns": "derniers",
+    "fullSuiteTimeoutForecastRunsAverage": "execution(s), moyenne",
+    "fullSuiteTimeoutForecastMaximum": "maximum",
+    "fullSuiteTimeoutForecastSafetyMargin": "marge de securite au-dessus du maximum",
+    "fullSuiteTimeoutForecastMinimum": "20%, mais au moins 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "aucun historique recent correspondant pour la validation complete; le delai configure est utilise"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -276,6 +285,10 @@
     "garda-off": {
       "label": "Désactiver Garda",
       "description": "Déplace les fichiers d’instructions racine gérés de Garda vers `runtime/switch/off` et active le bloc d’ignore du mode off."
+    },
+    "backup-create-manual": {
+      "label": "Creer une sauvegarde manuelle",
+      "description": "Cree un instantane de sauvegarde manuel pour rollback."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

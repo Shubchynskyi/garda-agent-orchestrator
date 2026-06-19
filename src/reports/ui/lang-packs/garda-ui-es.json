@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "El reset auditado de tareas ya está listo.",
     "taskResetReady": "Reset auditado listo",
     "taskResetNotReady": "Reset auditado no listo",
-    "taskResetRemediation": "Corrección:"
+    "taskResetRemediation": "Corrección:",
+    "taskCommandDiscard": "Descartar tarea",
+    "taskCommandDiscardDescription": "Descarta definitivamente esta tarea mediante la puerta protegida task-reset, limpia los artefactos de ejecución y la marca como DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Tiempo de espera recomendado para la comprobacion completa:",
+    "fullSuiteTimeoutForecastRecentRuns": "ultimas",
+    "fullSuiteTimeoutForecastRunsAverage": "ejecucion(es), promedio",
+    "fullSuiteTimeoutForecastMaximum": "maximo",
+    "fullSuiteTimeoutForecastSafetyMargin": "margen de seguridad sobre el maximo",
+    "fullSuiteTimeoutForecastMinimum": "20%, pero al menos 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "no hay historial reciente compatible de duracion completa; se usa el tiempo de espera configurado"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -276,6 +285,10 @@
     "garda-off": {
       "label": "Desactivar Garda",
       "description": "Mueve los archivos de instrucciones raíz administrados de Garda a `runtime/switch/off` y activa el bloque de ignorar del modo off."
+    },
+    "backup-create-manual": {
+      "label": "Crear copia manual",
+      "description": "Crea una instantanea manual de copia para rollback."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

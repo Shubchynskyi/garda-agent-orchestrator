@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "監査済みタスクリセットはすでに準備済みです。",
     "taskResetReady": "監査済みリセット準備済み",
     "taskResetNotReady": "監査済みリセット未準備",
-    "taskResetRemediation": "修復:"
+    "taskResetRemediation": "修復:",
+    "taskCommandDiscard": "タスクを破棄",
+    "taskCommandDiscardDescription": "保護された task-reset ゲートでこのタスクを最終破棄し、実行時アーティファクトを消去して DONE にします。",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "推奨されるフルスイートコマンドのタイムアウト:",
+    "fullSuiteTimeoutForecastRecentRuns": "直近",
+    "fullSuiteTimeoutForecastRunsAverage": "回の平均",
+    "fullSuiteTimeoutForecastMaximum": "最大",
+    "fullSuiteTimeoutForecastSafetyMargin": "最大値に対する安全マージン",
+    "fullSuiteTimeoutForecastMinimum": "20%、ただし最低30秒",
+    "fullSuiteTimeoutForecastConfiguredReason": "一致する最近のフルスイート実行時間履歴がないため、設定済みタイムアウトを使用します"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -276,6 +285,10 @@
     "garda-off": {
       "label": "Garda をオフ",
       "description": "管理対象の Garda ルート指示ファイルを `runtime/switch/off` に移動し、off モードの ignore ブロックを有効にします。"
+    },
+    "backup-create-manual": {
+      "label": "手動バックアップを作成",
+      "description": "手動のロールバック用バックアップスナップショットを作成します。"
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

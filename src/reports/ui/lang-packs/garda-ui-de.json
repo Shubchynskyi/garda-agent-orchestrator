@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Der geprüfte Task-Reset ist bereits bereit.",
     "taskResetReady": "Geprüfter Reset bereit",
     "taskResetNotReady": "Geprüfter Reset nicht bereit",
-    "taskResetRemediation": "Behebung:"
+    "taskResetRemediation": "Behebung:",
+    "taskCommandDiscard": "Aufgabe verwerfen",
+    "taskCommandDiscardDescription": "Verwirft diese Aufgabe endgültig über das geschützte Task-Reset-Gate, löscht Laufzeitartefakte und markiert sie als DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Empfohlenes Timeout fuer den Full-Suite-Befehl:",
+    "fullSuiteTimeoutForecastRecentRuns": "letzte",
+    "fullSuiteTimeoutForecastRunsAverage": "Lauf/Laeufe, Durchschnitt",
+    "fullSuiteTimeoutForecastMaximum": "Maximum",
+    "fullSuiteTimeoutForecastSafetyMargin": "Sicherheitsaufschlag ueber Maximum",
+    "fullSuiteTimeoutForecastMinimum": "20%, aber mindestens 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "keine aktuelle passende Full-Suite-Dauerhistorie; konfiguriertes Timeout wird verwendet"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {
@@ -276,6 +285,10 @@
     "garda-off": {
       "label": "Garda ausschalten",
       "description": "Verschiebt die verwalteten Root-Anweisungsdateien von Garda nach `runtime/switch/off` und aktiviert den Ignore-Block für den Off-Modus."
+    },
+    "backup-create-manual": {
+      "label": "Manuelles Backup erstellen",
+      "description": "Erstellt einen manuellen Rollback-Backup-Snapshot."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {

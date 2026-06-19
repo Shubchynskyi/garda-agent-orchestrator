@@ -86,9 +86,11 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     taskCommandStats: 'Task stats',
     taskCommandEvents: 'Task events',
     taskCommandReset: 'Reset task',
+    taskCommandDiscard: 'Discard task',
     taskCommandEnableReset: 'Enable audited task reset',
     taskCommandNextStepDescription: 'Asks Garda for the next required lifecycle step for this task. It can advance workflow state and requires confirmation.',
     taskCommandResetDescription: 'Reopens this task through the guarded task-reset gate. Requires task-reset to be enabled and a typed confirmation.',
+    taskCommandDiscardDescription: 'Terminally discards this task through the guarded task-reset gate, clears runtime artifacts, and marks it DONE.',
     taskCommandEnableResetDescription: 'Enables task reset through audited workflow set before reset or discard can run.',
     taskCommandEnableResetAuditDescription: 'Repairs missing workflow-set audit evidence for task_reset.enabled=true.',
     taskCommandStatsDescription: 'Shows focused counters and runtime summary for this task.',
@@ -251,6 +253,13 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     fullSuitePlacement: 'Placement',
     fullSuiteFreshness: 'Freshness',
     fullSuiteTimeoutForecast: 'Timeout forecast',
+    fullSuiteTimeoutForecastRecommendedPrefix: 'Recommended full-suite command timeout:',
+    fullSuiteTimeoutForecastRecentRuns: 'last',
+    fullSuiteTimeoutForecastRunsAverage: 'run(s) avg',
+    fullSuiteTimeoutForecastMaximum: 'max',
+    fullSuiteTimeoutForecastSafetyMargin: 'safety margin over max',
+    fullSuiteTimeoutForecastMinimum: '20% but at least 30s',
+    fullSuiteTimeoutForecastConfiguredReason: 'no recent matching full-suite duration history; using configured timeout',
     fullSuiteConfiguredTimeout: 'Configured timeout',
     fullSuiteAverageDuration: 'Average duration',
     fullSuiteHighWatermarkDuration: 'High-watermark duration',
@@ -462,9 +471,14 @@ export const LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<string, Readonly<Reco
     (pack) => pack.LOCAL_UI_PROJECT_MEMORY_TEXT
 );
 
-const CORE_LOCAL_UI_ACTION_TEXT = Object.freeze({
-    en: EMPTY_LOCALIZED_TEXT_MAP
-} satisfies Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>>);
+const CORE_LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
+    en: {
+        'backup-create-manual': {
+            label: 'Create manual backup',
+            description: 'Create a manual rollback backup snapshot.'
+        }
+    }
+});
 
 export const LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = buildImportedLanguageMap(
     CORE_LOCAL_UI_ACTION_TEXT,

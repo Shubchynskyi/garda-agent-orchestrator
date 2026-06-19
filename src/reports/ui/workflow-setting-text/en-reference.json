@@ -4,7 +4,7 @@
   },
   "compile-gate-command": {
     "label": "Compile-gate command",
-    "description": "Command compile-gate runs for compile/build/type-check validation. When unconfigured, compile-gate fails closed until a project-specific command is configured."
+    "description": "Command compile-gate runs for compile/build/type-check validation. This shell-command setting is CLI-only in the local UI; use audited `garda workflow set` from a terminal to change it. When unconfigured, compile-gate fails closed until a project-specific command is configured."
   },
   "full-suite-enabled": {
     "label": "Mandatory full-suite validation",
@@ -22,7 +22,7 @@
   },
   "full-suite-command": {
     "label": "Full-suite command",
-    "description": "Command the full-suite gate runs when mandatory full-suite validation is enabled."
+    "description": "Command the full-suite gate runs when mandatory full-suite validation is enabled. This shell-command setting is CLI-only in the local UI; use audited `garda workflow set` from a terminal to change it."
   },
   "full-suite-timeout-ms": {
     "label": "Full-suite timeout",

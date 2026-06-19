@@ -246,7 +246,16 @@
     "taskResetAlreadyReady": "Geaudite task reset is al gereed.",
     "taskResetReady": "Geaudite reset gereed",
     "taskResetNotReady": "Geaudite reset niet gereed",
-    "taskResetRemediation": "Herstel:"
+    "taskResetRemediation": "Herstel:",
+    "taskCommandDiscard": "Taak verwerpen",
+    "taskCommandDiscardDescription": "Verwerpt deze taak definitief via de beveiligde task-reset-gate, wist runtime-artefacten en markeert de taak als DONE.",
+    "fullSuiteTimeoutForecastRecommendedPrefix": "Aanbevolen time-out voor de full-suite-opdracht:",
+    "fullSuiteTimeoutForecastRecentRuns": "laatste",
+    "fullSuiteTimeoutForecastRunsAverage": "run(s) gemiddeld",
+    "fullSuiteTimeoutForecastMaximum": "maximum",
+    "fullSuiteTimeoutForecastSafetyMargin": "veiligheidsmarge boven maximum",
+    "fullSuiteTimeoutForecastMinimum": "20%, maar minimaal 30s",
+    "fullSuiteTimeoutForecastConfiguredReason": "geen recente passende full-suite-duurhistorie; geconfigureerde time-out wordt gebruikt"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
@@ -299,6 +308,12 @@
     "project-memory": {
       "title": "Projectgeheugen",
       "body": "Het tabblad projectgeheugen toont de huidige onderhoudsmodus en duurzame geheugenbestanden. Open elk bestand op aanvraag in plaats van de volledige inhoud in het dashboard te laden."
+    }
+  },
+  "LOCAL_UI_ACTION_TEXT": {
+    "backup-create-manual": {
+      "label": "Handmatige back-up maken",
+      "description": "Maakt een handmatige rollback-back-upmomentopname."
     }
   }
 }
