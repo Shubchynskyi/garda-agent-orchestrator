@@ -23,12 +23,12 @@
     "description": "जब मान true हो, निर्धारित दैनिक रखरखाव केवल उम्मीदवारों की सूची बनाता है और audit output लिखता है; कोई artifact हटाता या compress नहीं करता। थ्रेशहोल्ड ठीक करते समय true रखें, फिर लागू करने के लिए false करें।"
   },
   "purge_require_confirm": {
-    "label": "purge के लिए पुष्टि आवश्यक",
-    "description": "जब मान true हो, destructive purge और cleanup कमांड चलाने से पहले सर्वर स्पष्ट रूप से टाइप किया गया confirmation phrase मांगता है।"
+    "label": "स्वचालित cleanup पुष्टि सुरक्षा",
+    "description": "true होने पर scheduled या CLI destructive cleanup चुपचाप नहीं चलता और confirmation-gated रहता है। Manual UI cleanup और task-artifact cleanup हमेशा अपनी typed confirmation phrase मांगते हैं।"
   },
   "healthy_done_compact_after_days": {
-    "label": "स्वस्थ DONE को इतने दिन बाद compact करें",
-    "description": "इतने दिनों बाद सफलतापूर्वक पूर्ण (DONE) कार्यों को ledger evidence सत्यापित होने पर केवल ledger-history में compact किया जा सकता है।"
+    "label": "स्वस्थ DONE को इतने दिन बाद compress करें",
+    "description": "इतने दिनों के बाद सफल DONE tasks ledger evidence सत्यापित होने पर ledger-only history में compress हो सकते हैं।"
   },
   "problem_tasks_compress_after_days": {
     "label": "समस्याग्रस्त कार्य इतने दिन बाद compress करें",
@@ -36,20 +36,20 @@
   },
   "manual_runtime_cleanup": {
     "label": "मैनुअल runtime cleanup",
-    "description": "ऊपर की पंक्तियों से आयु और keep-latest मान लेकर `garda cleanup` एक बार चलाता है। Preview केवल उम्मीदवार दिखाता है; Apply नीति के अनुसार हटाता या compress करता है और पुष्टि मांगता है।"
+    "description": "`garda cleanup` को ऊपर की age और keep-latest values के साथ एक बार चलाता है। Preview dry-run है और केवल candidates दिखाता है; Apply policy के अनुसार delete या compress करता है और typed confirmation मांगता है।"
   },
   "task_purge": {
-    "label": "कार्य purge",
-    "description": "एक task ID के स्वामित्व वाले runtime artifact हटाता है और shared index की मरम्मत करता है। पूरे shared file नहीं हटाता; server पर active-task सुरक्षा लागू रहती है।"
+    "label": "टास्क runtime artifact cleanup",
+    "description": "एक task ID के runtime artifacts हटाता है और shared indexes repair करता है। पूरी shared files नहीं हटाता; active-task protection server पर लागू रहती है।"
   },
   "task_id": {
     "label": "कार्य ID"
   },
   "purge_task_button": {
-    "label": "कार्य purge करें"
+    "label": "Task runtime artifacts साफ करें"
   },
   "run_preview": {
-    "label": "पूर्वावलोकन"
+    "label": "Dry-run preview"
   },
   "value_true": {
     "label": "true — सक्षम"

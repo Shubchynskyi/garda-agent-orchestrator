@@ -23,33 +23,33 @@
     "description": "মান true হলে, নির্ধারিত দৈনিক রক্ষণাবেক্ষণ শুধু প্রার্থী তালিকা করে এবং অডিট আউটপুট লেখে; কোনো আর্টিফ্যাক্ট মুছে ফেলে বা কমপ্রেস করে না। থ্রেশহোল্ড ঠিক করার সময় true রাখুন, পরে প্রয়োগের জন্য false করুন।"
   },
   "purge_require_confirm": {
-    "label": "মোছার আগে নিশ্চিতকরণ আবশ্যক",
-    "description": "মান true হলে, ধ্বংসাত্মক purge ও cleanup কমান্ড চালানোর আগে সার্ভার স্পষ্টভাবে টাইপ করা নিশ্চিতকরণ বাক্যাংশ চাইবে।"
+    "label": "স্বয়ংক্রিয় cleanup নিশ্চিতকরণ সুরক্ষা",
+    "description": "true হলে scheduled বা CLI destructive cleanup নীরবে চলে না, confirmation-gated থাকে। Manual UI cleanup এবং এক-task artifact cleanup সবসময় নিজস্ব typed confirmation phrase চায়।"
   },
   "healthy_done_compact_after_days": {
-    "label": "সুস্থ DONE টাস্ক কমপ্যাক্ট করুন (দিন পরে)",
-    "description": "এত দিন পরে, সফলভাবে সমাপ্ত (DONE) টাস্কগুলো ledger প্রমাণ যাচাই হলে শুধু ledger-ভিত্তিক ইতিহাসে কমপ্যাক্ট করা যেতে পারে।"
+    "label": "সুস্থ DONE সংকুচিত করুন (দিন পরে)",
+    "description": "এত দিন পরে সফল DONE task ledger evidence যাচাই হলে ledger-only history হিসেবে সংকুচিত হতে পারে।"
   },
   "problem_tasks_compress_after_days": {
     "label": "সমস্যাযুক্ত টাস্ক কমপ্রেস করুন (দিন পরে)",
     "description": "এত দিন পরে, ব্যর্থ বা আটকে থাকা টাস্কের ভারী ফরেনসিক আর্টিফ্যাক্ট কমপ্রেস করা যেতে পারে, তবে পুনরুদ্ধারযোগ্য পাঠযোগ্য প্রমাণ রাখা হবে।"
   },
   "manual_runtime_cleanup": {
-    "label": "ম্যানুয়াল runtime ক্লিনআপ",
-    "description": "উপরের সারির বয়স এবং keep-latest মান ব্যবহার করে একবার `garda cleanup` চালায়। Preview কেবল প্রার্থী দেখায়; Apply নীতিমালা অনুযায়ী মুছে ফেলে বা কমপ্রেস করে এবং নিশ্চিতকরণ চায়।"
+    "label": "ম্যানুয়াল runtime cleanup",
+    "description": "`garda cleanup` একবার চালায়, উপররের age ও keep-latest মান দিয়ে। Preview একটি dry-run, শুধু candidate দেখায়; Apply policy অনুযায়ী delete বা compress করে এবং typed confirmation চায়।"
   },
   "task_purge": {
-    "label": "টাস্ক purge",
-    "description": "একটি টাস্ক ID-এর মালিকানাধীন runtime আর্টিফ্যাক্ট মুছে দেয় এবং শেয়ার করা ইনডেক্স মেরামত করে। সম্পূর্ণ শেয়ার করা ফাইল সরায় না; সার্ভার-সাইডে সক্রিয় টাস্ক সুরক্ষা বহাল থাকে।"
+    "label": "টাস্ক runtime artifact পরিষ্কার",
+    "description": "একটি task ID-এর runtime artifacts সরায় এবং shared indexes মেরামত করে। সম্পূর্ণ shared files সরায় না; active-task protection server-এ থাকে।"
   },
   "task_id": {
     "label": "টাস্ক ID"
   },
   "purge_task_button": {
-    "label": "টাস্ক purge করুন"
+    "label": "Task runtime artifacts পরিষ্কার করুন"
   },
   "run_preview": {
-    "label": "প্রিভিউ"
+    "label": "Dry-run preview"
   },
   "value_true": {
     "label": "true — সক্রিয়"

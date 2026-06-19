@@ -23,33 +23,33 @@
     "description": "När värdet är true listar det schemalagda dagliga underhållet bara kandidater och skriver granskningsutdata; det tar inte bort eller komprimerar artefakter. Använd true medan du justerar trösklarna och byt sedan till false för att tillämpa."
   },
   "purge_require_confirm": {
-    "label": "Kräv bekräftelse för purge",
-    "description": "När värdet är true kräver destruktiva purge- och cleanup-kommandon en uttryckligen inskriven bekräftelsefras innan servern kör dem."
+    "label": "Bekraftelseskydd for automatisk cleanup",
+    "description": "Nar true ar satt kraver schemalagd eller CLI-baserad destruktiv cleanup fortsatt bekraftelse och kors inte tyst. Manuell UI-cleanup och uppgiftsartefakt-cleanup kraver alltid egna inskrivna bekraftelsefraser."
   },
   "healthy_done_compact_after_days": {
-    "label": "Kompaktera friska DONE efter (dagar)",
-    "description": "Efter så många dagar kan framgångsrikt slutförda uppgifter (DONE) kompakteras till endast ledger-historik när ledger-bevisen har verifierats."
+    "label": "Komprimera friska DONE efter (dagar)",
+    "description": "Efter sa manga dagar kan lyckade DONE-uppgifter komprimeras till endast ledger-historik nar ledger-beviset ar verifierat."
   },
   "problem_tasks_compress_after_days": {
     "label": "Komprimera problemuppgifter efter (dagar)",
     "description": "Efter så många dagar kan tunga forensiska artefakter från misslyckade eller fastnade uppgifter komprimeras samtidigt som läsbara återställningsbevis bevaras."
   },
   "manual_runtime_cleanup": {
-    "label": "Manuell runtime-rensning",
-    "description": "Kör `garda cleanup` en gång med ålders- och behåll-senaste-värdena från raderna ovan. Förhandsvisning visar bara kandidater; Verkställ tar bort eller komprimerar enligt policyn och kräver bekräftelse."
+    "label": "Manuell runtime-cleanup",
+    "description": "Kor `garda cleanup` en gang med alder- och behall-senaste-vardena fran raderna ovan. Forhandsvisning ar en dry-run som bara visar kandidater; Verkstall tar bort eller komprimerar enligt policyn och kraver inskriven bekraftelse."
   },
   "task_purge": {
-    "label": "Uppgifts-purge",
-    "description": "Tar bort runtime-artefakter som ägs av ett enda uppgifts-ID och reparerar delade index. Tar inte bort hela delade filer; skydd för aktiva uppgifter gäller fortfarande på servern."
+    "label": "Cleanup av runtime-artefakter for uppgift",
+    "description": "Tar bort runtime-artefakter for ett uppgifts-ID och reparerar delade index. Tar inte bort hela delade filer; aktiv-uppgiftsskyddet galler fortfarande pa servern."
   },
   "task_id": {
     "label": "Uppgifts-ID"
   },
   "purge_task_button": {
-    "label": "Rensa uppgift"
+    "label": "Rensa runtime-artefakter"
   },
   "run_preview": {
-    "label": "Förhandsvisning"
+    "label": "Dry-run-forhandsvisning"
   },
   "value_true": {
     "label": "true — aktiverad"

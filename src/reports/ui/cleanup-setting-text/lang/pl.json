@@ -23,33 +23,33 @@
     "description": "Gdy wartość to true, zaplanowana codzienna konserwacja tylko wypisuje kandydatów i zapisuje dane audytowe; nie usuwa ani nie kompresuje artefaktów. Użyj true podczas strojenia progów, a potem przełącz na false, aby zastosować."
   },
   "purge_require_confirm": {
-    "label": "Wymagaj potwierdzenia purge",
-    "description": "Gdy wartość to true, destrukcyjne polecenia purge i cleanup wymagają jawnie wpisanej frazy potwierdzającej, zanim serwer je wykona."
+    "label": "Zabezpieczenie potwierdzenia automatycznego cleanup",
+    "description": "Gdy true, destrukcyjny cleanup planowy lub CLI pozostaje wymagajacy potwierdzenia i nie uruchamia sie po cichu. Reczny cleanup w UI oraz cleanup artefaktow zadania zawsze wymagaja wlasnych wpisywanych fraz potwierdzenia."
   },
   "healthy_done_compact_after_days": {
-    "label": "Kompaktuj zdrowe DONE po (dniach)",
-    "description": "Po tylu dniach pomyślnie zakończone zadania (DONE) mogą zostać skompaktowane do historii tylko w ledgerze, gdy dowód ledgera zostanie zweryfikowany."
+    "label": "Kompresuj zdrowe DONE po (dniach)",
+    "description": "Po tylu dniach poprawnie zakonczone zadania DONE moga byc skompresowane do historii tylko ledger po zweryfikowaniu dowodow ledger."
   },
   "problem_tasks_compress_after_days": {
     "label": "Kompresuj problematyczne zadania po (dniach)",
     "description": "Po tylu dniach ciężkie artefakty śledcze zadań nieudanych lub zablokowanych mogą zostać skompresowane przy zachowaniu czytelnych dowodów potrzebnych do odzyskiwania."
   },
   "manual_runtime_cleanup": {
-    "label": "Ręczne czyszczenie runtime",
-    "description": "Uruchamia `garda cleanup` jeden raz z wartościami wieku i liczby najnowszych zadań z wierszy powyżej. Podgląd pokazuje tylko kandydatów; Zastosuj usuwa lub kompresuje zgodnie z polityką i wymaga potwierdzenia."
+    "label": "Reczny cleanup runtime",
+    "description": "Uruchamia `garda cleanup` raz z wartosciami wieku i liczby najnowszych z wierszy powyzej. Podglad jest dry-run i pokazuje tylko kandydatow; Zastosuj usuwa lub kompresuje wedlug polityki i wymaga wpisanego potwierdzenia."
   },
   "task_purge": {
-    "label": "Purge zadania",
-    "description": "Usuwa artefakty runtime należące do jednego identyfikatora zadania i naprawia współdzielone indeksy. Nie usuwa całych współdzielonych plików; ochrona aktywnych zadań nadal obowiązuje po stronie serwera."
+    "label": "Cleanup artefaktow runtime zadania",
+    "description": "Usuwa artefakty runtime jednego ID zadania i naprawia wspolne indeksy. Nie usuwa calych wspolnych plikow; ochrona aktywnych zadan pozostaje po stronie serwera."
   },
   "task_id": {
     "label": "ID zadania"
   },
   "purge_task_button": {
-    "label": "Wyczyść zadanie"
+    "label": "Wyczysc artefakty runtime"
   },
   "run_preview": {
-    "label": "Podgląd"
+    "label": "Podglad dry-run"
   },
   "value_true": {
     "label": "true — włączone"

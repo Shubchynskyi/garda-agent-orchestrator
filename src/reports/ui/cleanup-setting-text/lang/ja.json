@@ -23,33 +23,33 @@
     "description": "true の場合、定期日次メンテナンスは候補を列挙して監査出力を書くだけで、アーティファクトの削除や圧縮は行いません。しきい値調整中は true を使い、適用時に false に切り替えてください。"
   },
   "purge_require_confirm": {
-    "label": "Purge に確認を必須化",
-    "description": "true の場合、破壊的な purge および cleanup コマンドをサーバーが実行する前に、明示的に入力した確認フレーズが必要です。"
+    "label": "自動クリーンアップ確認保護",
+    "description": "true の場合、スケジュールまたは CLI の破壊的クリーンアップは確認必須のままで、暗黙には実行されません。UI の手動クリーンアップとタスク単位のアーティファクト cleanup は常に個別の入力確認フレーズを要求します。"
   },
   "healthy_done_compact_after_days": {
-    "label": "正常な DONE を圧縮するまでの日数",
-    "description": "この日数を過ぎると、正常に完了したタスク (DONE) は ledger 証跡の検証後に ledger のみの履歴へ圧縮できます。"
+    "label": "正常な DONE を指定日数後に圧縮",
+    "description": "この日数を過ぎると、正常完了した DONE タスクは ledger 証拠の検証後に ledger のみの履歴へ圧縮できます。"
   },
   "problem_tasks_compress_after_days": {
     "label": "問題タスクを圧縮するまでの日数",
     "description": "この日数を過ぎると、失敗または停止したタスクの大きなフォレンジックアーティファクトを、復旧時に読める証跡を残したまま圧縮できます。"
   },
   "manual_runtime_cleanup": {
-    "label": "手動 runtime クリーンアップ",
-    "description": "上の行の経過日数と最新保持数を使って `garda cleanup` を 1 回実行します。プレビューは候補のみを表示し、適用ではポリシーに従って削除または圧縮を行い、確認が必要です。"
+    "label": "手動 runtime cleanup",
+    "description": "上の行の age と keep-latest 値で `garda cleanup` を 1 回実行します。プレビューは候補だけを表示する dry-run です。適用はポリシーに従って削除または圧縮し、入力確認を要求します。"
   },
   "task_purge": {
-    "label": "タスク purge",
-    "description": "1 つのタスク ID に属する runtime アーティファクトを削除し、共有インデックスを修復します。共有ファイル全体は削除せず、アクティブタスク保護はサーバー側で引き続き適用されます。"
+    "label": "タスク runtime アーティファクト cleanup",
+    "description": "1 つのタスク ID の runtime アーティファクトを削除し、共有インデックスを修復します。共有ファイル全体は削除しません。アクティブタスク保護はサーバー側で維持されます。"
   },
   "task_id": {
     "label": "タスク ID"
   },
   "purge_task_button": {
-    "label": "タスクを purge"
+    "label": "runtime アーティファクトを cleanup"
   },
   "run_preview": {
-    "label": "プレビュー"
+    "label": "dry-run プレビュー"
   },
   "value_true": {
     "label": "true — 有効"

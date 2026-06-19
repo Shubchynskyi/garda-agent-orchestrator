@@ -23,33 +23,33 @@
     "description": "当值为 true 时，计划中的每日维护只会列出候选项并写入审计输出；不会删除或压缩任何制品。调试阈值时请使用 true，准备真正执行时再切换为 false。"
   },
   "purge_require_confirm": {
-    "label": "Purge 需要确认",
-    "description": "当值为 true 时，具有破坏性的 purge 和 cleanup 命令在服务器执行前需要明确输入确认短语。"
+    "label": "自动 cleanup 确认保护",
+    "description": "当值为 true 时，计划任务或 CLI 的破坏性 cleanup 仍需要确认，不会静默执行。UI 手动 cleanup 和单任务 artifact cleanup 始终需要各自输入确认短语。"
   },
   "healthy_done_compact_after_days": {
     "label": "健康 DONE 在多少天后压缩",
-    "description": "成功完成的任务 (DONE) 在达到这个天数后，可在 ledger 证据验证通过后压缩为仅保留 ledger 历史。"
+    "description": "超过这个天数后，成功完成的 DONE 任务在 ledger 证据验证后可以压缩为仅 ledger 历史。"
   },
   "problem_tasks_compress_after_days": {
     "label": "问题任务在多少天后压缩",
     "description": "失败或卡住的任务在达到这个天数后，可以压缩其较大的取证制品，同时保留可用于恢复的可读证据。"
   },
   "manual_runtime_cleanup": {
-    "label": "手动 runtime 清理",
-    "description": "使用上方行中的年龄和保留最新值执行一次 `garda cleanup`。预览只显示候选项；应用会按策略删除或压缩，并要求确认。"
+    "label": "手动 runtime cleanup",
+    "description": "使用上方的年龄和保留最新值执行一次 `garda cleanup`。预览是 dry-run，只显示候选项；应用会按策略删除或压缩，并要求输入确认短语。"
   },
   "task_purge": {
-    "label": "任务 purge",
-    "description": "删除属于单个任务 ID 的 runtime 制品，并修复共享索引。不会删除整个共享文件；活动任务保护仍然会在服务器端生效。"
+    "label": "任务 runtime artifact cleanup",
+    "description": "移除一个任务 ID 拥有的 runtime artifact，并修复共享索引。不会删除整个共享文件；活动任务保护仍在服务器端生效。"
   },
   "task_id": {
     "label": "任务 ID"
   },
   "purge_task_button": {
-    "label": "清理任务"
+    "label": "清理 runtime artifact"
   },
   "run_preview": {
-    "label": "预览"
+    "label": "dry-run 预览"
   },
   "value_true": {
     "label": "true — 已启用"

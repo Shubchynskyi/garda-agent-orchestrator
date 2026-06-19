@@ -23,12 +23,12 @@
     "description": "Wenn true gesetzt ist, listet die geplante tägliche Wartung nur Kandidaten auf und schreibt Audit-Ausgaben; Artefakte werden weder gelöscht noch komprimiert. Verwenden Sie true beim Feinabstimmen der Grenzwerte und wechseln Sie danach zu false für die Anwendung."
   },
   "purge_require_confirm": {
-    "label": "Bestätigung für Purge erforderlich",
-    "description": "Wenn true gesetzt ist, verlangen zerstörerische Purge- und Cleanup-Befehle eine explizit eingegebene Bestätigungsphrase, bevor der Server sie ausführt."
+    "label": "Schutz fuer automatische Bereinigungsbestaetigung",
+    "description": "Wenn true gesetzt ist, bleiben geplante oder CLI-basierte destruktive Bereinigungen bestaetigungspflichtig und laufen nicht still. Manuelle UI-Bereinigung und Aufgaben-Artefaktbereinigung verlangen immer eigene eingegebene Bestaetigungsphrasen."
   },
   "healthy_done_compact_after_days": {
-    "label": "Erfolgreiche DONE nach (Tagen) verdichten",
-    "description": "Nach so vielen Tagen dürfen erfolgreich abgeschlossene Aufgaben (DONE) auf eine reine Ledger-Historie verdichtet werden, sobald der Ledger-Nachweis verifiziert ist."
+    "label": "Erfolgreiche DONE nach (Tagen) komprimieren",
+    "description": "Nach so vielen Tagen duerfen erfolgreich abgeschlossene Aufgaben (DONE) auf eine reine Ledger-Historie komprimiert werden, sobald der Ledger-Nachweis verifiziert ist."
   },
   "problem_tasks_compress_after_days": {
     "label": "Problematische Aufgaben nach (Tagen) komprimieren",
@@ -36,20 +36,20 @@
   },
   "manual_runtime_cleanup": {
     "label": "Manuelle Runtime-Bereinigung",
-    "description": "Führt `garda cleanup` einmal mit den Werten für Alter und Neueste-behalten aus den Zeilen oben aus. Die Vorschau zeigt nur Kandidaten; Anwenden löscht oder komprimiert gemäß Richtlinie und verlangt eine Bestätigung."
+    "description": "Fuehrt `garda cleanup` einmal mit den Werten fuer Alter und Neueste-behalten aus den Zeilen oben aus. Vorschau ist ein Dry-run und zeigt nur Kandidaten; Anwenden loescht oder komprimiert gemaess Richtlinie und verlangt eine eingegebene Bestaetigung."
   },
   "task_purge": {
-    "label": "Aufgaben-Purge",
-    "description": "Löscht Runtime-Artefakte, die zu einer einzelnen Aufgaben-ID gehören, und repariert gemeinsame Indizes. Ganze gemeinsame Dateien werden nicht entfernt; der Schutz aktiver Aufgaben gilt serverseitig weiterhin."
+    "label": "Runtime-Artefakte einer Aufgabe bereinigen",
+    "description": "Entfernt Runtime-Artefakte einer einzelnen Aufgaben-ID und repariert gemeinsame Indizes. Ganze gemeinsame Dateien werden nicht entfernt; der Schutz aktiver Aufgaben gilt serverseitig weiterhin."
   },
   "task_id": {
     "label": "Aufgaben-ID"
   },
   "purge_task_button": {
-    "label": "Aufgabe löschen"
+    "label": "Runtime-Artefakte bereinigen"
   },
   "run_preview": {
-    "label": "Vorschau"
+    "label": "Dry-run-Vorschau"
   },
   "value_true": {
     "label": "true — aktiviert"

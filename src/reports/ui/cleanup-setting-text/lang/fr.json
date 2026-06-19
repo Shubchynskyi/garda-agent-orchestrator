@@ -23,33 +23,33 @@
     "description": "Quand la valeur est true, la maintenance quotidienne planifiée se contente de lister les candidats et d’écrire une sortie d’audit ; elle ne supprime ni ne compresse aucun artefact. Utilisez true pendant le réglage des seuils, puis passez à false pour appliquer."
   },
   "purge_require_confirm": {
-    "label": "Confirmation de purge requise",
-    "description": "Quand la valeur est true, les commandes destructrices de purge et de nettoyage exigent une phrase de confirmation saisie explicitement avant exécution par le serveur."
+    "label": "Protection de confirmation pour le nettoyage automatique",
+    "description": "Quand la valeur est true, le nettoyage destructif planifie ou via CLI reste soumis a confirmation et ne s execute pas en silence. Le nettoyage manuel dans l UI et le nettoyage des artefacts d une tache exigent toujours leurs propres phrases de confirmation."
   },
   "healthy_done_compact_after_days": {
-    "label": "Compacter les DONE saines après (jours)",
-    "description": "Après ce nombre de jours, les tâches terminées avec succès (DONE) peuvent être compactées en historique de ledger uniquement une fois la preuve du ledger vérifiée."
+    "label": "Compresser les DONE saines apres (jours)",
+    "description": "Apres ce nombre de jours, les taches DONE terminees correctement peuvent etre compressees en historique ledger seul une fois la preuve ledger verifiee."
   },
   "problem_tasks_compress_after_days": {
     "label": "Compresser les tâches problématiques après (jours)",
     "description": "Après ce nombre de jours, les tâches en échec ou bloquées peuvent voir leurs artefacts forensiques volumineux compressés tout en conservant des preuves lisibles pour la reprise."
   },
   "manual_runtime_cleanup": {
-    "label": "Nettoyage manuel du runtime",
-    "description": "Exécute `garda cleanup` une fois avec les valeurs d’âge et de conservation des plus récentes définies ci-dessus. L’aperçu montre seulement les candidats ; Appliquer supprime ou compresse selon la politique et exige une confirmation."
+    "label": "Nettoyage runtime manuel",
+    "description": "Execute `garda cleanup` une fois avec les valeurs age et conserver-les-plus-recentes des lignes ci-dessus. Apercu est un dry-run qui montre seulement les candidats; Appliquer supprime ou compresse selon la politique et exige une confirmation saisie."
   },
   "task_purge": {
-    "label": "Purge de tâche",
-    "description": "Supprime les artefacts runtime appartenant à un seul ID de tâche et répare les index partagés. Ne supprime pas des fichiers partagés entiers ; la protection des tâches actives continue de s’appliquer côté serveur."
+    "label": "Nettoyage des artefacts runtime d une tache",
+    "description": "Supprime les artefacts runtime appartenant a un ID de tache et repare les index partages. Ne supprime pas les fichiers partages entiers; la protection des taches actives reste appliquee cote serveur."
   },
   "task_id": {
     "label": "ID de tâche"
   },
   "purge_task_button": {
-    "label": "Purger la tâche"
+    "label": "Nettoyer les artefacts runtime"
   },
   "run_preview": {
-    "label": "Aperçu"
+    "label": "Apercu dry-run"
   },
   "value_true": {
     "label": "true — activé"

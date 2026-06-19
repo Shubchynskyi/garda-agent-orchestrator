@@ -23,33 +23,33 @@
     "description": "Khi giá trị là true, bảo trì hằng ngày theo lịch chỉ liệt kê các ứng viên và ghi đầu ra kiểm toán; không xóa hoặc nén artefact nào. Dùng true khi tinh chỉnh ngưỡng, rồi chuyển sang false để áp dụng."
   },
   "purge_require_confirm": {
-    "label": "Yêu cầu xác nhận khi purge",
-    "description": "Khi giá trị là true, các lệnh purge và cleanup mang tính phá hủy yêu cầu một cụm xác nhận được gõ rõ ràng trước khi máy chủ thực thi."
+    "label": "Bao ve xac nhan cleanup tu dong",
+    "description": "Khi true, cleanup pha huy theo lich hoac qua CLI van bi chan boi xac nhan va khong chay am tham. Cleanup thu cong trong UI va cleanup artifact cua mot task luon yeu cau cum xac nhan rieng."
   },
   "healthy_done_compact_after_days": {
-    "label": "Nén gọn DONE lành mạnh sau (ngày)",
-    "description": "Sau chừng này ngày, các tác vụ hoàn tất thành công (DONE) có thể được nén gọn thành lịch sử chỉ còn ledger sau khi bằng chứng ledger đã được xác minh."
+    "label": "Nen DONE khoe sau (ngay)",
+    "description": "Sau so ngay nay, cac task DONE thanh cong co the duoc nen thanh lich su chi ledger sau khi bang chung ledger duoc xac minh."
   },
   "problem_tasks_compress_after_days": {
     "label": "Nén các tác vụ có vấn đề sau (ngày)",
     "description": "Sau chừng này ngày, các artefact điều tra lớn của các tác vụ thất bại hoặc bị kẹt có thể được nén lại, trong khi vẫn giữ bằng chứng có thể đọc được để phục hồi."
   },
   "manual_runtime_cleanup": {
-    "label": "Dọn dẹp runtime thủ công",
-    "description": "Chạy `garda cleanup` một lần với các giá trị tuổi và giữ-lại-mới-nhất từ các dòng phía trên. Xem trước chỉ hiển thị ứng viên; Áp dụng sẽ xóa hoặc nén theo chính sách và yêu cầu xác nhận."
+    "label": "Cleanup runtime thu cong",
+    "description": "Chay `garda cleanup` mot lan voi gia tri tuoi va giu-moi-nhat tu cac dong phia tren. Xem truoc la dry-run chi hien thi ung vien; Ap dung xoa hoac nen theo chinh sach va yeu cau cum xac nhan da nhap."
   },
   "task_purge": {
-    "label": "Purge tác vụ",
-    "description": "Xóa các artefact runtime thuộc về một ID tác vụ và sửa các chỉ mục dùng chung. Không xóa toàn bộ các tệp dùng chung; cơ chế bảo vệ tác vụ đang hoạt động vẫn được áp dụng ở máy chủ."
+    "label": "Cleanup artifact runtime cua task",
+    "description": "Xoa artifact runtime cua mot task ID va sua cac chi muc dung chung. Khong xoa toan bo tep dung chung; bao ve task dang hoat dong van nam tren may chu."
   },
   "task_id": {
     "label": "ID tác vụ"
   },
   "purge_task_button": {
-    "label": "Purge tác vụ"
+    "label": "Don artifact runtime"
   },
   "run_preview": {
-    "label": "Xem trước"
+    "label": "Xem truoc dry-run"
   },
   "value_true": {
     "label": "true — bật"

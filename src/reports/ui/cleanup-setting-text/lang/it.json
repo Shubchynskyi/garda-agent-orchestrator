@@ -23,33 +23,33 @@
     "description": "Quando è true, la manutenzione giornaliera pianificata elenca solo i candidati e scrive l’output di audit; non elimina né comprime artefatti. Usa true mentre regoli le soglie, poi passa a false per applicare."
   },
   "purge_require_confirm": {
-    "label": "Conferma obbligatoria per la purge",
-    "description": "Quando è true, i comandi distruttivi di purge e cleanup richiedono una frase di conferma digitata esplicitamente prima che il server li esegua."
+    "label": "Protezione di conferma per pulizia automatica",
+    "description": "Quando true, la pulizia distruttiva pianificata o via CLI resta vincolata a conferma e non viene eseguita in silenzio. La pulizia manuale UI e quella degli artefatti di una attivita richiedono sempre frasi di conferma proprie."
   },
   "healthy_done_compact_after_days": {
-    "label": "Compatta i DONE sani dopo (giorni)",
-    "description": "Dopo questo numero di giorni, le attività completate con successo (DONE) possono essere compattate in una cronologia solo ledger una volta verificata l’evidenza del ledger."
+    "label": "Comprimi DONE sane dopo (giorni)",
+    "description": "Dopo questi giorni, le attivita DONE concluse con successo possono essere compresse in cronologia solo ledger dopo la verifica delle prove ledger."
   },
   "problem_tasks_compress_after_days": {
     "label": "Comprimi le attività problematiche dopo (giorni)",
     "description": "Dopo questo numero di giorni, gli artefatti forensi pesanti delle attività fallite o bloccate possono essere compressi mantenendo comunque evidenze leggibili per il recupero."
   },
   "manual_runtime_cleanup": {
-    "label": "Pulizia manuale del runtime",
-    "description": "Esegue `garda cleanup` una volta con i valori di età e mantieni-le-più-recenti delle righe sopra. L’anteprima mostra solo i candidati; Applica elimina o comprime secondo la politica e richiede conferma."
+    "label": "Pulizia runtime manuale",
+    "description": "Esegue `garda cleanup` una volta con i valori di eta e mantieni-piu-recenti dalle righe sopra. Anteprima e un dry-run che mostra solo candidati; Applica elimina o comprime secondo la policy e richiede conferma digitata."
   },
   "task_purge": {
-    "label": "Purge dell’attività",
-    "description": "Elimina gli artefatti di runtime appartenenti a un singolo ID attività e ripara gli indici condivisi. Non rimuove interi file condivisi; la protezione delle attività attive continua ad applicarsi sul server."
+    "label": "Pulizia artefatti runtime attivita",
+    "description": "Rimuove gli artefatti runtime di un ID attivita e ripara gli indici condivisi. Non rimuove interi file condivisi; la protezione delle attivita attive resta sul server."
   },
   "task_id": {
     "label": "ID attività"
   },
   "purge_task_button": {
-    "label": "Purge attività"
+    "label": "Pulisci artefatti runtime"
   },
   "run_preview": {
-    "label": "Anteprima"
+    "label": "Anteprima dry-run"
   },
   "value_true": {
     "label": "true — abilitato"

@@ -23,33 +23,33 @@
     "description": "Değer true olduğunda zamanlanmış günlük bakım yalnızca adayları listeler ve denetim çıktısı yazar; artefaktları silmez veya sıkıştırmaz. Eşikleri ayarlarken true kullanın, uygulamak için sonra false yapın."
   },
   "purge_require_confirm": {
-    "label": "Purge için onay zorunlu",
-    "description": "Değer true olduğunda yıkıcı purge ve cleanup komutları, sunucu bunları çalıştırmadan önce açıkça yazılmış bir onay ifadesi gerektirir."
+    "label": "Otomatik cleanup onay korumasi",
+    "description": "true oldugunda zamanlanmis veya CLI uzerinden yikici cleanup sessizce calismaz ve onay gerektirir. UI manuel cleanup ve gorev artefakti cleanup her zaman kendi yazili onay ifadelerini ister."
   },
   "healthy_done_compact_after_days": {
-    "label": "Sağlıklı DONE görevlerini şu kadar gün sonra sıkıştır",
-    "description": "Bu kadar gün sonra başarıyla tamamlanan görevler (DONE), ledger kanıtı doğrulandıktan sonra yalnızca ledger geçmişine sıkıştırılabilir."
+    "label": "Saglikli DONE gorevlerini sonra sikistir (gun)",
+    "description": "Bu kadar gunden sonra basariyla tamamlanan DONE gorevleri ledger kaniti dogrulaninca yalniz ledger gecmisine sikistirilabilir."
   },
   "problem_tasks_compress_after_days": {
     "label": "Sorunlu görevleri şu kadar gün sonra sıkıştır",
     "description": "Bu kadar gün sonra başarısız veya takılı kalmış görevlerin ağır adli artefaktları, kurtarma için okunabilir kanıt korunarak sıkıştırılabilir."
   },
   "manual_runtime_cleanup": {
-    "label": "Manuel runtime temizliği",
-    "description": "Yukarıdaki satırlardaki yaş ve en-yenileri-koru değerleriyle `garda cleanup` komutunu bir kez çalıştırır. Önizleme yalnızca adayları gösterir; Uygula politikaya göre siler veya sıkıştırır ve onay ister."
+    "label": "Manuel runtime cleanup",
+    "description": "Yukaridaki yas ve en-yenileri-koru degerleriyle `garda cleanup` komutunu bir kez calistirir. Onizleme yalniz adaylari gosteren dry-run olur; Uygula politikaya gore siler veya sikistirir ve yazili onay ister."
   },
   "task_purge": {
-    "label": "Görev purge",
-    "description": "Tek bir görev kimliğine ait runtime artefaktlarını siler ve paylaşılan dizinleri onarır. Tüm paylaşılan dosyaları kaldırmaz; etkin görev koruması sunucuda geçerli olmaya devam eder."
+    "label": "Gorev runtime artefakti cleanup",
+    "description": "Bir gorev ID sine ait runtime artefaktlarini kaldirir ve paylasilan indeksleri onarir. Tum paylasilan dosyalari kaldirmaz; aktif gorev korumasi sunucuda kalir."
   },
   "task_id": {
     "label": "Görev kimliği"
   },
   "purge_task_button": {
-    "label": "Görevi temizle"
+    "label": "Runtime artefaktlarini temizle"
   },
   "run_preview": {
-    "label": "Önizleme"
+    "label": "Dry-run onizleme"
   },
   "value_true": {
     "label": "true — etkin"

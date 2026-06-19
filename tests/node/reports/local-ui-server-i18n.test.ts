@@ -50,6 +50,8 @@ class FakeElement {
     textContent = '';
     value = '';
     hidden = false;
+    focused = false;
+    scrolled = false;
     private buttonCacheHtml = '';
     private buttonCache: FakeElement[] = [];
     private html = '';
@@ -76,6 +78,18 @@ class FakeElement {
         for (const listener of this.listeners.get(eventName) || []) {
             await listener();
         }
+    }
+
+    setAttribute(_name: string, _value: string): void {
+        // no-op test double
+    }
+
+    focus(): void {
+        this.focused = true;
+    }
+
+    scrollIntoView(): void {
+        this.scrolled = true;
     }
 
     querySelectorAll(selector: string): FakeElement[] {
@@ -653,15 +667,51 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         assert.ok(renderCleanupResult);
         renderCleanupResult({
             status: 'previewed',
-            action_id: 'cleanup-run',
+            action_id: 'cleanup-preview-custom',
             command: 'garda cleanup --dry-run'
         });
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview dry-run/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Manual runtime cleanup/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Dry-run only/u);
+        assert.equal(fakeDocument.elements['cleanup-status'].focused, true);
+        assert.equal(fakeDocument.elements['cleanup-status'].scrolled, true);
 
+        renderCleanupResult({
+            status: 'executed',
+            action_id: 'cleanup-apply-custom',
+            exit_code: 1,
+            stderr: 'cleanup failed'
+        });
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Apply/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Exit code 1/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /cleanup failed/u);
+        assert.doesNotMatch(fakeDocument.elements['cleanup-status'].innerHTML, /<code>Applied/u);
+
+        fakeDocument.elements['cleanup-status'].focused = false;
+        fakeDocument.elements['cleanup-status'].scrolled = false;
+        renderCleanupResult({
+            status: 'executed',
+            action_id: 'cleanup-task-purge',
+            exit_code: 0,
+            stdout: 'task runtime artifacts cleaned'
+        });
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Clean task runtime artifacts/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /<code>OK<\/code>/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /task runtime artifacts cleaned/u);
+        assert.equal(fakeDocument.elements['cleanup-status'].focused, true);
+        assert.equal(fakeDocument.elements['cleanup-status'].scrolled, true);
+
+        renderCleanupResult({
+            status: 'previewed',
+            action_id: 'cleanup-preview-custom',
+            command: 'garda cleanup --dry-run'
+        });
         fakeDocument.elements['language-select'].value = 'de';
         await fakeDocument.elements['language-select'].dispatch('change');
 
         assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Mindestalter der Aufgabe|Mindestaufgabenalter|Tägliche Wartung|Speichern/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Dry-run-Vorschau/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Manuelle Runtime-Bereinigung/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Dry-run/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });

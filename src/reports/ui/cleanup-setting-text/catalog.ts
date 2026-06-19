@@ -47,12 +47,12 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
             description: 'When true, scheduled daily maintenance only lists candidates and writes audit output; it does not delete or compress artifacts. Use true while tuning thresholds, then switch to false to apply.'
         },
         purge_require_confirm: {
-            label: 'Purge confirmation required',
-            description: 'When true, destructive purge and cleanup commands require an explicit typed confirmation phrase before the server executes them.'
+            label: 'Automatic cleanup confirmation safeguard',
+            description: 'When true, scheduled or CLI destructive cleanup remains confirmation-gated instead of running silently. Manual UI cleanup and task-artifact cleanup always require their own typed confirmation phrases.'
         },
         healthy_done_compact_after_days: {
-            label: 'Compact healthy DONE after (days)',
-            description: 'After this many days, successfully completed (DONE) tasks may be compacted to ledger-only history once ledger evidence is verified.'
+            label: 'Compress healthy DONE after (days)',
+            description: 'After this many days, successfully completed (DONE) tasks may be compressed to ledger-only history once ledger evidence is verified.'
         },
         problem_tasks_compress_after_days: {
             label: 'Compress problem tasks after (days)',
@@ -60,20 +60,20 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
         },
         manual_runtime_cleanup: {
             label: 'Manual runtime cleanup',
-            description: 'Runs garda cleanup once with the age and keep-latest values from the rows above. Preview (dry-run) shows candidates only; Apply deletes or compresses according to policy and requires confirmation.'
+            description: 'Runs garda cleanup once with the age and keep-latest values from the rows above. Preview is a dry-run that only shows candidates; Apply deletes or compresses according to policy and requires typed confirmation.'
         },
         task_purge: {
-            label: 'Task purge',
-            description: 'Deletes runtime artifacts owned by one task ID and repairs shared indexes. Does not remove whole shared files; active-task protection still applies on the server.'
+            label: 'Task runtime artifact cleanup',
+            description: 'Removes runtime artifacts owned by one task ID and repairs shared indexes. It does not remove whole shared files; active-task protection still applies on the server.'
         },
         task_id: {
             label: 'Task ID'
         },
         purge_task_button: {
-            label: 'Purge task'
+            label: 'Clean task runtime artifacts'
         },
         run_preview: {
-            label: 'Preview'
+            label: 'Preview dry-run'
         },
         value_true: {
             label: 'true — enabled'

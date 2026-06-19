@@ -23,33 +23,33 @@
     "description": "Wanneer de waarde true is, somt het geplande dagelijkse onderhoud alleen kandidaten op en schrijft het audituitvoer; artefacten worden niet verwijderd of gecomprimeerd. Gebruik true tijdens het afstellen van drempels en zet daarna false om toe te passen."
   },
   "purge_require_confirm": {
-    "label": "Bevestiging voor purge vereist",
-    "description": "Wanneer de waarde true is, vereisen destructieve purge- en cleanup-opdrachten een expliciet getypte bevestigingszin voordat de server ze uitvoert."
+    "label": "Bevestigingsbeveiliging voor automatische cleanup",
+    "description": "Als true blijft geplande of CLI-destructieve cleanup bevestiging vereisen en draait deze niet stilzwijgend. Handmatige UI-cleanup en taakartefact-cleanup vragen altijd hun eigen getypte bevestigingszinnen."
   },
   "healthy_done_compact_after_days": {
     "label": "Gezonde DONE comprimeren na (dagen)",
-    "description": "Na zoveel dagen mogen succesvol voltooide taken (DONE) worden gecompacteerd tot alleen ledger-geschiedenis zodra het ledger-bewijs is geverifieerd."
+    "description": "Na zoveel dagen mogen succesvol voltooide DONE-taken worden gecomprimeerd naar ledger-only historie zodra ledger-bewijs is geverifieerd."
   },
   "problem_tasks_compress_after_days": {
     "label": "Probleemtaken comprimeren na (dagen)",
     "description": "Na zoveel dagen mogen zware forensische artefacten van mislukte of vastgelopen taken worden gecomprimeerd, terwijl herstelbare leesbare bewijzen behouden blijven."
   },
   "manual_runtime_cleanup": {
-    "label": "Handmatige runtime-opruiming",
-    "description": "Voert `garda cleanup` één keer uit met de waarden voor leeftijd en nieuwste-behouden uit de regels hierboven. Voorbeeld toont alleen kandidaten; Toepassen verwijdert of comprimeert volgens het beleid en vereist bevestiging."
+    "label": "Handmatige runtime-cleanup",
+    "description": "Voert `garda cleanup` eenmaal uit met de leeftijds- en nieuwste-behoudenwaarden uit de rijen hierboven. Voorbeeld is een dry-run die alleen kandidaten toont; Toepassen verwijdert of comprimeert volgens beleid en vereist getypte bevestiging."
   },
   "task_purge": {
-    "label": "Taak-purge",
-    "description": "Verwijdert runtime-artefacten die eigendom zijn van één taak-ID en herstelt gedeelde indexen. Verwijdert geen volledige gedeelde bestanden; bescherming van actieve taken blijft op de server van kracht."
+    "label": "Runtime-artefacten van taak opschonen",
+    "description": "Verwijdert runtime-artefacten van een taak-ID en repareert gedeelde indexen. Verwijdert geen volledige gedeelde bestanden; actieve-taakbescherming blijft op de server gelden."
   },
   "task_id": {
     "label": "Taak-ID"
   },
   "purge_task_button": {
-    "label": "Taak purgen"
+    "label": "Runtime-artefacten opschonen"
   },
   "run_preview": {
-    "label": "Voorbeeld"
+    "label": "Dry-run voorbeeld"
   },
   "value_true": {
     "label": "true — ingeschakeld"
