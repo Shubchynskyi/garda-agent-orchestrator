@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 
 import { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
+import { computeProtectedSnapshotDigest } from '../../../../src/gates/protected-control-plane/protected-control-plane';
 import {
     resolveTaskResetScope,
     runTaskResetCommand
@@ -44,6 +45,7 @@ interface FakeRepoOptions {
     taskResetEnabled?: boolean;
     writeWorkflowConfig?: boolean;
     writeTaskResetAudit?: boolean;
+    writeTaskResetReceipt?: boolean;
 }
 
 function buildFakeRepo(options: FakeRepoOptions = {}): {
@@ -61,7 +63,8 @@ function buildFakeRepo(options: FakeRepoOptions = {}): {
         hasReviewTempDir = false,
         taskResetEnabled = true,
         writeWorkflowConfig = true,
-        writeTaskResetAudit = taskResetEnabled
+        writeTaskResetAudit = taskResetEnabled,
+        writeTaskResetReceipt = writeTaskResetAudit
     } = options;
 
     const repoRoot = makeTmpDir();
@@ -99,7 +102,7 @@ function buildFakeRepo(options: FakeRepoOptions = {}): {
         );
         if (writeTaskResetAudit) {
             const auditPath = path.join(bundleDir, 'runtime', 'workflow-config-audit.jsonl');
-            fs.appendFileSync(auditPath, JSON.stringify({
+            const auditRecord = {
                 schema_version: 1,
                 event_source: 'workflow-config-set',
                 timestamp_utc: '2026-05-13T00:00:00.000Z',
@@ -109,7 +112,42 @@ function buildFakeRepo(options: FakeRepoOptions = {}): {
                 changed_fields: ['task_reset.enabled'],
                 before_sha256: createHash('sha256').update('before', 'utf8').digest('hex'),
                 after_sha256: createHash('sha256').update(configText, 'utf8').digest('hex')
-            }) + '\n', 'utf8');
+            };
+            const auditLine = JSON.stringify(auditRecord);
+            fs.appendFileSync(auditPath, auditLine + '\n', 'utf8');
+            if (writeTaskResetReceipt) {
+                const receiptPath = path.join(bundleDir, 'live', 'config', 'task-reset-enablement-receipt.json');
+                const receiptPayload = {
+                    event_source: 'task-reset-enablement-receipt',
+                    command: 'workflow set',
+                    config_path: auditRecord.config_path,
+                    changed_fields: ['task_reset.enabled'],
+                    after_sha256: auditRecord.after_sha256,
+                    audit_record_sha256: createHash('sha256').update(auditLine, 'utf8').digest('hex')
+                };
+                const receiptText = `${JSON.stringify({
+                    schema_version: 1,
+                    ...receiptPayload,
+                    timestamp_utc: '2026-05-13T00:00:00.000Z',
+                    actor: 'operator_command',
+                    receipt_sha256: createHash('sha256').update(JSON.stringify(receiptPayload), 'utf8').digest('hex')
+                }, null, 2)}\n`;
+                fs.writeFileSync(receiptPath, receiptText, 'utf8');
+                const protectedSnapshot = {
+                    'garda-agent-orchestrator/live/config/task-reset-enablement-receipt.json': createHash('sha256').update(receiptText, 'utf8').digest('hex')
+                };
+                fs.writeFileSync(path.join(bundleDir, 'runtime', 'protected-control-plane-manifest.json'), `${JSON.stringify({
+                    schema_version: 1,
+                    event_source: 'refresh-protected-control-plane-manifest',
+                    timestamp_utc: '2026-05-13T00:00:00.000Z',
+                    workspace_root: repoRoot.replace(/\\/gu, '/'),
+                    orchestrator_root: bundleDir.replace(/\\/gu, '/'),
+                    protected_roots: ['garda-agent-orchestrator/live/config/task-reset-enablement-receipt.json'],
+                    protected_snapshot: protectedSnapshot,
+                    protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
+                    is_source_checkout: false
+                }, null, 2)}\n`, 'utf8');
+            }
         }
     }
 
@@ -527,6 +565,135 @@ describe('runTaskResetCommand — TASK_RESET_DISABLED', () => {
             assert.equal(result.outcome, 'TASK_RESET_DISABLED');
             assert.equal(result.exitCode, 1);
             assert.ok(result.outputLines.some((l) => l.includes('no matching audited workflow set record')));
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('blocks confirmed reset mutations when a task-reset audit row has no matching enablement receipt', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: true,
+            writeTaskResetAudit: true,
+            writeTaskResetReceipt: false
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
+            assert.ok(result.outputLines.some((l) => l.includes('no matching audited workflow set record')));
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('blocks confirmed reset mutations when enablement receipt is not protected by a manifest', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: true,
+            writeTaskResetAudit: true,
+            writeTaskResetReceipt: true
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        const manifestPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'protected-control-plane-manifest.json');
+        try {
+            fs.rmSync(manifestPath, { force: true });
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('blocks confirmed reset mutations when protected manifest does not match the enablement receipt', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: true,
+            writeTaskResetAudit: true,
+            writeTaskResetReceipt: true
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        const receiptPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'task-reset-enablement-receipt.json');
+        try {
+            fs.appendFileSync(receiptPath, '\n', 'utf8');
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
+            assert.ok(fs.existsSync(eventsFile), 'events file should remain');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('keeps audited reset enabled when a later duplicate audit row is not receipt-bound', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: true,
+            writeTaskResetAudit: true,
+            writeTaskResetReceipt: true
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+            const configText = fs.readFileSync(configPath, 'utf8');
+            const auditPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'workflow-config-audit.jsonl');
+            fs.appendFileSync(auditPath, `${JSON.stringify({
+                schema_version: 1,
+                event_source: 'workflow-config-set',
+                timestamp_utc: '2026-05-13T00:01:00.000Z',
+                actor: 'operator_command',
+                command: 'workflow set',
+                config_path: configPath.replace(/\\/gu, '/'),
+                changed_fields: ['task_reset.enabled'],
+                before_sha256: createHash('sha256').update('forged-before', 'utf8').digest('hex'),
+                after_sha256: createHash('sha256').update(configText, 'utf8').digest('hex')
+            })}\n`, 'utf8');
+
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'RESET_COMPLETE');
+            assert.equal(result.exitCode, 0);
+            assert.ok(!fs.existsSync(eventsFile), 'events file should be deleted by the authorized reset');
+        } finally {
+            cleanup(repoRoot);
+        }
+    });
+
+    it('blocks forged runtime audit rows from bridging current config to an older receipt-bound enablement', () => {
+        const { repoRoot, eventsRoot, reviewsRoot, taskId } = buildFakeRepo({
+            hasEventsFile: true,
+            taskResetEnabled: true,
+            writeTaskResetAudit: true,
+            writeTaskResetReceipt: true
+        });
+        const eventsFile = path.join(eventsRoot, `${taskId}.jsonl`);
+        try {
+            const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+            const previousConfigText = fs.readFileSync(configPath, 'utf8');
+            const currentConfig = JSON.parse(previousConfigText) as ReturnType<typeof buildDefaultWorkflowConfig>;
+            currentConfig.auto_backup.keep_latest = 11;
+            const currentConfigText = JSON.stringify(currentConfig, null, 2) + '\n';
+            fs.writeFileSync(configPath, currentConfigText, 'utf8');
+            const auditPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'workflow-config-audit.jsonl');
+            fs.appendFileSync(auditPath, `${JSON.stringify({
+                schema_version: 1,
+                event_source: 'workflow-config-set',
+                timestamp_utc: '2026-05-13T00:01:00.000Z',
+                actor: 'operator_command',
+                command: 'workflow set',
+                config_path: configPath.replace(/\\/gu, '/'),
+                changed_fields: ['auto_backup.keep_latest'],
+                before_sha256: createHash('sha256').update(previousConfigText, 'utf8').digest('hex'),
+                after_sha256: createHash('sha256').update(currentConfigText, 'utf8').digest('hex')
+            })}\n`, 'utf8');
+
+            const result = runTaskResetCommand({ taskId, repoRoot, eventsRoot, reviewsRoot, confirm: true, discard: true });
+            assert.equal(result.outcome, 'TASK_RESET_DISABLED');
+            assert.equal(result.exitCode, 1);
             assert.ok(fs.existsSync(eventsFile), 'events file should remain');
         } finally {
             cleanup(repoRoot);

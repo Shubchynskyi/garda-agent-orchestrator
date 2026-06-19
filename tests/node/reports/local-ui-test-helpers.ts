@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach } from 'node:test';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import { computeProtectedSnapshotDigest } from '../../../src/gates/protected-control-plane/protected-control-plane';
 
 interface ClosableLocalUiServer {
     close: () => Promise<void>;
@@ -114,7 +115,7 @@ export function writeLocalUiTaskResetAuditRecord(repoRoot: string): void {
     const configSha = createHash('sha256').update(configText, 'utf8').digest('hex');
     const auditPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'workflow-config-audit.jsonl');
     fs.mkdirSync(path.dirname(auditPath), { recursive: true });
-    fs.appendFileSync(auditPath, `${JSON.stringify({
+    const auditRecord = {
         schema_version: 1,
         event_source: 'workflow-config-set',
         timestamp_utc: new Date().toISOString(),
@@ -124,7 +125,41 @@ export function writeLocalUiTaskResetAuditRecord(repoRoot: string): void {
         changed_fields: ['task_reset.enabled'],
         before_sha256: configSha,
         after_sha256: configSha
-    })}\n`, 'utf8');
+    };
+    const auditLine = JSON.stringify(auditRecord);
+    fs.appendFileSync(auditPath, `${auditLine}\n`, 'utf8');
+
+    const receiptPayload = {
+        event_source: 'task-reset-enablement-receipt',
+        command: 'workflow set',
+        config_path: auditRecord.config_path,
+        changed_fields: auditRecord.changed_fields,
+        after_sha256: auditRecord.after_sha256,
+        audit_record_sha256: createHash('sha256').update(auditLine, 'utf8').digest('hex')
+    };
+    const receiptText = `${JSON.stringify({
+        schema_version: 1,
+        ...receiptPayload,
+        timestamp_utc: new Date().toISOString(),
+        actor: 'operator_command',
+        receipt_sha256: createHash('sha256').update(JSON.stringify(receiptPayload), 'utf8').digest('hex')
+    }, null, 2)}\n`;
+    const receiptPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'task-reset-enablement-receipt.json');
+    fs.writeFileSync(receiptPath, receiptText, 'utf8');
+    const protectedSnapshot = {
+        'garda-agent-orchestrator/live/config/task-reset-enablement-receipt.json': createHash('sha256').update(receiptText, 'utf8').digest('hex')
+    };
+    fs.writeFileSync(path.join(path.dirname(auditPath), 'protected-control-plane-manifest.json'), `${JSON.stringify({
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        timestamp_utc: new Date().toISOString(),
+        workspace_root: repoRoot.replace(/\\/gu, '/'),
+        orchestrator_root: path.join(repoRoot, 'garda-agent-orchestrator').replace(/\\/gu, '/'),
+        protected_roots: ['garda-agent-orchestrator/live/config/task-reset-enablement-receipt.json'],
+        protected_snapshot: protectedSnapshot,
+        protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
+        is_source_checkout: false
+    }, null, 2)}\n`, 'utf8');
 }
 
 export function removeLocalUiTempRepo(repoRoot: string | null | undefined): void {

@@ -1,5 +1,7 @@
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
+import { isRecognizedBundleName } from '../../../core/constants';
 import {
     buildDefaultWorkflowConfig,
     hasMaterializedWorkflowConfigBaseline,
@@ -55,6 +57,12 @@ import type {
     WorkflowFileConfigData,
     WorkflowSetResult
 } from './workflow-command-types';
+
+function resolveProtectedManifestRefreshRoot(roots: ReturnType<typeof resolveWorkflowRoots>): string {
+    return isRecognizedBundleName(path.basename(roots.bundleRoot))
+        ? roots.targetRoot
+        : roots.bundleRoot;
+}
 
 export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const roots = resolveWorkflowRoots(options);
@@ -428,7 +436,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             currentSerialized,
             nextSerialized
         );
-        protectedManifestPath = refreshWorkflowProtectedManifest(roots.targetRoot);
+        protectedManifestPath = refreshWorkflowProtectedManifest(resolveProtectedManifestRefreshRoot(roots));
     } else if (taskResetAuditRepairRequested) {
         requireWorkflowSetOperatorConfirmation(options);
         const currentFileText = fs.readFileSync(roots.configPath, 'utf8');
@@ -439,6 +447,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             currentFileText,
             currentFileText
         );
+        protectedManifestPath = refreshWorkflowProtectedManifest(resolveProtectedManifestRefreshRoot(roots));
     }
 
     const result: WorkflowSetResult = {

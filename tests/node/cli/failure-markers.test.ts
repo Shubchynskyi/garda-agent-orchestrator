@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { computeProtectedSnapshotDigest } from '../../../src/gates/protected-control-plane/protected-control-plane';
 import {
     EXIT_GENERAL_FAILURE,
     EXIT_VALIDATION_FAILURE,
@@ -96,21 +97,49 @@ function writeTaskResetFixture(targetRoot: string, taskStatus = 'IN_PROGRESS'): 
     const workflowConfigText = JSON.stringify(workflowConfig, null, 2) + '\n';
     const workflowConfigPath = path.join(bundleDir, 'live', 'config', 'workflow-config.json');
     fs.writeFileSync(workflowConfigPath, workflowConfigText, 'utf8');
-    fs.writeFileSync(
-        path.join(bundleDir, 'runtime', 'workflow-config-audit.jsonl'),
-        JSON.stringify({
-            schema_version: 1,
-            event_source: 'workflow-config-set',
-            timestamp_utc: '2026-05-13T00:00:00.000Z',
-            actor: 'operator_command',
-            command: 'workflow set',
-            config_path: workflowConfigPath.replace(/\\/g, '/'),
-            changed_fields: ['task_reset.enabled'],
-            before_sha256: createHash('sha256').update('before', 'utf8').digest('hex'),
-            after_sha256: createHash('sha256').update(workflowConfigText, 'utf8').digest('hex')
-        }) + '\n',
-        'utf8'
-    );
+    const auditRecord = {
+        schema_version: 1,
+        event_source: 'workflow-config-set',
+        timestamp_utc: '2026-05-13T00:00:00.000Z',
+        actor: 'operator_command',
+        command: 'workflow set',
+        config_path: workflowConfigPath.replace(/\\/g, '/'),
+        changed_fields: ['task_reset.enabled'],
+        before_sha256: createHash('sha256').update('before', 'utf8').digest('hex'),
+        after_sha256: createHash('sha256').update(workflowConfigText, 'utf8').digest('hex')
+    };
+    const auditLine = JSON.stringify(auditRecord);
+    fs.writeFileSync(path.join(bundleDir, 'runtime', 'workflow-config-audit.jsonl'), `${auditLine}\n`, 'utf8');
+    const receiptPayload = {
+        event_source: 'task-reset-enablement-receipt',
+        command: 'workflow set',
+        config_path: auditRecord.config_path,
+        changed_fields: auditRecord.changed_fields,
+        after_sha256: auditRecord.after_sha256,
+        audit_record_sha256: createHash('sha256').update(auditLine, 'utf8').digest('hex')
+    };
+    const receiptText = `${JSON.stringify({
+        schema_version: 1,
+        ...receiptPayload,
+        timestamp_utc: '2026-05-13T00:00:00.000Z',
+        actor: 'operator_command',
+        receipt_sha256: createHash('sha256').update(JSON.stringify(receiptPayload), 'utf8').digest('hex')
+    }, null, 2)}\n`;
+    fs.writeFileSync(path.join(bundleDir, 'live', 'config', 'task-reset-enablement-receipt.json'), receiptText, 'utf8');
+    const protectedSnapshot = {
+        'garda-agent-orchestrator/live/config/task-reset-enablement-receipt.json': createHash('sha256').update(receiptText, 'utf8').digest('hex')
+    };
+    fs.writeFileSync(path.join(bundleDir, 'runtime', 'protected-control-plane-manifest.json'), `${JSON.stringify({
+        schema_version: 1,
+        event_source: 'refresh-protected-control-plane-manifest',
+        timestamp_utc: '2026-05-13T00:00:00.000Z',
+        workspace_root: targetRoot.replace(/\\/g, '/'),
+        orchestrator_root: bundleDir.replace(/\\/g, '/'),
+        protected_roots: ['garda-agent-orchestrator/live/config/task-reset-enablement-receipt.json'],
+        protected_snapshot: protectedSnapshot,
+        protected_snapshot_sha256: computeProtectedSnapshotDigest(protectedSnapshot),
+        is_source_checkout: false
+    }, null, 2)}\n`, 'utf8');
 }
 
 test('bootstrap with invalid flag produces GARDA_BOOTSTRAP_FAILED with EXIT_USAGE_ERROR', () => {

@@ -72,11 +72,13 @@ export function getProtectedControlPlaneRoots(repoRoot: string): string[] {
         `${bundleName}/bin/`,
         `${bundleName}/dist/`,
         `${bundleName}/live/config/workflow-config.json`,
+        `${bundleName}/live/config/task-reset-enablement-receipt.json`,
         `${bundleName}/template/config/workflow-config.json`,
         `${bundleName}/live/docs/agent-rules/`
     ]);
     const roots = [
         ...bundleRoots,
+        'live/config/task-reset-enablement-receipt.json',
         SHARED_START_TASK_WORKFLOW_RELATIVE_PATH,
         ...ALL_AGENT_ENTRYPOINT_FILES,
         ...getProviderOrchestratorProfileDefinitions().map((profile) => profile.orchestratorRelativePath),
@@ -94,6 +96,7 @@ export function getProtectedControlPlaneRoots(repoRoot: string): string[] {
             'bin/',
             'dist/',
             'live/config/workflow-config.json',
+            'live/config/task-reset-enablement-receipt.json',
             'template/config/workflow-config.json',
             'live/docs/agent-rules/'
         );
