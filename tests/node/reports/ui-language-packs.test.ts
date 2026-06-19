@@ -40,7 +40,7 @@ test('imported UI language packs are registered beside built-in English', () => 
     assert.ok(languageIds.includes('de'));
     assert.ok(languageIds.includes('uk'));
     assert.equal(getLocalUiText('de').tasksTab, 'Aufgaben');
-    assert.equal(getLocalUiText('de').backupsTab, 'Backups');
+    assert.equal(getLocalUiText('de').backupsTab, 'Sicherungen');
 });
 
 test('Russian UI language is loaded from the language pack without source-embedded translations', () => {

@@ -5,7 +5,8 @@ import {
     LOCAL_UI_TEXT,
     assertLocalUiLanguagePacksComplete,
     getLocalUiText,
-    normalizeLocalUiLanguage
+    normalizeLocalUiLanguage,
+    validateLocalUiTextLanguagePack
 } from '../../../src/reports/ui/ui-i18n';
 import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 
@@ -24,6 +25,20 @@ test('local UI language fallback is English at runtime', () => {
     assert.equal(normalizeLocalUiLanguage('__proto__'), 'en');
     assert.equal(normalizeLocalUiLanguage('toString'), 'en');
     assert.equal(getLocalUiText('de').tasksTab, 'Aufgaben');
+});
+
+test('local UI stale-English audit keeps machine tokens exempt', () => {
+    const pack = {
+        ...LOCAL_UI_TEXT.ru,
+        appTitle: LOCAL_UI_TEXT.en.appTitle,
+        idColumn: LOCAL_UI_TEXT.en.idColumn,
+        taskActionsHelp: LOCAL_UI_TEXT.en.taskActionsHelp
+    };
+    const issues = validateLocalUiTextLanguagePack('ru', pack);
+
+    assert.ok(issues.some((issue) => issue.key === 'taskActionsHelp' && issue.reason === 'local UI text still matches English source'));
+    assert.equal(issues.some((issue) => issue.key === 'appTitle'), false);
+    assert.equal(issues.some((issue) => issue.key === 'idColumn'), false);
 });
 
 test('local UI renders Russian chrome while preserving machine surfaces', () => {

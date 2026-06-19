@@ -272,6 +272,21 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
 
 export type LocalUiTextKey = keyof typeof ENGLISH_LOCAL_UI_TEXT;
 
+export interface LocalUiTextValidationIssue {
+    languageId: string;
+    key: string;
+    reason: string;
+}
+
+const LOCAL_UI_TEXT_ENGLISH_MATCH_EXEMPT_KEYS = new Set<LocalUiTextKey>([
+    'appTitle',
+    'idColumn'
+]);
+
+function shouldAllowEnglishMatchForLocalUiText(key: LocalUiTextKey): boolean {
+    return LOCAL_UI_TEXT_ENGLISH_MATCH_EXEMPT_KEYS.has(key);
+}
+
 const IMPORTED_UI_LANGUAGE_PACKS: readonly ImportedUiLanguagePack[] = loadImportedUiLanguagePacks(
     Object.keys(ENGLISH_LOCAL_UI_TEXT)
 );
@@ -509,14 +524,49 @@ export function getLocalUiText(language: unknown): Readonly<Record<LocalUiTextKe
     return LOCAL_UI_TEXT[normalizeLocalUiLanguage(language)] || LOCAL_UI_TEXT[DEFAULT_LOCAL_UI_LANGUAGE];
 }
 
+export function validateLocalUiTextLanguagePack(
+    languageId: string,
+    pack: Readonly<Record<string, string>>,
+    englishPack: Readonly<Record<LocalUiTextKey, string>> = LOCAL_UI_TEXT.en
+): LocalUiTextValidationIssue[] {
+    const issues: LocalUiTextValidationIssue[] = [];
+    const englishKeys = Object.keys(englishPack).sort() as LocalUiTextKey[];
+    const keys = Object.keys(pack).sort();
+    for (const key of englishKeys) {
+        if (!keys.includes(key)) {
+            issues.push({ languageId, key, reason: 'missing local UI text key' });
+            continue;
+        }
+        const actual = pack[key];
+        if (!actual?.trim()) {
+            issues.push({ languageId, key, reason: 'empty local UI text value' });
+            continue;
+        }
+        if (
+            languageId !== DEFAULT_LOCAL_UI_LANGUAGE
+            && actual === englishPack[key]
+            && !shouldAllowEnglishMatchForLocalUiText(key)
+        ) {
+            issues.push({ languageId, key, reason: 'local UI text still matches English source' });
+        }
+    }
+    for (const extraKey of keys) {
+        if (!englishKeys.includes(extraKey as LocalUiTextKey)) {
+            issues.push({ languageId, key: extraKey, reason: 'unexpected extra local UI text key' });
+        }
+    }
+    return issues;
+}
+
 export function assertLocalUiLanguagePacksComplete(): void {
-    const englishKeys = Object.keys(LOCAL_UI_TEXT.en).sort();
     for (const language of LOCAL_UI_LANGUAGES) {
-        const keys = Object.keys(LOCAL_UI_TEXT[language.id]).sort();
-        const missingKeys = englishKeys.filter((key) => !keys.includes(key));
-        const extraKeys = keys.filter((key) => !englishKeys.includes(key));
-        if (missingKeys.length > 0 || extraKeys.length > 0) {
-            throw new Error(`Local UI language pack '${language.id}' is incomplete. Missing: ${missingKeys.join(', ') || 'none'}; extra: ${extraKeys.join(', ') || 'none'}.`);
+        const issues = validateLocalUiTextLanguagePack(language.id, LOCAL_UI_TEXT[language.id]);
+        if (issues.length > 0) {
+            const summary = issues
+                .slice(0, 12)
+                .map((issue) => `${issue.key}: ${issue.reason}`)
+                .join('; ');
+            throw new Error(`Local UI language pack '${language.id}' is incomplete (${issues.length} issue(s)). ${summary}`);
         }
     }
 }

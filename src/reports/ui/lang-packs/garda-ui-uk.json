@@ -60,7 +60,7 @@
     "runtimeDiagnosticsTitle": "Діагностика виконання",
     "noRuntimeDiagnostics": "Немає повідомлень про діагностику під час виконання.",
     "taskActionsTitle": "Команди завдань",
-    "taskActionsHelp": "Task-specific commands are shown here; workspace maintenance commands live in their domain tabs.",
+    "taskActionsHelp": "Команди конкретної задачі показано тут; команди обслуговування workspace розміщено у вкладках відповідних доменів.",
     "taskCommandNextStep": "Наступний крок життєвого циклу",
     "taskCommandStats": "Статистика завдань",
     "taskCommandEvents": "Події завдань",
