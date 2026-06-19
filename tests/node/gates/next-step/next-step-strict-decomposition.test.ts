@@ -1382,6 +1382,49 @@ describe('gates/next-step strict decomposition', () => {
         assert.equal(text.includes('gate classify-change'), false);
     });
 
+    it('does not treat preview and reporting substrings as broad review or report domains', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P2 | tests/local | Preview reporting copy for memory note | gpt-5.4 | 2026-05-20 | strict | Tiny local copy check for memory wording. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.equal(text.includes('record-strict-decomposition-decision'), false);
+        assert.equal(text.includes('task_text:broad-domains='), false);
+    });
+
+    it('still counts deliberate reviewer and reports aliases as broad-domain signals', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | workflow/reviewer-reports-memory | Route reviewer reports and memory workflow planning | gpt-5.4 | 2026-05-20 | strict | Scope covers reviewer routing, reports UI, project memory, and workflow gates. |`,
+            ''
+        ].join('\n'), 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'BLOCKED');
+        assert.equal(result.next_gate, 'record-strict-decomposition-decision');
+        assert.ok(result.reason.includes('task_text:broad-domains='));
+        assert.ok(result.reason.includes('review'));
+        assert.ok(result.reason.includes('ui'));
+        assert.ok(result.commands[0].command.includes('gate record-strict-decomposition-decision'));
+    });
+
     it('does not let low-risk copy wording exempt broad strict multi-domain tasks', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [

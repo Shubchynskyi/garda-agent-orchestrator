@@ -131,10 +131,7 @@ function containsStrictDecompositionDelimitedTerm(text: string, term: string): b
 }
 
 function containsStrictDecompositionBroadAlias(text: string, alias: string): boolean {
-    if (/^[a-z0-9-]+$/.test(alias) && alias.length <= 4) {
-        return new RegExp(`(^|[^a-z0-9])${escapeRegex(alias)}([^a-z0-9]|$)`).test(text);
-    }
-    return containsStrictDecompositionTerm(text, alias);
+    return containsStrictDecompositionDelimitedTerm(text, alias);
 }
 
 function getStrictDecompositionDecisionTaskSummary(
