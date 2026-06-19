@@ -638,6 +638,99 @@ test('local UI switch actions support preview confirmation execution and audit',
     }
 });
 
+test('local UI manual backup action supports preview confirmation execution and audit', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const executedCommands: string[] = [];
+    const server = await startLocalUiServer({
+        repoRoot,
+        port: 0,
+        actionsEnabled: true,
+        actionRunner: async (action) => {
+            executedCommands.push(action.command.display);
+            return {
+                exit_code: 0,
+                signal: null,
+                stdout: 'backup ok',
+                stderr: ''
+            };
+        }
+    });
+    try {
+        const actionToken = extractActionToken(await (await fetch(server.url)).text());
+        const actionHeaders = {
+            'content-type': 'application/json',
+            'origin': server.url.slice(0, -1),
+            'x-garda-action-token': actionToken
+        };
+        const listResponse = await fetch(`${server.url}api/actions`);
+        assert.equal(listResponse.status, 200);
+        const list = await listResponse.json() as {
+            enabled: boolean;
+            actions: Array<{
+                id: string;
+                category: string;
+                command: string;
+                requires_confirmation: boolean;
+                confirmation_phrase: string;
+            }>;
+        };
+        const action = list.actions.find((item) => item.id === 'backup-create-manual');
+        assert.ok(action, 'manual backup action must be exposed');
+        assert.equal(action.category, 'Backups');
+        assert.match(action.command, /backup create --target-root \. --confirm/u);
+        assert.equal(action.requires_confirmation, true);
+        assert.equal(action.confirmation_phrase, 'CREATE BACKUP');
+
+        const previewResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'backup-create-manual', mode: 'preview' })
+        });
+        assert.equal(previewResponse.status, 200);
+        const preview = await previewResponse.json() as {
+            status: string;
+            command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
+        };
+        assert.equal(preview.status, 'previewed');
+        assert.match(preview.command, /backup create --target-root \. --confirm/u);
+        assert.equal(preview.requires_confirmation, true);
+        assert.equal(preview.confirmation_phrase, 'CREATE BACKUP');
+        assert.deepEqual(executedCommands, []);
+
+        const blockedResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'backup-create-manual', mode: 'execute', confirmation: 'wrong' })
+        });
+        assert.equal(blockedResponse.status, 409);
+        assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
+        assert.deepEqual(executedCommands, []);
+
+        const executeResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'backup-create-manual', mode: 'execute', confirmation: 'CREATE BACKUP' })
+        });
+        assert.equal(executeResponse.status, 200);
+        const execute = await executeResponse.json() as { status: string; stdout: string; audit_path: string };
+        assert.equal(execute.status, 'executed');
+        assert.equal(execute.stdout, 'backup ok');
+        assert.equal(executedCommands.length, 1);
+        assert.match(executedCommands[0], /backup create --target-root \. --confirm/u);
+        const auditLines = fs.readFileSync(execute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.equal(auditLines.length, 3);
+        assert.match(auditLines[0], /"status":"previewed"/u);
+        assert.match(auditLines[1], /"status":"confirmation_required"/u);
+        assert.match(auditLines[2], /"action_id":"backup-create-manual"/u);
+        assert.match(auditLines[2], /"status":"executed"/u);
+    } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
+});
+
 test('local UI visible action timeout result returns deterministic HTTP and audit fields', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);

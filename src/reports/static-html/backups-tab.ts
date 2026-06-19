@@ -21,7 +21,7 @@ export function renderBackupsPanel(tab: ReportBackupsTab): string {
     return [
         '<section class="panel" id="tab-backups" role="tabpanel">',
         '<div class="stack">',
-        '<p class="notice">Backups tab is read-only in static HTML. Inventory reflects snapshot time at report generation; restore actions are available only through the live <code>garda ui</code> server.</p>',
+        '<p class="notice">Backups tab is read-only in static HTML. Inventory reflects snapshot time at report generation; manual create and restore actions are available only through the live <code>garda ui --actions</code> server.</p>',
         '<div class="card">',
         '<h2>Backups</h2>',
         `<p class="meta">Snapshots root: ${escapeHtml(tab.snapshots_root)} (${tab.snapshots_root_exists ? 'present' : 'missing'})</p>`,

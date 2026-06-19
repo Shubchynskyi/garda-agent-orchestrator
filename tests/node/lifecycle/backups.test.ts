@@ -47,7 +47,7 @@ function seedRollbackSnapshot(targetRoot: string, name: string): string {
 }
 
 describe('backup backend inventory', () => {
-    it('lists existing update and scheduled backups with restore metadata and size', () => {
+    it('lists existing update scheduled and manual backups with restore metadata and size', () => {
         const { targetRoot, bundleRoot } = makeWorkspace('gao-backups-list-');
         try {
             const updateSnapshotPath = seedRollbackSnapshot(targetRoot, 'update-20260501-010000-000');
@@ -57,12 +57,18 @@ describe('backup backend inventory', () => {
                 reason: 'scheduled',
                 timestamp: '20260502-010000-000'
             });
+            const manual = createBackupSnapshot({
+                targetRoot,
+                bundleRoot,
+                reason: 'manual',
+                timestamp: '20260502-020000-000'
+            });
 
             const backups = listBackups(targetRoot);
-            assert.equal(backups.length, 2);
+            assert.equal(backups.length, 3);
             assert.deepEqual(
                 backups.map((backup) => backup.reason).sort(),
-                ['scheduled', 'update']
+                ['manual', 'scheduled', 'update']
             );
 
             const update = backups.find((backup) => backup.reason === 'update');
@@ -79,6 +85,9 @@ describe('backup backend inventory', () => {
             assert.equal(fs.existsSync(getRollbackRecordsPath(scheduled.snapshotPath)), true);
             assert.equal(scheduled.health, 'AVAILABLE');
             assert.ok(scheduled.sizeBytes > 0, 'scheduled backup size should be reported');
+            assert.equal(manual.reason, 'manual');
+            assert.equal(manual.health, 'AVAILABLE');
+            assert.equal(resolveBackupRestoreSnapshotPath(targetRoot, manual.id), manual.snapshotPath);
         } finally {
             removePathRecursive(targetRoot);
         }

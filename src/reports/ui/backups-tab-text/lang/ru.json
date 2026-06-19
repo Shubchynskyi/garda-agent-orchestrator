@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "по расписанию"
   },
+  "reason_manual": {
+    "label": "вручную"
+  },
   "health_available": {
     "label": "Доступна"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Управляемые действия отключены."
+  },
+  "manual_create_title": {
+    "label": "Ручная резервная копия"
+  },
+  "manual_create_help": {
+    "description": "Создайте rollback-снимок текущего состояния workspace через защищённый backend резервных копий."
+  },
+  "manual_create_button": {
+    "label": "Создать копию"
+  },
+  "manual_create_unavailable": {
+    "label": "Ручное создание резервной копии недоступно."
   },
   "restore_unavailable": {
     "label": "Восстановление этой резервной копии недоступно."

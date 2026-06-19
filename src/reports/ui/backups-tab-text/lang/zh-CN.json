@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "计划"
   },
+  "reason_manual": {
+    "label": "手动"
+  },
   "health_available": {
     "label": "可用"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "受控操作已禁用。"
+  },
+  "manual_create_title": {
+    "label": "手动备份"
+  },
+  "manual_create_help": {
+    "description": "通过受保护的备份后端创建当前工作区状态的回滚备份快照。"
+  },
+  "manual_create_button": {
+    "label": "创建备份"
+  },
+  "manual_create_unavailable": {
+    "label": "手动备份创建不可用。"
   },
   "restore_unavailable": {
     "label": "此备份无法恢复。"

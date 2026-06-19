@@ -176,6 +176,7 @@ export const LIFECYCLE_COMMANDS: readonly string[] = Object.freeze([
     'uninstall',
     'update',
     'rollback',
+    'backup',
     'cleanup',
     'repair',
     'gc',

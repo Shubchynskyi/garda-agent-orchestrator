@@ -9,8 +9,9 @@ const BACKUPS_TAB_TEXT_CATALOG = buildBackupsTabTextCatalog();
 const EXPECTED_ENTRY_IDS = listBackupsTabTextCatalogIds(BACKUPS_TAB_TEXT_CATALOG);
 
 test('backups tab text catalog covers every backups tab entry definition', () => {
-    assert.equal(EXPECTED_ENTRY_IDS.length, 26);
+    assert.equal(EXPECTED_ENTRY_IDS.length, 31);
     assert.ok(EXPECTED_ENTRY_IDS.includes('inventory_title'));
+    assert.ok(EXPECTED_ENTRY_IDS.includes('manual_create_button'));
     assert.ok(EXPECTED_ENTRY_IDS.includes('restore_preview_help'));
 });
 

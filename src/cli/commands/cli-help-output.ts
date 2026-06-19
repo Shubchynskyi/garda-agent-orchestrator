@@ -40,6 +40,7 @@ export type CommandHelpName =
     | 'doctor'
     | 'debug'
     | 'cleanup'
+    | 'backup'
     | 'repair'
     | 'gc'
     | 'clean';
@@ -353,6 +354,21 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             'The policy subcommand is the human-facing review-artifact storage policy editor/viewer.'
         ])
     }),
+    backup: Object.freeze({
+        summary: 'Create manual rollback backup snapshots.',
+        usage: Object.freeze([
+            `${PRIMARY_CLI_NAME} backup create --confirm [--target-root PATH] [--init-answers-path PATH] [--json]`,
+            `${PRIMARY_CLI_NAME} backup create --dry-run [--target-root PATH] [--json]`
+        ]),
+        examples: Object.freeze([
+            `${PRIMARY_CLI_NAME} backup create --dry-run`,
+            `${PRIMARY_CLI_NAME} backup create --confirm`
+        ]),
+        hints: Object.freeze([
+            'backup create writes a manual snapshot under runtime/update-rollbacks and includes rollback records for restore.',
+            'Mutating backup create requires --confirm; use the live UI with --actions for guarded browser confirmation.'
+        ])
+    }),
     repair: Object.freeze({
         summary: 'Inspect and rebuild derived runtime indexes, protected manifests, and stale lock state.',
         usage: Object.freeze([
@@ -426,7 +442,7 @@ function styleHelpToken(token: string): string {
         || normalized.endsWith('garda.js')
         || [
             'setup', 'agent-init', 'status', 'doctor', 'debug', 'stats', 'task', 'html', 'ui', 'off', 'on', 'bootstrap', 'install', 'init', 'reinit',
-            'update', 'rollback', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
+            'update', 'rollback', 'backup', 'uninstall', 'cleanup', 'repair', 'gc', 'clean', 'verify', 'check-update', 'skills',
             'review-capabilities', 'templates', 'profile', 'workflow', 'diff-managed', 'gate', 'show', 'set', 'list', 'current',
             'use', 'create', 'delete', 'validate', 'suggest', 'add', 'remove', 'enable', 'disable', 'edit', 'reset',
             'inspect', 'rebuild-indexes', 'protected-manifest', 'locks',
@@ -604,6 +620,7 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  update        Check for updates and optionally apply them (npm by default).',
             '  update git    Apply update from a git repo or local git clone.',
             '  rollback      Rollback to a specific version or restore from the latest rollback snapshot.',
+            '  backup        Create a manual rollback backup snapshot.',
             '  uninstall     Remove the deployed orchestrator bundle and managed files.',
             '  cleanup       Remove stale runtime artifacts and manage review-artifact storage policy.',
             '  repair        Inspect and rebuild runtime indexes, protected manifests, and stale lock state.',

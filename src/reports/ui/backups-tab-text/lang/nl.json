@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "gepland"
   },
+  "reason_manual": {
+    "label": "handmatig"
+  },
   "health_available": {
     "label": "Beschikbaar"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Gecontroleerde acties zijn uitgeschakeld."
+  },
+  "manual_create_title": {
+    "label": "Handmatige back-up"
+  },
+  "manual_create_help": {
+    "description": "Maak via de bewaakte back-upbackend een rollback-back-upsnapshot van de huidige werkruimtestatus."
+  },
+  "manual_create_button": {
+    "label": "Back-up maken"
+  },
+  "manual_create_unavailable": {
+    "label": "Handmatig back-up maken is niet beschikbaar."
   },
   "restore_unavailable": {
     "label": "Herstel niet beschikbaar voor deze back-up."

@@ -3,6 +3,7 @@ import { UI_ACTION_ROLLBACK_TIMEOUT_MS, buildUiActionDefinition } from './action
 import type { UiActionDefinition } from './types';
 
 export const BACKUP_RESTORE_ACTION_ID_PREFIX = 'backup-restore:';
+export const MANUAL_BACKUP_CREATE_ACTION_ID = 'backup-create-manual';
 
 export function buildBackupRestoreActionId(backupId: string): string {
     return `${BACKUP_RESTORE_ACTION_ID_PREFIX}${backupId}`;
@@ -12,15 +13,42 @@ export function buildBackupRestoreConfirmationPhrase(backupId: string): string {
     return `RESTORE BACKUP ${backupId}`;
 }
 
+export function buildManualBackupCreateConfirmationPhrase(): string {
+    return 'CREATE BACKUP';
+}
+
+function buildManualBackupCreateAction(repoRoot: string): UiActionDefinition {
+    return buildUiActionDefinition(
+        repoRoot,
+        MANUAL_BACKUP_CREATE_ACTION_ID,
+        'Backups',
+        'Create manual backup',
+        'Create a manual rollback backup snapshot through the guarded backup backend.',
+        [
+            'backup',
+            'create',
+            '--target-root',
+            repoRoot,
+            '--confirm'
+        ],
+        {
+            mutates: true,
+            confirmationPhrase: buildManualBackupCreateConfirmationPhrase(),
+            timeoutMs: UI_ACTION_ROLLBACK_TIMEOUT_MS
+        }
+    );
+}
+
 export function buildUiBackupActionDefinitions(repoRoot: string): UiActionDefinition[] {
+    const manualBackupAction = buildManualBackupCreateAction(repoRoot);
     let backups;
     try {
         backups = listBackups(repoRoot);
     } catch {
-        return [];
+        return [manualBackupAction];
     }
 
-    return backups.map((backup) => {
+    return [manualBackupAction, ...backups.map((backup) => {
         const restorable = backup.health === 'AVAILABLE';
         return buildUiActionDefinition(
             repoRoot,
@@ -45,5 +73,5 @@ export function buildUiBackupActionDefinitions(repoRoot: string): UiActionDefini
                     : `Backup is not restorable (${backup.health}).`
             }
         );
-    });
+    })];
 }

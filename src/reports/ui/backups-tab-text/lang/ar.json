@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "مجدول"
   },
+  "reason_manual": {
+    "label": "يدوي"
+  },
   "health_available": {
     "label": "متاحة"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "الإجراءات المُتحكَّم بها معطّلة."
+  },
+  "manual_create_title": {
+    "label": "نسخ احتياطي يدوي"
+  },
+  "manual_create_help": {
+    "description": "أنشئ لقطة نسخة احتياطية قابلة للرجوع للحالة الحالية لمساحة العمل عبر واجهة النسخ الاحتياطي المحمية."
+  },
+  "manual_create_button": {
+    "label": "إنشاء نسخة احتياطية"
+  },
+  "manual_create_unavailable": {
+    "label": "إنشاء النسخة الاحتياطية اليدوية غير متاح."
   },
   "restore_unavailable": {
     "label": "الاستعادة غير متاحة لهذه النسخة الاحتياطية."

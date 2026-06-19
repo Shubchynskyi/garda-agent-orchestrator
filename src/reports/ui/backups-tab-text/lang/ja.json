@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "スケジュール"
   },
+  "reason_manual": {
+    "label": "手動"
+  },
   "health_available": {
     "label": "利用可能"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "制御されたアクションは無効です。"
+  },
+  "manual_create_title": {
+    "label": "手動バックアップ"
+  },
+  "manual_create_help": {
+    "description": "保護されたバックアップバックエンドを通じて、現在のワークスペース状態のロールバック用バックアップスナップショットを作成します。"
+  },
+  "manual_create_button": {
+    "label": "バックアップを作成"
+  },
+  "manual_create_unavailable": {
+    "label": "手動バックアップの作成は利用できません。"
   },
   "restore_unavailable": {
     "label": "このバックアップは復元できません。"

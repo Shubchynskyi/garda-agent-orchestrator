@@ -10,6 +10,7 @@ export interface BackupsTabTextValidationIssue {
 const ENGLISH_LABEL_MATCH_EXEMPT_IDS = new Set([
     'id_column',
     'reason_update',
+    'reason_manual',
     'reason_scheduled'
 ]);
 

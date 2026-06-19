@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "zaplanowane"
   },
+  "reason_manual": {
+    "label": "ręczne"
+  },
   "health_available": {
     "label": "Dostępna"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Kontrolowane akcje są wyłączone."
+  },
+  "manual_create_title": {
+    "label": "Ręczna kopia zapasowa"
+  },
+  "manual_create_help": {
+    "description": "Utwórz przez chroniony backend kopii zapasowych migawkę rollback aktualnego stanu obszaru roboczego."
+  },
+  "manual_create_button": {
+    "label": "Utwórz kopię"
+  },
+  "manual_create_unavailable": {
+    "label": "Ręczne tworzenie kopii zapasowej jest niedostępne."
   },
   "restore_unavailable": {
     "label": "Przywracanie niedostępne dla tej kopii."

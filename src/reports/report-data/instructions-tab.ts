@@ -40,12 +40,12 @@ export function buildInstructionEntries(): ReportInstructionEntry[] {
         {
             id: 'backups',
             title: 'Backups',
-            body: 'The Backups tab lists rollback snapshots from the backup inventory, shows auto-backup settings from workflow config, and exposes guarded restore actions when the UI server runs with `--actions`.'
+            body: 'The Backups tab lists rollback snapshots from the backup inventory, shows auto-backup settings from workflow config, and exposes guarded manual-create and restore actions when the UI server runs with `--actions`.'
         },
         {
             id: 'workspace-actions',
             title: 'Workspace actions',
-            body: 'Workspace actions are shown in their domain tabs: task commands in the selected task detail, backup restore commands in Backups, cleanup controls in Cleanup settings, and Garda switch controls in the top status strip.'
+            body: 'Workspace actions are shown in their domain tabs: task commands in the selected task detail, backup create/restore commands in Backups, cleanup controls in Cleanup settings, and Garda switch controls in the top status strip.'
         }
     ];
 }

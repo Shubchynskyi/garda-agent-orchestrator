@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "agendado"
   },
+  "reason_manual": {
+    "label": "manual"
+  },
   "health_available": {
     "label": "Disponível"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Ações controladas estão desativadas."
+  },
+  "manual_create_title": {
+    "label": "Backup manual"
+  },
+  "manual_create_help": {
+    "description": "Crie um snapshot de backup para rollback do estado atual do workspace pelo backend protegido de backups."
+  },
+  "manual_create_button": {
+    "label": "Criar backup"
+  },
+  "manual_create_unavailable": {
+    "label": "A criação manual de backup está indisponível."
   },
   "restore_unavailable": {
     "label": "Restauração indisponível para este backup."

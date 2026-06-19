@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "за розкладом"
   },
+  "reason_manual": {
+    "label": "вручну"
+  },
   "health_available": {
     "label": "Доступна"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Керовані дії вимкнено."
+  },
+  "manual_create_title": {
+    "label": "Ручна резервна копія"
+  },
+  "manual_create_help": {
+    "description": "Створіть через захищений backend резервних копій rollback-знімок поточного стану робочого простору."
+  },
+  "manual_create_button": {
+    "label": "Створити копію"
+  },
+  "manual_create_unavailable": {
+    "label": "Ручне створення резервної копії недоступне."
   },
   "restore_unavailable": {
     "label": "Відновлення для цієї копії недоступне."

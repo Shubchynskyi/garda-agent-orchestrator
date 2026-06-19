@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "अनुसूचित"
   },
+  "reason_manual": {
+    "label": "मैनुअल"
+  },
   "health_available": {
     "label": "उपलब्ध"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "नियंत्रित क्रियाएँ अक्षम हैं।"
+  },
+  "manual_create_title": {
+    "label": "मैनुअल बैकअप"
+  },
+  "manual_create_help": {
+    "description": "सुरक्षित बैकअप बैकएंड के माध्यम से वर्तमान वर्कस्पेस स्थिति का रोलबैक बैकअप स्नैपशॉट बनाएँ।"
+  },
+  "manual_create_button": {
+    "label": "बैकअप बनाएँ"
+  },
+  "manual_create_unavailable": {
+    "label": "मैनुअल बैकअप बनाना उपलब्ध नहीं है."
   },
   "restore_unavailable": {
     "label": "इस बैकअप के लिए पुनर्स्थापना उपलब्ध नहीं।"

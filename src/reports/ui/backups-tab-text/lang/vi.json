@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "theo lịch"
   },
+  "reason_manual": {
+    "label": "thủ công"
+  },
   "health_available": {
     "label": "Khả dụng"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Hành động được kiểm soát đã tắt."
+  },
+  "manual_create_title": {
+    "label": "Sao lưu thủ công"
+  },
+  "manual_create_help": {
+    "description": "Tạo ảnh chụp sao lưu rollback của trạng thái workspace hiện tại thông qua backend sao lưu được bảo vệ."
+  },
+  "manual_create_button": {
+    "label": "Tạo sao lưu"
+  },
+  "manual_create_unavailable": {
+    "label": "Không thể tạo sao lưu thủ công."
   },
   "restore_unavailable": {
     "label": "Không thể khôi phục bản sao lưu này."

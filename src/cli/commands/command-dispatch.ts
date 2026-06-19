@@ -196,6 +196,11 @@ export async function dispatchCliCommand(options: DispatchCliCommandOptions): Pr
             await handleRollback(commandArgv, packageJson);
             return;
         }
+        case 'backup': {
+            const { handleBackup } = await import('./backup-command');
+            await handleBackup(commandArgv, packageJson);
+            return;
+        }
         case 'uninstall': {
             const { handleUninstall } = await import('./workspace-maintenance-command');
             handleUninstall(commandArgv, packageJson);

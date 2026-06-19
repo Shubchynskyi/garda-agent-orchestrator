@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "terjadwal"
   },
+  "reason_manual": {
+    "label": "manual"
+  },
   "health_available": {
     "label": "Tersedia"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Tindakan terkendali dinonaktifkan."
+  },
+  "manual_create_title": {
+    "label": "Cadangan manual"
+  },
+  "manual_create_help": {
+    "description": "Buat snapshot cadangan rollback dari kondisi workspace saat ini melalui backend cadangan yang dijaga."
+  },
+  "manual_create_button": {
+    "label": "Buat cadangan"
+  },
+  "manual_create_unavailable": {
+    "label": "Pembuatan cadangan manual tidak tersedia."
   },
   "restore_unavailable": {
     "label": "Pemulihan tidak tersedia untuk cadangan ini."

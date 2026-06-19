@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "zamanlanmış"
   },
+  "reason_manual": {
+    "label": "elle"
+  },
   "health_available": {
     "label": "Kullanılabilir"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Kontrollü eylemler devre dışı."
+  },
+  "manual_create_title": {
+    "label": "Manuel yedek"
+  },
+  "manual_create_help": {
+    "description": "Korumalı yedekleme arka ucu üzerinden geçerli çalışma alanı durumunun geri alma yedek anlık görüntüsünü oluşturur."
+  },
+  "manual_create_button": {
+    "label": "Yedek oluştur"
+  },
+  "manual_create_unavailable": {
+    "label": "Manuel yedek oluşturma kullanılamıyor."
   },
   "restore_unavailable": {
     "label": "Bu yedek için geri yükleme kullanılamıyor."

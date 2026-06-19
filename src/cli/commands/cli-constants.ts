@@ -57,6 +57,7 @@ export const COMMAND_SUMMARY = Object.freeze<readonly CommandSummaryEntry[]>([
     ['update', 'Check/apply updates'],
     ['update git', 'Apply update from git source'],
     ['rollback', 'Rollback to a specific or previous version'],
+    ['backup', 'Create manual backup snapshots'],
     ['uninstall', 'Remove orchestrator'],
     ['cleanup', 'Remove retained runtime artifacts and manage review-artifact storage policy'],
     ['repair', 'Inspect and rebuild runtime indexes, protected manifests, and stale locks'],

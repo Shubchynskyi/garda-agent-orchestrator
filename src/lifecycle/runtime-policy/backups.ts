@@ -17,10 +17,10 @@ import type { CleanupItem } from '../cleanup/cleanup-types';
 export const DEFAULT_BACKUP_KEEP_LATEST = 10;
 
 const BACKUP_METADATA_FILE_NAME = 'backup-metadata.json';
-const BACKUP_ID_PATTERN = /^(update|scheduled)-(\d{8}-\d{6})(?:-(\d{3}))?$/i;
+const BACKUP_ID_PATTERN = /^(update|scheduled|manual)-(\d{8}-\d{6})(?:-(\d{3}))?$/i;
 const BACKUP_TIMESTAMP_PATTERN = /^\d{8}-\d{6}(?:-\d{3})?$/;
 
-export type BackupReason = 'update' | 'scheduled';
+export type BackupReason = 'update' | 'scheduled' | 'manual';
 export type BackupHealthStatus = 'AVAILABLE' | 'MISSING_RECORDS' | 'INVALID_RECORDS';
 
 export interface BackupMetadata {
@@ -164,7 +164,10 @@ function inferReasonFromId(id: string): BackupReason | null {
     if (!match) {
         return null;
     }
-    return match[1].toLowerCase() === 'scheduled' ? 'scheduled' : 'update';
+    const reason = match[1].toLowerCase();
+    return reason === 'scheduled' ? 'scheduled'
+        : reason === 'manual' ? 'manual'
+            : 'update';
 }
 
 function readBackupMetadata(snapshotPath: string): BackupMetadata | null {
@@ -177,7 +180,8 @@ function readBackupMetadata(snapshotPath: string): BackupMetadata | null {
         const parsed: unknown = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
         const parsedObject = isJsonObject(parsed) ? parsed : null;
         const reason = parsedObject?.reason === 'scheduled' ? 'scheduled'
-            : parsedObject?.reason === 'update' ? 'update'
+            : parsedObject?.reason === 'manual' ? 'manual'
+                : parsedObject?.reason === 'update' ? 'update'
                 : null;
         const createdAt = typeof parsedObject?.createdAt === 'string' && parsedObject.createdAt.trim()
             ? parsedObject.createdAt.trim()
@@ -295,7 +299,7 @@ export function createBackupSnapshot(options: CreateBackupSnapshotOptions): Back
         initAnswersPath = path.join(resolveBundleName(), 'runtime', 'init-answers.json'),
         timestamp = getTimestamp()
     } = options;
-    if (reason !== 'update' && reason !== 'scheduled') {
+    if (reason !== 'update' && reason !== 'scheduled' && reason !== 'manual') {
         throw new Error(`Unsupported backup reason: ${reason}`);
     }
 

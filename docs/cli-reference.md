@@ -426,6 +426,21 @@ Notes:
 - Older updates created before rollback metadata persistence may require manual recovery.
 - Successful non-dry-run rollback also invalidates cached bundle runtime modules so later commands in the same host process reload the restored bundle instead of stale in-memory code.
 
+### `garda backup`
+
+Create a manual rollback backup snapshot in the backup inventory.
+
+```text
+garda backup create --target-root "." --dry-run
+garda backup create --target-root "." --confirm
+garda backup create --target-root "." --confirm --json
+```
+
+Notes:
+- `backup create --confirm` writes a `manual-<timestamp>` snapshot under `garda-agent-orchestrator/runtime/update-rollbacks/` with rollback records, so the Backups UI can restore it through the guarded rollback path.
+- `--dry-run` is read-only and reports the planned target without creating files.
+- The live `garda ui --actions` Backups tab exposes the same create path as a guarded browser action that requires the exact confirmation phrase `CREATE BACKUP`.
+
 ### `garda cleanup`
 
 Preview or apply retained runtime artifact cleanup under `garda-agent-orchestrator/runtime/` using count-, age-, and runtime-retention policy limits. Use `--dry-run` to preview removals and compression without deleting anything.

@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { writeRollbackRecords } from '../../../src/lifecycle/common';
 import {
     BACKUP_RESTORE_ACTION_ID_PREFIX,
+    MANUAL_BACKUP_CREATE_ACTION_ID,
     buildBackupRestoreActionId,
     buildBackupRestoreConfirmationPhrase,
     buildUiBackupActionDefinitions,
@@ -23,7 +24,8 @@ test('workspace, task, and backup action registries stay in separate builders', 
     assert.ok(workspace.every((action) => !action.id.startsWith(BACKUP_RESTORE_ACTION_ID_PREFIX)));
     assert.ok(workspace.every((action) => action.category !== 'Task'));
     assert.ok(task.every((action) => action.category === 'Task'));
-    assert.ok(backup.every((action) => action.id.startsWith(BACKUP_RESTORE_ACTION_ID_PREFIX)));
+    assert.ok(backup.some((action) => action.id === MANUAL_BACKUP_CREATE_ACTION_ID));
+    assert.ok(backup.every((action) => action.id === MANUAL_BACKUP_CREATE_ACTION_ID || action.id.startsWith(BACKUP_RESTORE_ACTION_ID_PREFIX)));
     assert.ok(backup.every((action) => action.category === 'Backups'));
 
     const merged = buildUiWorkspaceAndBackupActionDefinitions(repoRoot);
@@ -51,8 +53,13 @@ test('backup restore actions bind inventory ids to rollback commands with confir
 
     try {
         const actions = buildUiBackupActionDefinitions(tempRoot);
-        assert.equal(actions.length, 1);
-        const action = actions[0];
+        assert.equal(actions.length, 2);
+        const manualAction = actions.find((candidate) => candidate.id === MANUAL_BACKUP_CREATE_ACTION_ID);
+        assert.ok(manualAction);
+        assert.match(manualAction.command.display, /backup create/u);
+        assert.equal(manualAction.confirmation_phrase, 'CREATE BACKUP');
+        const action = actions.find((candidate) => candidate.id === buildBackupRestoreActionId(backupId));
+        assert.ok(action);
         assert.equal(action.id, buildBackupRestoreActionId(backupId));
         assert.equal(action.confirmation_phrase, buildBackupRestoreConfirmationPhrase(backupId));
         assert.equal(action.enabled, true);

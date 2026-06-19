@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "programado"
   },
+  "reason_manual": {
+    "label": "manual"
+  },
   "health_available": {
     "label": "Disponible"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Las acciones controladas están deshabilitadas."
+  },
+  "manual_create_title": {
+    "label": "Copia manual"
+  },
+  "manual_create_help": {
+    "description": "Crea una instantánea de copia de seguridad para reversión del estado actual del espacio de trabajo mediante el backend protegido de copias."
+  },
+  "manual_create_button": {
+    "label": "Crear copia"
+  },
+  "manual_create_unavailable": {
+    "label": "La creación manual de copias no está disponible."
   },
   "restore_unavailable": {
     "label": "Restauración no disponible para esta copia."

@@ -84,7 +84,7 @@ export function resolveCommandParityPolicy(commandName: string, commandArgv: str
     if (commandName === 'next-step') {
         return buildParityPolicy('block', resolveNavigatorParityRoot(commandArgv), 'next-step is the lifecycle navigator and must not route from stale source or bundle code.');
     }
-    if (['setup', 'bootstrap', 'install', 'init', 'reinit', 'update', 'rollback', 'uninstall'].includes(commandName)) {
+    if (['setup', 'bootstrap', 'install', 'init', 'reinit', 'update', 'rollback', 'backup', 'uninstall'].includes(commandName)) {
         if (isTrustedLocalBundleRefreshCommand(commandName, commandArgv)) {
             return buildParityPolicy(
                 'warn',
@@ -94,6 +94,9 @@ export function resolveCommandParityPolicy(commandName: string, commandArgv: str
         }
         if (commandName === 'update' && isUpdateGitCheckOnly(commandArgv)) {
             return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'update git --check-only is read-only, so stale source parity is surfaced without blocking.');
+        }
+        if (commandName === 'backup' && hasFlag(commandArgv, '--dry-run')) {
+            return buildParityPolicy('warn', resolveTargetOrBundleParityRoot(commandArgv), 'backup create --dry-run is read-only, so stale source parity is surfaced without blocking.');
         }
         return buildParityPolicy('block', resolveTargetOrBundleParityRoot(commandArgv), 'mutating lifecycle commands must not run against a stale source checkout or deployed bundle.');
     }

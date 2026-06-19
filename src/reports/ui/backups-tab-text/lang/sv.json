@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "schemalagd"
   },
+  "reason_manual": {
+    "label": "manuell"
+  },
   "health_available": {
     "label": "Tillgänglig"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Kontrollerade åtgärder är inaktiverade."
+  },
+  "manual_create_title": {
+    "label": "Manuell säkerhetskopia"
+  },
+  "manual_create_help": {
+    "description": "Skapa en rollback-snapshot av arbetsytans aktuella tillstånd via den skyddade backup-backenden."
+  },
+  "manual_create_button": {
+    "label": "Skapa backup"
+  },
+  "manual_create_unavailable": {
+    "label": "Manuell backupskapande är inte tillgängligt."
   },
   "restore_unavailable": {
     "label": "Återställning är inte tillgänglig för denna säkerhetskopia."

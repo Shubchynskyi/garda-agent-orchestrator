@@ -542,6 +542,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     confirmation_phrase: null
                 },
                 {
+                    id: 'backup-create-manual',
+                    category: 'Backups',
+                    label: 'Create manual backup',
+                    description: 'Create a manual rollback backup snapshot.',
+                    command: 'node bin/garda.js backup create --target-root "." --confirm',
+                    mutates: true,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: true,
+                    confirmation_phrase: 'CREATE BACKUP'
+                },
+                {
                     id: 'backup-restore:update-20260101-120000-000',
                     category: 'Backups',
                     label: 'Restore backup update-20260101-120000-000',
@@ -602,12 +614,17 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
 
         const storedLanguageCalls: Array<[string, string]> = [];
         let sessionFetchFails = false;
+        let manualBackupShouldFail = false;
+        let reportFetchCount = 0;
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
             window: {
                 prompt: (message: string) => {
                     if (message.includes('RESTORE BACKUP update-20260101-120000-000')) {
                         return 'RESTORE BACKUP update-20260101-120000-000';
+                    }
+                    if (message.includes('CREATE BACKUP')) {
+                        return 'CREATE BACKUP';
                     }
                     if (message.includes('APPLY GARDA SETTING')) {
                         return 'APPLY GARDA SETTING';
@@ -624,7 +641,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
             },
             setInterval: () => 1,
             clearInterval: () => undefined,
-            fetch: async (url: string, options?: { method?: string }) => {
+            fetch: async (url: string, options?: { method?: string; body?: string }) => {
                 if (sessionFetchFails && (url === '/api/session' || url === '/api/session/activity' || url === '/api/session/shutdown')) {
                     throw new Error('session unavailable');
                 }
@@ -636,6 +653,27 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         json: async () => ({})
                     };
                 }
+                if (url === '/api/actions' && options?.method === 'POST') {
+                    const requestedAction = options.body
+                        ? (JSON.parse(options.body) as { action_id?: string }).action_id
+                        : null;
+                    if (requestedAction === 'backup-create-manual' && manualBackupShouldFail) {
+                        return {
+                            ok: false,
+                            status: 500,
+                            text: async () => '',
+                            json: async () => ({
+                                action_id: 'backup-create-manual',
+                                status: 'executed',
+                                command: 'node bin/garda.js backup create --target-root "." --confirm',
+                                exit_code: 1,
+                                stdout: '',
+                                stderr: 'backup create failed',
+                                audit_path: 'runtime/ui-actions/audit.jsonl'
+                            })
+                        };
+                    }
+                }
                 return ({
                 ok: true,
                 status: 200,
@@ -645,14 +683,29 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         return session;
                     }
                     if (url === '/api/report') {
+                        reportFetchCount += 1;
                         return report;
                     }
                     if (url === '/api/actions') {
                         if (options?.method === 'POST') {
+                            const requestedAction = options.body
+                                ? (JSON.parse(options.body) as { action_id?: string }).action_id
+                                : null;
+                            if (requestedAction === 'backup-create-manual') {
+                                return {
+                                    action_id: 'backup-create-manual',
+                                    status: 'executed',
+                                    command: 'node bin/garda.js backup create --target-root "." --confirm',
+                                    exit_code: 0,
+                                    stdout: 'verbose backup create output that should stay hidden in the backup status panel',
+                                    audit_path: 'runtime/ui-actions/audit.jsonl'
+                                };
+                            }
                             return {
                                 action_id: 'backup-restore:update-20260101-120000-000',
                                 status: 'executed',
                                 command: 'node bin/garda.js rollback --snapshot-path runtime/update-rollbacks/update-20260101-120000-000 --target-root "."',
+                                exit_code: 0,
                                 stdout: 'verbose rollback output that should stay hidden in the backup status panel',
                                 audit_path: 'runtime/ui-actions/audit.jsonl'
                             };
@@ -667,6 +720,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                                 label: 'Auto-backup enabled',
                                 key: 'backups.auto_backup.enabled',
                                 command: 'node bin/garda.js workflow set --auto-backup-enabled true --target-root "."',
+                                exit_code: 0,
                                 stdout: 'verbose workflow output that should stay hidden in the backup status panel',
                                 current_value: false,
                                 proposed_value: true,
@@ -732,6 +786,24 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements.actions.innerHTML, '');
         assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /backup-restore/u);
         assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /rollback --snapshot-path/u);
+        assert.match(fakeDocument.elements['backups-table'].innerHTML, /data-backup-action-id="backup-create-manual"/u);
+        const manualBackupButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
+            .find((button) => button.dataset.backupActionId === 'backup-create-manual' && button.dataset.actionMode === 'execute');
+        assert.ok(manualBackupButton);
+        await manualBackupButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, />OK</u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup create --target-root/u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /verbose backup create output/u);
+        manualBackupShouldFail = true;
+        const reportFetchCountBeforeFailedBackup = reportFetchCount;
+        await manualBackupButton.dispatch('click');
+        await flushPromises();
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /<code>OK<\/code>/u);
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /backup create failed/u);
+        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup create --target-root/u);
+        assert.equal(reportFetchCount, reportFetchCountBeforeFailedBackup);
+        manualBackupShouldFail = false;
         assert.match(fakeDocument.elements['backups-table'].innerHTML, /data-backup-action-id="backup-restore:update-20260101-120000-000"/u);
         const backupRestoreButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
             .find((button) => button.dataset.backupActionId === 'backup-restore:update-20260101-120000-000' && button.dataset.actionMode === 'execute');

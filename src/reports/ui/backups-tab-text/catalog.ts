@@ -15,10 +15,15 @@ export const BACKUPS_TAB_TEXT_IDS = Object.freeze([
     'restore_column',
     'reason_update',
     'reason_scheduled',
+    'reason_manual',
     'health_available',
     'health_missing_records',
     'health_invalid_records',
     'actions_disabled',
+    'manual_create_title',
+    'manual_create_help',
+    'manual_create_button',
+    'manual_create_unavailable',
     'restore_unavailable',
     'restore_backup',
     'auto_backup_title',
@@ -75,6 +80,9 @@ export function buildBackupsTabTextCatalog(): Readonly<Record<BackupsTabTextId, 
         reason_scheduled: {
             label: 'scheduled'
         },
+        reason_manual: {
+            label: 'manual'
+        },
         health_available: {
             label: 'Available'
         },
@@ -86,6 +94,18 @@ export function buildBackupsTabTextCatalog(): Readonly<Record<BackupsTabTextId, 
         },
         actions_disabled: {
             label: 'Controlled actions are disabled.'
+        },
+        manual_create_title: {
+            label: 'Manual backup'
+        },
+        manual_create_help: {
+            description: 'Create a rollback backup snapshot of the current workspace state through the guarded backup backend.'
+        },
+        manual_create_button: {
+            label: 'Create backup'
+        },
+        manual_create_unavailable: {
+            label: 'Manual backup creation is unavailable.'
         },
         restore_unavailable: {
             label: 'Restore unavailable for this backup.'

@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "planifié"
   },
+  "reason_manual": {
+    "label": "manuel"
+  },
   "health_available": {
     "label": "Disponible"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Les actions contrôlées sont désactivées."
+  },
+  "manual_create_title": {
+    "label": "Sauvegarde manuelle"
+  },
+  "manual_create_help": {
+    "description": "Crée un instantané de sauvegarde de restauration de l'état actuel de l'espace de travail via le backend de sauvegarde protégé."
+  },
+  "manual_create_button": {
+    "label": "Créer une sauvegarde"
+  },
+  "manual_create_unavailable": {
+    "label": "La création de sauvegarde manuelle est indisponible."
   },
   "restore_unavailable": {
     "label": "Restauration indisponible pour cette sauvegarde."

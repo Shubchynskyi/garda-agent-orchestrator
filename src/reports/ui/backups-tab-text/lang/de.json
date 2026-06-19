@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "geplant"
   },
+  "reason_manual": {
+    "label": "manuell"
+  },
   "health_available": {
     "label": "Verfügbar"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "Kontrollierte Aktionen sind deaktiviert."
+  },
+  "manual_create_title": {
+    "label": "Manuelles Backup"
+  },
+  "manual_create_help": {
+    "description": "Erstelle über das geschützte Backup-Backend einen Rollback-Backup-Snapshot des aktuellen Workspace-Zustands."
+  },
+  "manual_create_button": {
+    "label": "Backup erstellen"
+  },
+  "manual_create_unavailable": {
+    "label": "Manuelle Backup-Erstellung ist nicht verfügbar."
   },
   "restore_unavailable": {
     "label": "Wiederherstellung für dieses Backup nicht verfügbar."

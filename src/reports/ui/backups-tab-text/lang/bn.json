@@ -41,6 +41,9 @@
   "reason_scheduled": {
     "label": "নির্ধারিত"
   },
+  "reason_manual": {
+    "label": "ম্যানুয়াল"
+  },
   "health_available": {
     "label": "উপলব্ধ"
   },
@@ -52,6 +55,18 @@
   },
   "actions_disabled": {
     "label": "নিয়ন্ত্রিত ক্রিয়া নিষ্ক্রিয়।"
+  },
+  "manual_create_title": {
+    "label": "ম্যানুয়াল ব্যাকআপ"
+  },
+  "manual_create_help": {
+    "description": "সুরক্ষিত ব্যাকআপ ব্যাকএন্ডের মাধ্যমে বর্তমান ওয়ার্কস্পেস অবস্থার একটি রোলব্যাক ব্যাকআপ স্ন্যাপশট তৈরি করুন."
+  },
+  "manual_create_button": {
+    "label": "ব্যাকআপ তৈরি করুন"
+  },
+  "manual_create_unavailable": {
+    "label": "ম্যানুয়াল ব্যাকআপ তৈরি করা উপলভ্য নয়."
   },
   "restore_unavailable": {
     "label": "এই ব্যাকআপের জন্য পুনরুদ্ধার উপলব্ধ নয়।"
