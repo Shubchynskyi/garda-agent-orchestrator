@@ -707,7 +707,16 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                                     status: 'executed',
                                     command: 'node bin/garda.js backup create --target-root "." --confirm',
                                     exit_code: 0,
-                                    stdout: 'verbose backup create output that should stay hidden in the backup status panel',
+                                    stdout: [
+                                        'Status: SUCCESS',
+                                        'BackupPath: garda-agent-orchestrator/runtime/backups/manual-20260101-120000-000',
+                                        'RetentionResult: SUCCESS',
+                                        'RetentionKeepLatest: 2',
+                                        'RetentionRemovedCount: 1',
+                                        'RetentionSkippedCount: 0',
+                                        'RetentionErrorCount: 0',
+                                        'RetentionTotalFreedBytes: 4096'
+                                    ].join('\n'),
                                     audit_path: 'runtime/ui-actions/audit.jsonl'
                                 };
                             }
@@ -804,9 +813,11 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await flushPromises();
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Create manual backup/u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup-create-manual/u);
-        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, />OK</u);
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /OK: Status=SUCCESS/u);
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /RetentionResult=SUCCESS/u);
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Removed=1/u);
+        assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Keep=2/u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup create --target-root/u);
-        assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /verbose backup create output/u);
         manualBackupShouldFail = true;
         const reportFetchCountBeforeFailedBackup = reportFetchCount;
         await manualBackupButton.dispatch('click');

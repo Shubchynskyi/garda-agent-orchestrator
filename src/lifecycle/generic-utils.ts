@@ -199,8 +199,14 @@ export function getTimestamp(): string {
 
 export function copyPathRecursive(sourcePath: string, destinationPath: string): void {
     const stats = fs.lstatSync(sourcePath);
+    if (stats.isSymbolicLink()) {
+        throw new Error(`Refusing to copy symlink or junction source: ${sourcePath}`);
+    }
     const parentDir = path.dirname(destinationPath);
     if (parentDir) fs.mkdirSync(parentDir, { recursive: true });
+    if (fs.existsSync(destinationPath) && fs.lstatSync(destinationPath).isSymbolicLink()) {
+        throw new Error(`Refusing to overwrite symlink or junction destination: ${destinationPath}`);
+    }
 
     if (!stats.isDirectory()) {
         fs.copyFileSync(sourcePath, destinationPath);
@@ -210,11 +216,21 @@ export function copyPathRecursive(sourcePath: string, destinationPath: string): 
     const stack: Array<{ src: string; dst: string }> = [{ src: sourcePath, dst: destinationPath }];
     while (stack.length > 0) {
         const { src, dst } = stack.pop()!;
+        if (fs.existsSync(dst) && fs.lstatSync(dst).isSymbolicLink()) {
+            throw new Error(`Refusing to overwrite symlink or junction destination: ${dst}`);
+        }
         fs.mkdirSync(dst, { recursive: true });
         for (const entry of fs.readdirSync(src)) {
             const srcChild = path.join(src, entry);
             const dstChild = path.join(dst, entry);
-            if (fs.lstatSync(srcChild).isDirectory()) {
+            const childStats = fs.lstatSync(srcChild);
+            if (childStats.isSymbolicLink()) {
+                throw new Error(`Refusing to copy symlink or junction source: ${srcChild}`);
+            }
+            if (fs.existsSync(dstChild) && fs.lstatSync(dstChild).isSymbolicLink()) {
+                throw new Error(`Refusing to overwrite symlink or junction destination: ${dstChild}`);
+            }
+            if (childStats.isDirectory()) {
                 stack.push({ src: srcChild, dst: dstChild });
             } else {
                 fs.copyFileSync(srcChild, dstChild);

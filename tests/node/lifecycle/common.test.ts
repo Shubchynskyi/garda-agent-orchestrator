@@ -29,6 +29,23 @@ function mkTmpDir() {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'gao-lifecycle-common-'));
 }
 
+function canCreateSymlinks(): boolean {
+    const dir = mkTmpDir();
+    try {
+        const target = path.join(dir, 'target');
+        const link = path.join(dir, 'link');
+        fs.mkdirSync(target, { recursive: true });
+        fs.symlinkSync(target, link, 'junction');
+        return fs.lstatSync(link).isSymbolicLink();
+    } catch {
+        return false;
+    } finally {
+        removePathRecursive(dir);
+    }
+}
+
+const symlinkSupported = canCreateSymlinks();
+
 describe('compareVersionStrings', () => {
     it('returns 0 for equal versions', () => {
         assert.equal(compareVersionStrings('1.0.8', '1.0.8'), 0);
@@ -177,6 +194,50 @@ describe('copyPathRecursive and removePathRecursive', () => {
         }
     });
 
+    it('rejects nested symlink or junction entries while copying directories', { skip: !symlinkSupported && 'Symlinks/junctions not supported' }, () => {
+        const dir = mkTmpDir();
+        try {
+            const src = path.join(dir, 'src');
+            const outside = path.join(dir, 'outside');
+            const dst = path.join(dir, 'dst');
+            fs.mkdirSync(src, { recursive: true });
+            fs.mkdirSync(outside, { recursive: true });
+            fs.writeFileSync(path.join(outside, 'secret.txt'), 'outside-secret', 'utf8');
+            fs.symlinkSync(outside, path.join(src, 'linked-outside'), 'junction');
+
+            assert.throws(
+                () => copyPathRecursive(src, dst),
+                /Refusing to copy symlink or junction source/
+            );
+            assert.equal(fs.existsSync(path.join(dst, 'linked-outside', 'secret.txt')), false);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects destination symlink or junction entries while copying directories', { skip: !symlinkSupported && 'Symlinks/junctions not supported' }, () => {
+        const dir = mkTmpDir();
+        try {
+            const src = path.join(dir, 'src');
+            const dst = path.join(dir, 'dst');
+            const outside = path.join(dir, 'outside');
+            fs.mkdirSync(path.join(src, 'linked-destination'), { recursive: true });
+            fs.writeFileSync(path.join(src, 'linked-destination', 'payload.txt'), 'new-data', 'utf8');
+            fs.mkdirSync(dst, { recursive: true });
+            fs.mkdirSync(outside, { recursive: true });
+            fs.writeFileSync(path.join(outside, 'payload.txt'), 'outside-data', 'utf8');
+            fs.symlinkSync(outside, path.join(dst, 'linked-destination'), 'junction');
+
+            assert.throws(
+                () => copyPathRecursive(src, dst),
+                /Refusing to overwrite symlink or junction destination/
+            );
+            assert.equal(fs.readFileSync(path.join(outside, 'payload.txt'), 'utf8'), 'outside-data');
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
     it('removePathRecursive removes directories', () => {
         const dir = mkTmpDir();
         const target = path.join(dir, 'target');
@@ -316,6 +377,51 @@ describe('copyDirectoryContentMerge', () => {
             assert.equal(fs.readFileSync(path.join(dst, 'sub', 'b.txt'), 'utf8'), 'new-b');
             assert.ok(!fs.existsSync(path.join(dst, 'orphan.txt')));
             assert.ok(!fs.existsSync(path.join(dst, 'sub', 'old.txt')));
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects source symlink or junction entries while merging directories', { skip: !symlinkSupported && 'Symlinks/junctions not supported' }, () => {
+        const dir = mkTmpDir();
+        try {
+            const src = path.join(dir, 'src');
+            const outside = path.join(dir, 'outside');
+            const dst = path.join(dir, 'dst');
+            fs.mkdirSync(src, { recursive: true });
+            fs.mkdirSync(outside, { recursive: true });
+            fs.mkdirSync(dst, { recursive: true });
+            fs.writeFileSync(path.join(outside, 'secret.txt'), 'outside-secret', 'utf8');
+            fs.symlinkSync(outside, path.join(src, 'linked-outside'), 'junction');
+
+            assert.throws(
+                () => copyDirectoryContentMerge(src, dst, []),
+                /Refusing to copy symlink or junction source/
+            );
+            assert.equal(fs.existsSync(path.join(dst, 'linked-outside', 'secret.txt')), false);
+        } finally {
+            removePathRecursive(dir);
+        }
+    });
+
+    it('rejects destination symlink or junction entries while merging directories', { skip: !symlinkSupported && 'Symlinks/junctions not supported' }, () => {
+        const dir = mkTmpDir();
+        try {
+            const src = path.join(dir, 'src');
+            const outside = path.join(dir, 'outside');
+            const dst = path.join(dir, 'dst');
+            fs.mkdirSync(src, { recursive: true });
+            fs.mkdirSync(outside, { recursive: true });
+            fs.mkdirSync(dst, { recursive: true });
+            fs.writeFileSync(path.join(src, 'linked-destination'), 'new-data', 'utf8');
+            fs.writeFileSync(path.join(outside, 'payload.txt'), 'outside-data', 'utf8');
+            fs.symlinkSync(outside, path.join(dst, 'linked-destination'), 'junction');
+
+            assert.throws(
+                () => copyDirectoryContentMerge(src, dst, []),
+                /Refusing to overwrite symlink or junction destination/
+            );
+            assert.equal(fs.readFileSync(path.join(outside, 'payload.txt'), 'utf8'), 'outside-data');
         } finally {
             removePathRecursive(dir);
         }

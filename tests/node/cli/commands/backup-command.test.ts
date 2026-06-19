@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { getLifecycleOperationLockPath } from '../../../../src/lifecycle/common';
-import { listBackups } from '../../../../src/lifecycle/backups';
+import { createBackupSnapshot, listBackups } from '../../../../src/lifecycle/backups';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
 
 function makeWorkspace(prefix: string): { targetRoot: string; bundleRoot: string } {
@@ -34,6 +34,18 @@ function seedLifecycleOperationLock(targetRoot: string): void {
     }, null, 2), 'utf8');
 }
 
+function writeWorkflowAutoBackupConfig(bundleRoot: string, keepLatest: number): void {
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({
+        auto_backup: {
+            enabled: true,
+            interval_days: 1,
+            keep_latest: keepLatest
+        }
+    }, null, 2), 'utf8');
+}
+
 describe('backup create CLI command', () => {
     it('prints a dry-run preview without creating a backup', async () => {
         const { targetRoot } = makeWorkspace('gao-cli-backup-dry-run-');
@@ -48,6 +60,8 @@ describe('backup create CLI command', () => {
 
             assert.equal(result.exitCode, 0);
             assert.match(combinedOutput(result), /Status: SKIPPED_DRY_RUN/u);
+            assert.match(combinedOutput(result), /RetentionApplied: False/u);
+            assert.match(combinedOutput(result), /RetentionResult: SKIPPED_DRY_RUN/u);
             assert.equal(listBackups(targetRoot).length, 0);
         } finally {
             fs.rmSync(targetRoot, { recursive: true, force: true });
@@ -87,9 +101,52 @@ describe('backup create CLI command', () => {
             assert.equal(result.exitCode, 0);
             assert.match(combinedOutput(result), /Status: SUCCESS/u);
             assert.match(combinedOutput(result), /BackupId: manual-/u);
+            assert.match(combinedOutput(result), /RetentionApplied: True/u);
+            assert.match(combinedOutput(result), /RetentionResult: SUCCESS/u);
             assert.equal(backups.length, 1);
             assert.equal(backups[0].reason, 'manual');
             assert.equal(backups[0].health, 'AVAILABLE');
+        } finally {
+            fs.rmSync(targetRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('applies configured retention after confirmed manual backup creation', async () => {
+        const { targetRoot, bundleRoot } = makeWorkspace('gao-cli-backup-retention-');
+        try {
+            writeWorkflowAutoBackupConfig(bundleRoot, 2);
+            createBackupSnapshot({
+                targetRoot,
+                bundleRoot,
+                reason: 'manual',
+                timestamp: '20260501-010000-000'
+            });
+            createBackupSnapshot({
+                targetRoot,
+                bundleRoot,
+                reason: 'manual',
+                timestamp: '20260502-010000-000'
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'backup',
+                'create',
+                '--target-root',
+                targetRoot,
+                '--confirm'
+            ], { cwd: targetRoot });
+
+            const backups = listBackups(targetRoot);
+            assert.equal(result.exitCode, 0);
+            assert.match(combinedOutput(result), /RetentionApplied: True/u);
+            assert.match(combinedOutput(result), /RetentionKeepLatest: 2/u);
+            assert.match(combinedOutput(result), /RetentionRemovedCount: 1/u);
+            assert.equal(backups.length, 2);
+            assert.equal(
+                backups.some((backup) => backup.id === 'manual-20260501-010000-000'),
+                false,
+                'oldest manual backup should be pruned by configured retention'
+            );
         } finally {
             fs.rmSync(targetRoot, { recursive: true, force: true });
         }
@@ -133,6 +190,8 @@ describe('backup create CLI command', () => {
             assert.equal(parsed.status, 'SUCCESS');
             assert.equal(typeof parsed.backupId, 'string');
             assert.match(String(parsed.backupId), /^manual-/u);
+            assert.equal(parsed.retentionApplied, true);
+            assert.equal(parsed.retentionResult, 'SUCCESS');
             assert.equal(listBackups(targetRoot).length, 1);
         } finally {
             fs.rmSync(targetRoot, { recursive: true, force: true });

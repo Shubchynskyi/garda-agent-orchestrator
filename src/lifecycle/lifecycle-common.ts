@@ -233,6 +233,9 @@ export function copyDirectoryContentMerge(
     const expectedDestFiles = new Set<string>();
 
     for (const sourceFile of readdirRecursiveFiles(sourceDirectory)) {
+        if (fs.lstatSync(sourceFile).isSymbolicLink()) {
+            throw new Error(`Refusing to copy symlink or junction source: ${sourceFile}`);
+        }
         const rel = path.relative(sourceRoot, sourceFile);
         if (!rel || rel === '.') continue;
         if (rel.split(path.sep).includes('..')) {
@@ -240,6 +243,9 @@ export function copyDirectoryContentMerge(
         }
 
         const destFile = path.resolve(path.join(destinationDirectory, rel));
+        if (fs.existsSync(destFile) && fs.lstatSync(destFile).isSymbolicLink()) {
+            throw new Error(`Refusing to overwrite symlink or junction destination: ${destFile}`);
+        }
         ensureWithinRoot(destRoot, destFile, 'Destination file');
         expectedDestFiles.add(destFile.toLowerCase());
 
