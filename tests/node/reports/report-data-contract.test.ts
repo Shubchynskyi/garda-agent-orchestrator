@@ -216,6 +216,9 @@ function writeInitAndProjectMemory(repoRoot: string): void {
     for (const fileName of ['README.md', 'compact.md', 'context.md', 'stack.md', 'architecture.md', 'module-map.md', 'commands.md', 'conventions.md', 'decisions.md', 'risks.md']) {
         fs.writeFileSync(path.join(memoryRoot, fileName), `# ${fileName}\n\nMemory for ${fileName}.\n`);
     }
+    const promptPath = path.join(repoRoot, 'template', 'docs', 'prompts', 'project-memory-optimization.md');
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, '# Project memory optimization prompt\n');
 }
 
 test('readCanonicalActiveQueueRows reads only the canonical upper Active Queue table', () => {
@@ -339,6 +342,8 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-initialized' && row.value === true));
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-validated' && row.value === true));
     assert.ok(report.project_memory_tab.status.some((row) => row.id === 'memory-read-first' && Array.isArray(row.value) && row.value.includes('live/docs/project-memory/README.md')));
+    assert.match(report.project_memory_tab.advisory.prompt_path, /template[/\\]docs[/\\]prompts[/\\]project-memory-optimization\.md$/u);
+    assert.equal(report.project_memory_tab.advisory.prompt_exists, true);
     assert.ok(report.project_memory_tab.settings.some((setting) => (
         setting.key === 'project_memory_maintenance.max_compact_summary_chars'
         && setting.flag === '--project-memory-max-compact-summary-chars'

@@ -79,12 +79,17 @@ class FakeElement {
         }
     }
 
+    scrollIntoView(): void {
+        // No-op for dashboard client tests.
+    }
+
     querySelectorAll(selector: string): FakeElement[] {
         if (selector !== 'button[data-task-id]'
             && selector !== 'button[data-action-id]'
             && selector !== 'button[data-setting-id]'
             && selector !== 'button[data-task-action-id]'
             && selector !== 'button[data-backup-action-id]'
+            && selector !== 'button[data-file-path]'
             && selector !== 'button[data-instruction-tab]') {
             return [];
         }
@@ -100,7 +105,9 @@ class FakeElement {
                         ? 'task-action-id'
                         : selector === 'button[data-backup-action-id]'
                             ? 'backup-action-id'
-                            : 'instruction-tab';
+                            : selector === 'button[data-file-path]'
+                                ? 'file-path'
+                                : 'instruction-tab';
             const dataKey = selector === 'button[data-task-id]'
                 ? 'taskId'
                 : selector === 'button[data-action-id]'
@@ -111,10 +118,13 @@ class FakeElement {
                             ? 'taskActionId'
                             : selector === 'button[data-backup-action-id]'
                                 ? 'backupActionId'
-                                : 'instructionTab';
+                                : selector === 'button[data-file-path]'
+                                    ? 'filePath'
+                                    : 'instructionTab';
             const modePattern = /data-action-mode="([^"]+)"/u;
             const settingModePattern = /data-setting-mode="([^"]+)"/u;
             const taskActionModePattern = /data-task-action-mode="([^"]+)"/u;
+            const fileTargetPattern = /data-file-target="([^"]+)"/u;
             this.buttonCache = Array.from(this.innerHTML.matchAll(new RegExp(`data-${attributeName}="([^"]+)"`, 'gu')), (match) => {
                 const button = new FakeElement(`button-${match[1]}`);
                 button.dataset[dataKey] = match[1];
@@ -130,6 +140,10 @@ class FakeElement {
                 const taskActionModeMatch = buttonHtml.match(taskActionModePattern);
                 if (taskActionModeMatch) {
                     button.dataset.taskActionMode = taskActionModeMatch[1];
+                }
+                const fileTargetMatch = buttonHtml.match(fileTargetPattern);
+                if (fileTargetMatch) {
+                    button.dataset.fileTarget = fileTargetMatch[1];
                 }
                 return button;
             });
@@ -417,6 +431,17 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         health_message: null
                     }
                 ]
+            },
+            project_memory_tab: {
+                settings_config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
+                memory_directory_path: 'garda-agent-orchestrator/live/docs/project-memory',
+                advisory: {
+                    prompt_path: 'template/docs/prompts/project-memory-optimization.md',
+                    prompt_exists: true
+                },
+                settings: [],
+                status: [],
+                files: []
             }
         };
         const detail = {
@@ -603,9 +628,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 if (sessionFetchFails && (url === '/api/session' || url === '/api/session/activity' || url === '/api/session/shutdown')) {
                     throw new Error('session unavailable');
                 }
+                if (url.startsWith('/files?path=')) {
+                    return {
+                        ok: true,
+                        status: 200,
+                        text: async () => '# Project Memory Optimization Prompt\n\nUse this as a project map.',
+                        json: async () => ({})
+                    };
+                }
                 return ({
                 ok: true,
                 status: 200,
+                text: async () => '',
                 json: async () => {
                     if (url === '/api/session' || url === '/api/session/activity' || url === '/api/session/shutdown') {
                         return session;
@@ -728,6 +762,20 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /16m/u);
         assert.match(fakeDocument.elements['language-select'].innerHTML, /Русский/u);
         assert.match(fakeDocument.elements['ui-notice'].textContent, /127\.0\.0\.1/u);
+
+        const projectMemoryButton = fakeDocument.querySelectorAll('nav button[data-tab]')[3];
+        await projectMemoryButton.dispatch('click');
+        assert.match(fakeDocument.elements['project-memory'].innerHTML, /Project memory optimization/u);
+        assert.match(fakeDocument.elements['project-memory'].innerHTML, /template\/docs\/prompts\/project-memory-optimization\.md/u);
+        assert.match(fakeDocument.elements['project-memory'].innerHTML, /data-file-path="template\/docs\/prompts\/project-memory-optimization\.md"/u);
+        const promptOpenButton = fakeDocument.elements['project-memory'].querySelectorAll('button[data-file-path]')
+            .find((button) => button.dataset.filePath === 'template/docs/prompts/project-memory-optimization.md');
+        assert.ok(promptOpenButton);
+        assert.equal(promptOpenButton.dataset.fileTarget, 'memory-file-content');
+        await promptOpenButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['memory-file-content'].innerHTML, /Project Memory Optimization Prompt/u);
+        assert.match(fakeDocument.elements['memory-file-content'].innerHTML, /template\/docs\/prompts\/project-memory-optimization\.md/u);
 
         const taskButton = tasksNode.querySelectorAll('button[data-task-id]')[0];
         await taskButton.dispatch('click');

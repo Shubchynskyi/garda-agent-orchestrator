@@ -19,6 +19,7 @@ export type {
     ReportOrdinaryDocsInfo,
     ReportInitSettingsTab,
     ReportProjectMemoryFile,
+    ReportProjectMemoryAdvisory,
     ReportProjectMemoryTab,
     ReportBackupRow,
     ReportBackupsTab,

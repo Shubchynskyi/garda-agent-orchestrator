@@ -49,6 +49,14 @@ function renderProjectMemorySettings() {
     + settings.map(setting => renderSettingRow(setting, disabled, 'memory')).join('')
     + '</tbody></table></div></section>';
 }
+function renderProjectMemoryOptimizationAdvisory(tab) {
+  const advisory = tab.advisory || {};
+  const promptPath = advisory.prompt_path || 'garda-agent-orchestrator/template/docs/prompts/project-memory-optimization.md';
+  const openControl = advisory.prompt_exists ? openFileButton(promptPath, 'memory-file-content') : '';
+  return '<section class="memory-section memory-advisory"><h3>' + safe(t('projectMemoryOptimizationTitle')) + '</h3>'
+    + '<p>' + inlineText(t('projectMemoryOptimizationBody')) + '</p>'
+    + '<p class="memory-prompt-path"><strong>' + safe(t('projectMemoryOptimizationPromptFile')) + '</strong> <span class="value-with-open"><code>' + safe(promptPath) + '</code>' + openControl + '</span></p></section>';
+}
 function wireProjectMemorySettings() {
   const settings = currentSettingsPayload && currentSettingsPayload.settings ? currentSettingsPayload.settings : [];
   for (const button of projectMemoryNode.querySelectorAll('button[data-setting-id]')) {
@@ -80,7 +88,8 @@ function renderProjectMemory(report) {
     tab.settings_config_path,
     tab.memory_directory_path
   ]);
-  projectMemoryNode.innerHTML = renderProjectMemorySettings()
+  projectMemoryNode.innerHTML = renderProjectMemoryOptimizationAdvisory(tab)
+    + renderProjectMemorySettings()
     + '<section class="memory-section"><h3>' + safe(t('projectMemoryStatusTitle')) + '</h3>' + renderMemoryValueTable(tab.status || []) + '</section>'
     + '<section class="memory-section"><h3>' + safe(t('projectMemoryFilesTitle')) + '</h3>'
     + (files.length === 0 ? '<p class="empty">' + safe(t('noProjectMemoryFiles')) + '</p>' : '<div class="memory-table"><table><thead><tr><th>' + safe(t('fileColumn')) + '</th><th>' + safe(t('purposeColumn')) + '</th><th>' + safe(t('sizeColumn')) + '</th></tr></thead><tbody>'

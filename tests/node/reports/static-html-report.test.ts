@@ -191,6 +191,9 @@ function writeProjectMemoryReadme(repoRoot: string): void {
     const memoryPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'README.md');
     fs.mkdirSync(path.dirname(memoryPath), { recursive: true });
     fs.writeFileSync(memoryPath, '# Project memory\n');
+    const promptPath = path.join(repoRoot, 'garda-agent-orchestrator', 'template', 'docs', 'prompts', 'project-memory-optimization.md');
+    fs.mkdirSync(path.dirname(promptPath), { recursive: true });
+    fs.writeFileSync(promptPath, '# Project memory optimization prompt\n');
 }
 
 test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data', () => {
@@ -254,6 +257,9 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('<a href="'));
     assert.ok(html.includes('href="../../../AGENTS.md"'));
     assert.ok(html.includes('href="../../live/docs/project-memory/README.md"'));
+    assert.ok(html.includes('Project Memory Optimization'));
+    assert.ok(html.includes('garda-agent-orchestrator/template/docs/prompts/project-memory-optimization.md'));
+    assert.ok(html.includes('href="../../template/docs/prompts/project-memory-optimization.md"'));
     assert.ok(!html.includes('href="AGENTS.md"'));
     assert.ok(html.includes('C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-compile-output.log'));
     assert.ok(html.includes('Full-suite Validation'));

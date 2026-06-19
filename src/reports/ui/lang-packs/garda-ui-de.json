@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Bearbeitung gewöhnlicher Dokumente ist deaktiviert. Neu starten mit",
     "addOrdinaryDoc": "Dokument hinzufügen",
     "removeOrdinaryDoc": "Entfernen",
-    "availableReviewTypes": "Verfügbare Review-Typen"
+    "availableReviewTypes": "Verfügbare Review-Typen",
+    "projectMemoryOptimizationTitle": "Projektspeicher optimieren",
+    "projectMemoryOptimizationBody": "Gelegentlich können Sie einem Agenten die Optimierung der Projektspeicherdateien geben. Wählen Sie einen Agenten mit tiefem Reasoning und geben Sie ihm diesen Prompt.",
+    "projectMemoryOptimizationPromptFile": "Prompt-Datei"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

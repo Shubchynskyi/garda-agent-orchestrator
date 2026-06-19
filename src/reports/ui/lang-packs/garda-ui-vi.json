@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Chỉnh sửa tài liệu thường bị tắt. Khởi động lại với",
     "addOrdinaryDoc": "Thêm tài liệu",
     "removeOrdinaryDoc": "Xóa",
-    "availableReviewTypes": "Các loại review khả dụng"
+    "availableReviewTypes": "Các loại review khả dụng",
+    "projectMemoryOptimizationTitle": "Tối ưu hóa bộ nhớ dự án",
+    "projectMemoryOptimizationBody": "Thỉnh thoảng bạn có thể giao cho một agent nhiệm vụ tối ưu hóa các tệp bộ nhớ dự án. Chọn agent có suy luận sâu và đưa prompt này cho agent đó.",
+    "projectMemoryOptimizationPromptFile": "Tệp prompt"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

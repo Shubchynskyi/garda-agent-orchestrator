@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "일반 문서 편집이 비활성화되어 있습니다. 다음으로 다시 시작하세요",
     "addOrdinaryDoc": "문서 추가",
     "removeOrdinaryDoc": "제거",
-    "availableReviewTypes": "사용 가능한 리뷰 유형"
+    "availableReviewTypes": "사용 가능한 리뷰 유형",
+    "projectMemoryOptimizationTitle": "프로젝트 메모리 최적화",
+    "projectMemoryOptimizationBody": "가끔 에이전트에게 프로젝트 메모리 파일 최적화 작업을 맡길 수 있습니다. 깊이 추론하는 에이전트를 선택하고 이 프롬프트를 주세요.",
+    "projectMemoryOptimizationPromptFile": "프롬프트 파일"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

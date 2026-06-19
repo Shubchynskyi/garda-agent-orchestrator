@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "通常ドキュメントの編集は無効です。次で再起動してください",
     "addOrdinaryDoc": "ドキュメントを追加",
     "removeOrdinaryDoc": "削除",
-    "availableReviewTypes": "利用可能なレビュータイプ"
+    "availableReviewTypes": "利用可能なレビュータイプ",
+    "projectMemoryOptimizationTitle": "プロジェクトメモリの最適化",
+    "projectMemoryOptimizationBody": "ときどきエージェントにプロジェクトメモリファイルの最適化を依頼できます。深い推論ができるエージェントを選び、このプロンプトを渡してください。",
+    "projectMemoryOptimizationPromptFile": "プロンプトファイル"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

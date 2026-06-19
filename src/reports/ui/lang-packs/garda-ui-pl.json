@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Edycja zwykłych dokumentów jest wyłączona. Uruchom ponownie z",
     "addOrdinaryDoc": "Dodaj dokument",
     "removeOrdinaryDoc": "Usuń",
-    "availableReviewTypes": "Dostępne typy review"
+    "availableReviewTypes": "Dostępne typy review",
+    "projectMemoryOptimizationTitle": "Optymalizacja pamięci projektu",
+    "projectMemoryOptimizationBody": "Czasami można zlecić agentowi optymalizację plików pamięci projektu. Wybierz agenta z głębokim rozumowaniem i podaj mu ten prompt.",
+    "projectMemoryOptimizationPromptFile": "Plik promptu"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

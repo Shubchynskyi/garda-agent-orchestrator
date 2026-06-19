@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "La edición de documentos ordinarios está deshabilitada. Reinicie con",
     "addOrdinaryDoc": "Añadir documento",
     "removeOrdinaryDoc": "Eliminar",
-    "availableReviewTypes": "Tipos de revisión disponibles"
+    "availableReviewTypes": "Tipos de revisión disponibles",
+    "projectMemoryOptimizationTitle": "Optimización de la memoria del proyecto",
+    "projectMemoryOptimizationBody": "De vez en cuando puede asignar a un agente la optimización de los archivos de memoria del proyecto. Elija un agente con razonamiento profundo y dele este prompt.",
+    "projectMemoryOptimizationPromptFile": "Archivo del prompt"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

@@ -196,9 +196,15 @@ export interface ReportProjectMemoryFile {
     size_bytes: number | null;
 }
 
+export interface ReportProjectMemoryAdvisory {
+    prompt_path: string;
+    prompt_exists: boolean;
+}
+
 export interface ReportProjectMemoryTab {
     settings_config_path: string;
     memory_directory_path: string;
+    advisory: ReportProjectMemoryAdvisory;
     status: ReportValueRow[];
     settings: ReportWorkflowSetting[];
     files: ReportProjectMemoryFile[];

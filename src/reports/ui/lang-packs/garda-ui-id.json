@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Pengeditan dokumen biasa dinonaktifkan. Mulai ulang dengan",
     "addOrdinaryDoc": "Tambah dokumen",
     "removeOrdinaryDoc": "Hapus",
-    "availableReviewTypes": "Jenis review yang tersedia"
+    "availableReviewTypes": "Jenis review yang tersedia",
+    "projectMemoryOptimizationTitle": "Optimasi memori proyek",
+    "projectMemoryOptimizationBody": "Sesekali Anda dapat memberi agen tugas untuk mengoptimalkan file memori proyek. Pilih agen dengan penalaran mendalam dan berikan prompt ini.",
+    "projectMemoryOptimizationPromptFile": "File prompt"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "普通文档编辑已禁用。请使用以下方式重启",
     "addOrdinaryDoc": "添加文档",
     "removeOrdinaryDoc": "移除",
-    "availableReviewTypes": "可用的审查类型"
+    "availableReviewTypes": "可用的审查类型",
+    "projectMemoryOptimizationTitle": "项目记忆优化",
+    "projectMemoryOptimizationBody": "有时可以让一个代理优化项目记忆文件。请选择具备深度推理能力的代理，并把这个提示词交给它。",
+    "projectMemoryOptimizationPromptFile": "提示词文件"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

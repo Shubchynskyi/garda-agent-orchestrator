@@ -185,6 +185,9 @@ tr.selected { background: #eef8f6; }
 .memory-table th:nth-child(2) { width: 46%; }
 .memory-table th:nth-child(3) { width: 20%; }
 .memory-section { margin-top: 16px; }
+.memory-advisory { margin-top: 0; padding: 10px; border-left: 4px solid var(--accent); background: #f7fbfa; }
+.memory-advisory p { color: var(--muted); line-height: 1.45; }
+.memory-prompt-path { margin-top: 8px; overflow-wrap: anywhere; }
 .memory-file-content { margin-top: 10px; }
 .memory-file-content h3 { margin-top: 18px; }
 .memory-file-content pre { max-height: 55vh; }

@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "साधारण दस्तावेज़ संपादन अक्षम है। पुनः प्रारंभ करें",
     "addOrdinaryDoc": "दस्तावेज़ जोड़ें",
     "removeOrdinaryDoc": "हटाएँ",
-    "availableReviewTypes": "उपलब्ध रिव्यू प्रकार"
+    "availableReviewTypes": "उपलब्ध रिव्यू प्रकार",
+    "projectMemoryOptimizationTitle": "प्रोजेक्ट मेमोरी अनुकूलन",
+    "projectMemoryOptimizationBody": "कभी-कभी आप प्रोजेक्ट मेमोरी फ़ाइलों को अनुकूलित करने का कार्य किसी एजेंट को दे सकते हैं। गहरे विचार वाले एजेंट को चुनें और उसे यह प्रॉम्प्ट दें।",
+    "projectMemoryOptimizationPromptFile": "प्रॉम्प्ट फ़ाइल"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

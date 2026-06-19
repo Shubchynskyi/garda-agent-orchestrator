@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Редактирование обычных документов отключено. Перезапустите с",
     "addOrdinaryDoc": "Добавить документ",
     "removeOrdinaryDoc": "Удалить",
-    "availableReviewTypes": "Доступные типы ревью"
+    "availableReviewTypes": "Доступные типы ревью",
+    "projectMemoryOptimizationTitle": "Оптимизация памяти проекта",
+    "projectMemoryOptimizationBody": "Иногда можно давать агенту задачу по оптимизации файлов памяти, выберите агента с глубоким размышлением и дайте ему этот промт.",
+    "projectMemoryOptimizationPromptFile": "Файл промта"
   },
   "LOCAL_UI_SETTING_TEXT": {},
   "LOCAL_UI_INIT_SETTING_TEXT": {},

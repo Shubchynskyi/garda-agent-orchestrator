@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "La modification des documents ordinaires est désactivée. Redémarrez avec",
     "addOrdinaryDoc": "Ajouter un document",
     "removeOrdinaryDoc": "Supprimer",
-    "availableReviewTypes": "Types de review disponibles"
+    "availableReviewTypes": "Types de review disponibles",
+    "projectMemoryOptimizationTitle": "Optimisation de la mémoire du projet",
+    "projectMemoryOptimizationBody": "Vous pouvez parfois confier à un agent l optimisation des fichiers de mémoire du projet. Choisissez un agent avec un raisonnement approfondi et donnez-lui ce prompt.",
+    "projectMemoryOptimizationPromptFile": "Fichier du prompt"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

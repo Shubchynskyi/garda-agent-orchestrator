@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Redigering av vanliga dokument är inaktiverad. Starta om med",
     "addOrdinaryDoc": "Lägg till dokument",
     "removeOrdinaryDoc": "Ta bort",
-    "availableReviewTypes": "Tillgängliga review-typer"
+    "availableReviewTypes": "Tillgängliga review-typer",
+    "projectMemoryOptimizationTitle": "Optimering av projektminne",
+    "projectMemoryOptimizationBody": "Ibland kan du ge en agent uppgiften att optimera projektminnesfiler. Välj en agent med djup resonemangsförmåga och ge den denna prompt.",
+    "projectMemoryOptimizationPromptFile": "Promptfil"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

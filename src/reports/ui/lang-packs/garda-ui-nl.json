@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Bewerken van gewone documenten is uitgeschakeld. Herstart met",
     "addOrdinaryDoc": "Document toevoegen",
     "removeOrdinaryDoc": "Verwijderen",
-    "availableReviewTypes": "Beschikbare reviewtypen"
+    "availableReviewTypes": "Beschikbare reviewtypen",
+    "projectMemoryOptimizationTitle": "Projectgeheugen optimaliseren",
+    "projectMemoryOptimizationBody": "U kunt af en toe een agent de taak geven om projectgeheugenbestanden te optimaliseren. Kies een agent met diep redeneren en geef hem deze prompt.",
+    "projectMemoryOptimizationPromptFile": "Promptbestand"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

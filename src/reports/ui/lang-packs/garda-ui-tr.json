@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "Sıradan belge düzenleme devre dışı. Şununla yeniden başlatın",
     "addOrdinaryDoc": "Belge ekle",
     "removeOrdinaryDoc": "Kaldır",
-    "availableReviewTypes": "Kullanılabilir inceleme türleri"
+    "availableReviewTypes": "Kullanılabilir inceleme türleri",
+    "projectMemoryOptimizationTitle": "Proje belleği optimizasyonu",
+    "projectMemoryOptimizationBody": "Bazen bir ajana proje belleği dosyalarını optimize etme görevi verebilirsiniz. Derin akıl yürütmeye sahip bir ajan seçin ve ona bu promptu verin.",
+    "projectMemoryOptimizationPromptFile": "Prompt dosyası"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

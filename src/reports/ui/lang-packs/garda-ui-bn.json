@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "সাধারণ নথি সম্পাদনা নিষ্ক্রিয়। পুনরায় চালু করুন",
     "addOrdinaryDoc": "নথি যোগ করুন",
     "removeOrdinaryDoc": "সরান",
-    "availableReviewTypes": "উপলব্ধ রিভিউ ধরন"
+    "availableReviewTypes": "উপলব্ধ রিভিউ ধরন",
+    "projectMemoryOptimizationTitle": "প্রকল্প মেমরি অপ্টিমাইজেশন",
+    "projectMemoryOptimizationBody": "কখনও কখনও প্রকল্প মেমরি ফাইল অপ্টিমাইজ করার কাজ কোনো এজেন্টকে দিতে পারেন। গভীরভাবে চিন্তা করতে পারে এমন এজেন্ট বেছে নিন এবং তাকে এই প্রম্পট দিন।",
+    "projectMemoryOptimizationPromptFile": "প্রম্পট ফাইল"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

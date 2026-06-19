@@ -2,6 +2,21 @@ import { escapeHtml, renderUnavailableList, toStaticRepoFileHref, type StaticHtm
 import { renderValueTable } from './value-table';
 import type { ReportProjectMemoryFile, ReportProjectMemoryTab } from '../report-data-contract';
 
+function renderMemoryAdvisory(tab: ReportProjectMemoryTab, context: StaticHtmlRenderContext): string {
+    const href = tab.advisory.prompt_exists ? toStaticRepoFileHref(context, tab.advisory.prompt_path) : null;
+    const promptLink = href
+        ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">Open prompt</a>`
+        : '<span class="meta">Prompt file unavailable.</span>';
+    return [
+        '<section class="card memory-file">',
+        '<h3>Project Memory Optimization</h3>',
+        '<p class="meta">Occasionally assign an agent to optimize project-memory files. Choose a deep-reasoning agent and give it this prompt.</p>',
+        `<p class="meta">Prompt file: <code>${escapeHtml(tab.advisory.prompt_path)}</code></p>`,
+        promptLink,
+        '</section>'
+    ].join('');
+}
+
 function renderMemoryFile(file: ReportProjectMemoryFile, context: StaticHtmlRenderContext): string {
     const sizeLabel = typeof file.size_bytes === 'number' ? `${file.size_bytes} bytes` : '-';
     const href = file.exists ? toStaticRepoFileHref(context, file.path) : null;
@@ -39,6 +54,7 @@ export function renderProjectMemoryPanel(tab: ReportProjectMemoryTab, context: S
         '<div class="stack">',
         '<div class="card">',
         '<h2>Project Memory</h2>',
+        renderMemoryAdvisory(tab, context),
         '<h3>Status</h3>',
         renderValueTable(tab.status, context),
         '<h3 style="margin-top: 14px;">Limits and workflow settings</h3>',

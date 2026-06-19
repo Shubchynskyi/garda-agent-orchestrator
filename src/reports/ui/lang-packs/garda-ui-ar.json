@@ -235,7 +235,10 @@
     "ordinaryDocsActionsDisabled": "تعديل المستندات العادية معطّل. أعد التشغيل مع",
     "addOrdinaryDoc": "إضافة مستند",
     "removeOrdinaryDoc": "إزالة",
-    "availableReviewTypes": "أنواع المراجعة المتاحة"
+    "availableReviewTypes": "أنواع المراجعة المتاحة",
+    "projectMemoryOptimizationTitle": "تحسين ذاكرة المشروع",
+    "projectMemoryOptimizationBody": "يمكن أحيانًا تكليف وكيل بتحسين ملفات ذاكرة المشروع. اختر وكيلًا ذا تفكير عميق وأعطه هذا الموجه.",
+    "projectMemoryOptimizationPromptFile": "ملف الموجه"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

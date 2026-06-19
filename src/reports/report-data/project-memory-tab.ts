@@ -14,6 +14,11 @@ import type {
     ReportWorkflowConfigTab
 } from './types';
 
+const PROJECT_MEMORY_OPTIMIZATION_PROMPT_RELATIVE_PATHS = Object.freeze([
+    'garda-agent-orchestrator/template/docs/prompts/project-memory-optimization.md',
+    'template/docs/prompts/project-memory-optimization.md'
+] as const);
+
 function buildProjectMemoryStatusRows(
     workflowTab: ReportWorkflowConfigTab,
     agentInitState: Record<string, unknown>
@@ -35,6 +40,23 @@ function buildProjectMemoryStatusRows(
         valueRow('memory-summary-rule', 'Generated summary rule', 'Generated rule file that summarizes project memory for agent startup.', stateValue('ProjectMemorySummaryRule')),
         valueRow('memory-bootstrap-report', 'Bootstrap report', 'Runtime report from project-memory bootstrap or validation.', stateValue('ProjectMemoryBootstrapReport'))
     ];
+}
+
+function resolveProjectMemoryOptimizationPrompt(root: string): { prompt_path: string; prompt_exists: boolean } {
+    for (const relativePath of PROJECT_MEMORY_OPTIMIZATION_PROMPT_RELATIVE_PATHS) {
+        const absolutePath = path.join(root, relativePath);
+        if (fs.existsSync(absolutePath)) {
+            return {
+                prompt_path: toRepoRelativePath(root, absolutePath),
+                prompt_exists: true
+            };
+        }
+    }
+    const fallbackPath = path.join(root, PROJECT_MEMORY_OPTIMIZATION_PROMPT_RELATIVE_PATHS[0]);
+    return {
+        prompt_path: toRepoRelativePath(root, fallbackPath),
+        prompt_exists: false
+    };
 }
 
 export function buildProjectMemoryTab(
@@ -67,6 +89,7 @@ export function buildProjectMemoryTab(
     return {
         settings_config_path: workflowTab.config_path,
         memory_directory_path: toRepoRelativePath(root, memoryDir),
+        advisory: resolveProjectMemoryOptimizationPrompt(root),
         status: buildProjectMemoryStatusRows(workflowTab, agentState.value),
         settings: workflowTab.settings.filter((setting) => setting.key.startsWith('project_memory_maintenance.')),
         files,
