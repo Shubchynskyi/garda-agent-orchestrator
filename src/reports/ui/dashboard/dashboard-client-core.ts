@@ -99,6 +99,31 @@ function metric(label, value) {
 function fullSuiteValue(value) {
   return value === null || value === undefined || value === '' ? '-' : value;
 }
+function fullSuiteDurationSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return '-';
+  }
+  const roundedSeconds = Math.round(seconds * 10) / 10;
+  if (roundedSeconds < 60) {
+    return roundedSeconds.toFixed(1).replace(/\\.0$/, '') + 's';
+  }
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainder = Math.round((roundedSeconds - minutes * 60) * 10) / 10;
+  const remainderText = remainder.toFixed(1).replace(/\\.0$/, '');
+  return remainder === 0 ? minutes + 'm' : minutes + 'm ' + remainderText + 's';
+}
+function fullSuiteForecastRows(forecast) {
+  if (!forecast || typeof forecast !== 'object') {
+    return [];
+  }
+  return [
+    [t('fullSuiteConfiguredTimeout'), fullSuiteDurationSeconds(forecast.configured_timeout_seconds)],
+    [t('fullSuiteAverageDuration'), fullSuiteDurationSeconds(forecast.average_duration_seconds)],
+    [t('fullSuiteHighWatermarkDuration'), fullSuiteDurationSeconds(forecast.high_watermark_duration_seconds)],
+    [t('fullSuiteRecommendedTimeout'), fullSuiteDurationSeconds(forecast.recommended_timeout_seconds)]
+  ];
+}
 function fullSuiteSummary(fullSuite) {
   if (!fullSuite) {
     return '<p class="empty">-</p>';
@@ -108,6 +133,7 @@ function fullSuiteSummary(fullSuite) {
     [t('fullSuitePlacement'), fullSuite.placement],
     [t('fullSuiteFreshness'), fullSuite.freshness],
     [t('fullSuiteTimeoutForecast'), fullSuite.timeout_forecast_label],
+    ...fullSuiteForecastRows(fullSuite.timeout_forecast),
     [t('fullSuiteArtifact'), fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (' + t('missing') + ')')],
     [t('fullSuiteOutput'), fullSuite.output_artifact_path]
   ];

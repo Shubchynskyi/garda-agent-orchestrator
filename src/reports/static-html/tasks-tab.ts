@@ -102,6 +102,25 @@ function duration(seconds) {
   const rest = seconds % 60;
   return rest === 0 ? minutes + 'm' : minutes + 'm ' + rest + 's';
 }
+function fullSuiteDurationSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '-';
+  const roundedSeconds = Math.round(seconds * 10) / 10;
+  if (roundedSeconds < 60) return roundedSeconds.toFixed(1).replace(/\\.0$/, '') + 's';
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainder = Math.round((roundedSeconds - minutes * 60) * 10) / 10;
+  const remainderText = remainder.toFixed(1).replace(/\\.0$/, '');
+  return remainder === 0 ? minutes + 'm' : minutes + 'm ' + remainderText + 's';
+}
+function fullSuiteForecastRows(forecast) {
+  if (!forecast || typeof forecast !== 'object') return [];
+  return [
+    ['Configured timeout', fullSuiteDurationSeconds(forecast.configured_timeout_seconds)],
+    ['Average duration', fullSuiteDurationSeconds(forecast.average_duration_seconds)],
+    ['High-watermark duration', fullSuiteDurationSeconds(forecast.high_watermark_duration_seconds)],
+    ['Recommended timeout', fullSuiteDurationSeconds(forecast.recommended_timeout_seconds)]
+  ];
+}
 function safe(value) {
   return text(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 }
@@ -112,6 +131,7 @@ function fullSuiteRows(fullSuite) {
     ['Placement', fullSuite.placement],
     ['Freshness', fullSuite.freshness],
     ['Timeout forecast', fullSuite.timeout_forecast_label],
+    ...fullSuiteForecastRows(fullSuite.timeout_forecast),
     ['Evidence artifact', fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (missing)')],
     ['Output artifact', fullSuite.output_artifact_path]
   ];

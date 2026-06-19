@@ -455,16 +455,16 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 mismatch_reason: null,
                 timeout_forecast: {
                     history_path: 'runtime/full-suite-duration-history.json',
-                    sample_count: 0,
-                    average_duration_seconds: null,
-                    high_watermark_duration_seconds: null,
-                    recommended_timeout_seconds: 600,
-                    safety_margin_seconds: null,
-                    recommendation_source: 'config_timeout',
+                    sample_count: 5,
+                    average_duration_seconds: 343.2,
+                    high_watermark_duration_seconds: 396.3,
+                    recommended_timeout_seconds: 476,
+                    safety_margin_seconds: 79.7,
+                    recommendation_source: 'history',
                     configured_timeout_seconds: 600,
                     warning: null
                 },
-                timeout_forecast_label: 'Recommended full-suite command timeout: 600s (configured timeout; no matching successful duration history yet).'
+                timeout_forecast_label: 'Recommended full-suite command timeout: 476s (last 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).'
             },
             audit: {
                 status: 'BLOCKED',
@@ -736,6 +736,28 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Runtime diagnostics/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Full-suite validation/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /2m 3\.5s/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Average duration/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /5m 43\.2s/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Recommended timeout/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /7m 56s/u);
+        Object.assign(detail.full_suite_validation.timeout_forecast as Record<string, unknown>, {
+            history_path: 'runtime/full-suite-duration-history.json',
+            sample_count: 0,
+            average_duration_seconds: null,
+            high_watermark_duration_seconds: null,
+            recommended_timeout_seconds: 600,
+            safety_margin_seconds: null,
+            recommendation_source: 'config_timeout',
+            configured_timeout_seconds: 600,
+            warning: null
+        });
+        detail.full_suite_validation.timeout_forecast_label = 'Recommended full-suite command timeout: 600s (no recent matching full-suite duration history; using configured timeout).';
+        await taskButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements.detail.innerHTML, /Configured timeout<\/th><td>10m<\/td>/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Average duration<\/th><td>-<\/td>/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /High-watermark duration<\/th><td>-<\/td>/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Recommended timeout<\/th><td>10m<\/td>/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-full-suite-validation\.json/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /post-done-drift: blocked item/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Audit status/u);
