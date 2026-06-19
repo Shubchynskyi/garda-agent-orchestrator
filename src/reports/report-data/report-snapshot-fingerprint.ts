@@ -7,6 +7,7 @@ export function buildReportSnapshotFingerprint(repoRoot: string): string {
     return [
         statFingerprint(path.join(resolvedRoot, 'TASK.md')),
         statFingerprint(path.join(resolvedRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json')),
+        statFingerprint(path.join(resolvedRoot, 'garda-agent-orchestrator', 'runtime', 'workflow-config-audit.jsonl')),
         statFingerprint(path.join(resolvedRoot, 'garda-agent-orchestrator', 'live', 'config', 'paths.json')),
         statFingerprint(path.join(resolvedRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json')),
         statFingerprint(path.join(resolvedRoot, 'garda-agent-orchestrator', 'runtime', 'agent-init-state.json')),

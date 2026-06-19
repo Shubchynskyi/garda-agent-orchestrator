@@ -238,7 +238,15 @@
     "availableReviewTypes": "أنواع المراجعة المتاحة",
     "projectMemoryOptimizationTitle": "تحسين ذاكرة المشروع",
     "projectMemoryOptimizationBody": "يمكن أحيانًا تكليف وكيل بتحسين ملفات ذاكرة المشروع. اختر وكيلًا ذا تفكير عميق وأعطه هذا الموجه.",
-    "projectMemoryOptimizationPromptFile": "ملف الموجه"
+    "projectMemoryOptimizationPromptFile": "ملف الموجه",
+    "taskCommandEnableReset": "تفعيل إعادة تعيين المهمة المدققة",
+    "taskCommandEnableResetDescription": "يفعل إعادة تعيين المهمة عبر workflow set المدقق قبل السماح بإعادة التعيين أو discard.",
+    "taskCommandEnableResetAuditDescription": "يصلح دليل تدقيق workflow-set المفقود لـ task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled يساوي true، لكن دليل workflow-set المدقق مفقود.",
+    "taskResetAlreadyReady": "إعادة تعيين المهمة المدققة جاهزة بالفعل.",
+    "taskResetReady": "إعادة التعيين المدققة جاهزة",
+    "taskResetNotReady": "إعادة التعيين المدققة غير جاهزة",
+    "taskResetRemediation": "الإصلاح:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

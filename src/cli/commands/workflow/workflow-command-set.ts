@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+
 import {
     buildDefaultWorkflowConfig,
     hasMaterializedWorkflowConfigBaseline,
@@ -404,6 +406,11 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     const actualChangedFieldSet = new Set(actualChangedFields);
     const noopFields = requestedFields.filter((field) => !actualChangedFieldSet.has(field));
 
+    const taskResetAuditRepairRequested = !changed
+        && requestedFields.includes('task_reset.enabled')
+        && nextValidated.task_reset?.enabled === true
+        && String(options.operatorConfirmed || '').trim() === 'yes';
+
     let auditPath: string | null = null;
     let protectedManifestPath: string | null = null;
     if (changed) {
@@ -422,6 +429,16 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             nextSerialized
         );
         protectedManifestPath = refreshWorkflowProtectedManifest(roots.targetRoot);
+    } else if (taskResetAuditRepairRequested) {
+        requireWorkflowSetOperatorConfirmation(options);
+        const currentFileText = fs.readFileSync(roots.configPath, 'utf8');
+        auditPath = writeWorkflowConfigAuditRecord(
+            roots.bundleRoot,
+            roots.configPath,
+            ['task_reset.enabled'],
+            currentFileText,
+            currentFileText
+        );
     }
 
     const result: WorkflowSetResult = {

@@ -238,7 +238,15 @@
     "availableReviewTypes": "Các loại review khả dụng",
     "projectMemoryOptimizationTitle": "Tối ưu hóa bộ nhớ dự án",
     "projectMemoryOptimizationBody": "Thỉnh thoảng bạn có thể giao cho một agent nhiệm vụ tối ưu hóa các tệp bộ nhớ dự án. Chọn agent có suy luận sâu và đưa prompt này cho agent đó.",
-    "projectMemoryOptimizationPromptFile": "Tệp prompt"
+    "projectMemoryOptimizationPromptFile": "Tệp prompt",
+    "taskCommandEnableReset": "Bật reset tác vụ đã kiểm toán",
+    "taskCommandEnableResetDescription": "Bật task reset qua workflow set đã kiểm toán trước khi chạy reset hoặc discard.",
+    "taskCommandEnableResetAuditDescription": "Sửa bằng chứng audit workflow-set bị thiếu cho task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled là true, nhưng thiếu bằng chứng workflow-set đã kiểm toán.",
+    "taskResetAlreadyReady": "Task reset đã kiểm toán đã sẵn sàng.",
+    "taskResetReady": "Reset đã kiểm toán sẵn sàng",
+    "taskResetNotReady": "Reset đã kiểm toán chưa sẵn sàng",
+    "taskResetRemediation": "Cách sửa:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

@@ -288,6 +288,33 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.equal(projectMemoryCompactLimit.value_type, 'integer');
     assert.equal(projectMemoryCompactLimit.flag, '--project-memory-max-compact-summary-chars');
     assert.match(projectMemoryCompactLimit.command, /garda workflow set --project-memory-max-compact-summary-chars <number>/);
+    const taskReset = tab.settings.find((setting) => setting.key === 'task_reset.enabled');
+    assert.ok(taskReset);
+    assert.equal(taskReset.value, false);
+    assert.equal(taskReset.readiness?.ready, false);
+    assert.equal(taskReset.readiness?.configured_enabled, false);
+    assert.equal(taskReset.readiness?.audited_enablement, false);
+});
+
+test('buildWorkflowConfigTab separates task reset config value from audited readiness', () => {
+    const repoRoot = makeTempRepo();
+    writeWorkflowConfig(repoRoot);
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    config.task_reset.enabled = true;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+    const tab = buildWorkflowConfigTab(repoRoot);
+
+    const taskReset = tab.settings.find((setting) => setting.key === 'task_reset.enabled');
+    assert.ok(taskReset);
+    assert.equal(taskReset.value, true);
+    assert.equal(taskReset.readiness?.ready, false);
+    assert.equal(taskReset.readiness?.configured_enabled, true);
+    assert.equal(taskReset.readiness?.audited_enablement, false);
+    assert.match(taskReset.readiness?.disabled_reason || '', /no matching audited workflow set record/u);
+    assert.match(taskReset.readiness?.remediation_command || '', /workflow set --target-root "\." --task-reset-enabled true/u);
+    assert.equal(taskReset.readiness?.remediation_action_id, 'task-reset-enable-audited');
 });
 
 test('buildWorkflowConfigTab preserves unknown legacy enum-list values with diagnostics', () => {
@@ -476,6 +503,27 @@ test('buildReportSnapshotFingerprint changes when backup inventory root changes'
         existed: true,
         pathType: 'file'
     }]);
+    const after = buildReportSnapshotFingerprint(repoRoot);
+    assert.notEqual(before, after);
+});
+
+test('buildReportSnapshotFingerprint changes when workflow config audit log changes', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const before = buildReportSnapshotFingerprint(repoRoot);
+    const auditPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'workflow-config-audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    fs.writeFileSync(auditPath, `${JSON.stringify({
+        schema_version: 1,
+        event_source: 'workflow-config-set',
+        timestamp_utc: '2026-06-19T04:00:00.000Z',
+        actor: 'operator_command',
+        command: 'workflow set',
+        changed_fields: ['task_reset.enabled'],
+        before_sha256: 'before',
+        after_sha256: 'after'
+    })}\n`, 'utf8');
     const after = buildReportSnapshotFingerprint(repoRoot);
     assert.notEqual(before, after);
 });

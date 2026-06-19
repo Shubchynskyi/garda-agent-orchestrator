@@ -238,7 +238,15 @@
     "availableReviewTypes": "Jenis review yang tersedia",
     "projectMemoryOptimizationTitle": "Optimasi memori proyek",
     "projectMemoryOptimizationBody": "Sesekali Anda dapat memberi agen tugas untuk mengoptimalkan file memori proyek. Pilih agen dengan penalaran mendalam dan berikan prompt ini.",
-    "projectMemoryOptimizationPromptFile": "File prompt"
+    "projectMemoryOptimizationPromptFile": "File prompt",
+    "taskCommandEnableReset": "Aktifkan reset tugas teraudit",
+    "taskCommandEnableResetDescription": "Mengaktifkan task reset melalui workflow set teraudit sebelum reset atau discard dijalankan.",
+    "taskCommandEnableResetAuditDescription": "Memperbaiki bukti audit workflow-set yang hilang untuk task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled bernilai true, tetapi bukti workflow-set teraudit tidak ada.",
+    "taskResetAlreadyReady": "Task reset teraudit sudah siap.",
+    "taskResetReady": "Reset teraudit siap",
+    "taskResetNotReady": "Reset teraudit belum siap",
+    "taskResetRemediation": "Perbaikan:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

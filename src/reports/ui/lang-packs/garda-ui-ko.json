@@ -238,7 +238,15 @@
     "availableReviewTypes": "사용 가능한 리뷰 유형",
     "projectMemoryOptimizationTitle": "프로젝트 메모리 최적화",
     "projectMemoryOptimizationBody": "가끔 에이전트에게 프로젝트 메모리 파일 최적화 작업을 맡길 수 있습니다. 깊이 추론하는 에이전트를 선택하고 이 프롬프트를 주세요.",
-    "projectMemoryOptimizationPromptFile": "프롬프트 파일"
+    "projectMemoryOptimizationPromptFile": "프롬프트 파일",
+    "taskCommandEnableReset": "감사된 작업 reset 활성화",
+    "taskCommandEnableResetDescription": "reset 또는 discard 실행 전에 감사된 workflow set으로 작업 reset을 활성화합니다.",
+    "taskCommandEnableResetAuditDescription": "task_reset.enabled=true에 대해 누락된 workflow-set 감사 증거를 복구합니다.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled가 true이지만 감사된 workflow-set 증거가 없습니다.",
+    "taskResetAlreadyReady": "감사된 작업 reset이 이미 준비되었습니다.",
+    "taskResetReady": "감사된 reset 준비됨",
+    "taskResetNotReady": "감사된 reset 미준비",
+    "taskResetRemediation": "복구:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

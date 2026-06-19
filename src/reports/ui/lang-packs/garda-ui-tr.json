@@ -238,7 +238,15 @@
     "availableReviewTypes": "Kullanılabilir inceleme türleri",
     "projectMemoryOptimizationTitle": "Proje belleği optimizasyonu",
     "projectMemoryOptimizationBody": "Bazen bir ajana proje belleği dosyalarını optimize etme görevi verebilirsiniz. Derin akıl yürütmeye sahip bir ajan seçin ve ona bu promptu verin.",
-    "projectMemoryOptimizationPromptFile": "Prompt dosyası"
+    "projectMemoryOptimizationPromptFile": "Prompt dosyası",
+    "taskCommandEnableReset": "Denetimli görev resetini etkinleştir",
+    "taskCommandEnableResetDescription": "reset veya discard çalışmadan önce denetimli workflow set ile görev resetini etkinleştirir.",
+    "taskCommandEnableResetAuditDescription": "task_reset.enabled=true için eksik workflow-set denetim kanıtını onarır.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled true, ancak denetimli workflow-set kanıtı eksik.",
+    "taskResetAlreadyReady": "Denetimli görev reseti zaten hazır.",
+    "taskResetReady": "Denetimli reset hazır",
+    "taskResetNotReady": "Denetimli reset hazır değil",
+    "taskResetRemediation": "Düzeltme:"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

@@ -136,6 +136,14 @@ export interface ReportWorkflowSetting {
     min?: number;
     max?: number;
     placeholder?: string;
+    readiness?: {
+        ready: boolean;
+        configured_enabled: boolean;
+        audited_enablement: boolean;
+        disabled_reason: string | null;
+        remediation_command: string | null;
+        remediation_action_id: string | null;
+    };
     readonly: true;
 }
 

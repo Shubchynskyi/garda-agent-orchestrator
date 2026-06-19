@@ -238,7 +238,15 @@
     "availableReviewTypes": "Types de review disponibles",
     "projectMemoryOptimizationTitle": "Optimisation de la mémoire du projet",
     "projectMemoryOptimizationBody": "Vous pouvez parfois confier à un agent l optimisation des fichiers de mémoire du projet. Choisissez un agent avec un raisonnement approfondi et donnez-lui ce prompt.",
-    "projectMemoryOptimizationPromptFile": "Fichier du prompt"
+    "projectMemoryOptimizationPromptFile": "Fichier du prompt",
+    "taskCommandEnableReset": "Activer la réinitialisation auditée",
+    "taskCommandEnableResetDescription": "Active la réinitialisation des tâches via workflow set audité avant reset ou discard.",
+    "taskCommandEnableResetAuditDescription": "Répare la preuve auditée workflow-set manquante pour task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled vaut true, mais la preuve auditée workflow-set est absente.",
+    "taskResetAlreadyReady": "La réinitialisation auditée des tâches est déjà prête.",
+    "taskResetReady": "Réinitialisation auditée prête",
+    "taskResetNotReady": "Réinitialisation auditée non prête",
+    "taskResetRemediation": "Correction :"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

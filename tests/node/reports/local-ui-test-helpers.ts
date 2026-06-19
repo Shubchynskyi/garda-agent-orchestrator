@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { afterEach } from 'node:test';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 
@@ -105,6 +106,25 @@ export function setLocalUiTaskResetEnabled(repoRoot: string, enabled: boolean): 
     const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
     parsed.task_reset.enabled = enabled;
     fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2));
+}
+
+export function writeLocalUiTaskResetAuditRecord(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const configText = fs.readFileSync(configPath, 'utf8');
+    const configSha = createHash('sha256').update(configText, 'utf8').digest('hex');
+    const auditPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'workflow-config-audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    fs.appendFileSync(auditPath, `${JSON.stringify({
+        schema_version: 1,
+        event_source: 'workflow-config-set',
+        timestamp_utc: new Date().toISOString(),
+        actor: 'operator_command',
+        command: 'workflow set',
+        config_path: configPath.replace(/\\/gu, '/'),
+        changed_fields: ['task_reset.enabled'],
+        before_sha256: configSha,
+        after_sha256: configSha
+    })}\n`, 'utf8');
 }
 
 export function removeLocalUiTempRepo(repoRoot: string | null | undefined): void {

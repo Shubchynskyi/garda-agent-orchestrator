@@ -238,7 +238,15 @@
     "availableReviewTypes": "Beschikbare reviewtypen",
     "projectMemoryOptimizationTitle": "Projectgeheugen optimaliseren",
     "projectMemoryOptimizationBody": "U kunt af en toe een agent de taak geven om projectgeheugenbestanden te optimaliseren. Kies een agent met diep redeneren en geef hem deze prompt.",
-    "projectMemoryOptimizationPromptFile": "Promptbestand"
+    "projectMemoryOptimizationPromptFile": "Promptbestand",
+    "taskCommandEnableReset": "Geaudite task reset inschakelen",
+    "taskCommandEnableResetDescription": "Schakelt task reset in via geaudite workflow set voordat reset of discard kan draaien.",
+    "taskCommandEnableResetAuditDescription": "Herstelt ontbrekend workflow-set-auditbewijs voor task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled is true, maar geaudite workflow-set-bewijs ontbreekt.",
+    "taskResetAlreadyReady": "Geaudite task reset is al gereed.",
+    "taskResetReady": "Geaudite reset gereed",
+    "taskResetNotReady": "Geaudite reset niet gereed",
+    "taskResetRemediation": "Herstel:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

@@ -13,6 +13,7 @@ import {
     cleanupLocalUiTestResources,
     makeLocalUiTempRepo,
     setLocalUiTaskResetEnabled,
+    writeLocalUiTaskResetAuditRecord,
     writeLocalUiRepoFixture
 } from './local-ui-test-helpers';
 
@@ -1022,6 +1023,49 @@ test('local UI task actions support preview confirmation execution and audit', a
         assert.deepEqual(executedCommands, []);
 
         setTaskResetEnabled(repoRoot, true);
+        const missingAuditResetResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-reopen', mode: 'preview' })
+        });
+        assert.equal(missingAuditResetResponse.status, 409);
+        const missingAuditReset = await missingAuditResetResponse.json() as {
+            status: string;
+            unavailable_reason: string;
+        };
+        assert.equal(missingAuditReset.status, 'unavailable');
+        assert.match(missingAuditReset.unavailable_reason, /TASK_RESET_DISABLED/u);
+        assert.match(missingAuditReset.unavailable_reason, /no matching audited workflow set record/u);
+
+        const enablePreviewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-enable-audited', mode: 'preview' })
+        });
+        assert.equal(enablePreviewResponse.status, 200);
+        const enablePreview = await enablePreviewResponse.json() as {
+            status: string;
+            command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
+        };
+        assert.equal(enablePreview.status, 'previewed');
+        assert.match(enablePreview.command, /workflow set --task-reset-enabled true/u);
+        assert.match(enablePreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
+        assert.equal(enablePreview.requires_confirmation, true);
+        assert.equal(enablePreview.confirmation_phrase, 'ENABLE TASK RESET');
+
+        const enableExecuteResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'task-reset-enable-audited', mode: 'execute', confirmation: 'ENABLE TASK RESET' })
+        });
+        assert.equal(enableExecuteResponse.status, 200);
+        assert.equal((await enableExecuteResponse.json() as { status: string }).status, 'executed');
+        assert.equal(executedCommands.length, 1);
+        assert.match(executedCommands[0], /workflow set --task-reset-enabled true/u);
+
+        writeLocalUiTaskResetAuditRecord(repoRoot);
         const resetPreviewResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
             headers: actionHeaders,
@@ -1056,8 +1100,8 @@ test('local UI task actions support preview confirmation execution and audit', a
         const resetExecute = await resetExecuteResponse.json() as { status: string; stdout: string };
         assert.equal(resetExecute.status, 'executed');
         assert.equal(resetExecute.stdout, 'task ok');
-        assert.equal(executedCommands.length, 1);
-        assert.match(executedCommands[0], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
+        assert.equal(executedCommands.length, 2);
+        assert.match(executedCommands[1], /gate task-reset --task-id T-100 --reopen --confirm --repo-root/u);
 
         const statsResponse = await fetch(`${server.url}api/tasks/T-100/actions`, {
             method: 'POST',
@@ -1068,8 +1112,8 @@ test('local UI task actions support preview confirmation execution and audit', a
         const stats = await statsResponse.json() as { status: string; stdout: string; audit_path: string };
         assert.equal(stats.status, 'executed');
         assert.equal(stats.stdout, 'task ok');
-        assert.equal(executedCommands.length, 2);
-        assert.match(executedCommands[1], /task T-100 stats --target-root/u);
+        assert.equal(executedCommands.length, 3);
+        assert.match(executedCommands[2], /task T-100 stats --target-root/u);
         const auditLines = fs.readFileSync(stats.audit_path, 'utf8').trim().split(/\r?\n/u);
         assert.match(auditLines[auditLines.length - 1], /"action_id":"T-100:task-stats"/u);
         assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);

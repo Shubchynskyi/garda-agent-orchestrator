@@ -6,9 +6,10 @@ import * as path from 'node:path';
 
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
 import { buildGuardedCommandHelpText } from '../../../../src/cli/commands/cli-format-output';
-import { isGardaSelfGuardDenyAgentEntryForBundle } from '../../../../src/core/workflow-config';
+import { buildDefaultWorkflowConfig, isGardaSelfGuardDenyAgentEntryForBundle } from '../../../../src/core/workflow-config';
 import { OPERATOR_CONFIRMATION_MAX_AGE_MS } from '../../../../src/core/operator-confirmation';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../src/core/constants';
+import { resolveTaskResetAvailability } from '../../../../src/core/task-reset-availability';
 
 const PACKAGE_JSON = { name: 'garda-agent-orchestrator', version: '1.0.0' };
 
@@ -280,6 +281,67 @@ test('workflow set updates task reset availability with audit record', () => {
 
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.task_reset.enabled, true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set can repair task reset audit evidence when config is already enabled', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+        config.task_reset.enabled = true;
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');
+
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--task-reset-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'NO_CHANGE');
+        assert.equal(result.changed, false);
+        assert.deepEqual(result.changed_fields, []);
+        assert.deepEqual(result.noop_fields, ['task_reset.enabled']);
+        assert.ok(result.audit_path);
+        assert.ok(output.includes('Status: NO_CHANGE'));
+        const auditText = fs.readFileSync(result.audit_path, 'utf8');
+        const auditRecord = JSON.parse(auditText) as { changed_fields?: unknown };
+        assert.deepEqual(auditRecord.changed_fields, ['task_reset.enabled']);
+        assert.equal(resolveTaskResetAvailability(bundleRoot).enabled, true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set repair task reset audit uses current config file bytes for non-canonical JSON', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+        config.task_reset.enabled = true;
+        fs.writeFileSync(configPath, JSON.stringify(config));
+
+        const before = resolveTaskResetAvailability(bundleRoot);
+        assert.equal(before.configuredEnabled, true);
+        assert.equal(before.auditedEnablement, false);
+        assert.equal(before.enabled, false);
+
+        const { result } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--task-reset-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'NO_CHANGE');
+        assert.ok(result.audit_path);
+        assert.equal(fs.readFileSync(configPath, 'utf8'), JSON.stringify(config));
+        assert.equal(resolveTaskResetAvailability(bundleRoot).enabled, true);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

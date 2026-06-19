@@ -238,7 +238,15 @@
     "availableReviewTypes": "उपलब्ध रिव्यू प्रकार",
     "projectMemoryOptimizationTitle": "प्रोजेक्ट मेमोरी अनुकूलन",
     "projectMemoryOptimizationBody": "कभी-कभी आप प्रोजेक्ट मेमोरी फ़ाइलों को अनुकूलित करने का कार्य किसी एजेंट को दे सकते हैं। गहरे विचार वाले एजेंट को चुनें और उसे यह प्रॉम्प्ट दें।",
-    "projectMemoryOptimizationPromptFile": "प्रॉम्प्ट फ़ाइल"
+    "projectMemoryOptimizationPromptFile": "प्रॉम्प्ट फ़ाइल",
+    "taskCommandEnableReset": "ऑडिटेड task reset चालू करें",
+    "taskCommandEnableResetDescription": "reset या discard चलाने से पहले audited workflow set के जरिए task reset चालू करता है।",
+    "taskCommandEnableResetAuditDescription": "task_reset.enabled=true के लिए missing workflow-set audit evidence को ठीक करता है।",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled true है, लेकिन audited workflow-set evidence missing है।",
+    "taskResetAlreadyReady": "Audited task reset पहले से ready है।",
+    "taskResetReady": "Audited reset ready",
+    "taskResetNotReady": "Audited reset ready नहीं है",
+    "taskResetRemediation": "उपाय:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

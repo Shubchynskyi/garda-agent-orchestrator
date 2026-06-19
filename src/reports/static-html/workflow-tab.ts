@@ -5,11 +5,16 @@ function renderWorkflowSetting(setting: ReportWorkflowSetting): string {
     const options = setting.options.length > 0
         ? setting.options.map((option) => `${option.label} (${option.value}): ${option.description}`).join('\n')
         : 'No fixed options';
+    const readiness = setting.readiness
+        ? `<br><strong>Readiness:</strong> ${escapeHtml(setting.readiness.ready ? 'ready' : 'not ready')}`
+            + (setting.readiness.disabled_reason ? `<br><code>${escapeHtml(setting.readiness.disabled_reason)}</code>` : '')
+            + (setting.readiness.remediation_command ? `<br><code>${escapeHtml(setting.readiness.remediation_command)}</code>` : '')
+        : '';
     return [
         '<tr>',
         `<td><strong>${escapeHtml(setting.label)}</strong><br><code>(${escapeHtml(setting.key)})</code></td>`,
         `<td>${escapeHtml(JSON.stringify(setting.value))}</td>`,
-        `<td>${escapeHtml(setting.description)}<br><pre>${escapeHtml(options)}</pre></td>`,
+        `<td>${escapeHtml(setting.description)}${readiness}<br><pre>${escapeHtml(options)}</pre></td>`,
         `<td><code>${escapeHtml(setting.command)}</code></td>`,
         '</tr>'
     ].join('');

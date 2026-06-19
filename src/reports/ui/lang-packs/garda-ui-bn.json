@@ -238,7 +238,15 @@
     "availableReviewTypes": "উপলব্ধ রিভিউ ধরন",
     "projectMemoryOptimizationTitle": "প্রকল্প মেমরি অপ্টিমাইজেশন",
     "projectMemoryOptimizationBody": "কখনও কখনও প্রকল্প মেমরি ফাইল অপ্টিমাইজ করার কাজ কোনো এজেন্টকে দিতে পারেন। গভীরভাবে চিন্তা করতে পারে এমন এজেন্ট বেছে নিন এবং তাকে এই প্রম্পট দিন।",
-    "projectMemoryOptimizationPromptFile": "প্রম্পট ফাইল"
+    "projectMemoryOptimizationPromptFile": "প্রম্পট ফাইল",
+    "taskCommandEnableReset": "অডিটেড task reset চালু করুন",
+    "taskCommandEnableResetDescription": "reset বা discard চালানোর আগে audited workflow set দিয়ে task reset চালু করে।",
+    "taskCommandEnableResetAuditDescription": "task_reset.enabled=true এর জন্য অনুপস্থিত workflow-set audit evidence মেরামত করে।",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled true, কিন্তু audited workflow-set evidence নেই।",
+    "taskResetAlreadyReady": "Audited task reset ইতিমধ্যে প্রস্তুত।",
+    "taskResetReady": "Audited reset প্রস্তুত",
+    "taskResetNotReady": "Audited reset প্রস্তুত নয়",
+    "taskResetRemediation": "সমাধান:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

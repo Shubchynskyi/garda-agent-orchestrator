@@ -238,7 +238,15 @@
     "availableReviewTypes": "Tipos de revisión disponibles",
     "projectMemoryOptimizationTitle": "Optimización de la memoria del proyecto",
     "projectMemoryOptimizationBody": "De vez en cuando puede asignar a un agente la optimización de los archivos de memoria del proyecto. Elija un agente con razonamiento profundo y dele este prompt.",
-    "projectMemoryOptimizationPromptFile": "Archivo del prompt"
+    "projectMemoryOptimizationPromptFile": "Archivo del prompt",
+    "taskCommandEnableReset": "Habilitar reset auditado",
+    "taskCommandEnableResetDescription": "Habilita el reset de tareas mediante workflow set auditado antes de ejecutar reset o discard.",
+    "taskCommandEnableResetAuditDescription": "Repara la evidencia auditada de workflow-set que falta para task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled es true, pero falta la evidencia auditada de workflow-set.",
+    "taskResetAlreadyReady": "El reset auditado de tareas ya está listo.",
+    "taskResetReady": "Reset auditado listo",
+    "taskResetNotReady": "Reset auditado no listo",
+    "taskResetRemediation": "Corrección:"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

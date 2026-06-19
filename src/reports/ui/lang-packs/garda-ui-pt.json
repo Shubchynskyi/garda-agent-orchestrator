@@ -238,7 +238,15 @@
     "availableReviewTypes": "Tipos de review disponíveis",
     "projectMemoryOptimizationTitle": "Otimização da memória do projeto",
     "projectMemoryOptimizationBody": "Ocasionalmente pode atribuir a um agente a tarefa de otimizar os ficheiros de memória do projeto. Escolha um agente com raciocínio profundo e dê-lhe este prompt.",
-    "projectMemoryOptimizationPromptFile": "Ficheiro do prompt"
+    "projectMemoryOptimizationPromptFile": "Ficheiro do prompt",
+    "taskCommandEnableReset": "Ativar reset auditado da tarefa",
+    "taskCommandEnableResetDescription": "Ativa o reset de tarefas por workflow set auditado antes de reset ou discard.",
+    "taskCommandEnableResetAuditDescription": "Repara a evidência auditada de workflow-set ausente para task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled é true, mas falta evidência auditada de workflow-set.",
+    "taskResetAlreadyReady": "O reset auditado da tarefa já está pronto.",
+    "taskResetReady": "Reset auditado pronto",
+    "taskResetNotReady": "Reset auditado não pronto",
+    "taskResetRemediation": "Correção:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

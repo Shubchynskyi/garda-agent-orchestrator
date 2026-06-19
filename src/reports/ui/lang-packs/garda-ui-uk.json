@@ -238,7 +238,15 @@
     "availableReviewTypes": "Доступні типи ревʼю",
     "projectMemoryOptimizationTitle": "Оптимізація памʼяті проєкту",
     "projectMemoryOptimizationBody": "Іноді можна дати агенту задачу з оптимізації файлів памʼяті. Виберіть агента з глибоким міркуванням і дайте йому цей промт.",
-    "projectMemoryOptimizationPromptFile": "Файл промта"
+    "projectMemoryOptimizationPromptFile": "Файл промта",
+    "taskCommandEnableReset": "Увімкнути перевірене скидання задач",
+    "taskCommandEnableResetDescription": "Увімкнює скидання задач через перевірений workflow set перед reset або discard.",
+    "taskCommandEnableResetAuditDescription": "Відновлює відсутній audit-доказ workflow-set для task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled дорівнює true, але немає перевіреного доказу workflow-set.",
+    "taskResetAlreadyReady": "Перевірене скидання задач уже готове.",
+    "taskResetReady": "Перевірене скидання готове",
+    "taskResetNotReady": "Перевірене скидання не готове",
+    "taskResetRemediation": "Виправлення:"
   },
   "LOCAL_UI_SETTING_TEXT": {},
   "LOCAL_UI_INIT_SETTING_TEXT": {},

@@ -12,6 +12,8 @@ import {
 import {
     cleanupLocalUiTestResources,
     makeLocalUiTempRepo,
+    setLocalUiTaskResetEnabled,
+    writeLocalUiTaskResetAuditRecord,
     writeLocalUiRepoFixture,
     writeLocalUiTaskQueue
 } from './local-ui-test-helpers';
@@ -397,10 +399,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     },
                     {
                         key: 'task_reset.enabled',
-                        value: false,
+                        value: true,
                         command: 'garda workflow show',
                         description: 'Task reset disabled',
-                        readonly: true
+                        readonly: true,
+                        readiness: {
+                            ready: false,
+                            configured_enabled: true,
+                            audited_enablement: false,
+                            disabled_reason: 'workflow-config.task_reset.enabled is true but no matching audited workflow set record was found',
+                            remediation_command: 'garda workflow set --target-root "." --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"',
+                            remediation_action_id: 'task-reset-enable-audited'
+                        }
                     }
                 ]
             },
@@ -886,7 +896,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-code\.md/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-next-step"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-reopen"/u);
-        assert.match(fakeDocument.elements.detail.innerHTML, /Task reset is disabled/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-enable-audited"/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /TASK_RESET_DISABLED/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-stats"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Show plan/u);
         const taskActionButton = fakeDocument.elements.detail.querySelectorAll('button[data-task-action-id]')
@@ -942,6 +953,52 @@ test('local UI server refreshes cached task snapshot after TASK.md changes', asy
 
         assert.equal((await fetch(`${server.url}api/tasks/T-100/detail`)).status, 404);
         assert.equal((await fetch(`${server.url}api/tasks/T-101/detail`)).status, 200);
+    } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
+});
+
+test('local UI server refreshes cached report after workflow config audit-only repair', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    setLocalUiTaskResetEnabled(repoRoot, true);
+    const server = await startLocalUiServer({ repoRoot, port: 0 });
+    const readTaskResetReadiness = async (): Promise<{
+        ready?: boolean;
+        configured_enabled?: boolean;
+        audited_enablement?: boolean;
+    } | undefined> => {
+        const response = await fetch(`${server.url}api/report`);
+        assert.equal(response.status, 200);
+        const report = await response.json() as {
+            workflow_config_tab: {
+                settings: Array<{
+                    key: string;
+                    readiness?: {
+                        ready?: boolean;
+                        configured_enabled?: boolean;
+                        audited_enablement?: boolean;
+                    };
+                }>;
+            };
+        };
+        return report.workflow_config_tab.settings.find((setting) => setting.key === 'task_reset.enabled')?.readiness;
+    };
+    try {
+        const before = await readTaskResetReadiness();
+        assert.equal(before?.configured_enabled, true);
+        assert.equal(before?.audited_enablement, false);
+        assert.equal(before?.ready, false);
+
+        writeLocalUiTaskResetAuditRecord(repoRoot);
+        const auditPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'workflow-config-audit.jsonl');
+        const future = new Date(Date.now() + 2000);
+        fs.utimesSync(auditPath, future, future);
+
+        const after = await readTaskResetReadiness();
+        assert.equal(after?.configured_enabled, true);
+        assert.equal(after?.audited_enablement, true);
+        assert.equal(after?.ready, true);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }

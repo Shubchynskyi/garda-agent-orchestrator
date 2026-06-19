@@ -141,15 +141,26 @@ function settingCurrentDisplay(setting) {
   }
   return isDurationMsSetting(setting) ? formatDurationMs(setting.current_value) : JSON.stringify(setting.current_value);
 }
+function settingReadinessNote(setting) {
+  if (!setting || setting.id !== 'task-reset-enabled' || !setting.readiness) {
+    return '';
+  }
+  const readiness = setting.readiness;
+  const state = readiness.ready === true ? t('taskResetReady') : t('taskResetNotReady');
+  const reason = readiness.disabled_reason ? '<div><code>' + safe(readiness.disabled_reason) + '</code></div>' : '';
+  const remediation = readiness.remediation_command ? '<div>' + safe(t('taskResetRemediation')) + ' <code>' + safe(readiness.remediation_command) + '</code></div>' : '';
+  return '<div class="setting-note"><strong>' + safe(state) + '</strong>' + reason + remediation + '</div>';
+}
 function renderSettingRow(setting, disabled, controlScope) {
   const label = localizedField(settingTextPacks, setting.id, 'label', setting.label);
   const description = localizedField(settingTextPacks, setting.id, 'description', setting.description);
   const dependencyNote = setting.id === 'review-cycle-auto-split-enabled'
     ? '<div class="setting-note">' + safe(t('reviewCycleAutoSplitDependency')) + '</div>'
     : '';
+  const readinessNote = settingReadinessNote(setting);
   return '<tr>'
     + '<td><div class="setting-title"><strong>' + safe(label) + '</strong><code>(' + safe(setting.key) + ')</code><span class="setting-parameter"><code>' + safe(setting.flag) + '</code></span></div></td>'
-    + '<td class="description-cell">' + inlineText(description) + dependencyNote + '</td>'
+    + '<td class="description-cell">' + inlineText(description) + dependencyNote + readinessNote + '</td>'
     + '<td><code class="current-value">' + safe(settingCurrentDisplay(setting)) + '</code></td>'
     + '<td>' + renderSettingOptions(setting) + '</td>'
     + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled, controlScope) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'

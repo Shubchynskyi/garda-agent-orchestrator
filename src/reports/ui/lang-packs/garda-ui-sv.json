@@ -238,7 +238,15 @@
     "availableReviewTypes": "Tillgängliga review-typer",
     "projectMemoryOptimizationTitle": "Optimering av projektminne",
     "projectMemoryOptimizationBody": "Ibland kan du ge en agent uppgiften att optimera projektminnesfiler. Välj en agent med djup resonemangsförmåga och ge den denna prompt.",
-    "projectMemoryOptimizationPromptFile": "Promptfil"
+    "projectMemoryOptimizationPromptFile": "Promptfil",
+    "taskCommandEnableReset": "Aktivera granskad task reset",
+    "taskCommandEnableResetDescription": "Aktiverar task reset via granskat workflow set innan reset eller discard kan köras.",
+    "taskCommandEnableResetAuditDescription": "Reparerar saknad workflow-set-revisionsbevisning för task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled är true, men granskat workflow-set-bevis saknas.",
+    "taskResetAlreadyReady": "Granskad task reset är redan redo.",
+    "taskResetReady": "Granskad reset redo",
+    "taskResetNotReady": "Granskad reset inte redo",
+    "taskResetRemediation": "Åtgärd:"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

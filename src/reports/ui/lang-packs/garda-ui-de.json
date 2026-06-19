@@ -238,7 +238,15 @@
     "availableReviewTypes": "Verfügbare Review-Typen",
     "projectMemoryOptimizationTitle": "Projektspeicher optimieren",
     "projectMemoryOptimizationBody": "Gelegentlich können Sie einem Agenten die Optimierung der Projektspeicherdateien geben. Wählen Sie einen Agenten mit tiefem Reasoning und geben Sie ihm diesen Prompt.",
-    "projectMemoryOptimizationPromptFile": "Prompt-Datei"
+    "projectMemoryOptimizationPromptFile": "Prompt-Datei",
+    "taskCommandEnableReset": "Geprüften Task-Reset aktivieren",
+    "taskCommandEnableResetDescription": "Aktiviert Task-Reset über geprüftes workflow set, bevor reset oder discard ausgeführt werden können.",
+    "taskCommandEnableResetAuditDescription": "Repariert fehlende workflow-set-Prüfnachweise für task_reset.enabled=true.",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled ist true, aber der geprüfte workflow-set-Nachweis fehlt.",
+    "taskResetAlreadyReady": "Der geprüfte Task-Reset ist bereits bereit.",
+    "taskResetReady": "Geprüfter Reset bereit",
+    "taskResetNotReady": "Geprüfter Reset nicht bereit",
+    "taskResetRemediation": "Behebung:"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

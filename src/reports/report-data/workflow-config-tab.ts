@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildDefaultWorkflowConfig, type WorkflowConfigData } from '../../core/workflow-config';
+import { resolveTaskResetAvailability } from '../../core/task-reset-availability';
 import { joinOrchestratorPath, toPosix } from '../../gates/shared/helpers';
 import { validateWorkflowConfig } from '../../schemas/config-artifacts';
 import {
@@ -186,7 +187,7 @@ function buildWorkflowSetting(repoRoot: string, config: WorkflowConfigData, rawC
     }
     const value = resolveWorkflowSettingValue(config, rawConfig, definition);
     const options = buildWorkflowSettingOptions(repoRoot, key, value, definition.options);
-    return {
+    const setting: ReportWorkflowSetting = {
         id: definition.id,
         key,
         label: definition.label,
@@ -202,6 +203,18 @@ function buildWorkflowSetting(repoRoot: string, config: WorkflowConfigData, rawC
         placeholder: definition.placeholder,
         readonly: true
     };
+    if (key === 'task_reset.enabled') {
+        const readiness = resolveTaskResetAvailability(path.resolve(repoRoot));
+        setting.readiness = {
+            ready: readiness.enabled,
+            configured_enabled: readiness.configuredEnabled,
+            audited_enablement: readiness.auditedEnablement,
+            disabled_reason: readiness.disabledReason,
+            remediation_command: readiness.remediationCommand,
+            remediation_action_id: 'task-reset-enable-audited'
+        };
+    }
+    return setting;
 }
 
 function buildWorkflowSettings(repoRoot: string, config: WorkflowConfigData, rawConfig: unknown = config): ReportWorkflowSetting[] {

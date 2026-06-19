@@ -238,7 +238,15 @@
     "availableReviewTypes": "利用可能なレビュータイプ",
     "projectMemoryOptimizationTitle": "プロジェクトメモリの最適化",
     "projectMemoryOptimizationBody": "ときどきエージェントにプロジェクトメモリファイルの最適化を依頼できます。深い推論ができるエージェントを選び、このプロンプトを渡してください。",
-    "projectMemoryOptimizationPromptFile": "プロンプトファイル"
+    "projectMemoryOptimizationPromptFile": "プロンプトファイル",
+    "taskCommandEnableReset": "監査済みタスクリセットを有効化",
+    "taskCommandEnableResetDescription": "reset または discard の前に、監査済み workflow set でタスクリセットを有効にします。",
+    "taskCommandEnableResetAuditDescription": "task_reset.enabled=true の不足している workflow-set 監査証跡を修復します。",
+    "taskResetAuditUnavailable": "TASK_RESET_DISABLED: task_reset.enabled は true ですが、監査済み workflow-set 証跡がありません。",
+    "taskResetAlreadyReady": "監査済みタスクリセットはすでに準備済みです。",
+    "taskResetReady": "監査済みリセット準備済み",
+    "taskResetNotReady": "監査済みリセット未準備",
+    "taskResetRemediation": "修復:"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

@@ -7,16 +7,43 @@ export const UI_DASHBOARD_CLIENT_TASK_DETAIL = `function reviewSummary(audit) {
   return '<ul class="list">' + summary.map(item => '<li><code>' + safe(item.review_type) + '</code>: pass=' + safe(item.pass_count) + ', fail=' + safe(item.fail_count) + ', reused=' + safe(item.reused_count) + '</li>').join('') + '</ul>';
 }
 function isTaskResetEnabled() {
+  const readiness = taskResetReadiness();
+  if (readiness) {
+    return readiness.ready === true;
+  }
   const settings = currentReport && currentReport.workflow_config_tab && currentReport.workflow_config_tab.settings
     ? currentReport.workflow_config_tab.settings
     : [];
   const setting = settings.find(item => item && item.key === 'task_reset.enabled');
   return setting && setting.value === true;
 }
+function taskResetReadiness() {
+  const settings = currentReport && currentReport.workflow_config_tab && currentReport.workflow_config_tab.settings
+    ? currentReport.workflow_config_tab.settings
+    : [];
+  const setting = settings.find(item => item && item.key === 'task_reset.enabled');
+  return setting && setting.readiness ? setting.readiness : null;
+}
+function taskResetUnavailableText() {
+  const readiness = taskResetReadiness();
+  if (!readiness) {
+    return t('taskResetUnavailable');
+  }
+  if (readiness.configured_enabled === true && readiness.audited_enablement !== true) {
+    return t('taskResetAuditUnavailable') + ' ' + (readiness.disabled_reason || '');
+  }
+  return t('taskResetUnavailable') + ' ' + (readiness.disabled_reason || '');
+}
 function taskCommandList(taskId) {
+  const resetReadiness = taskResetReadiness();
+  const resetReady = isTaskResetEnabled();
+  const resetRemediationCommand = resetReadiness && resetReadiness.remediation_command
+    ? resetReadiness.remediation_command
+    : 'garda workflow set --target-root "." --task-reset-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"';
   const commands = [
     { id: 'task-next-step', label: t('taskCommandNextStep'), description: t('taskCommandNextStepDescription'), command: 'garda next-step "' + taskId + '" --repo-root "."', mutates: true, disabled: false, unavailable: '' },
-    { id: 'task-reset-reopen', label: t('taskCommandReset'), description: t('taskCommandResetDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --reopen --confirm --repo-root "."', mutates: true, disabled: !isTaskResetEnabled(), unavailable: t('taskResetUnavailable') },
+    { id: 'task-reset-reopen', label: t('taskCommandReset'), description: t('taskCommandResetDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --reopen --confirm --repo-root "."', mutates: true, disabled: !resetReady, unavailable: taskResetUnavailableText() },
+    { id: 'task-reset-enable-audited', label: t('taskCommandEnableReset'), description: resetReadiness && resetReadiness.configured_enabled === true ? t('taskCommandEnableResetAuditDescription') : t('taskCommandEnableResetDescription'), command: resetRemediationCommand, mutates: true, disabled: resetReady, unavailable: t('taskResetAlreadyReady') },
     { id: 'task-stats', label: t('taskCommandStats'), description: t('taskCommandStatsDescription'), command: 'garda task "' + taskId + '" stats --target-root "."', mutates: false, disabled: false, unavailable: '' },
     { id: 'task-events', label: t('taskCommandEvents'), description: t('taskCommandEventsDescription'), command: 'garda task "' + taskId + '" events --target-root "."', mutates: false, disabled: false, unavailable: '' }
   ];
@@ -62,6 +89,7 @@ function wireTaskActionButtons(taskId) {
 function taskActionConfirmationPhrase(actionId) {
   if (actionId === 'task-next-step') return 'RUN TASK NEXT STEP';
   if (actionId === 'task-reset-reopen') return 'RESET TASK';
+  if (actionId === 'task-reset-enable-audited') return 'ENABLE TASK RESET';
   return null;
 }
 async function runTaskAction(taskId, actionId, mode, confirmation) {
@@ -83,6 +111,16 @@ async function runTaskAction(taskId, actionId, mode, confirmation) {
     + outputBlock('stdout', result.stdout)
     + outputBlock('stderr', result.stderr)
     + '</section>';
+  const exitCode = Number.isFinite(Number(result.exit_code)) ? Number(result.exit_code) : null;
+  if (response.ok && result.status === 'executed' && (exitCode === null || exitCode === 0) && actionId === 'task-reset-enable-audited') {
+    try {
+      const reportResponse = await fetch('/api/report');
+      currentReport = await reportResponse.json();
+      await loadDetail(taskId);
+    } catch {
+      // Keep the command result visible if refresh fails.
+    }
+  }
 }
 function planButton(detail) {
   return detail.plan && detail.plan.available

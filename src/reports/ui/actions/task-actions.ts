@@ -1,30 +1,12 @@
-import * as path from 'node:path';
-import {
-    buildDefaultWorkflowConfig,
-    getWorkflowConfigPath,
-    readWorkflowConfigForMerge
-} from '../../../core/workflow-config';
-import { resolveBundleNameForTarget } from '../../../core/constants';
+import { resolveTaskResetAvailability } from '../../../core/task-reset-availability';
 import { buildUiActionDefinition } from './action-common';
 import type { UiActionDefinition } from './types';
 
-function resolveBundleRoot(repoRoot: string): string {
-    return path.join(repoRoot, resolveBundleNameForTarget(repoRoot));
-}
-
-function isTaskResetMutationEnabled(repoRoot: string): boolean {
-    const defaultConfig = buildDefaultWorkflowConfig();
-    const bundleRoot = resolveBundleRoot(repoRoot);
-    const configPath = getWorkflowConfigPath(bundleRoot);
-    const readResult = readWorkflowConfigForMerge(configPath);
-    const taskReset = readResult.config?.task_reset && typeof readResult.config.task_reset === 'object'
-        ? readResult.config.task_reset as Record<string, unknown>
-        : defaultConfig.task_reset as unknown as Record<string, unknown>;
-    return taskReset.enabled === true;
-}
+const TASK_RESET_ENABLE_CONFIRMATION_PHRASE = 'ENABLE TASK RESET';
 
 export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): UiActionDefinition[] {
-    const taskResetEnabled = isTaskResetMutationEnabled(repoRoot);
+    const taskResetAvailability = resolveTaskResetAvailability(repoRoot);
+    const nowUtc = new Date().toISOString();
     return [
         buildUiActionDefinition(
             repoRoot,
@@ -45,8 +27,34 @@ export function buildUiTaskActionDefinitions(repoRoot: string, taskId: string): 
             {
                 mutates: true,
                 confirmationPhrase: 'RESET TASK',
-                enabled: taskResetEnabled,
-                unavailableReason: 'Task reset mutations are disabled. Enable workflow setting task_reset.enabled before running a confirmed reset.'
+                enabled: taskResetAvailability.enabled,
+                unavailableReason: `TASK_RESET_DISABLED: ${taskResetAvailability.disabledReason || 'Task reset is not ready.'} Run the audited enable action before confirmed reset/discard.`
+            }
+        ),
+        buildUiActionDefinition(
+            repoRoot,
+            'task-reset-enable-audited',
+            'Task',
+            'Enable audited task reset',
+            taskResetAvailability.configuredEnabled
+                ? 'Repair missing workflow-set audit evidence for task_reset.enabled=true.'
+                : 'Enable task reset through audited workflow set before running reset or discard.',
+            [
+                'workflow',
+                'set',
+                '--task-reset-enabled',
+                'true',
+                '--target-root',
+                repoRoot,
+                '--operator-confirmed',
+                'yes',
+                '--operator-confirmed-at-utc',
+                nowUtc
+            ],
+            {
+                mutates: true,
+                confirmationPhrase: TASK_RESET_ENABLE_CONFIRMATION_PHRASE,
+                enabled: !taskResetAvailability.enabled
             }
         ),
         buildUiActionDefinition(
