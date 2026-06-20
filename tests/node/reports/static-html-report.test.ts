@@ -229,6 +229,8 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
         timeout_forecast: {
             history_path: 'runtime/metrics/full-suite-validation-duration-history.json',
             sample_count: 5,
+            excluded_sample_count: 0,
+            excluded_sample_reasons: {},
             average_duration_seconds: 343.2,
             high_watermark_duration_seconds: 396.3,
             recommended_timeout_seconds: 476,
@@ -284,6 +286,8 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
         timeout_forecast: {
             history_path: 'runtime/metrics/full-suite-validation-duration-history.json',
             sample_count: 0,
+            excluded_sample_count: 0,
+            excluded_sample_reasons: {},
             average_duration_seconds: null,
             high_watermark_duration_seconds: null,
             recommended_timeout_seconds: 600,

@@ -1137,6 +1137,15 @@ describe('gates/next-step', () => {
 
         seedCompilePass(repoRoot, TASK_ID);
 
+        recordFullSuiteValidationDuration(repoRoot, fullSuiteConfig, {
+            timestamp_utc: '2099-01-01T00:00:00.000Z',
+            task_id: 'T-OLD-SLOW-PASS',
+            status: 'PASSED',
+            duration_ms: 400_000,
+            timed_out: false,
+            exit_code: 0
+        });
+
         seedTimedOutFullSuiteFailure(repoRoot, TASK_ID, fullSuiteConfig);
 
 
@@ -1281,13 +1290,13 @@ describe('gates/next-step', () => {
 
         assert.equal(result.next_gate, 'full-suite-validation');
 
-        assert.match(result.reason, /Recommended full-suite command timeout: 240s/);
+        assert.match(result.reason, /Recommended full-suite command timeout: 130s/);
 
-        assert.match(result.reason, /last 2 run\(s\) avg 150s/);
+        assert.match(result.reason, /last 1 run\(s\) avg 100s/);
 
-        assert.match(result.reason, /max 200s/);
+        assert.match(result.reason, /max 100s/);
 
-        assert.ok(text.includes('FullSuiteTimeout: Recommended full-suite command timeout: 240s'));
+        assert.ok(text.includes('FullSuiteTimeout: Recommended full-suite command timeout: 130s'));
 
     });
 
@@ -1622,6 +1631,15 @@ describe('gates/next-step', () => {
         seedCompilePass(repoRoot, TASK_ID);
 
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
+
+        recordFullSuiteValidationDuration(repoRoot, NEXT_STEP_FULL_SUITE_TEST_CONFIG, {
+            timestamp_utc: '2099-01-01T00:00:00.000Z',
+            task_id: 'T-OLD-SLOW-PASS',
+            status: 'PASSED',
+            duration_ms: 400_000,
+            timed_out: false,
+            exit_code: 0
+        });
 
         seedTimedOutFullSuiteFailure(repoRoot, TASK_ID, NEXT_STEP_FULL_SUITE_TEST_CONFIG);
 

@@ -12,6 +12,7 @@ import { normalizeBooleanLike, normalizeInteger } from '../../schemas/shared';
 import { joinOrchestratorPath, normalizePath } from '../shared/helpers';
 import {
     OUT_OF_SCOPE_FAILURE_POLICIES,
+    type FullSuiteDurationForecastExclusionReason,
     type FullSuiteDurationHistory,
     type FullSuiteDurationHistoryEntry,
     type FullSuitePerformanceGuidance,
@@ -23,6 +24,8 @@ import {
 export const FULL_SUITE_DURATION_HISTORY_LIMIT = 5;
 export const FULL_SUITE_TIMEOUT_MARGIN_RATIO = 0.2;
 export const FULL_SUITE_TIMEOUT_MIN_MARGIN_SECONDS = 30;
+export const FULL_SUITE_DURATION_OUTLIER_MIN_MS = 6 * 60 * 60 * 1000;
+export const FULL_SUITE_DURATION_OUTLIER_TIMEOUT_MULTIPLIER = 3;
 
 const DEFAULT_CONFIG: FullSuiteValidationConfig = Object.freeze({
     enabled: false,
@@ -167,7 +170,44 @@ function isFullSuiteDurationHistoryEntry(value: unknown): value is FullSuiteDura
         && Number.isFinite(value.duration_ms)
         && value.duration_ms > 0
         && typeof value.timed_out === 'boolean'
+        && (typeof value.cancelled === 'boolean' || value.cancelled === undefined)
+        && (typeof value.retry_contaminated === 'boolean' || value.retry_contaminated === undefined)
         && (typeof value.exit_code === 'number' || value.exit_code === null);
+}
+
+export function classifyFullSuiteForecastSample(
+    config: FullSuiteValidationConfig,
+    entry: Pick<FullSuiteDurationHistoryEntry, 'status' | 'duration_ms' | 'timed_out' | 'cancelled' | 'retry_contaminated' | 'exit_code'>
+): {
+    eligible: boolean;
+    reason: FullSuiteDurationForecastExclusionReason;
+} {
+    if (!Number.isFinite(entry.duration_ms) || entry.duration_ms <= 0) {
+        return { eligible: false, reason: 'invalid_duration' };
+    }
+    if (entry.timed_out) {
+        return { eligible: false, reason: 'timed_out' };
+    }
+    if (entry.cancelled === true) {
+        return { eligible: false, reason: 'interrupted_or_cancelled' };
+    }
+    if (entry.retry_contaminated === true) {
+        return { eligible: false, reason: 'retry_contaminated' };
+    }
+    if (entry.status !== 'PASSED') {
+        return { eligible: false, reason: 'non_passing_status' };
+    }
+    if (entry.exit_code !== 0) {
+        return { eligible: false, reason: 'nonzero_exit' };
+    }
+    const outlierThresholdMs = Math.max(
+        FULL_SUITE_DURATION_OUTLIER_MIN_MS,
+        config.timeout_ms * FULL_SUITE_DURATION_OUTLIER_TIMEOUT_MULTIPLIER
+    );
+    if (entry.duration_ms > outlierThresholdMs) {
+        return { eligible: false, reason: 'outlier_duration' };
+    }
+    return { eligible: true, reason: 'none' };
 }
 
 export function readFullSuiteDurationHistory(repoRoot: string): {
@@ -220,12 +260,15 @@ export function recordFullSuiteValidationDuration(
     const historyPath = resolveFullSuiteDurationHistoryPath(repoRoot);
     const signature = buildFullSuiteConfigSignature(config);
     const { history } = readFullSuiteDurationHistory(repoRoot);
+    const sampleClassification = classifyFullSuiteForecastSample(config, entry);
     const entries = [
         ...history.entries.filter((candidate) => candidate.config_signature_sha256 === signature),
         {
             ...entry,
             command: redactSecretText(config.command),
-            config_signature_sha256: signature
+            config_signature_sha256: signature,
+            forecast_sample_eligible: sampleClassification.eligible,
+            forecast_exclusion_reason: sampleClassification.reason
         }
     ].slice(-FULL_SUITE_DURATION_HISTORY_LIMIT);
     const nextHistory: FullSuiteDurationHistory = {
@@ -246,15 +289,32 @@ export function buildFullSuiteTimeoutForecast(
     const historyPath = resolveFullSuiteDurationHistoryPath(repoRoot);
     const signature = buildFullSuiteConfigSignature(config);
     const { history, warning } = readFullSuiteDurationHistory(repoRoot);
-    const samples = history.entries
+    const matchingEntries = history.entries
         .filter((entry) => entry.config_signature_sha256 === signature)
         .filter((entry) => Number.isFinite(entry.duration_ms) && entry.duration_ms > 0)
         .slice(-FULL_SUITE_DURATION_HISTORY_LIMIT);
+    const classifiedEntries = matchingEntries.map((entry) => ({
+        entry,
+        classification: classifyFullSuiteForecastSample(config, entry)
+    }));
+    const samples = classifiedEntries
+        .filter(({ classification }) => classification.eligible)
+        .map(({ entry }) => entry);
+    const excludedSampleReasons: Partial<Record<FullSuiteDurationForecastExclusionReason, number>> = {};
+    for (const { classification } of classifiedEntries) {
+        if (classification.eligible) {
+            continue;
+        }
+        excludedSampleReasons[classification.reason] = (excludedSampleReasons[classification.reason] || 0) + 1;
+    }
+    const excludedSampleCount = classifiedEntries.length - samples.length;
     const configuredTimeoutSeconds = Math.ceil(config.timeout_ms / 1000);
     if (samples.length === 0) {
         return {
             history_path: normalizePath(historyPath),
             sample_count: 0,
+            excluded_sample_count: excludedSampleCount,
+            excluded_sample_reasons: excludedSampleReasons,
             average_duration_seconds: null,
             high_watermark_duration_seconds: null,
             recommended_timeout_seconds: configuredTimeoutSeconds,
@@ -276,6 +336,8 @@ export function buildFullSuiteTimeoutForecast(
     return {
         history_path: normalizePath(historyPath),
         sample_count: samples.length,
+        excluded_sample_count: excludedSampleCount,
+        excluded_sample_reasons: excludedSampleReasons,
         average_duration_seconds: Math.round(averageDurationSeconds * 10) / 10,
         high_watermark_duration_seconds: Math.round(highWatermarkDurationSeconds * 10) / 10,
         recommended_timeout_seconds: recommendedTimeoutSeconds,
@@ -287,15 +349,35 @@ export function buildFullSuiteTimeoutForecast(
 }
 
 export function formatFullSuiteTimeoutForecast(forecast: FullSuiteTimeoutForecast): string {
+    const exclusionSummary = formatFullSuiteForecastExclusionSummary(forecast);
     if (forecast.recommendation_source === 'history' && forecast.average_duration_seconds !== null) {
+        const excludedFragment = exclusionSummary ? `; ${exclusionSummary}` : '';
         return `Recommended full-suite command timeout: ${forecast.recommended_timeout_seconds}s `
             + `(last ${forecast.sample_count} run(s) avg ${forecast.average_duration_seconds}s; `
             + `max ${forecast.high_watermark_duration_seconds}s; `
-            + `safety margin over max +${forecast.safety_margin_seconds}s = 20% but at least 30s).`;
+            + `safety margin over max +${forecast.safety_margin_seconds}s = 20% but at least 30s${excludedFragment}).`;
     }
     const suffix = forecast.warning ? ` ${forecast.warning}` : '';
+    if (exclusionSummary) {
+        return `Recommended full-suite command timeout: ${forecast.recommended_timeout_seconds}s `
+            + `(no eligible recent matching full-suite duration history; ${exclusionSummary}; using configured timeout).${suffix}`;
+    }
     return `Recommended full-suite command timeout: ${forecast.recommended_timeout_seconds}s `
         + `(no recent matching full-suite duration history; using configured timeout).${suffix}`;
+}
+
+function formatFullSuiteForecastExclusionSummary(forecast: FullSuiteTimeoutForecast): string | null {
+    if (!forecast.excluded_sample_count) {
+        return null;
+    }
+    const reasons = Object.entries(forecast.excluded_sample_reasons)
+        .filter(([, count]) => typeof count === 'number' && count > 0)
+        .map(([reason, count]) => `${reason}=${count}`)
+        .sort();
+    if (reasons.length === 0) {
+        return `${forecast.excluded_sample_count} matching run(s) excluded from forecast`;
+    }
+    return `${forecast.excluded_sample_count} matching run(s) excluded from forecast (${reasons.join(', ')})`;
 }
 
 function commandIncludesShardMode(command: string): boolean {

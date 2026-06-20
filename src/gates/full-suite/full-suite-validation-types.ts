@@ -40,7 +40,11 @@ export interface FullSuiteDurationHistoryEntry {
     config_signature_sha256: string;
     duration_ms: number;
     timed_out: boolean;
+    cancelled?: boolean;
+    retry_contaminated?: boolean;
     exit_code: number | null;
+    forecast_sample_eligible?: boolean;
+    forecast_exclusion_reason?: FullSuiteDurationForecastExclusionReason;
 }
 
 export interface FullSuiteDurationHistory {
@@ -50,9 +54,21 @@ export interface FullSuiteDurationHistory {
     entries: FullSuiteDurationHistoryEntry[];
 }
 
+export type FullSuiteDurationForecastExclusionReason =
+    | 'none'
+    | 'timed_out'
+    | 'interrupted_or_cancelled'
+    | 'retry_contaminated'
+    | 'non_passing_status'
+    | 'nonzero_exit'
+    | 'invalid_duration'
+    | 'outlier_duration';
+
 export interface FullSuiteTimeoutForecast {
     history_path: string;
     sample_count: number;
+    excluded_sample_count: number;
+    excluded_sample_reasons: Partial<Record<FullSuiteDurationForecastExclusionReason, number>>;
     average_duration_seconds: number | null;
     high_watermark_duration_seconds: number | null;
     recommended_timeout_seconds: number;
@@ -66,6 +82,7 @@ export interface FullSuiteTimeoutAttemptEvidence {
     attempt: number;
     exit_code: number | null;
     timed_out: boolean;
+    cancelled?: boolean;
 }
 
 export interface FullSuiteTimeoutRepairTaskProposal {

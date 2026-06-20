@@ -455,6 +455,8 @@ export function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number)
             timeout_forecast: {
                 history_path: '',
                 sample_count: 0,
+                excluded_sample_count: 0,
+                excluded_sample_reasons: {},
                 average_duration_seconds: null,
                 high_watermark_duration_seconds: null,
                 recommended_timeout_seconds: 0,

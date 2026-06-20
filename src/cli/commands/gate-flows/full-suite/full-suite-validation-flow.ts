@@ -326,6 +326,7 @@ export async function runFullSuiteValidationCommand(
 
     let commandExitCode = EXIT_GENERAL_FAILURE;
     let timedOut = false;
+    let cancelled = false;
     let outputLines: string[] = [];
     const executionConfig = resolveEffectiveFullSuiteValidationConfig(repoRoot, config);
     const startedAtMs = Date.now();
@@ -354,6 +355,7 @@ export async function runFullSuiteValidationCommand(
             });
             commandExitCode = execution.exitCode;
             timedOut = execution.timedOut;
+            cancelled = execution.cancelled;
             const attemptLines = maxAttempts > 1 && (attempt > 1 || execution.timedOut)
                 ? [`FULL_SUITE_ATTEMPT ${attempt}/${maxAttempts}`]
                 : [];
@@ -366,6 +368,7 @@ export async function runFullSuiteValidationCommand(
             const message = error instanceof Error ? error.message : String(error);
             commandExitCode = EXIT_GENERAL_FAILURE;
             timedOut = false;
+            cancelled = false;
             const attemptLines = maxAttempts > 1 && attempt > 1
                 ? [`FULL_SUITE_ATTEMPT ${attempt}/${maxAttempts}`]
                 : [];
@@ -378,7 +381,8 @@ export async function runFullSuiteValidationCommand(
         timeoutAttempts.push({
             attempt,
             exit_code: commandExitCode,
-            timed_out: timedOut
+            timed_out: timedOut,
+            cancelled
         });
 
         if (timedOut) {
@@ -402,6 +406,7 @@ export async function runFullSuiteValidationCommand(
         );
     }
     const durationMs = Math.max(1, Date.now() - startedAtMs);
+    const retryContaminated = timeoutAttempts.some((attempt) => attempt.timed_out || attempt.cancelled === true);
     outputLines = outputLines.map((line) => redactSecretText(line));
     const rawOutputText = serializeCapturedOutputLines(outputLines);
     const result = buildValidationResult(
@@ -478,6 +483,8 @@ export async function runFullSuiteValidationCommand(
                 status: blockedResult.status,
                 duration_ms: durationMs,
                 timed_out: timedOut,
+                cancelled,
+                retry_contaminated: retryContaminated,
                 exit_code: commandExitCode
             });
         }
@@ -515,6 +522,8 @@ export async function runFullSuiteValidationCommand(
             status: result.status,
             duration_ms: durationMs,
             timed_out: timedOut,
+            cancelled,
+            retry_contaminated: retryContaminated,
             exit_code: commandExitCode
         });
     }

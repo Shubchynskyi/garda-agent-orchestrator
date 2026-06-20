@@ -10,6 +10,8 @@ import {
     formatFullSuiteTimeoutForecast,
     loadFullSuiteValidationConfig,
     persistFullSuiteFailureEvidence,
+    recordFullSuiteValidationDuration,
+    resolveFullSuiteDurationHistoryPath,
     type FullSuiteValidationCycleBinding,
     type FullSuiteValidationResult
 } from '../../../../gates/full-suite/full-suite-validation';
@@ -381,12 +383,25 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
     const artifactPath = path.join(reviewsRoot, `${options.taskId}-full-suite-validation.json`);
     const outputArtifactPath = path.join(reviewsRoot, `${options.taskId}-full-suite-output.log`);
     const config = loadFullSuiteValidationConfig(options.repoRoot);
-    const timeoutForecast = buildFullSuiteTimeoutForecast(options.repoRoot, config);
     const timeoutMs = options.summary?.timeoutMs || config.timeout_ms;
     const startedAtMs = Date.parse(options.summary?.startedAtUtc || '');
     const durationMs = Number.isFinite(startedAtMs)
         ? Math.max(1, Date.now() - startedAtMs)
         : timeoutMs;
+    const historyPath = resolveFullSuiteDurationHistoryPath(options.repoRoot);
+    const previousHistoryText = fs.existsSync(historyPath) && fs.statSync(historyPath).isFile()
+        ? fs.readFileSync(historyPath, 'utf8')
+        : null;
+    recordFullSuiteValidationDuration(options.repoRoot, config, {
+        timestamp_utc: new Date().toISOString(),
+        task_id: options.taskId,
+        status: 'FAILED',
+        duration_ms: durationMs,
+        timed_out: true,
+        cancelled: true,
+        exit_code: null
+    });
+    const timeoutForecast = buildFullSuiteTimeoutForecast(options.repoRoot, config);
     const outputLines = [
         'FULL_SUITE_INTERRUPTED_TIMEOUT_RECOVERY',
         `TaskId: ${options.taskId}`,
@@ -448,25 +463,34 @@ async function materializeInterruptedFullSuiteTimeoutEvidence(options: {
         outputLines
     });
     result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);
-    await writeArtifactThenEmitMandatoryFullSuiteEvent(options.repoRoot, eventsRoot, options.taskId, artifactPath, result.status, result, {
-        status: result.status,
-        enabled: result.enabled,
-        command: result.command,
-        exit_code: result.exit_code,
-        timed_out: result.timed_out,
-        preflight_path: result.cycle_binding?.preflight_path || gateHelpers.normalizePath(options.preflightPath),
-        artifact_path: gateHelpers.normalizePath(artifactPath),
-        output_artifact_path: result.output_artifact_path,
-        duration_ms: result.duration_ms,
-        timeout_forecast: result.timeout_forecast,
-        cycle_binding: result.cycle_binding,
-        violations: result.violations,
-        warnings: result.warnings,
-        output_telemetry: result.output_telemetry,
-        output_retention: result.output_retention,
-        failure_evidence: result.failure_evidence,
-        recovery_artifact_path: gateHelpers.normalizePath(options.recoveryArtifactPath)
-    });
+    try {
+        await writeArtifactThenEmitMandatoryFullSuiteEvent(options.repoRoot, eventsRoot, options.taskId, artifactPath, result.status, result, {
+            status: result.status,
+            enabled: result.enabled,
+            command: result.command,
+            exit_code: result.exit_code,
+            timed_out: result.timed_out,
+            preflight_path: result.cycle_binding?.preflight_path || gateHelpers.normalizePath(options.preflightPath),
+            artifact_path: gateHelpers.normalizePath(artifactPath),
+            output_artifact_path: result.output_artifact_path,
+            duration_ms: result.duration_ms,
+            timeout_forecast: result.timeout_forecast,
+            cycle_binding: result.cycle_binding,
+            violations: result.violations,
+            warnings: result.warnings,
+            output_telemetry: result.output_telemetry,
+            output_retention: result.output_retention,
+            failure_evidence: result.failure_evidence,
+            recovery_artifact_path: gateHelpers.normalizePath(options.recoveryArtifactPath)
+        });
+    } catch (error) {
+        if (previousHistoryText === null) {
+            fs.rmSync(historyPath, { force: true });
+        } else {
+            fs.writeFileSync(historyPath, previousHistoryText, 'utf8');
+        }
+        throw error;
+    }
 }
 
 function formatSummaryLines(summary: FullSuiteValidationInterruptedRunSummary): string[] {

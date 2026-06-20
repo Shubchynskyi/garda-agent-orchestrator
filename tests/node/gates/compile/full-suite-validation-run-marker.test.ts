@@ -13,6 +13,7 @@ import {
     runFullSuiteRunMarkerRecoveryCommand
 } from '../../../../src/cli/commands/gate-flows/full-suite/full-suite-run-marker-recovery';
 import { fileSha256, normalizePath } from '../../../../src/gates/shared/helpers';
+import { resolveFullSuiteDurationHistoryPath } from '../../../../src/gates/full-suite/full-suite-validation';
 
 describe('full-suite validation run marker', () => {
     function writeCurrentMarker(options: {
@@ -196,13 +197,45 @@ describe('full-suite validation run marker', () => {
             const compactSummary = fullSuiteArtifact.compact_summary;
             assert.ok(Array.isArray(compactSummary));
             const compactSummaryText = compactSummary.join('\n');
+            assert.match(compactSummaryText, /no eligible recent matching full-suite duration history/u);
+            assert.match(compactSummaryText, /1 matching run\(s\) excluded from forecast \(timed_out=1\)/u);
             assert.match(compactSummaryText, new RegExp(`NextRecoveryCommand: .+next-step "${taskId}" --repo-root "\\."`, 'u'));
             assert.match(compactSummaryText, new RegExp(`CleanupCommand: .+gate full-suite-run-marker-recovery --task-id "${taskId}"`, 'u'));
             const outputLog = fs.readFileSync(path.join(reviewsRoot, `${taskId}-full-suite-output.log`), 'utf8');
             assert.match(outputLog, /FULL_SUITE_INTERRUPTED_TIMEOUT_RECOVERY/u);
+            assert.match(outputLog, /no eligible recent matching full-suite duration history/u);
+            assert.match(outputLog, /1 matching run\(s\) excluded from forecast \(timed_out=1\)/u);
             assert.match(outputLog, new RegExp(`CleanupCommand: .+gate full-suite-run-marker-recovery --task-id "${taskId}"`, 'u'));
             const timeline = fs.readFileSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`), 'utf8');
             assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/u);
+            const durationHistory = JSON.parse(fs.readFileSync(resolveFullSuiteDurationHistoryPath(repoRoot), 'utf8')) as {
+                entries: Array<{
+                    task_id: string;
+                    status: string;
+                    timed_out: boolean;
+                    cancelled: boolean;
+                    exit_code: number | null;
+                    forecast_sample_eligible: boolean;
+                    forecast_exclusion_reason: string;
+                }>;
+            };
+            assert.deepEqual(durationHistory.entries.map((entry) => ({
+                task_id: entry.task_id,
+                status: entry.status,
+                timed_out: entry.timed_out,
+                cancelled: entry.cancelled,
+                exit_code: entry.exit_code,
+                forecast_sample_eligible: entry.forecast_sample_eligible,
+                forecast_exclusion_reason: entry.forecast_exclusion_reason
+            })), [{
+                task_id: taskId,
+                status: 'FAILED',
+                timed_out: true,
+                cancelled: true,
+                exit_code: null,
+                forecast_sample_eligible: false,
+                forecast_exclusion_reason: 'timed_out'
+            }]);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
@@ -311,6 +344,7 @@ describe('full-suite validation run marker', () => {
             assert.equal(recoveryArtifact.terminal_full_suite_evidence, null);
             const fullSuiteArtifactPath = path.join(reviewsRoot, `${taskId}-full-suite-validation.json`);
             assert.equal(fs.existsSync(fullSuiteArtifactPath), false);
+            assert.equal(fs.existsSync(resolveFullSuiteDurationHistoryPath(repoRoot)), false);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

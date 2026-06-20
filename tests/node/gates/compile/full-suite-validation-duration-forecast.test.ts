@@ -93,10 +93,10 @@ describe('gates/full-suite-validation', () => {
                 recordFullSuiteValidationDuration(repoRoot, config, {
                     timestamp_utc: `2099-01-01T00:00:0${index}.000Z`,
                     task_id: `T-${index}`,
-                    status: index % 2 === 0 ? 'PASSED' : 'FAILED',
+                    status: 'PASSED',
                     duration_ms: (index + 1) * 10_000,
                     timed_out: false,
-                    exit_code: index % 2 === 0 ? 0 : 1
+                    exit_code: 0
                 });
             }
 
@@ -138,6 +138,158 @@ describe('gates/full-suite-validation', () => {
             assert.equal(forecast.high_watermark_duration_seconds, 500);
             assert.equal(forecast.recommended_timeout_seconds, 600);
             assert.equal(forecast.safety_margin_seconds, 100);
+            assert.equal(forecast.excluded_sample_count, 0);
+        });
+
+        it('excludes timed-out and interrupted runs from timeout forecasts without dropping diagnostic history', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-hygiene-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig();
+
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:00.000Z',
+                task_id: 'T-GREEN',
+                status: 'PASSED',
+                duration_ms: 100_000,
+                timed_out: false,
+                exit_code: 0
+            });
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:01.000Z',
+                task_id: 'T-TIMEOUT',
+                status: 'FAILED',
+                duration_ms: 29_547_989,
+                timed_out: true,
+                exit_code: 1
+            });
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:02.000Z',
+                task_id: 'T-CANCELLED',
+                status: 'FAILED',
+                duration_ms: 600_000,
+                timed_out: false,
+                cancelled: true,
+                exit_code: 1
+            });
+
+            const history = JSON.parse(fs.readFileSync(resolveFullSuiteDurationHistoryPath(repoRoot), 'utf8')) as {
+                entries: Array<{
+                    task_id: string;
+                    forecast_sample_eligible: boolean;
+                    forecast_exclusion_reason: string;
+                }>;
+            };
+            assert.equal(history.entries.length, 3);
+            assert.deepEqual(history.entries.map((entry) => entry.task_id), ['T-GREEN', 'T-TIMEOUT', 'T-CANCELLED']);
+            assert.deepEqual(history.entries.map((entry) => entry.forecast_sample_eligible), [true, false, false]);
+            assert.deepEqual(history.entries.map((entry) => entry.forecast_exclusion_reason), ['none', 'timed_out', 'interrupted_or_cancelled']);
+
+            const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 1);
+            assert.equal(forecast.excluded_sample_count, 2);
+            assert.equal(forecast.excluded_sample_reasons.timed_out, 1);
+            assert.equal(forecast.excluded_sample_reasons.interrupted_or_cancelled, 1);
+            assert.equal(forecast.average_duration_seconds, 100);
+            assert.equal(forecast.high_watermark_duration_seconds, 100);
+            assert.equal(forecast.recommended_timeout_seconds, 130);
+            const text = formatFullSuiteTimeoutForecast(forecast);
+            assert.match(text, /last 1 run\(s\) avg 100s/);
+            assert.match(text, /2 matching run\(s\) excluded from forecast/);
+            assert.match(text, /interrupted_or_cancelled=1/);
+            assert.match(text, /timed_out=1/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('excludes only implausible successful outlier durations while preserving normal slow successful runs', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-outlier-hygiene-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig();
+
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:00.000Z',
+                task_id: 'T-SLOW-SUCCESS',
+                status: 'PASSED',
+                duration_ms: 500_000,
+                timed_out: false,
+                exit_code: 0
+            });
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:01.000Z',
+                task_id: 'T-SUSPENDED-WALLCLOCK',
+                status: 'PASSED',
+                duration_ms: 24 * 60 * 60 * 1000 + 1,
+                timed_out: false,
+                exit_code: 0
+            });
+
+            const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 1);
+            assert.equal(forecast.excluded_sample_count, 1);
+            assert.equal(forecast.excluded_sample_reasons.outlier_duration, 1);
+            assert.equal(forecast.high_watermark_duration_seconds, 500);
+            assert.equal(forecast.recommended_timeout_seconds, 600);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('surfaces excluded matching runs when no eligible forecast samples remain', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-all-excluded-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig();
+
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:00.000Z',
+                task_id: 'T-TIMEOUT',
+                status: 'FAILED',
+                duration_ms: 600_000,
+                timed_out: true,
+                exit_code: 1
+            });
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:01.000Z',
+                task_id: 'T-CANCELLED',
+                status: 'FAILED',
+                duration_ms: 500_000,
+                timed_out: false,
+                cancelled: true,
+                exit_code: 1
+            });
+
+            const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 0);
+            assert.equal(forecast.excluded_sample_count, 2);
+            const text = formatFullSuiteTimeoutForecast(forecast);
+            assert.match(text, /no eligible recent matching full-suite duration history/);
+            assert.match(text, /2 matching run\(s\) excluded from forecast/);
+            assert.match(text, /interrupted_or_cancelled=1/);
+            assert.match(text, /timed_out=1/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('excludes retry-contaminated successful runs from timeout forecasts', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-retry-contaminated-'));
+            const repoRoot = path.join(tempDir, 'repo');
+            fs.mkdirSync(repoRoot, { recursive: true });
+            const config = buildFullSuiteDurationTestConfig();
+
+            recordFullSuiteValidationDuration(repoRoot, config, {
+                timestamp_utc: '2099-01-01T00:00:00.000Z',
+                task_id: 'T-RETRY-PASS',
+                status: 'PASSED',
+                duration_ms: 600_000,
+                timed_out: false,
+                retry_contaminated: true,
+                exit_code: 0
+            });
+
+            const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
+            assert.equal(forecast.sample_count, 0);
+            assert.equal(forecast.excluded_sample_count, 1);
+            assert.equal(forecast.excluded_sample_reasons.retry_contaminated, 1);
+            assert.match(formatFullSuiteTimeoutForecast(forecast), /retry_contaminated=1/);
+            fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
         it('redacts secrets from recorded duration history command fields', () => {

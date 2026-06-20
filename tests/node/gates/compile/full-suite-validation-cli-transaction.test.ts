@@ -487,13 +487,30 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'FAILED');
             assert.equal(typeof artifact.duration_ms, 'number');
-            assert.equal(artifact.timeout_forecast.recommendation_source, 'history');
+            assert.equal(artifact.timeout_forecast.recommendation_source, 'config_timeout');
             const durationHistory = JSON.parse(
                 fs.readFileSync(resolveFullSuiteDurationHistoryPath(tempDir), 'utf8')
-            ) as { entries: Array<{ task_id: string; status: string; }>; };
+            ) as {
+                entries: Array<{
+                    task_id: string;
+                    status: string;
+                    forecast_sample_eligible: boolean;
+                    forecast_exclusion_reason: string;
+                }>;
+            };
             assert.deepEqual(
-                durationHistory.entries.map((entry) => ({ task_id: entry.task_id, status: entry.status })),
-                [{ task_id: 'T-POST-WORKFLOW-CONFIG', status: 'FAILED' }]
+                durationHistory.entries.map((entry) => ({
+                    task_id: entry.task_id,
+                    status: entry.status,
+                    forecast_sample_eligible: entry.forecast_sample_eligible,
+                    forecast_exclusion_reason: entry.forecast_exclusion_reason
+                })),
+                [{
+                    task_id: 'T-POST-WORKFLOW-CONFIG',
+                    status: 'FAILED',
+                    forecast_sample_eligible: false,
+                    forecast_exclusion_reason: 'non_passing_status'
+                }]
             );
             assert.ok(artifact.violations.some((line: string) => line.includes('Workflow config')));
             fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1033,6 +1050,31 @@ describe('gates/full-suite-validation', () => {
             assert.equal(artifact.timeout_policy.warning_only_continuation, false);
             assert.ok(artifact.compact_summary.some((line: string) => line.includes('FULL_SUITE_TIMEOUT_RETRY')));
             assert.ok(artifact.compact_summary.some((line: string) => line.includes('retry pass')));
+            const durationHistory = JSON.parse(fs.readFileSync(resolveFullSuiteDurationHistoryPath(tempDir), 'utf8')) as {
+                entries: Array<{
+                    task_id: string;
+                    status: string;
+                    timed_out: boolean;
+                    retry_contaminated: boolean;
+                    forecast_sample_eligible: boolean;
+                    forecast_exclusion_reason: string;
+                }>;
+            };
+            assert.deepEqual(durationHistory.entries.map((entry) => ({
+                task_id: entry.task_id,
+                status: entry.status,
+                timed_out: entry.timed_out,
+                retry_contaminated: entry.retry_contaminated,
+                forecast_sample_eligible: entry.forecast_sample_eligible,
+                forecast_exclusion_reason: entry.forecast_exclusion_reason
+            })), [{
+                task_id: 'T-TIMEOUT-RETRY',
+                status: 'PASSED',
+                timed_out: false,
+                retry_contaminated: true,
+                forecast_sample_eligible: false,
+                forecast_exclusion_reason: 'retry_contaminated'
+            }]);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
