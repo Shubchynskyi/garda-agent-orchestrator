@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "रिपेयर निरीक्षण",
       "description": "फ़ाइलें rebuild या delete किए बिना canonical और derived runtime state की जाँच करता है।"
+    },
+    "repair-rebuild-indexes": {
+      "label": "Indexes फिर बनाएं",
+      "description": "Canonical runtime evidence से derived task timeline और review indexes फिर बनाता है।"
+    },
+    "repair-protected-manifest": {
+      "label": "Protected manifest refresh करें",
+      "description": "मौजूदा workspace snapshot से trusted protected control-plane manifest refresh करता है।"
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Stale locks साफ करें",
+      "description": "केवल उन task-event और review-artifact locks को हटाता है जिन्हें Garda stale मानता है।"
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "निरीक्षण"
+    "Inspection": "निरीक्षण",
+    "Repair": "मरम्मत"
   }
 }

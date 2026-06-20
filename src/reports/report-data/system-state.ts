@@ -274,7 +274,7 @@ function buildProtectedManifestSignal(repoRoot: string): ReportSystemState['prot
                 ? `Protected manifest drift detected for ${evidence.changed_files.length} file(s).`
                 : `Protected manifest status is ${evidence.status}.`,
             assessment?.requires_refresh
-                ? 'If the drift is operator-approved, run repair protected-manifest with confirmation.'
+                ? 'If the drift is operator-approved, run `garda repair protected-manifest --target-root "." --confirm` or use the guarded UI repair action.'
                 : null,
             evidence.status,
             evidence.manifest_path
@@ -344,7 +344,7 @@ function buildRuntimeSignals(repoRoot: string, rows: ReportTaskRow[]): ReportSys
                 ? `${lockHealth.active_count} active task-event lock(s) detected; none are classified as stale.`
                 : 'No task-event locks are classified as stale.',
         lockHealth.stale_count > 0
-            ? lockHealth.locks.find((lock) => lock.status === 'STALE')?.remediation ?? 'Run doctor stale-lock cleanup diagnostics before removing locks.'
+            ? 'Review stale-lock diagnostics, then run `garda repair locks --target-root "." --cleanup-stale --confirm` or use the guarded UI repair action.'
             : runtimeArtifactScan.truncated
                 ? 'Run doctor for a complete runtime lock classification; the broad artifact scan was truncated.'
                 : null,
@@ -374,7 +374,7 @@ function buildRuntimeSignals(repoRoot: string, rows: ReportTaskRow[]): ReportSys
             ? `${timelineSummary.warnings.length} task timeline warning(s) detected.`
             : `${timelineSummary.healthy}/${timelineSummary.taskCount} task timeline(s) are complete.`,
         timelineSummary.warnings.length > 0
-            ? timelineSummary.warnings[0]
+            ? `${timelineSummary.warnings[0]} After reviewing the warning, use \`garda repair rebuild-indexes --target-root "." --confirm\` or the guarded UI repair action.`
             : null,
         {
             task_count: timelineSummary.taskCount,
@@ -391,7 +391,7 @@ function buildRuntimeSignals(repoRoot: string, rows: ReportTaskRow[]): ReportSys
         runtimeArtifactScan.truncated
             ? `Runtime artifact scan reached the ${MAX_RUNTIME_SIGNAL_SCAN_ENTRIES} entry limit.`
             : `${runtimeArtifactScan.count} broad runtime lock artifact(s) were found in the bounded scan.`,
-        runtimeArtifactScan.truncated ? 'Run doctor for complete runtime diagnostics when this bounded UI summary is truncated.' : null,
+        runtimeArtifactScan.truncated ? 'Run doctor for complete runtime diagnostics. After reviewing the output, use `garda repair rebuild-indexes --target-root "." --confirm` or the guarded UI repair action if derived indexes need rebuilding.' : null,
         {
             lock_count: runtimeArtifactScan.count,
             scan_truncated: runtimeArtifactScan.truncated,

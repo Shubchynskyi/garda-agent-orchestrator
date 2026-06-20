@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "Kiểm tra repair",
       "description": "Kiểm tra trạng thái runtime chuẩn và dẫn xuất mà không rebuild hoặc xóa file."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Xây dựng lại chỉ mục",
+      "description": "Xây dựng lại các chỉ mục task timeline và review phát sinh từ bằng chứng runtime chuẩn."
+    },
+    "repair-protected-manifest": {
+      "label": "Làm mới protected manifest",
+      "description": "Làm mới protected control-plane manifest tin cậy từ snapshot workspace hiện tại."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Dọn lock cũ",
+      "description": "Chỉ xóa task-event và review-artifact lock mà Garda phân loại là cũ."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "Kiểm tra"
+    "Inspection": "Kiểm tra",
+    "Repair": "Sửa chữa"
   }
 }

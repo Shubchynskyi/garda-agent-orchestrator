@@ -583,12 +583,40 @@ test('local UI switch actions support preview confirmation execution and audit',
         };
         const listResponse = await fetch(`${server.url}api/actions`);
         assert.equal(listResponse.status, 200);
-        const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; category: string; command: string; timeout_ms: number }> };
+        const list = await listResponse.json() as {
+            enabled: boolean;
+            actions: Array<{
+                id: string;
+                category: string;
+                command: string;
+                timeout_ms: number;
+                mutates: boolean;
+                requires_confirmation: boolean;
+                confirmation_phrase: string | null;
+            }>;
+        };
         assert.equal(list.enabled, true);
         assert.ok(list.actions.some((action) => action.id === 'status' && action.category === 'Inspection'));
         assert.ok(list.actions.some((action) => action.id === 'doctor' && action.category === 'Inspection'));
         assert.ok(list.actions.some((action) => action.id === 'status-why-blocked' && action.category === 'Inspection'));
         assert.ok(list.actions.some((action) => action.id === 'repair-inspect' && action.category === 'Inspection'));
+        const rebuildIndexesAction = list.actions.find((action) => action.id === 'repair-rebuild-indexes');
+        assert.ok(rebuildIndexesAction);
+        assert.equal(rebuildIndexesAction.category, 'Repair');
+        assert.equal(rebuildIndexesAction.mutates, true);
+        assert.equal(rebuildIndexesAction.requires_confirmation, true);
+        assert.equal(rebuildIndexesAction.confirmation_phrase, 'REBUILD GARDA INDEXES');
+        assert.match(rebuildIndexesAction.command, /repair rebuild-indexes --target-root "?\."? --confirm/u);
+        const protectedManifestAction = list.actions.find((action) => action.id === 'repair-protected-manifest');
+        assert.ok(protectedManifestAction);
+        assert.equal(protectedManifestAction.category, 'Repair');
+        assert.equal(protectedManifestAction.confirmation_phrase, 'REFRESH PROTECTED MANIFEST');
+        assert.match(protectedManifestAction.command, /repair protected-manifest --target-root "?\."? --confirm/u);
+        const locksCleanupAction = list.actions.find((action) => action.id === 'repair-locks-cleanup-stale');
+        assert.ok(locksCleanupAction);
+        assert.equal(locksCleanupAction.category, 'Repair');
+        assert.equal(locksCleanupAction.confirmation_phrase, 'CLEAN UP STALE LOCKS');
+        assert.match(locksCleanupAction.command, /repair locks --target-root "?\."? --cleanup-stale --confirm/u);
         assert.ok(list.actions.some((action) => action.id === 'garda-on' && action.category === 'Garda switch'));
         assert.ok(list.actions.some((action) => action.id === 'garda-off' && action.category === 'Garda switch'));
         assert.ok(list.actions.every((action) => !['html-report', 'cleanup-preview', 'cleanup-apply'].includes(action.id)));
@@ -613,6 +641,24 @@ test('local UI switch actions support preview confirmation execution and audit',
         assert.equal(preview.confirmation_phrase, 'TURN GARDA OFF');
         assert.deepEqual(executedCommands, []);
 
+        const repairPreviewResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'repair-rebuild-indexes', mode: 'preview' })
+        });
+        assert.equal(repairPreviewResponse.status, 200);
+        const repairPreview = await repairPreviewResponse.json() as {
+            status: string;
+            command: string;
+            requires_confirmation: boolean;
+            confirmation_phrase: string;
+        };
+        assert.equal(repairPreview.status, 'previewed');
+        assert.match(repairPreview.command, /repair rebuild-indexes --target-root "?\."? --confirm/u);
+        assert.equal(repairPreview.requires_confirmation, true);
+        assert.equal(repairPreview.confirmation_phrase, 'REBUILD GARDA INDEXES');
+        assert.deepEqual(executedCommands, []);
+
         const blockedResponse = await fetch(`${server.url}api/actions`, {
             method: 'POST',
             headers: actionHeaders,
@@ -620,6 +666,15 @@ test('local UI switch actions support preview confirmation execution and audit',
         });
         assert.equal(blockedResponse.status, 409);
         assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
+        assert.deepEqual(executedCommands, []);
+
+        const repairBlockedResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'repair-rebuild-indexes', mode: 'execute', confirmation: 'wrong' })
+        });
+        assert.equal(repairBlockedResponse.status, 409);
+        assert.equal((await repairBlockedResponse.json() as { status: string }).status, 'confirmation_required');
         assert.deepEqual(executedCommands, []);
 
         const executeResponse = await fetch(`${server.url}api/actions`, {
@@ -632,12 +687,31 @@ test('local UI switch actions support preview confirmation execution and audit',
         assert.equal(execute.status, 'executed');
         assert.equal(execute.stdout, 'ok');
         assert.equal(executedCommands.length, 1);
+
+        const repairExecuteResponse = await fetch(`${server.url}api/actions`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ action_id: 'repair-rebuild-indexes', mode: 'execute', confirmation: 'REBUILD GARDA INDEXES' })
+        });
+        assert.equal(repairExecuteResponse.status, 200);
+        const repairExecute = await repairExecuteResponse.json() as { status: string; command: string; stdout: string };
+        assert.equal(repairExecute.status, 'executed');
+        assert.equal(repairExecute.stdout, 'ok');
+        assert.match(repairExecute.command, /repair rebuild-indexes --target-root "?\."? --confirm/u);
+        assert.equal(executedCommands.length, 2);
+        assert.match(executedCommands[1], /repair rebuild-indexes --target-root "?\."? --confirm/u);
         assert.ok(fs.existsSync(execute.audit_path));
         const auditLines = fs.readFileSync(execute.audit_path, 'utf8').trim().split(/\r?\n/u);
-        assert.equal(auditLines.length, 3);
+        assert.equal(auditLines.length, 6);
         assert.match(auditLines[0], /"status":"previewed"/u);
-        assert.match(auditLines[1], /"status":"confirmation_required"/u);
-        assert.match(auditLines[2], /"status":"executed"/u);
+        assert.match(auditLines[1], /"action_id":"repair-rebuild-indexes"/u);
+        assert.match(auditLines[1], /"status":"previewed"/u);
+        assert.match(auditLines[2], /"status":"confirmation_required"/u);
+        assert.match(auditLines[3], /"action_id":"repair-rebuild-indexes"/u);
+        assert.match(auditLines[3], /"status":"confirmation_required"/u);
+        assert.match(auditLines[4], /"status":"executed"/u);
+        assert.match(auditLines[5], /"action_id":"repair-rebuild-indexes"/u);
+        assert.match(auditLines[5], /"status":"executed"/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }

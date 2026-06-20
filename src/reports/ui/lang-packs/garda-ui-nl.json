@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "Repair inspecteren",
       "description": "Inspecteert canonieke en afgeleide runtime-status zonder bestanden opnieuw te bouwen of te verwijderen."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Indexen opnieuw bouwen",
+      "description": "Bouwt afgeleide task-timeline- en review-indexen opnieuw op uit canoniek runtime-bewijs."
+    },
+    "repair-protected-manifest": {
+      "label": "Protected manifest vernieuwen",
+      "description": "Vernieuwt het vertrouwde protected control-plane manifest uit de huidige workspace-snapshot."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Verouderde locks opruimen",
+      "description": "Verwijdert alleen task-event- en review-artifact-locks die Garda als verouderd classificeert."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "Inspectie"
+    "Inspection": "Inspectie",
+    "Repair": "Herstel"
   }
 }

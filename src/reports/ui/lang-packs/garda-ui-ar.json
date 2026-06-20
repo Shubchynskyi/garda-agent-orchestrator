@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "فحص الإصلاح",
       "description": "يفحص الحالة الأساسية والمشتقة لبيانات runtime دون إعادة بناء أو حذف ملفات."
+    },
+    "repair-rebuild-indexes": {
+      "label": "إعادة بناء الفهارس",
+      "description": "يعيد بناء فهارس timeline وreview المشتقة من أدلة runtime الكانونية."
+    },
+    "repair-protected-manifest": {
+      "label": "تحديث manifest المحمي",
+      "description": "يحدّث protected control-plane manifest الموثوق من لقطة workspace الحالية."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "تنظيف الأقفال القديمة",
+      "description": "يزيل فقط أقفال task-event وreview-artifact التي تصنفها Garda كقديمة."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "فحص"
+    "Inspection": "فحص",
+    "Repair": "إصلاح"
   }
 }

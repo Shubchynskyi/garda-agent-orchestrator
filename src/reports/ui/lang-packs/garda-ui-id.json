@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "Inspeksi repair",
       "description": "Memeriksa state runtime kanonis dan turunan tanpa membangun ulang atau menghapus file."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Bangun ulang indeks",
+      "description": "Membangun ulang indeks task timeline dan review turunan dari bukti runtime kanonis."
+    },
+    "repair-protected-manifest": {
+      "label": "Segarkan protected manifest",
+      "description": "Menyegarkan protected control-plane manifest tepercaya dari snapshot workspace saat ini."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Bersihkan lock usang",
+      "description": "Menghapus hanya task-event dan review-artifact lock yang diklasifikasikan Garda sebagai usang."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "Inspeksi"
+    "Inspection": "Inspeksi",
+    "Repair": "Perbaikan"
   }
 }

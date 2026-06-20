@@ -341,6 +341,18 @@
     "repair-inspect": {
       "label": "Проверить восстановление",
       "description": "Проверяет каноническое и производное состояние runtime без пересборки или удаления файлов."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Пересобрать индексы",
+      "description": "Пересобирает производные индексы timeline задач и ревью из канонических runtime-доказательств."
+    },
+    "repair-protected-manifest": {
+      "label": "Обновить защищенный manifest",
+      "description": "Обновляет доверенный manifest защищенного control plane из текущего снимка workspace."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Очистить устаревшие блокировки",
+      "description": "Удаляет только task-event и review-artifact блокировки, которые Garda классифицирует как устаревшие."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
@@ -348,7 +360,8 @@
     "Export": "Экспорт",
     "Maintenance": "Обслуживание",
     "Garda switch": "Переключатель Garda",
-    "Workspace": "Рабочая область"
+    "Workspace": "Рабочая область",
+    "Repair": "Восстановление"
   },
   "LOCAL_UI_INSTRUCTION_TEXT": {
     "task-execution": {

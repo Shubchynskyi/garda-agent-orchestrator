@@ -297,6 +297,18 @@
     "repair-inspect": {
       "label": "Inspeccionar reparación",
       "description": "Inspecciona el estado runtime canónico y derivado sin reconstruir ni eliminar archivos."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Reconstruir índices",
+      "description": "Reconstruye los índices derivados de timeline de tareas y reviews desde evidencia runtime canónica."
+    },
+    "repair-protected-manifest": {
+      "label": "Actualizar manifest protegido",
+      "description": "Actualiza el manifest protegido confiable del control plane desde la instantánea actual del workspace."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Limpiar bloqueos obsoletos",
+      "description": "Elimina solo bloqueos de task-event y review-artifact que Garda clasifica como obsoletos."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -353,6 +365,7 @@
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "Inspección"
+    "Inspection": "Inspección",
+    "Repair": "Reparación"
   }
 }

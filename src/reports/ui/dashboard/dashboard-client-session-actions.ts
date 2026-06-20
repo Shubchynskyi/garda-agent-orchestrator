@@ -57,6 +57,13 @@ async function markActivity(force) {
   }
 }
 const SYSTEM_STATE_DIAGNOSTIC_ACTION_IDS = ['status', 'doctor', 'status-why-blocked', 'repair-inspect'];
+const SYSTEM_STATE_REPAIR_ACTION_BY_SIGNAL = {
+  'protected-manifest': 'repair-protected-manifest',
+  'runtime-locks': 'repair-locks-cleanup-stale',
+  'active-task-timelines': 'repair-rebuild-indexes',
+  'incomplete-task-timelines': 'repair-rebuild-indexes',
+  'runtime-artifact-scan': 'repair-rebuild-indexes'
+};
 function focusVisibleActionResult(node) {
   if (!node || !node.innerHTML) {
     return;
@@ -265,8 +272,23 @@ function renderSystemSignal(signal) {
     + '<div><strong>' + safe(systemSignalLabel(signal)) + '</strong><span class="badge ' + safe(systemHealthClass(signal.status)) + '">' + safe(systemHealthLabel(signal.status, signal.status)) + '</span></div>'
     + '<p>' + safe(signal.summary || '-') + '</p>'
     + (signal.remediation ? '<p class="empty">' + inlineText(signal.remediation) + '</p>' : '')
+    + systemRepairActionHtml(signal)
     + (signal.source_path ? '<code>' + safe(signal.source_path) + '</code>' : '')
     + '</div>';
+}
+function systemRepairActionHtml(signal) {
+  const actionId = SYSTEM_STATE_REPAIR_ACTION_BY_SIGNAL[signal && signal.id];
+  if (!actionId || !signal || signal.status === 'ok') {
+    return '';
+  }
+  if (!currentActionsPayload || !currentActionsPayload.enabled) {
+    return '<p class="empty">' + safe(t('actionsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('actionsDisabledTail')) + '</p>';
+  }
+  const action = (currentActionsPayload.actions || []).find(item => item.id === actionId);
+  if (!action || !action.enabled) {
+    return '';
+  }
+  return '<div class="action-buttons"><button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="execute">' + safe(actionLabel(action)) + '</button><span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span></div>';
 }
 function renderSystemConfigurationFiles(entries) {
   if (!entries || entries.length === 0) {

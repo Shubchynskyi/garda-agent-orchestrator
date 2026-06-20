@@ -317,6 +317,18 @@
     "repair-inspect": {
       "label": "Перевірити відновлення",
       "description": "Перевіряє канонічний і похідний стан runtime без перебудови або видалення файлів."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Перебудувати індекси",
+      "description": "Перебудовує похідні індекси timeline задач і review з канонічних runtime-доказів."
+    },
+    "repair-protected-manifest": {
+      "label": "Оновити protected manifest",
+      "description": "Оновлює довірений protected control-plane manifest з поточного snapshot workspace."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Очистити застарілі блокування",
+      "description": "Видаляє лише task-event і review-artifact locks, які Garda класифікує як застарілі."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -362,6 +374,7 @@
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "Перевірка"
+    "Inspection": "Перевірка",
+    "Repair": "Відновлення"
   }
 }

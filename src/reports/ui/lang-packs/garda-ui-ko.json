@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "복구 검사",
       "description": "파일을 재빌드하거나 삭제하지 않고 canonical 및 derived runtime state를 검사합니다."
+    },
+    "repair-rebuild-indexes": {
+      "label": "인덱스 재구축",
+      "description": "정규 runtime 증거에서 파생 task timeline 및 review index를 재구축합니다."
+    },
+    "repair-protected-manifest": {
+      "label": "protected manifest 새로 고침",
+      "description": "현재 workspace snapshot에서 신뢰된 protected control-plane manifest를 새로 고칩니다."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "오래된 lock 정리",
+      "description": "Garda가 오래됨으로 분류한 task-event 및 review-artifact lock만 제거합니다."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "검사"
+    "Inspection": "검사",
+    "Repair": "복구"
   }
 }

@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "রিপেয়ার পরিদর্শন",
       "description": "ফাইল rebuild বা delete না করে canonical এবং derived runtime state পরিদর্শন করে।"
+    },
+    "repair-rebuild-indexes": {
+      "label": "ইনডেক্স পুনর্নির্মাণ",
+      "description": "Canonical runtime evidence থেকে derived task timeline এবং review indexes পুনর্নির্মাণ করে।"
+    },
+    "repair-protected-manifest": {
+      "label": "Protected manifest রিফ্রেশ",
+      "description": "বর্তমান workspace snapshot থেকে trusted protected control-plane manifest রিফ্রেশ করে।"
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Stale locks পরিষ্কার",
+      "description": "শুধু Garda stale হিসেবে চিহ্নিত task-event এবং review-artifact locks সরায়।"
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "পরিদর্শন"
+    "Inspection": "পরিদর্শন",
+    "Repair": "মেরামত"
   }
 }

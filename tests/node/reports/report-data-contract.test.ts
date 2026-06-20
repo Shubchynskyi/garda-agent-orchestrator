@@ -671,9 +671,18 @@ test('buildReportDataContract classifies stale locks and incomplete timelines in
     };
 
     assert.equal(report.system_state.runtime.stale_locks.status, 'attention');
+    assert.match(
+        report.system_state.runtime.stale_locks.remediation || '',
+        /garda repair locks --target-root "\." --cleanup-stale --confirm/u
+    );
+    assert.doesNotMatch(report.system_state.runtime.stale_locks.remediation || '', /doctor --target-root/u);
     assert.equal(lockValue.stale_count, 1);
     assert.ok(lockValue.stale_locks?.some((lock) => lock.task_id === 'T-100' && lock.stale_reason === 'owner_dead'));
     assert.equal(report.system_state.runtime.incomplete_timeline.status, 'attention');
+    assert.match(
+        report.system_state.runtime.incomplete_timeline.remediation || '',
+        /garda repair rebuild-indexes --target-root "\." --confirm/u
+    );
     assert.ok(timelineValue.warnings?.some((warning) => warning.includes('INCOMPLETE timeline: T-100.jsonl')));
     assert.ok(['attention', 'error'].includes(report.system_state.overall.status));
 });

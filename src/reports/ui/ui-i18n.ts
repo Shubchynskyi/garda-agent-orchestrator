@@ -488,6 +488,18 @@ const CORE_LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<string,
             label: 'Repair inspect',
             description: 'Inspect canonical and derived runtime state without rebuilding or deleting files.'
         },
+        'repair-rebuild-indexes': {
+            label: 'Rebuild indexes',
+            description: 'Rebuild derived task timeline and review indexes from canonical runtime evidence.'
+        },
+        'repair-protected-manifest': {
+            label: 'Refresh protected manifest',
+            description: 'Refresh the trusted protected control-plane manifest from the current workspace snapshot.'
+        },
+        'repair-locks-cleanup-stale': {
+            label: 'Clean up stale locks',
+            description: 'Remove only task-event and review-artifact locks that Garda classifies as stale.'
+        },
         'backup-create-manual': {
             label: 'Create manual backup',
             description: 'Create a manual rollback backup snapshot.'
@@ -502,7 +514,8 @@ export const LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<strin
 
 const CORE_LOCAL_UI_ACTION_CATEGORY_TEXT = Object.freeze({
     en: {
-        Inspection: 'Inspection'
+        Inspection: 'Inspection',
+        Repair: 'Repair'
     }
 } satisfies Readonly<Record<string, Readonly<Record<string, string>>>>);
 

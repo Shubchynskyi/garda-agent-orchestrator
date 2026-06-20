@@ -297,6 +297,18 @@
     "repair-inspect": {
       "label": "Onarımı incele",
       "description": "Dosyaları yeniden oluşturmadan veya silmeden kanonik ve türetilmiş runtime durumunu inceler."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Dizinleri yeniden oluştur",
+      "description": "Kanonik runtime kanıtlarından türetilmiş task timeline ve review dizinlerini yeniden oluşturur."
+    },
+    "repair-protected-manifest": {
+      "label": "Protected manifest yenile",
+      "description": "Güvenilir protected control-plane manifestini geçerli workspace snapshotından yeniler."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Eski lockları temizle",
+      "description": "Yalnızca Garda tarafından eski olarak sınıflandırılan task-event ve review-artifact locklarını kaldırır."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -353,6 +365,7 @@
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "İnceleme"
+    "Inspection": "İnceleme",
+    "Repair": "Onarım"
   }
 }

@@ -30,12 +30,25 @@ test('workspace, task, and backup action registries stay in separate builders', 
 
     const merged = buildUiWorkspaceAndBackupActionDefinitions(repoRoot);
     assert.equal(merged.length, workspace.length + backup.length);
-    assert.deepEqual(workspace.map((action) => action.id).sort(), ['doctor', 'garda-off', 'garda-on', 'repair-inspect', 'status', 'status-why-blocked']);
+    assert.deepEqual(workspace.map((action) => action.id).sort(), [
+        'doctor',
+        'garda-off',
+        'garda-on',
+        'repair-inspect',
+        'repair-locks-cleanup-stale',
+        'repair-protected-manifest',
+        'repair-rebuild-indexes',
+        'status',
+        'status-why-blocked'
+    ]);
     assert.ok(merged.some((action) => action.id === 'garda-off'));
     assert.ok(merged.some((action) => action.id === 'status'));
     assert.ok(merged.some((action) => action.id === 'doctor'));
     assert.ok(merged.some((action) => action.id === 'status-why-blocked'));
     assert.ok(merged.some((action) => action.id === 'repair-inspect'));
+    assert.ok(merged.some((action) => action.id === 'repair-rebuild-indexes'));
+    assert.ok(merged.some((action) => action.id === 'repair-protected-manifest'));
+    assert.ok(merged.some((action) => action.id === 'repair-locks-cleanup-stale'));
 });
 
 test('backup restore actions bind inventory ids to rollback commands with confirmation phrases', () => {

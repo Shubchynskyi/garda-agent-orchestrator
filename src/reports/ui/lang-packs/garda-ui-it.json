@@ -330,9 +330,22 @@
     "repair-inspect": {
       "label": "Ispeziona repair",
       "description": "Ispeziona lo stato runtime canonico e derivato senza ricostruire o eliminare file."
+    },
+    "repair-rebuild-indexes": {
+      "label": "Ricostruisci indici",
+      "description": "Ricostruisce gli indici derivati di timeline task e review dalle prove runtime canoniche."
+    },
+    "repair-protected-manifest": {
+      "label": "Aggiorna manifest protetto",
+      "description": "Aggiorna il manifest protetto affidabile del control plane dallo snapshot corrente del workspace."
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "Pulisci lock obsoleti",
+      "description": "Rimuove solo i lock task-event e review-artifact classificati da Garda come obsoleti."
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "Ispezione"
+    "Inspection": "Ispezione",
+    "Repair": "Riparazione"
   }
 }

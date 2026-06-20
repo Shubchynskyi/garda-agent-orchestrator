@@ -297,6 +297,18 @@
     "repair-inspect": {
       "label": "repair検査",
       "description": "ファイルの再構築や削除をせずに、正規および派生runtime状態を検査します。"
+    },
+    "repair-rebuild-indexes": {
+      "label": "インデックスを再構築",
+      "description": "正規のruntime証跡から派生task timelineとreview indexを再構築します。"
+    },
+    "repair-protected-manifest": {
+      "label": "protected manifestを更新",
+      "description": "現在のworkspace snapshotから信頼済みprotected control-plane manifestを更新します。"
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "古いlockを削除",
+      "description": "Gardaが古いと分類したtask-eventとreview-artifactのlockだけを削除します。"
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -353,6 +365,7 @@
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "検査"
+    "Inspection": "検査",
+    "Repair": "修復"
   }
 }

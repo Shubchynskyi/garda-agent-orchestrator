@@ -297,6 +297,18 @@
     "repair-inspect": {
       "label": "检查修复",
       "description": "检查规范和派生 runtime 状态，不重建或删除文件。"
+    },
+    "repair-rebuild-indexes": {
+      "label": "重建索引",
+      "description": "从规范 runtime 证据重建派生的任务 timeline 和 review 索引。"
+    },
+    "repair-protected-manifest": {
+      "label": "刷新受保护 manifest",
+      "description": "从当前 workspace 快照刷新可信的 protected control-plane manifest。"
+    },
+    "repair-locks-cleanup-stale": {
+      "label": "清理过期锁",
+      "description": "只移除 Garda 分类为过期的 task-event 和 review-artifact 锁。"
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -353,6 +365,7 @@
     }
   },
   "LOCAL_UI_ACTION_CATEGORY_TEXT": {
-    "Inspection": "检查"
+    "Inspection": "检查",
+    "Repair": "修复"
   }
 }

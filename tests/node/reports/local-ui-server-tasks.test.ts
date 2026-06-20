@@ -451,7 +451,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     label: 'Protected manifest',
                     status: 'attention',
                     summary: 'Protected manifest drift detected for 1 file(s).',
-                    remediation: 'If the drift is operator-approved, run repair protected-manifest with confirmation.',
+                    remediation: 'If the drift is operator-approved, run `garda repair protected-manifest --target-root "." --confirm` or use the guarded UI repair action.',
                     value: 'DRIFT',
                     source_path: 'garda-agent-orchestrator/runtime/protected-control-plane-manifest.json',
                     assessment_code: 'INFO_SOURCE_CHECKOUT_INHERITED_DRIFT',
@@ -461,19 +461,19 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     stale_locks: {
                         id: 'runtime-locks',
                         label: 'Runtime locks',
-                        status: 'ok',
-                        summary: 'No runtime lock files were found in common lock locations.',
-                        remediation: null,
-                        value: { lock_count: 0 },
+                        status: 'attention',
+                        summary: '1 stale task-event lock was detected.',
+                        remediation: 'Run `garda repair locks --target-root "." --cleanup-stale --confirm` only after reviewing stale-lock diagnostics.',
+                        value: { lock_count: 1, stale_count: 1 },
                         source_path: 'garda-agent-orchestrator/runtime'
                     },
                     incomplete_timeline: {
                         id: 'incomplete-task-timelines',
                         label: 'Incomplete task timelines',
-                        status: 'ok',
-                        summary: 'No active or blocked task status is visible in TASK.md.',
-                        remediation: null,
-                        value: { active_or_blocked_tasks: 0 },
+                        status: 'attention',
+                        summary: '1 task timeline warning was detected.',
+                        remediation: 'After reviewing the warning, use `garda repair rebuild-indexes --target-root "." --confirm` or the guarded UI repair action.',
+                        value: { active_or_blocked_tasks: 1 },
                         source_path: 'TASK.md'
                     },
                     artifact_signals: []
@@ -714,6 +714,42 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     confirmation_phrase: null
                 },
                 {
+                    id: 'repair-rebuild-indexes',
+                    category: 'Repair',
+                    label: 'Rebuild indexes',
+                    description: 'Rebuild derived runtime indexes',
+                    command: 'node bin/garda.js repair rebuild-indexes --target-root "." --confirm',
+                    mutates: true,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: true,
+                    confirmation_phrase: 'REBUILD GARDA INDEXES'
+                },
+                {
+                    id: 'repair-protected-manifest',
+                    category: 'Repair',
+                    label: 'Refresh protected manifest',
+                    description: 'Refresh trusted protected manifest',
+                    command: 'node bin/garda.js repair protected-manifest --target-root "." --confirm',
+                    mutates: true,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: true,
+                    confirmation_phrase: 'REFRESH PROTECTED MANIFEST'
+                },
+                {
+                    id: 'repair-locks-cleanup-stale',
+                    category: 'Repair',
+                    label: 'Clean up stale locks',
+                    description: 'Remove stale runtime locks',
+                    command: 'node bin/garda.js repair locks --target-root "." --cleanup-stale --confirm',
+                    mutates: true,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: true,
+                    confirmation_phrase: 'CLEAN UP STALE LOCKS'
+                },
+                {
                     id: 'backup-create-manual',
                     category: 'Backups',
                     label: 'Create manual backup',
@@ -800,6 +836,15 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     }
                     if (message.includes('APPLY GARDA SETTING')) {
                         return 'APPLY GARDA SETTING';
+                    }
+                    if (message.includes('REBUILD GARDA INDEXES')) {
+                        return 'REBUILD GARDA INDEXES';
+                    }
+                    if (message.includes('REFRESH PROTECTED MANIFEST')) {
+                        return 'REFRESH PROTECTED MANIFEST';
+                    }
+                    if (message.includes('CLEAN UP STALE LOCKS')) {
+                        return 'CLEAN UP STALE LOCKS';
                     }
                     return null;
                 },
@@ -901,6 +946,25 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                                             : requestedAction === 'status-why-blocked'
                                                 ? 'GARDA_WHY_BLOCKED ok'
                                                 : 'GARDA_REPAIR_INSPECT ok',
+                                    stderr: '',
+                                    audit_path: 'runtime/ui-actions/audit.jsonl'
+                                };
+                            }
+                            if (requestedAction === 'repair-rebuild-indexes' || requestedAction === 'repair-protected-manifest' || requestedAction === 'repair-locks-cleanup-stale') {
+                                return {
+                                    action_id: requestedAction,
+                                    status: 'executed',
+                                    command: requestedAction === 'repair-rebuild-indexes'
+                                        ? 'node bin/garda.js repair rebuild-indexes --target-root "." --confirm'
+                                        : requestedAction === 'repair-protected-manifest'
+                                            ? 'node bin/garda.js repair protected-manifest --target-root "." --confirm'
+                                            : 'node bin/garda.js repair locks --target-root "." --cleanup-stale --confirm',
+                                    exit_code: 0,
+                                    stdout: requestedAction === 'repair-rebuild-indexes'
+                                        ? 'GARDA_REPAIR_REBUILD_INDEXES ok'
+                                        : requestedAction === 'repair-protected-manifest'
+                                            ? 'GARDA_REPAIR_PROTECTED_MANIFEST ok'
+                                            : 'GARDA_REPAIR_LOCKS ok',
                                     stderr: '',
                                     audit_path: 'runtime/ui-actions/audit.jsonl'
                                 };
@@ -1051,6 +1115,12 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="doctor"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="status-why-blocked"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-inspect"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-protected-manifest"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-locks-cleanup-stale"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-rebuild-indexes"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda repair protected-manifest --target-root/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda repair locks --target-root/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda repair rebuild-indexes --target-root/u);
         const statusDiagnosticButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
             .find((button) => button.dataset.actionId === 'status' && button.dataset.actionMode === 'execute');
         assert.ok(statusDiagnosticButton);
@@ -1087,6 +1157,29 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_INSPECT ok/u);
         assert.equal(fakeDocument.elements['action-status'].scrollCount, 4);
         assert.equal(fakeDocument.elements['action-status'].focusCount, 4);
+        const protectedManifestRepairButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
+            .find((button) => button.dataset.actionId === 'repair-protected-manifest' && button.dataset.actionMode === 'execute');
+        assert.ok(protectedManifestRepairButton);
+        await protectedManifestRepairButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Refresh protected manifest/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_PROTECTED_MANIFEST ok/u);
+        const locksRepairButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
+            .find((button) => button.dataset.actionId === 'repair-locks-cleanup-stale' && button.dataset.actionMode === 'execute');
+        assert.ok(locksRepairButton);
+        await locksRepairButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Clean up stale locks/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_LOCKS ok/u);
+        const rebuildIndexesRepairButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
+            .find((button) => button.dataset.actionId === 'repair-rebuild-indexes' && button.dataset.actionMode === 'execute');
+        assert.ok(rebuildIndexesRepairButton);
+        await rebuildIndexesRepairButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Rebuild indexes/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_REBUILD_INDEXES ok/u);
+        assert.equal(fakeDocument.elements['action-status'].scrollCount, 7);
+        assert.equal(fakeDocument.elements['action-status'].focusCount, 7);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Shutdown in/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /15m/u);
         assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /16m/u);
@@ -1175,6 +1268,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Диагностика/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Почему заблокировано/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Проверить восстановление/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Обновить защищенный manifest/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Очистить устаревшие блокировки/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Пересобрать индексы/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
         const localizedManualBackupButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
             .find((button) => button.dataset.backupActionId === 'backup-create-manual' && button.dataset.actionMode === 'execute');
