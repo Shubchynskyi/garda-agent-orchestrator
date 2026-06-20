@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "Utworz reczna kopie",
       "description": "Tworzy reczny snapshot kopii zapasowej do rollbacku."
+    },
+    "status": {
+      "label": "Status",
+      "description": "Uruchamia polecenie statusu Garda tylko do odczytu dla tego workspace."
+    },
+    "doctor": {
+      "label": "Diagnostyka",
+      "description": "Uruchamia diagnostykę Garda tylko do odczytu dla init answers, manifestów, wygenerowanych plików, blokad i stanu pakietu."
+    },
+    "status-why-blocked": {
+      "label": "Dlaczego zablokowane",
+      "description": "Wyjaśnia, dlaczego widoczne zadania są zablokowane, bez zmiany plików."
+    },
+    "repair-inspect": {
+      "label": "Inspekcja naprawy",
+      "description": "Sprawdza kanoniczny i pochodny stan runtime bez przebudowywania ani usuwania plików."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspekcja"
   }
 }

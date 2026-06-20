@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "Handmatige back-up maken",
       "description": "Maakt een handmatige rollback-back-upmomentopname."
+    },
+    "status": {
+      "label": "Status",
+      "description": "Voert de alleen-lezen Garda-statusopdracht uit voor deze workspace."
+    },
+    "doctor": {
+      "label": "Diagnose",
+      "description": "Voert alleen-lezen Garda-diagnostiek uit voor init answers, manifests, gegenereerde bestanden, locks en pakketstatus."
+    },
+    "status-why-blocked": {
+      "label": "Waarom geblokkeerd",
+      "description": "Legt uit waarom zichtbare taken geblokkeerd zijn zonder bestanden te wijzigen."
+    },
+    "repair-inspect": {
+      "label": "Repair inspecteren",
+      "description": "Inspecteert canonieke en afgeleide runtime-status zonder bestanden opnieuw te bouwen of te verwijderen."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspectie"
   }
 }

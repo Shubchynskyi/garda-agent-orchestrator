@@ -289,6 +289,14 @@
     "backup-create-manual": {
       "label": "手動バックアップを作成",
       "description": "手動のロールバック用バックアップスナップショットを作成します。"
+    },
+    "status-why-blocked": {
+      "label": "ブロック理由",
+      "description": "ファイルを変更せずに、表示中のタスクがブロックされている理由を説明します。"
+    },
+    "repair-inspect": {
+      "label": "repair検査",
+      "description": "ファイルの再構築や削除をせずに、正規および派生runtime状態を検査します。"
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -343,5 +351,8 @@
       "title": "プロジェクトメモリ",
       "body": "プロジェクトメモリタブには現在のメンテナンスモードと永続的なメモリファイルが表示されます。ダッシュボードに全文を読み込まず、必要に応じて各ファイルを開いてください。"
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "検査"
   }
 }

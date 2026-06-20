@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
     UI_ACTION_DEFAULT_TIMEOUT_MS,
+    UI_ACTION_INSPECTION_TIMEOUT_MS,
     formatUiActionTimeoutMessage,
     runUiActionCommand
 } from '../../../src/reports/ui/actions/action-common';
@@ -103,8 +104,14 @@ test('workspace UI actions only expose visible switch controls with default time
         const actions = buildUiWorkspaceActionDefinitions(repoRoot);
         const actionIds = actions.map((action) => action.id).sort();
 
-        assert.deepEqual(actionIds, ['garda-off', 'garda-on']);
-        assert.ok(actions.every((action) => action.timeout_ms === UI_ACTION_DEFAULT_TIMEOUT_MS));
+        assert.deepEqual(actionIds, ['doctor', 'garda-off', 'garda-on', 'repair-inspect', 'status', 'status-why-blocked']);
+        const timeoutById = new Map(actions.map((action) => [action.id, action.timeout_ms]));
+        assert.equal(timeoutById.get('status'), UI_ACTION_INSPECTION_TIMEOUT_MS);
+        assert.equal(timeoutById.get('doctor'), UI_ACTION_INSPECTION_TIMEOUT_MS);
+        assert.equal(timeoutById.get('status-why-blocked'), UI_ACTION_INSPECTION_TIMEOUT_MS);
+        assert.equal(timeoutById.get('repair-inspect'), UI_ACTION_INSPECTION_TIMEOUT_MS);
+        assert.equal(timeoutById.get('garda-on'), UI_ACTION_DEFAULT_TIMEOUT_MS);
+        assert.equal(timeoutById.get('garda-off'), UI_ACTION_DEFAULT_TIMEOUT_MS);
     } finally {
         cleanupTmpDir(repoRoot);
     }

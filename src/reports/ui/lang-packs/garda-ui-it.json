@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "Crea backup manuale",
       "description": "Crea uno snapshot di backup manuale per rollback."
+    },
+    "status": {
+      "label": "Stato",
+      "description": "Esegue il comando di stato Garda in sola lettura per questo workspace."
+    },
+    "doctor": {
+      "label": "Diagnostica",
+      "description": "Esegue diagnostica Garda in sola lettura per risposte init, manifest, file generati, lock e stato del pacchetto."
+    },
+    "status-why-blocked": {
+      "label": "Perché bloccato",
+      "description": "Spiega perché i task visibili sono bloccati senza modificare file."
+    },
+    "repair-inspect": {
+      "label": "Ispeziona repair",
+      "description": "Ispeziona lo stato runtime canonico e derivato senza ricostruire o eliminare file."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Ispezione"
   }
 }

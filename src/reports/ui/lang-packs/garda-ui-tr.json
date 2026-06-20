@@ -289,6 +289,14 @@
     "backup-create-manual": {
       "label": "Manuel yedek olustur",
       "description": "Manuel rollback yedek anlik goruntusu olusturur."
+    },
+    "status-why-blocked": {
+      "label": "Neden engelli",
+      "description": "Görünen görevlerin neden engellendiğini dosyaları değiştirmeden açıklar."
+    },
+    "repair-inspect": {
+      "label": "Onarımı incele",
+      "description": "Dosyaları yeniden oluşturmadan veya silmeden kanonik ve türetilmiş runtime durumunu inceler."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -343,5 +351,8 @@
       "title": "Proje belleği",
       "body": "Proje belleği sekmesi geçerli bakım modunu ve kalıcı bellek dosyalarını gösterir. Tüm içeriği panele yüklemek yerine her dosyayı isteğe bağlı açın."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "İnceleme"
   }
 }

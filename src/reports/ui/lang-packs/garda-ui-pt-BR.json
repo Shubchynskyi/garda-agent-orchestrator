@@ -289,6 +289,14 @@
     "backup-create-manual": {
       "label": "Criar backup manual",
       "description": "Cria um snapshot manual de backup para rollback."
+    },
+    "status-why-blocked": {
+      "label": "Por que bloqueado",
+      "description": "Explica por que as tarefas visíveis estão bloqueadas sem alterar arquivos."
+    },
+    "repair-inspect": {
+      "label": "Inspecionar reparo",
+      "description": "Inspeciona o estado runtime canônico e derivado sem reconstruir ou excluir arquivos."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -343,5 +351,8 @@
       "title": "Memória do projeto",
       "body": "A aba de memória do projeto mostra o modo de manutenção atual e os arquivos de memória durável. Abra cada arquivo sob demanda em vez de carregar todo o conteúdo no painel."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspeção"
   }
 }

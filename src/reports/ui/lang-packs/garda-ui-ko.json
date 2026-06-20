@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "수동 백업 만들기",
       "description": "수동 롤백 백업 스냅샷을 만듭니다."
+    },
+    "status": {
+      "label": "상태",
+      "description": "이 workspace에 대해 읽기 전용 Garda status 명령을 실행합니다."
+    },
+    "doctor": {
+      "label": "진단",
+      "description": "init answers, manifest, generated files, locks, package state에 대한 읽기 전용 Garda 진단을 실행합니다."
+    },
+    "status-why-blocked": {
+      "label": "차단 이유",
+      "description": "파일을 변경하지 않고 표시된 task가 차단된 이유를 설명합니다."
+    },
+    "repair-inspect": {
+      "label": "복구 검사",
+      "description": "파일을 재빌드하거나 삭제하지 않고 canonical 및 derived runtime state를 검사합니다."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "검사"
   }
 }

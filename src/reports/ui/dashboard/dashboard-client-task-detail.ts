@@ -113,6 +113,7 @@ async function runTaskAction(taskId, actionId, mode, confirmation) {
     + outputBlock('stdout', result.stdout)
     + outputBlock('stderr', result.stderr)
     + '</section>';
+  focusVisibleActionResult(node);
   const exitCode = Number.isFinite(Number(result.exit_code)) ? Number(result.exit_code) : null;
   if (response.ok && result.status === 'executed' && (exitCode === null || exitCode === 0) && actionId === 'task-reset-enable-audited') {
     try {

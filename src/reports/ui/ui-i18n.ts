@@ -317,7 +317,6 @@ function buildImportedLanguageMap<T>(
 }
 
 const EMPTY_LOCALIZED_TEXT_MAP = Object.freeze({});
-const EMPTY_CATEGORY_TEXT_MAP = Object.freeze({});
 
 const WORKFLOW_SETTING_TEXT_CATALOG = buildWorkflowSettingTextCatalog();
 const WORKFLOW_SETTING_TEXT_TRANSLATIONS = loadWorkflowSettingTextTranslations();
@@ -473,6 +472,22 @@ export const LOCAL_UI_PROJECT_MEMORY_TEXT: Readonly<Record<string, Readonly<Reco
 
 const CORE_LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<string, LocalUiLocalizedText>>>> = Object.freeze({
     en: {
+        status: {
+            label: 'Status',
+            description: 'Run the read-only Garda status command for this workspace.'
+        },
+        doctor: {
+            label: 'Doctor',
+            description: 'Run read-only Garda diagnostics for init answers, manifests, generated files, locks, and package state.'
+        },
+        'status-why-blocked': {
+            label: 'Why blocked',
+            description: 'Explain why visible tasks are blocked without changing files.'
+        },
+        'repair-inspect': {
+            label: 'Repair inspect',
+            description: 'Inspect canonical and derived runtime state without rebuilding or deleting files.'
+        },
         'backup-create-manual': {
             label: 'Create manual backup',
             description: 'Create a manual rollback backup snapshot.'
@@ -486,7 +501,9 @@ export const LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<strin
 );
 
 const CORE_LOCAL_UI_ACTION_CATEGORY_TEXT = Object.freeze({
-    en: EMPTY_CATEGORY_TEXT_MAP
+    en: {
+        Inspection: 'Inspection'
+    }
 } satisfies Readonly<Record<string, Readonly<Record<string, string>>>>);
 
 export const LOCAL_UI_ACTION_CATEGORY_TEXT: Readonly<Record<string, Readonly<Record<string, string>>>> = buildImportedLanguageMap(

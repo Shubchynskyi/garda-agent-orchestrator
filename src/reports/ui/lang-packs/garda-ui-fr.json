@@ -289,6 +289,14 @@
     "backup-create-manual": {
       "label": "Creer une sauvegarde manuelle",
       "description": "Cree un instantane de sauvegarde manuel pour rollback."
+    },
+    "status-why-blocked": {
+      "label": "Pourquoi bloqué",
+      "description": "Explique pourquoi les tâches visibles sont bloquées sans modifier les fichiers."
+    },
+    "repair-inspect": {
+      "label": "Inspecter repair",
+      "description": "Inspecte l’état runtime canonique et dérivé sans reconstruire ni supprimer de fichiers."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -343,5 +351,8 @@
       "title": "Mémoire du projet",
       "body": "L’onglet mémoire du projet affiche le mode de maintenance actuel et les fichiers de mémoire durable. Ouvrez chaque fichier à la demande au lieu de charger tout le contenu dans le tableau de bord."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspection"
   }
 }

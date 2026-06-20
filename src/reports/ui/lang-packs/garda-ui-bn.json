@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "ম্যানুয়াল ব্যাকআপ তৈরি করুন",
       "description": "ম্যানুয়াল রোলব্যাক ব্যাকআপ স্ন্যাপশট তৈরি করুন।"
+    },
+    "status": {
+      "label": "স্থিতি",
+      "description": "এই workspace-এ read-only Garda status command চালায়।"
+    },
+    "doctor": {
+      "label": "ডায়াগনস্টিক",
+      "description": "init answers, manifest, generated files, locks এবং package state-এর জন্য read-only Garda diagnostics চালায়।"
+    },
+    "status-why-blocked": {
+      "label": "কেন ব্লকড",
+      "description": "ফাইল না বদলে দৃশ্যমান task কেন blocked তা ব্যাখ্যা করে।"
+    },
+    "repair-inspect": {
+      "label": "রিপেয়ার পরিদর্শন",
+      "description": "ফাইল rebuild বা delete না করে canonical এবং derived runtime state পরিদর্শন করে।"
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "পরিদর্শন"
   }
 }

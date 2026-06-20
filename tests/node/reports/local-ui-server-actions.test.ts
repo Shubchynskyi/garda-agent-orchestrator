@@ -585,9 +585,13 @@ test('local UI switch actions support preview confirmation execution and audit',
         assert.equal(listResponse.status, 200);
         const list = await listResponse.json() as { enabled: boolean; actions: Array<{ id: string; category: string; command: string; timeout_ms: number }> };
         assert.equal(list.enabled, true);
+        assert.ok(list.actions.some((action) => action.id === 'status' && action.category === 'Inspection'));
+        assert.ok(list.actions.some((action) => action.id === 'doctor' && action.category === 'Inspection'));
+        assert.ok(list.actions.some((action) => action.id === 'status-why-blocked' && action.category === 'Inspection'));
+        assert.ok(list.actions.some((action) => action.id === 'repair-inspect' && action.category === 'Inspection'));
         assert.ok(list.actions.some((action) => action.id === 'garda-on' && action.category === 'Garda switch'));
         assert.ok(list.actions.some((action) => action.id === 'garda-off' && action.category === 'Garda switch'));
-        assert.ok(list.actions.every((action) => !['status', 'doctor', 'html-report', 'cleanup-preview', 'cleanup-apply'].includes(action.id)));
+        assert.ok(list.actions.every((action) => !['html-report', 'cleanup-preview', 'cleanup-apply'].includes(action.id)));
         assert.ok(list.actions.every((action) => action.command.includes('bin/garda.js')));
         assert.ok(list.actions.every((action) => Number.isInteger(action.timeout_ms) && action.timeout_ms > 0));
 

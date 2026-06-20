@@ -56,6 +56,21 @@ async function markActivity(force) {
     await refreshSession();
   }
 }
+const SYSTEM_STATE_DIAGNOSTIC_ACTION_IDS = ['status', 'doctor', 'status-why-blocked', 'repair-inspect'];
+function focusVisibleActionResult(node) {
+  if (!node || !node.innerHTML) {
+    return;
+  }
+  if (typeof node.setAttribute === 'function' && (!node.getAttribute || node.getAttribute('tabindex') === null)) {
+    node.setAttribute('tabindex', '-1');
+  }
+  if (typeof node.scrollIntoView === 'function') {
+    node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if (typeof node.focus === 'function') {
+    node.focus({ preventScroll: true });
+  }
+}
 function renderActionResult(result) {
   currentActionResult = result;
   const actionId = result.action_id || '';
@@ -67,6 +82,7 @@ function renderActionResult(result) {
     + outputBlock('stdout', result.stdout)
     + outputBlock('stderr', result.stderr)
     + '</section>';
+  focusVisibleActionResult(actionStatusNode);
 }
 function outputBlock(label, value) {
   if (!value) {
@@ -260,6 +276,23 @@ function renderSystemConfigurationFiles(entries) {
     + entries.map(entry => '<tr><td><strong>' + safe(systemConfigFileLabel(entry)) + '</strong><br><code>' + safe(entry.path) + '</code></td><td><span class="badge ' + safe(configFileStatusClass(entry.status)) + '">' + safe(configFileStatusLabel(entry.status)) + '</span></td></tr>').join('')
     + '</tbody></table></div></section>';
 }
+function systemDiagnosticActionsHtml(payload) {
+  const actions = payload && payload.actions ? payload.actions : [];
+  if (!payload || !payload.enabled) {
+    return '<section class="system-diagnostic-actions"><h3>' + safe(t('runtimeDiagnosticsTitle')) + '</h3><p class="empty">' + safe(t('actionsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('actionsDisabledTail')) + '</p></section>';
+  }
+  const buttons = SYSTEM_STATE_DIAGNOSTIC_ACTION_IDS.map(actionId => {
+    const action = actions.find(item => item.id === actionId);
+    if (!action || !action.enabled) {
+      return '';
+    }
+    return '<button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="execute">' + safe(actionLabel(action)) + '</button>';
+  }).join('');
+  if (!buttons) {
+    return '';
+  }
+  return '<section class="system-diagnostic-actions"><h3>' + safe(t('runtimeDiagnosticsTitle')) + '</h3><p class="empty">' + safe(t('actionsPreviewHelp')) + '</p><div class="action-buttons">' + buttons + '</div></section>';
+}
 function renderSystemState(report) {
   const node = document.getElementById('system-state-panel');
   if (!node || !report) {
@@ -296,8 +329,12 @@ function renderSystemState(report) {
     + '<span class="badge ' + safe(systemHealthClass(renderedOverallStatus)) + '">' + safe(renderedOverallLabel) + '</span>'
     + '</section>'
     + workflowDetails
+    + systemDiagnosticActionsHtml(currentActionsPayload)
     + '<section class="system-signal-grid">' + signals.map(renderSystemSignal).join('') + '</section>'
     + renderSystemConfigurationFiles(state.configuration_files || []);
+  if (currentActionsPayload && currentActionsPayload.enabled) {
+    wireActionButtons(node, currentActionsPayload.actions || []);
+  }
 }
 function renderActions(payload) {
   currentActionsPayload = payload;
@@ -318,6 +355,7 @@ function renderActions(payload) {
   }).join('');
   wireActionButtons(actionsNode, payload.actions);
   if (currentReport) {
+    renderSystemState(currentReport);
     renderBackups(currentReport);
   }
 }

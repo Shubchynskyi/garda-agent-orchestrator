@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "Buat backup manual",
       "description": "Membuat snapshot backup rollback manual."
+    },
+    "status": {
+      "label": "Status",
+      "description": "Menjalankan perintah status Garda read-only untuk workspace ini."
+    },
+    "doctor": {
+      "label": "Diagnostik",
+      "description": "Menjalankan diagnostik Garda read-only untuk init answers, manifest, file yang dihasilkan, lock, dan status paket."
+    },
+    "status-why-blocked": {
+      "label": "Mengapa diblokir",
+      "description": "Menjelaskan mengapa task yang terlihat diblokir tanpa mengubah file."
+    },
+    "repair-inspect": {
+      "label": "Inspeksi repair",
+      "description": "Memeriksa state runtime kanonis dan turunan tanpa membangun ulang atau menghapus file."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspeksi"
   }
 }

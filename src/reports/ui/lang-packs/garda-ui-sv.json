@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "Skapa manuell backup",
       "description": "Skapar en manuell rollback-backupsnapshot."
+    },
+    "status": {
+      "label": "Status",
+      "description": "Kör det skrivskyddade Garda-statuskommandot för denna workspace."
+    },
+    "doctor": {
+      "label": "Diagnostik",
+      "description": "Kör skrivskyddad Garda-diagnostik för init answers, manifest, genererade filer, lås och paketstatus."
+    },
+    "status-why-blocked": {
+      "label": "Varför blockerad",
+      "description": "Förklarar varför synliga uppgifter är blockerade utan att ändra filer."
+    },
+    "repair-inspect": {
+      "label": "Inspektera repair",
+      "description": "Inspekterar kanoniskt och härlett runtime-tillstånd utan att bygga om eller ta bort filer."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspektion"
   }
 }

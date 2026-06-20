@@ -289,6 +289,14 @@
     "backup-create-manual": {
       "label": "Manuelles Backup erstellen",
       "description": "Erstellt einen manuellen Rollback-Backup-Snapshot."
+    },
+    "status-why-blocked": {
+      "label": "Warum blockiert",
+      "description": "Erklärt ohne Dateiänderungen, warum sichtbare Tasks blockiert sind."
+    },
+    "repair-inspect": {
+      "label": "Repair prüfen",
+      "description": "Prüft kanonischen und abgeleiteten Runtime-Zustand ohne Neuaufbau oder Löschen von Dateien."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -343,5 +351,8 @@
       "title": "Projektspeicher",
       "body": "Die Registerkarte Projektspeicher zeigt den aktuellen Wartungsmodus und die dauerhaften Projektspeicherdateien. Öffnen Sie jede Datei bei Bedarf, statt den vollständigen Inhalt ins Dashboard zu laden."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Prüfung"
   }
 }

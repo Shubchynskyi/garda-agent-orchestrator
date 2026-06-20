@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "Criar backup manual",
       "description": "Cria um snapshot manual de backup para rollback."
+    },
+    "status": {
+      "label": "Estado",
+      "description": "Executa o comando de estado Garda somente leitura para este workspace."
+    },
+    "doctor": {
+      "label": "Diagnóstico",
+      "description": "Executa diagnósticos Garda somente leitura para respostas de init, manifestos, ficheiros gerados, locks e estado do pacote."
+    },
+    "status-why-blocked": {
+      "label": "Por que bloqueado",
+      "description": "Explica porque as tarefas visíveis estão bloqueadas sem alterar ficheiros."
+    },
+    "repair-inspect": {
+      "label": "Inspecionar reparação",
+      "description": "Inspeciona o estado runtime canónico e derivado sem reconstruir ou eliminar ficheiros."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspeção"
   }
 }

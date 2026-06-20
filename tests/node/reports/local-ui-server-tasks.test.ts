@@ -50,6 +50,9 @@ class FakeElement {
     readonly listeners = new Map<string, FakeListener[]>();
     readonly dataset: Record<string, string> = {};
     readonly classList: FakeClassList;
+    readonly attributes = new Map<string, string>();
+    focusCount = 0;
+    scrollCount = 0;
     textContent = '';
     value = '';
     hidden = false;
@@ -67,6 +70,8 @@ class FakeElement {
 
     set innerHTML(value: string) {
         this.html = value;
+        this.buttonCacheHtml = '';
+        this.buttonCache = [];
     }
 
     addEventListener(eventName: string, listener: FakeListener): void {
@@ -81,8 +86,20 @@ class FakeElement {
         }
     }
 
+    setAttribute(name: string, value: string): void {
+        this.attributes.set(name, value);
+    }
+
+    getAttribute(name: string): string | null {
+        return this.attributes.get(name) ?? null;
+    }
+
     scrollIntoView(): void {
-        // No-op for dashboard client tests.
+        this.scrollCount += 1;
+    }
+
+    focus(): void {
+        this.focusCount += 1;
     }
 
     querySelectorAll(selector: string): FakeElement[] {
@@ -655,6 +672,44 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     description: 'Run status',
                     command: 'node bin/garda.js status --target-root "."',
                     mutates: false,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: false,
+                    confirmation_phrase: null
+                },
+                {
+                    id: 'doctor',
+                    category: 'Inspection',
+                    label: 'Doctor',
+                    description: 'Run diagnostics',
+                    command: 'node bin/garda.js doctor --target-root "." --dry-run',
+                    mutates: false,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: false,
+                    confirmation_phrase: null
+                },
+                {
+                    id: 'status-why-blocked',
+                    category: 'Inspection',
+                    label: 'Why blocked',
+                    description: 'Explain blockers',
+                    command: 'node bin/garda.js status why-blocked --target-root "."',
+                    mutates: false,
+                    enabled: true,
+                    unavailable_reason: null,
+                    requires_confirmation: false,
+                    confirmation_phrase: null
+                },
+                {
+                    id: 'repair-inspect',
+                    category: 'Inspection',
+                    label: 'Repair inspect',
+                    description: 'Inspect runtime repair state',
+                    command: 'node bin/garda.js repair inspect --target-root "."',
+                    mutates: false,
+                    enabled: true,
+                    unavailable_reason: null,
                     requires_confirmation: false,
                     confirmation_phrase: null
                 },
@@ -827,6 +882,29 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                                     audit_path: 'runtime/ui-actions/audit.jsonl'
                                 };
                             }
+                            if (requestedAction === 'status' || requestedAction === 'doctor' || requestedAction === 'status-why-blocked' || requestedAction === 'repair-inspect') {
+                                return {
+                                    action_id: requestedAction,
+                                    status: 'executed',
+                                    command: requestedAction === 'status'
+                                        ? 'node bin/garda.js status --target-root "."'
+                                        : requestedAction === 'doctor'
+                                            ? 'node bin/garda.js doctor --target-root "." --dry-run'
+                                            : requestedAction === 'status-why-blocked'
+                                                ? 'node bin/garda.js status why-blocked --target-root "."'
+                                                : 'node bin/garda.js repair inspect --target-root "."',
+                                    exit_code: 0,
+                                    stdout: requestedAction === 'status'
+                                        ? 'GARDA_STATUS ok'
+                                        : requestedAction === 'doctor'
+                                            ? 'GARDA_DOCTOR ok'
+                                            : requestedAction === 'status-why-blocked'
+                                                ? 'GARDA_WHY_BLOCKED ok'
+                                                : 'GARDA_REPAIR_INSPECT ok',
+                                    stderr: '',
+                                    audit_path: 'runtime/ui-actions/audit.jsonl'
+                                };
+                            }
                             return {
                                 action_id: 'backup-restore:update-20260101-120000-000',
                                 status: 'executed',
@@ -925,6 +1003,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Removed=1/u);
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, /Keep=2/u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /backup create --target-root/u);
+        assert.equal(fakeDocument.elements['backup-action-status'].getAttribute('tabindex'), '-1');
+        assert.equal(fakeDocument.elements['backup-action-status'].scrollCount, 1);
+        assert.equal(fakeDocument.elements['backup-action-status'].focusCount, 1);
         manualBackupShouldFail = true;
         const reportFetchCountBeforeFailedBackup = reportFetchCount;
         await manualBackupButton.dispatch('click');
@@ -966,6 +1047,46 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Recommended full-suite command timeout/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Config state/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda-agent-orchestrator\/runtime\/init-answers\.json/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="status"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="doctor"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="status-why-blocked"/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-inspect"/u);
+        const statusDiagnosticButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
+            .find((button) => button.dataset.actionId === 'status' && button.dataset.actionMode === 'execute');
+        assert.ok(statusDiagnosticButton);
+        await statusDiagnosticButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Status/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_STATUS ok/u);
+        assert.equal(fakeDocument.elements['action-status'].getAttribute('tabindex'), '-1');
+        assert.equal(fakeDocument.elements['action-status'].scrollCount, 1);
+        assert.equal(fakeDocument.elements['action-status'].focusCount, 1);
+        const doctorDiagnosticButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
+            .find((button) => button.dataset.actionId === 'doctor' && button.dataset.actionMode === 'execute');
+        assert.ok(doctorDiagnosticButton);
+        await doctorDiagnosticButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Doctor/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_DOCTOR ok/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /runtime\/ui-actions\/audit\.jsonl/u);
+        assert.equal(fakeDocument.elements['action-status'].scrollCount, 2);
+        assert.equal(fakeDocument.elements['action-status'].focusCount, 2);
+        const whyBlockedDiagnosticButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
+            .find((button) => button.dataset.actionId === 'status-why-blocked' && button.dataset.actionMode === 'execute');
+        assert.ok(whyBlockedDiagnosticButton);
+        await whyBlockedDiagnosticButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Why blocked/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_WHY_BLOCKED ok/u);
+        const repairInspectDiagnosticButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
+            .find((button) => button.dataset.actionId === 'repair-inspect' && button.dataset.actionMode === 'execute');
+        assert.ok(repairInspectDiagnosticButton);
+        await repairInspectDiagnosticButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Repair inspect/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_INSPECT ok/u);
+        assert.equal(fakeDocument.elements['action-status'].scrollCount, 4);
+        assert.equal(fakeDocument.elements['action-status'].focusCount, 4);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Shutdown in/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /15m/u);
         assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /16m/u);
@@ -1037,6 +1158,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['task-action-status'].innerHTML, /Dry-run only/u);
         assert.match(fakeDocument.elements['task-action-status'].innerHTML, /runtime\/ui-actions\/audit\.jsonl/u);
         assert.doesNotMatch(fakeDocument.elements['task-action-status'].innerHTML, /node bin\/garda\.js task T-100 stats/u);
+        assert.equal(fakeDocument.elements['task-action-status'].getAttribute('tabindex'), '-1');
+        assert.equal(fakeDocument.elements['task-action-status'].scrollCount, 1);
+        assert.equal(fakeDocument.elements['task-action-status'].focusCount, 1);
 
         fakeDocument.elements['language-select'].value = 'ru';
         await fakeDocument.elements['language-select'].dispatch('change');
@@ -1047,6 +1171,10 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /нет недавней истории длительности полной проверки/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Recommended full-suite command timeout/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Защищённые режимы/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Статус/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Диагностика/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Почему заблокировано/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Проверить восстановление/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
         const localizedManualBackupButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
             .find((button) => button.dataset.backupActionId === 'backup-create-manual' && button.dataset.actionMode === 'execute');
@@ -1069,6 +1197,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Предупреждения/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Guarded UI actions are disabled/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Действия отключены/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /чтобы показать разрешённые команды/u);
 
         actions.enabled = true;
         (report.system_state.signals as unknown[]) = [

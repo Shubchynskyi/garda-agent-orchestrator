@@ -289,6 +289,14 @@
     "backup-create-manual": {
       "label": "创建手动备份",
       "description": "创建用于回滚的手动备份快照。"
+    },
+    "status-why-blocked": {
+      "label": "为何阻塞",
+      "description": "解释可见任务为何被阻塞，不更改文件。"
+    },
+    "repair-inspect": {
+      "label": "检查修复",
+      "description": "检查规范和派生 runtime 状态，不重建或删除文件。"
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -343,5 +351,8 @@
       "title": "项目记忆",
       "body": "项目记忆选项卡显示当前维护模式和持久记忆文件。请按需打开每个文件，而不是将全部内容加载到仪表板中。"
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "检查"
   }
 }

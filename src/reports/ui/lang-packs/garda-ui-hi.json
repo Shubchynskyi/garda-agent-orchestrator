@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "मैनुअल बैकअप बनाएं",
       "description": "मैनुअल rollback बैकअप स्नैपशॉट बनाएं।"
+    },
+    "status": {
+      "label": "स्थिति",
+      "description": "इस workspace के लिए read-only Garda status command चलाता है।"
+    },
+    "doctor": {
+      "label": "डायग्नोस्टिक",
+      "description": "init answers, manifests, generated files, locks और package state के लिए read-only Garda diagnostics चलाता है।"
+    },
+    "status-why-blocked": {
+      "label": "क्यों अवरुद्ध",
+      "description": "फ़ाइलें बदले बिना बताता है कि दिखने वाले tasks क्यों blocked हैं।"
+    },
+    "repair-inspect": {
+      "label": "रिपेयर निरीक्षण",
+      "description": "फ़ाइलें rebuild या delete किए बिना canonical और derived runtime state की जाँच करता है।"
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "निरीक्षण"
   }
 }

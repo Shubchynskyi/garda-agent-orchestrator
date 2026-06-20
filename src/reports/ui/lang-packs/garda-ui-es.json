@@ -289,6 +289,14 @@
     "backup-create-manual": {
       "label": "Crear copia manual",
       "description": "Crea una instantanea manual de copia para rollback."
+    },
+    "status-why-blocked": {
+      "label": "Por qué bloqueado",
+      "description": "Explica por qué las tareas visibles están bloqueadas sin cambiar archivos."
+    },
+    "repair-inspect": {
+      "label": "Inspeccionar reparación",
+      "description": "Inspecciona el estado runtime canónico y derivado sin reconstruir ni eliminar archivos."
     }
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
@@ -343,5 +351,8 @@
       "title": "Memoria del proyecto",
       "body": "La pestaña de memoria del proyecto muestra el modo de mantenimiento actual y los archivos de memoria duradera. Abra cada archivo bajo demanda en lugar de cargar el contenido completo en el panel."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Inspección"
   }
 }

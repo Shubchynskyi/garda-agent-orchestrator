@@ -314,6 +314,25 @@
     "backup-create-manual": {
       "label": "Tao ban sao luu thu cong",
       "description": "Tao anh chup sao luu rollback thu cong."
+    },
+    "status": {
+      "label": "Trạng thái",
+      "description": "Chạy lệnh trạng thái Garda chỉ đọc cho workspace này."
+    },
+    "doctor": {
+      "label": "Chẩn đoán",
+      "description": "Chạy chẩn đoán Garda chỉ đọc cho init answers, manifest, file được tạo, lock và trạng thái package."
+    },
+    "status-why-blocked": {
+      "label": "Vì sao bị chặn",
+      "description": "Giải thích vì sao các task hiển thị bị chặn mà không thay đổi file."
+    },
+    "repair-inspect": {
+      "label": "Kiểm tra repair",
+      "description": "Kiểm tra trạng thái runtime chuẩn và dẫn xuất mà không rebuild hoặc xóa file."
     }
+  },
+  "LOCAL_UI_ACTION_CATEGORY_TEXT": {
+    "Inspection": "Kiểm tra"
   }
 }
