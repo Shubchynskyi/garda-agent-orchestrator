@@ -147,6 +147,24 @@ function weakenFullSuiteCommand(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 }
 
+function weakenFullSuiteTimeoutBlocker(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        full_suite_validation: { timeout_blocker?: boolean };
+    };
+    config.full_suite_validation.timeout_blocker = false;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
+function weakenFullSuiteTimeoutRetryCount(repoRoot: string): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        full_suite_validation: { timeout_retry_count?: number };
+    };
+    config.full_suite_validation.timeout_retry_count = 0;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
 function enableFullSuitePolicy(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
@@ -942,6 +960,50 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             seedInitAnswers(repoRoot);
             initializeGitRepo(repoRoot);
             weakenFullSuiteCommand(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when full-suite timeout blocker is disabled', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-timeout-blocker-unsafe';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenFullSuiteTimeoutBlocker(repoRoot);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config when full-suite timeout retry count is reduced', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-timeout-retry-unsafe';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            initializeGitRepo(repoRoot);
+            weakenFullSuiteTimeoutRetryCount(repoRoot);
 
             const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
             assert.deepEqual(baselineState.compatibility_baseline_files, []);

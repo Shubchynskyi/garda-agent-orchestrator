@@ -19,6 +19,7 @@ import {
     ORCHESTRATOR_WORK_POLICY_MODES,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES,
+    FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     buildDefaultWorkflowConfig,
     normalizeFullSuiteValidationPlacement,
     type OrchestratorWorkPolicyMode
@@ -49,6 +50,8 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         'enabled',
         'command',
         'timeout_ms',
+        'timeout_blocker',
+        'timeout_retry_count',
         'green_summary_max_lines',
         'red_failure_chunk_lines',
         'out_of_scope_failure_policy',
@@ -60,6 +63,8 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
             'enabled',
             'command',
             'timeout_ms',
+            'timeout_blocker',
+            'timeout_retry_count',
             'green_summary_max_lines',
             'red_failure_chunk_lines',
             'out_of_scope_failure_policy',
@@ -81,6 +86,15 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         section.timeout_ms,
         'workflow-config.full_suite_validation.timeout_ms',
         { minimum: 1000 }
+    );
+    normalizedSection.timeout_blocker = normalizeBooleanLike(
+        section.timeout_blocker ?? buildDefaultWorkflowConfig().full_suite_validation.timeout_blocker,
+        'workflow-config.full_suite_validation.timeout_blocker'
+    );
+    normalizedSection.timeout_retry_count = normalizeInteger(
+        section.timeout_retry_count ?? buildDefaultWorkflowConfig().full_suite_validation.timeout_retry_count,
+        'workflow-config.full_suite_validation.timeout_retry_count',
+        { minimum: 0, maximum: FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX }
     );
     normalizedSection.green_summary_max_lines = normalizeInteger(
         section.green_summary_max_lines,
@@ -459,4 +473,3 @@ function validateReviewCycleGuardSection(input: unknown): Record<string, unknown
     }
     return normalizeReviewCycleGuardConfig(normalizedInput) as unknown as Record<string, unknown>;
 }
-

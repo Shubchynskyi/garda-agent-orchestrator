@@ -316,6 +316,12 @@ export async function runFullSuiteValidationCommand(
     let outputLines: string[] = [];
     const executionConfig = resolveEffectiveFullSuiteValidationConfig(repoRoot, config);
     const startedAtMs = Date.now();
+    const timeoutRetryCount = Number.isSafeInteger(executionConfig.timeout_retry_count)
+        && (executionConfig.timeout_retry_count ?? 0) >= 0
+        ? executionConfig.timeout_retry_count ?? 0
+        : 1;
+    const maxAttempts = Math.max(1, 1 + timeoutRetryCount);
+    const timeoutCleanupObservations: string[] = [];
     writeFullSuiteValidationRunMarker({
         repoRoot,
         taskId,
@@ -324,30 +330,59 @@ export async function runFullSuiteValidationCommand(
         timeoutMs: executionConfig.timeout_ms,
         cycleBinding
     });
-    try {
-        const execution = await executeCommandAsync(config.command, {
-            cwd: repoRoot,
-            env: buildFullSuiteValidationCommandEnv(executionConfig.timeout_ms),
-            timeoutMs: executionConfig.timeout_ms,
-            onSpawn: (child) => updateFullSuiteValidationRunMarkerChildProcess(repoRoot, taskId, child)
-        });
-        commandExitCode = execution.exitCode;
-        timedOut = execution.timedOut;
-        outputLines = execution.outputLines;
-    } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        outputLines = [message];
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            const execution = await executeCommandAsync(config.command, {
+                cwd: repoRoot,
+                env: buildFullSuiteValidationCommandEnv(executionConfig.timeout_ms),
+                timeoutMs: executionConfig.timeout_ms,
+                onSpawn: (child) => updateFullSuiteValidationRunMarkerChildProcess(repoRoot, taskId, child)
+            });
+            commandExitCode = execution.exitCode;
+            timedOut = execution.timedOut;
+            const attemptLines = maxAttempts > 1 && (attempt > 1 || execution.timedOut)
+                ? [`FULL_SUITE_ATTEMPT ${attempt}/${maxAttempts}`]
+                : [];
+            outputLines = [
+                ...outputLines,
+                ...attemptLines,
+                ...execution.outputLines
+            ];
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            commandExitCode = EXIT_GENERAL_FAILURE;
+            timedOut = false;
+            const attemptLines = maxAttempts > 1 && attempt > 1
+                ? [`FULL_SUITE_ATTEMPT ${attempt}/${maxAttempts}`]
+                : [];
+            outputLines = [
+                ...outputLines,
+                ...attemptLines,
+                message
+            ];
+        }
+
+        if (timedOut) {
+            const generatedLockCleanup = cleanupGeneratedLocksAfterTimedOutFullSuite(repoRoot);
+            if (generatedLockCleanup.length > 0) {
+                const cleanupObservations = generatedLockCleanup.map(formatGeneratedLockCleanupObservation);
+                timeoutCleanupObservations.push(...cleanupObservations);
+                outputLines = [
+                    ...outputLines,
+                    ...cleanupObservations
+                ];
+            }
+        }
+
+        if (!timedOut || attempt >= maxAttempts) {
+            break;
+        }
+
+        outputLines.push(
+            `FULL_SUITE_TIMEOUT_RETRY attempt=${attempt} next_attempt=${attempt + 1} max_attempts=${maxAttempts} timeout_ms=${executionConfig.timeout_ms}`
+        );
     }
     const durationMs = Math.max(1, Date.now() - startedAtMs);
-    const generatedLockCleanup = timedOut
-        ? cleanupGeneratedLocksAfterTimedOutFullSuite(repoRoot)
-        : [];
-    if (generatedLockCleanup.length > 0) {
-        outputLines = [
-            ...outputLines,
-            ...generatedLockCleanup.map(formatGeneratedLockCleanupObservation)
-        ];
-    }
     outputLines = outputLines.map((line) => redactSecretText(line));
     const rawOutputText = serializeCapturedOutputLines(outputLines);
     const result = buildValidationResult(
@@ -368,8 +403,8 @@ export async function runFullSuiteValidationCommand(
         result,
         outputLines
     });
-    if (generatedLockCleanup.length > 0) {
-        result.warnings.push(...generatedLockCleanup.map(formatGeneratedLockCleanupObservation));
+    if (timeoutCleanupObservations.length > 0) {
+        result.warnings.push(...timeoutCleanupObservations);
     }
     result.duration_ms = durationMs;
     result.output_telemetry = buildFullSuiteValidationOutputTelemetry(outputLines, result);

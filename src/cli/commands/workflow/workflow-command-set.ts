@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { isRecognizedBundleName } from '../../../core/constants';
 import {
     buildDefaultWorkflowConfig,
+    FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     hasMaterializedWorkflowConfigBaseline,
     normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
@@ -163,6 +164,22 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             1000
         );
         changedFields.push('full_suite_validation.timeout_ms');
+    }
+    if (typeof options.fullSuiteTimeoutBlocker === 'string') {
+        nextFullSuiteValidation.timeout_blocker = parseBooleanText(
+            options.fullSuiteTimeoutBlocker,
+            '--full-suite-timeout-blocker'
+        );
+        changedFields.push('full_suite_validation.timeout_blocker');
+    }
+    if (typeof options.fullSuiteTimeoutRetryCount === 'string') {
+        nextFullSuiteValidation.timeout_retry_count = parseIntegerText(
+            options.fullSuiteTimeoutRetryCount,
+            '--full-suite-timeout-retry-count',
+            0,
+            FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX
+        );
+        changedFields.push('full_suite_validation.timeout_retry_count');
     }
     if (typeof options.fullSuiteGreenSummaryMaxLines === 'string') {
         nextFullSuiteValidation.green_summary_max_lines = parseIntegerText(
@@ -386,6 +403,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         throw new Error(
             "Workflow setting flags are required for 'workflow set'. "
             + 'Use --compile-gate-command, --full-suite-enabled, --full-suite-command, --full-suite-timeout-ms, '
+            + '--full-suite-timeout-blocker, --full-suite-timeout-retry-count, '
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '

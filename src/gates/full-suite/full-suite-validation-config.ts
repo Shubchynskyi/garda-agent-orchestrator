@@ -4,7 +4,11 @@ import { createHash } from 'node:crypto';
 
 import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../core/constants';
 import { redactSecretText } from '../../core/redaction';
-import { normalizeFullSuiteValidationPlacement } from '../../core/workflow-config';
+import {
+    FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
+    normalizeFullSuiteValidationPlacement
+} from '../../core/workflow-config';
+import { normalizeBooleanLike, normalizeInteger } from '../../schemas/shared';
 import { joinOrchestratorPath, normalizePath } from '../shared/helpers';
 import {
     OUT_OF_SCOPE_FAILURE_POLICIES,
@@ -24,6 +28,8 @@ const DEFAULT_CONFIG: FullSuiteValidationConfig = Object.freeze({
     enabled: false,
     command: UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
     timeout_ms: 600_000,
+    timeout_blocker: true,
+    timeout_retry_count: 1,
     green_summary_max_lines: 5,
     red_failure_chunk_lines: 50,
     out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
@@ -63,6 +69,17 @@ export function loadFullSuiteValidationConfig(repoRoot: string): FullSuiteValida
         timeout_ms: typeof record.timeout_ms === 'number' && record.timeout_ms > 0
             ? record.timeout_ms
             : DEFAULT_CONFIG.timeout_ms,
+        timeout_blocker: normalizeBooleanLikeOrDefault(
+            record.timeout_blocker,
+            'workflow-config.full_suite_validation.timeout_blocker',
+            DEFAULT_CONFIG.timeout_blocker ?? true
+        ),
+        timeout_retry_count: normalizeIntegerOrDefault(
+            record.timeout_retry_count,
+            'workflow-config.full_suite_validation.timeout_retry_count',
+            DEFAULT_CONFIG.timeout_retry_count ?? 1,
+            { minimum: 0, maximum: FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX }
+        ),
         green_summary_max_lines: typeof record.green_summary_max_lines === 'number' && record.green_summary_max_lines > 0
             ? record.green_summary_max_lines
             : DEFAULT_CONFIG.green_summary_max_lines,
@@ -75,6 +92,33 @@ export function loadFullSuiteValidationConfig(repoRoot: string): FullSuiteValida
             errorPath: 'workflow-config.full_suite_validation.placement'
         })
     };
+}
+
+function normalizeBooleanLikeOrDefault(value: unknown, fieldName: string, fallback: boolean): boolean {
+    if (value === undefined) {
+        return fallback;
+    }
+    try {
+        return normalizeBooleanLike(value, fieldName);
+    } catch {
+        return fallback;
+    }
+}
+
+function normalizeIntegerOrDefault(
+    value: unknown,
+    fieldName: string,
+    fallback: number,
+    options: { readonly minimum?: number; readonly maximum?: number } = {}
+): number {
+    if (value === undefined) {
+        return fallback;
+    }
+    try {
+        return normalizeInteger(value, fieldName, options);
+    } catch {
+        return fallback;
+    }
 }
 
 function normalizeOutOfScopePolicy(value: unknown): OutOfScopeFailurePolicy {
@@ -93,6 +137,11 @@ export function buildFullSuiteConfigSignature(config: FullSuiteValidationConfig)
     const relevantConfig = {
         command: config.command,
         timeout_ms: config.timeout_ms,
+        timeout_blocker: config.timeout_blocker !== false,
+        timeout_retry_count: Number.isSafeInteger(config.timeout_retry_count) && (config.timeout_retry_count ?? 0) >= 0
+            && (config.timeout_retry_count ?? 0) <= FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX
+            ? config.timeout_retry_count
+            : DEFAULT_CONFIG.timeout_retry_count,
         green_summary_max_lines: config.green_summary_max_lines,
         red_failure_chunk_lines: config.red_failure_chunk_lines,
         out_of_scope_failure_policy: config.out_of_scope_failure_policy,

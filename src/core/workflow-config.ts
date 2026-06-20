@@ -24,6 +24,8 @@ export interface FullSuiteValidationConfig {
     enabled: boolean;
     command: string;
     timeout_ms: number;
+    timeout_blocker: boolean;
+    timeout_retry_count: number;
     green_summary_max_lines: number;
     red_failure_chunk_lines: number;
     out_of_scope_failure_policy: string;
@@ -42,6 +44,7 @@ export const FULL_SUITE_VALIDATION_PLACEMENTS = Object.freeze([
     'before_completion'
 ] as const);
 export type FullSuiteValidationPlacement = typeof FULL_SUITE_VALIDATION_PLACEMENTS[number];
+export const FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX = 3;
 
 export interface NormalizeFullSuiteValidationPlacementOptions {
     rejectInvalidExplicit?: boolean;
@@ -154,6 +157,8 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         enabled: false,
         command: UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
         timeout_ms: 600_000,
+        timeout_blocker: true,
+        timeout_retry_count: 1,
         green_summary_max_lines: 5,
         red_failure_chunk_lines: 50,
         out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',

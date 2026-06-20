@@ -13,6 +13,7 @@ import {
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
 import {
+    FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     FULL_SUITE_VALIDATION_PLACEMENTS,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES
@@ -331,6 +332,8 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                 enabled:                    { type: 'boolean', description: 'Enable full-suite validation.' },
                 command:                    { type: 'string', minLength: 1, description: 'Command to run for full-suite validation.' },
                 timeout_ms:                 { type: 'integer', minimum: 1000, description: 'Timeout in milliseconds.' },
+                timeout_blocker:            { type: 'boolean', description: 'Block task progress after repeated full-suite timeout evidence instead of continuing with warning-only evidence.' },
+                timeout_retry_count:        { type: 'integer', minimum: 0, maximum: FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX, description: 'Number of same-scope full-suite timeout retries allowed before blocker handling applies.' },
                 green_summary_max_lines:    { type: 'integer', minimum: 1, description: 'Max lines for pass summary.' },
                 red_failure_chunk_lines:    { type: 'integer', minimum: 10, description: 'Chunk size for failure output.' },
                 out_of_scope_failure_policy: { type: 'string', enum: [...OUT_OF_SCOPE_FAILURE_POLICIES], description: 'Policy for handling out-of-scope failures.' },

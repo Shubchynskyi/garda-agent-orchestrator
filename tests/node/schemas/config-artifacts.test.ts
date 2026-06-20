@@ -189,6 +189,8 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
 
     const fullSuiteValidation = normalized.full_suite_validation as Record<string, unknown>;
     assert.equal(fullSuiteValidation.placement, 'before_completion');
+    assert.equal(fullSuiteValidation.timeout_blocker, true);
+    assert.equal(fullSuiteValidation.timeout_retry_count, 1);
 });
 
 test('validateWorkflowConfig defaults missing full-suite placement but rejects invalid values', () => {
@@ -221,6 +223,61 @@ test('validateWorkflowConfig defaults missing full-suite placement but rejects i
             }
         }),
         /full_suite_validation\.placement must be one of/
+    );
+});
+
+test('validateWorkflowConfig defaults and validates full-suite timeout policy fields', () => {
+    const baseConfig = {
+        full_suite_validation: {
+            enabled: false,
+            command: 'npm test',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        }
+    };
+
+    const defaulted = validateWorkflowConfig(baseConfig);
+    const defaultedFullSuite = defaulted.full_suite_validation as Record<string, unknown>;
+    assert.equal(defaultedFullSuite.timeout_blocker, true);
+    assert.equal(defaultedFullSuite.timeout_retry_count, 1);
+
+    const normalized = validateWorkflowConfig({
+        ...baseConfig,
+        full_suite_validation: {
+            ...baseConfig.full_suite_validation,
+            timeout_blocker: 'no',
+            timeout_retry_count: '0'
+        }
+    });
+    const fullSuite = normalized.full_suite_validation as Record<string, unknown>;
+    assert.equal(fullSuite.timeout_blocker, false);
+    assert.equal(fullSuite.timeout_retry_count, 0);
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            full_suite_validation: {
+                ...baseConfig.full_suite_validation,
+                timeout_retry_count: -1
+            }
+        }),
+        /full_suite_validation\.timeout_retry_count must be >= 0/
+    );
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            full_suite_validation: {
+                ...baseConfig.full_suite_validation,
+                timeout_retry_count: 4
+            }
+        }),
+        /full_suite_validation\.timeout_retry_count must be <= 3/
     );
 });
 

@@ -256,6 +256,8 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(`FullSuiteCommand: ${fullSuiteValidation.command}`);
     lines.push(`FullSuitePerformance: ${formatFullSuitePerformanceGuidance(fullSuiteValidation.command)}`);
     lines.push(`FullSuiteTimeoutMs: ${fullSuiteValidation.timeout_ms}`);
+    lines.push(`FullSuiteTimeoutBlocker: ${fullSuiteValidation.timeout_blocker}`);
+    lines.push(`FullSuiteTimeoutRetryCount: ${fullSuiteValidation.timeout_retry_count}`);
     lines.push(`FullSuiteGreenSummaryMaxLines: ${fullSuiteValidation.green_summary_max_lines}`);
     lines.push(`FullSuiteRedFailureChunkLines: ${fullSuiteValidation.red_failure_chunk_lines}`);
     lines.push(`FullSuiteOutOfScopeFailurePolicy: ${fullSuiteValidation.out_of_scope_failure_policy}`);
@@ -305,6 +307,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Tip: compile-gate executes workflow-config compile_gate.command only; unconfigured workspaces fail closed and do not fall back to 40-commands.md.');
     lines.push('Tip: run "workflow set --compile-gate-command \"<compile/build/type-check command>\" --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" after operator approval to set the compile gate command.');
     lines.push('Tip: run "workflow set --full-suite on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the repo-local mode after operator approval.');
+    lines.push('Tip: run "workflow set --full-suite-timeout-blocker true|false --full-suite-timeout-retry-count 1 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change timeout blocker behavior after operator approval.');
     lines.push(`Tip: run "workflow set --review-execution-policy <${REVIEW_EXECUTION_POLICY_MODES.join('|')}> --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change review launch ordering after operator approval.`);
     lines.push('Tip: run "workflow set --scope-budget on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the scope budget guard after operator approval.');
     lines.push('Tip: run "workflow set --review-cycle on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change the review cycle guard after operator approval.');

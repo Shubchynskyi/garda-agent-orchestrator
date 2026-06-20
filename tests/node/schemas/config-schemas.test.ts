@@ -321,6 +321,30 @@ test('workflow-config schema accepts legacy full_suite_validation without placem
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('workflow-config schema carries full-suite timeout policy defaults', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const fullSuite = data.full_suite_validation as Record<string, unknown>;
+    assert.equal(fullSuite.timeout_blocker, true);
+    assert.equal(fullSuite.timeout_retry_count, 1);
+
+    const timeoutRetrySchema = (
+        (workflowConfigSchema.properties as Record<string, unknown>).full_suite_validation as Record<string, unknown>
+    ).properties as Record<string, Record<string, unknown>>;
+    assert.equal(timeoutRetrySchema.timeout_retry_count.maximum, 3);
+
+    const result = validateAgainstSchema(data, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config schema accepts legacy full_suite_validation without timeout policy fields', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    delete (clone.full_suite_validation as Record<string, unknown>).timeout_blocker;
+    delete (clone.full_suite_validation as Record<string, unknown>).timeout_retry_count;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
 test('workflow-config schema accepts optional compile gate command section', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     const result = validateAgainstSchema(data, workflowConfigSchema);

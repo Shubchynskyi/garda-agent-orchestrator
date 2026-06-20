@@ -376,6 +376,8 @@ describe('runUpdate', () => {
                 timeout_ms: 123456,
                 green_summary_max_lines: 7,
                 red_failure_chunk_lines: 42,
+                timeout_blocker: true,
+                timeout_retry_count: 1,
                 out_of_scope_failure_policy: 'AUDIT_AND_WARN',
                 auto_open_report: true,
                 placement: 'after_compile_before_reviews'
@@ -636,6 +638,8 @@ describe('runUpdate', () => {
                 timeout_ms: 123456,
                 green_summary_max_lines: 7,
                 red_failure_chunk_lines: 42,
+                timeout_blocker: true,
+                timeout_retry_count: 1,
                 out_of_scope_failure_policy: 'AUDIT_AND_WARN',
                 placement: 'after_compile_before_reviews'
             });
@@ -672,6 +676,8 @@ describe('runUpdate', () => {
                 timeout_ms: 600000,
                 green_summary_max_lines: 5,
                 red_failure_chunk_lines: 50,
+                timeout_blocker: true,
+                timeout_retry_count: 1,
                 out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
                 placement: 'after_compile_before_reviews'
             });

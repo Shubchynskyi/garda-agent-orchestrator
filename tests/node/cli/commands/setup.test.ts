@@ -586,6 +586,8 @@ test('handleSetup preserves explicit workflow-config full-suite settings across 
             timeout_ms: 123456,
             green_summary_max_lines: 7,
             red_failure_chunk_lines: 42,
+            timeout_blocker: true,
+            timeout_retry_count: 1,
             out_of_scope_failure_policy: 'AUDIT_AND_WARN',
             placement: 'after_compile_before_reviews'
         });
@@ -987,6 +989,8 @@ test('handleSetup preserves legacy workflow-config omission for review_execution
             timeout_ms: 123456,
             green_summary_max_lines: 7,
             red_failure_chunk_lines: 42,
+            timeout_blocker: true,
+            timeout_retry_count: 1,
             out_of_scope_failure_policy: 'AUDIT_AND_WARN',
             placement: 'after_compile_before_reviews'
         });

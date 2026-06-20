@@ -119,6 +119,8 @@ export const WORKFLOW_SET_DEFINITIONS = {
     '--full-suite-enabled': { key: 'fullSuiteEnabled', type: 'string' },
     '--full-suite-command': { key: 'fullSuiteCommand', type: 'string' },
     '--full-suite-timeout-ms': { key: 'fullSuiteTimeoutMs', type: 'string' },
+    '--full-suite-timeout-blocker': { key: 'fullSuiteTimeoutBlocker', type: 'string' },
+    '--full-suite-timeout-retry-count': { key: 'fullSuiteTimeoutRetryCount', type: 'string' },
     '--full-suite-green-summary-max-lines': { key: 'fullSuiteGreenSummaryMaxLines', type: 'string' },
     '--full-suite-red-failure-chunk-lines': { key: 'fullSuiteRedFailureChunkLines', type: 'string' },
     '--full-suite-out-of-scope-failure-policy': { key: 'fullSuiteOutOfScopeFailurePolicy', type: 'string' },

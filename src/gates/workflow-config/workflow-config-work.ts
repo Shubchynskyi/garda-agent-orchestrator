@@ -234,7 +234,11 @@ const COMPATIBILITY_FULL_SUITE_VALIDATION_REQUIRED_KEYS = [
     'red_failure_chunk_lines',
     'timeout_ms'
 ];
-const COMPATIBILITY_FULL_SUITE_VALIDATION_OPTIONAL_KEYS = ['placement'];
+const COMPATIBILITY_FULL_SUITE_VALIDATION_OPTIONAL_KEYS = [
+    'placement',
+    'timeout_blocker',
+    'timeout_retry_count'
+];
 const COMPATIBILITY_FULL_SUITE_VALIDATION_KEYS = [
     ...COMPATIBILITY_FULL_SUITE_VALIDATION_REQUIRED_KEYS,
     ...COMPATIBILITY_FULL_SUITE_VALIDATION_OPTIONAL_KEYS
@@ -372,6 +376,18 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
         } catch {
             return false;
         }
+    }
+    if (
+        hasOwnKey(fullSuiteValidation, 'timeout_blocker')
+        && fullSuiteValidation.timeout_blocker !== defaultFullSuiteValidation.timeout_blocker
+    ) {
+        return false;
+    }
+    if (
+        hasOwnKey(fullSuiteValidation, 'timeout_retry_count')
+        && !numberEquals(fullSuiteValidation, 'timeout_retry_count', defaultFullSuiteValidation.timeout_retry_count)
+    ) {
+        return false;
     }
     if (fullSuiteValidation.enabled === true && command !== 'npm test') {
         return false;

@@ -966,6 +966,134 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
+        it('gate full-suite-validation retries timed-out commands according to timeout retry policy', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-timeout-retry-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const markerPath = path.join(tempDir, 'first-attempt-marker.txt');
+            const helperScript = path.join(tempDir, 'timeout-once-then-pass.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const fs = require("node:fs");',
+                    `const marker = ${JSON.stringify(markerPath.replace(/\\/g, '/'))};`,
+                    'if (!fs.existsSync(marker)) {',
+                    '  fs.writeFileSync(marker, "seen", "utf8");',
+                    '  setTimeout(() => { process.stdout.write("late first attempt\\n"); process.exit(0); }, 1500);',
+                    '} else {',
+                    '  process.stdout.write("retry pass\\n");',
+                    '  process.exit(0);',
+                    '}'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 1,
+                    timeout_blocker: true,
+                    timeout_retry_count: 1,
+                    green_summary_max_lines: 10,
+                    red_failure_chunk_lines: 20,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after_compile_before_reviews'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-RETRY-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-TIMEOUT-RETRY',
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-TIMEOUT-RETRY',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-TIMEOUT-RETRY-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
+            assert.equal(artifact.timed_out, false);
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('FULL_SUITE_TIMEOUT_RETRY')));
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('retry pass')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation retries timed-out commands before warning-only timeout results', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-timeout-retry-warn-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const markerPath = path.join(tempDir, 'first-attempt-marker.txt');
+            const helperScript = path.join(tempDir, 'timeout-once-then-pass.js');
+            fs.writeFileSync(
+                helperScript,
+                [
+                    'const fs = require("node:fs");',
+                    `const marker = ${JSON.stringify(markerPath.replace(/\\/g, '/'))};`,
+                    'if (!fs.existsSync(marker)) {',
+                    '  fs.writeFileSync(marker, "seen", "utf8");',
+                    '  setTimeout(() => { process.stdout.write("late first warning attempt\\n"); process.exit(0); }, 1500);',
+                    '} else {',
+                    '  process.stdout.write("warning retry pass\\n");',
+                    '  process.exit(0);',
+                    '}'
+                ].join('\n'),
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 1,
+                    timeout_blocker: false,
+                    timeout_retry_count: 1,
+                    green_summary_max_lines: 10,
+                    red_failure_chunk_lines: 20,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after_compile_before_reviews'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-RETRY-WARN-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-TIMEOUT-RETRY-WARN',
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-TIMEOUT-RETRY-WARN',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-TIMEOUT-RETRY-WARN-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'PASSED');
+            assert.equal(artifact.timed_out, false);
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('FULL_SUITE_TIMEOUT_RETRY')));
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('warning retry pass')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
         it('gate full-suite-validation supplies prebuilt node test env to npm test subprocesses', async () => {
             const repoRoot = path.resolve(process.cwd());
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-shard-env-'));
@@ -1057,6 +1185,7 @@ describe('gates/full-suite-validation', () => {
                     enabled: true,
                     command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
                     timeout_ms: 300,
+                    timeout_retry_count: 0,
                     green_summary_max_lines: 5,
                     red_failure_chunk_lines: 10,
                     out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'

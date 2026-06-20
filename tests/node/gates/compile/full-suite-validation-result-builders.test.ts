@@ -251,6 +251,31 @@ describe('gates/full-suite-validation', () => {
             assert.ok(result.violations.some((line) => line.includes('timed out')));
         });
 
+        it('buildValidationResult records in-scope timeouts as WARNED when timeout blocker is disabled', () => {
+            const config = loadFullSuiteValidationConfig('/nonexistent');
+            const result = buildValidationResult(
+                { ...config, enabled: true, timeout_blocker: false },
+                1,
+                true,
+                [
+                    'not ok 1 - failed at tests/node/cli/commands/gates.test.ts:10',
+                    'Process timed out after 600000 ms.'
+                ],
+                null,
+                ['tests/node/cli/commands/gates.test.ts'],
+                {
+                    task_id: 'T-123',
+                    preflight_path: 'runtime/reviews/T-123-preflight.json',
+                    preflight_sha256: 'abc123',
+                    compile_gate_timestamp: null
+                }
+            );
+
+            assert.equal(result.status, 'WARNED');
+            assert.equal(result.violations.length, 0);
+            assert.ok(result.warnings.some((line) => line.includes('timeout_blocker=false')));
+        });
+
         it('formatFullSuiteValidationResult includes cycle binding', () => {
             const config = loadFullSuiteValidationConfig('/nonexistent');
             const result = buildSkippedResult(config, {

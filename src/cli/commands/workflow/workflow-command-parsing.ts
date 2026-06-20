@@ -82,13 +82,16 @@ export function resolveBooleanSettingOption(options: {
     return null;
 }
 
-export function parseIntegerText(value: string, flagName: string, minimum: number): number {
+export function parseIntegerText(value: string, flagName: string, minimum: number, maximum?: number): number {
     if (!/^\d+$/.test(value.trim())) {
         throw new Error(`${flagName} must be an integer.`);
     }
     const parsed = Number.parseInt(value.trim(), 10);
     if (parsed < minimum) {
         throw new Error(`${flagName} must be >= ${minimum}.`);
+    }
+    if (maximum !== undefined && parsed > maximum) {
+        throw new Error(`${flagName} must be <= ${maximum}.`);
     }
     return parsed;
 }

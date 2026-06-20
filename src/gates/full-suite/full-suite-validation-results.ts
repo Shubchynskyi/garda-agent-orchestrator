@@ -288,7 +288,9 @@ export function buildValidationResult(
     }
 
     const effectiveStatus: 'FAILED' | 'WARNED' =
-        harnessFailure.detected
+        timedOut && config.timeout_blocker === false
+            ? 'WARNED'
+            : harnessFailure.detected
             ? 'WARNED'
             : outOfScopeDetected
             && config.out_of_scope_failure_policy === 'AUDIT_AND_WARN'
@@ -309,7 +311,13 @@ export function buildValidationResult(
             );
         }
     } else {
-        if (harnessFailure.detected) {
+        if (timedOut && config.timeout_blocker === false) {
+            warnings.push(
+                'Full suite validation timed out, but workflow-config.full_suite_validation.timeout_blocker=false. ' +
+                'Recorded as WARNED so task progress can continue with explicit timeout-warning evidence.'
+            );
+            warnings.push(`Full suite exited with code ${exitCode} after timeout ${config.timeout_ms}ms.`);
+        } else if (harnessFailure.detected) {
             warnings.push(
                 'Full suite timed out in an out-of-scope test harness or lock surface. ' +
                 'Recorded as WARNED so unrelated reviewed tasks are not blocked indefinitely. ' +

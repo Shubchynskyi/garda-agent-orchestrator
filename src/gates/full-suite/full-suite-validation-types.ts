@@ -12,6 +12,8 @@ export interface FullSuiteValidationConfig {
     readonly enabled: boolean;
     readonly command: string;
     readonly timeout_ms: number;
+    readonly timeout_blocker?: boolean;
+    readonly timeout_retry_count?: number;
     readonly green_summary_max_lines: number;
     readonly red_failure_chunk_lines: number;
     readonly out_of_scope_failure_policy: OutOfScopeFailurePolicy;

@@ -96,6 +96,8 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Review execution policy: code_first_optional'));
         assert.ok(output.includes('FullSuiteCommand: npm test'));
         assert.ok(output.includes('FullSuitePerformance: mode=standard; optimized=false; boundary=mandatory_full_suite_not_smoke_or_fast'));
+        assert.ok(output.includes('FullSuiteTimeoutBlocker: true'));
+        assert.ok(output.includes('FullSuiteTimeoutRetryCount: 1'));
         assert.ok(output.includes('FullSuitePlacement: before_test_review'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
@@ -500,6 +502,33 @@ test('workflow set rejects invalid full-suite placement values', () => {
     }
 });
 
+test('workflow set rejects invalid full-suite timeout retry count', () => {
+    const bundleRoot = createBundleRoot();
+
+    try {
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--full-suite-timeout-retry-count', '-1',
+                ...buildOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /--full-suite-timeout-retry-count must be an integer/
+        );
+        assert.throws(
+            () => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--full-suite-timeout-retry-count', '4',
+                ...buildOperatorConfirmationArgs()
+            ], PACKAGE_JSON),
+            /--full-suite-timeout-retry-count must be <= 3/
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow set enables garda self-guard without operator confirmation', () => {
     const bundleRoot = createBundleRoot({}, {
         orchestrator_work_policy: {
@@ -709,7 +738,9 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('unconfigured workspaces fail closed instead of falling back to 40-commands.md'));
     assert.ok(helpText.includes('workflow set --review-cycle-enabled true --review-cycle-max-total-non-test-reviews 30'));
     assert.ok(helpText.includes('workflow set --full-suite on --operator-confirmed yes --operator-confirmed-at-utc'));
+    assert.ok(helpText.includes('workflow set --full-suite-timeout-blocker true --full-suite-timeout-retry-count 1'));
     assert.ok(helpText.includes('workflow set --full-suite-placement before_test_review'));
+    assert.ok(helpText.includes('--full-suite-timeout-blocker true|false'));
     assert.ok(helpText.includes('--scope-budget on|off|--scope-budget-enabled true|false'));
     assert.ok(helpText.includes('--review-cycle on|off|--review-cycle-enabled true|false'));
     assert.ok(helpText.includes('--review-cycle-auto-split on|off|--review-cycle-auto-split-enabled true|false'));
@@ -722,6 +753,7 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('workflow set --garda-self-guard on'));
     assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('Task reset mutations are disabled by default'));
+    assert.ok(helpText.includes('Full-suite timeout blocker controls whether repeated timeout evidence blocks task progress'));
     assert.ok(!helpText.includes('Project memory maintenance is disabled by default'));
 });
 
@@ -781,6 +813,8 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.compile_gate_summary_line, 'Compile gate command: unconfigured (fail-closed)');
         assert.equal(parsed.full_suite_validation.enabled, true);
         assert.equal(parsed.full_suite_validation.placement, 'before_test_review');
+        assert.equal(parsed.full_suite_validation.timeout_blocker, true);
+        assert.equal(parsed.full_suite_validation.timeout_retry_count, 1);
         assert.equal(parsed.review_execution_policy.mode, 'code_first_optional');
         assert.equal(parsed.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(parsed.review_cycle_guard.max_total_non_test_reviews, 30);
@@ -843,6 +877,8 @@ test('workflow set updates repo-local full-suite config deterministically', () =
             '--full-suite-enabled', 'true',
             '--full-suite-command', 'npm run test:full',
             '--full-suite-timeout-ms', '123456',
+            '--full-suite-timeout-blocker', 'false',
+            '--full-suite-timeout-retry-count', '0',
             '--full-suite-out-of-scope-failure-policy', 'audit_and_warn',
             '--full-suite-placement', 'before completion',
             '--review-execution-policy', 'parallel_all',
@@ -858,8 +894,12 @@ test('workflow set updates repo-local full-suite config deterministically', () =
         assert.equal(parsedConfig.full_suite_validation.enabled, true);
         assert.equal(parsedConfig.full_suite_validation.command, 'npm run test:full');
         assert.equal(parsedConfig.full_suite_validation.timeout_ms, 123456);
+        assert.equal(parsedConfig.full_suite_validation.timeout_blocker, false);
+        assert.equal(parsedConfig.full_suite_validation.timeout_retry_count, 0);
         assert.equal(parsedConfig.full_suite_validation.out_of_scope_failure_policy, 'AUDIT_AND_WARN');
         assert.equal(parsedConfig.full_suite_validation.placement, 'before_completion');
+        assert.ok(result.changed_fields.includes('full_suite_validation.timeout_blocker'));
+        assert.ok(result.changed_fields.includes('full_suite_validation.timeout_retry_count'));
         assert.equal(parsedConfig.review_execution_policy.mode, 'parallel_all');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
