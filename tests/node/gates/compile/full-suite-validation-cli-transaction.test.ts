@@ -1025,8 +1025,74 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'PASSED');
             assert.equal(artifact.timed_out, false);
+            assert.equal(artifact.timeout_policy.timeout_blocker, true);
+            assert.equal(artifact.timeout_policy.timeout_retry_count, 1);
+            assert.equal(artifact.timeout_policy.max_attempts, 2);
+            assert.deepEqual(artifact.timeout_policy.attempts.map((entry: { timed_out: boolean }) => entry.timed_out), [true, false]);
+            assert.equal(artifact.timeout_policy.attempts_exhausted, false);
+            assert.equal(artifact.timeout_policy.warning_only_continuation, false);
             assert.ok(artifact.compact_summary.some((line: string) => line.includes('FULL_SUITE_TIMEOUT_RETRY')));
             assert.ok(artifact.compact_summary.some((line: string) => line.includes('retry pass')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation records warning-only timeout policy evidence when timeout blocker is disabled', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-timeout-warn-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'hang-warning.js');
+            fs.writeFileSync(
+                helperScript,
+                'process.stdout.write("warning timeout attempt\\n"); setInterval(() => {}, 1000);',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 100,
+                    timeout_blocker: false,
+                    timeout_retry_count: 0,
+                    green_summary_max_lines: 10,
+                    red_failure_chunk_lines: 20,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after_compile_before_reviews'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-WARN-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-TIMEOUT-WARN',
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-TIMEOUT-WARN',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, 0, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-TIMEOUT-WARN-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'WARNED');
+            assert.equal(artifact.timed_out, true);
+            assert.equal(artifact.timeout_policy.timeout_blocker, false);
+            assert.equal(artifact.timeout_policy.timeout_retry_count, 0);
+            assert.equal(artifact.timeout_policy.max_attempts, 1);
+            assert.equal(artifact.timeout_policy.attempts_exhausted, true);
+            assert.equal(artifact.timeout_policy.warning_only_continuation, true);
+            assert.equal(artifact.timeout_policy.repair_task_proposal, null);
+            const timeline = fs.readFileSync(path.join(eventsDir, 'T-TIMEOUT-WARN.jsonl'), 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_WARNED"/);
+            assert.match(timeline, /"timeout_policy":\{/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
@@ -1089,6 +1155,12 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'PASSED');
             assert.equal(artifact.timed_out, false);
+            assert.equal(artifact.timeout_policy.timeout_blocker, false);
+            assert.equal(artifact.timeout_policy.timeout_retry_count, 1);
+            assert.equal(artifact.timeout_policy.max_attempts, 2);
+            assert.deepEqual(artifact.timeout_policy.attempts.map((entry: { timed_out: boolean }) => entry.timed_out), [true, false]);
+            assert.equal(artifact.timeout_policy.attempts_exhausted, false);
+            assert.equal(artifact.timeout_policy.warning_only_continuation, false);
             assert.ok(artifact.compact_summary.some((line: string) => line.includes('FULL_SUITE_TIMEOUT_RETRY')));
             assert.ok(artifact.compact_summary.some((line: string) => line.includes('warning retry pass')));
             fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1211,7 +1283,75 @@ describe('gates/full-suite-validation', () => {
             const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
             assert.equal(artifact.status, 'FAILED');
             assert.equal(artifact.timed_out, true);
+            assert.equal(artifact.timeout_policy.timeout_blocker, true);
+            assert.equal(artifact.timeout_policy.timeout_retry_count, 0);
+            assert.equal(artifact.timeout_policy.max_attempts, 1);
+            assert.equal(artifact.timeout_policy.attempts_exhausted, true);
+            assert.equal(artifact.timeout_policy.warning_only_continuation, false);
+            assert.equal(artifact.timeout_policy.repair_task_proposal.suggested_task_id, 'T-TIMEOUT-LOCK-F1');
             assert.ok(artifact.warnings.some((line: string) => line.includes('timeout cleanup removed generated lock')));
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
+        it('gate full-suite-validation blocks after configured timeout retry is exhausted', async () => {
+            const repoRoot = path.resolve(process.cwd());
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-cli-timeout-retry-exhausted-'));
+            const configDir = path.join(tempDir, 'garda-agent-orchestrator', 'live', 'config');
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            const eventsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
+            fs.mkdirSync(configDir, { recursive: true });
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            fs.mkdirSync(eventsDir, { recursive: true });
+
+            const helperScript = path.join(tempDir, 'always-timeout.js');
+            fs.writeFileSync(
+                helperScript,
+                'process.stdout.write("timeout retry exhausted attempt\\n"); setInterval(() => {}, 1000);',
+                'utf8'
+            );
+            fs.writeFileSync(path.join(configDir, 'workflow-config.json'), JSON.stringify({
+                full_suite_validation: {
+                    enabled: true,
+                    command: `"${process.execPath.replace(/\\/g, '/')}" "${helperScript.replace(/\\/g, '/')}"`,
+                    timeout_ms: 100,
+                    timeout_blocker: true,
+                    timeout_retry_count: 1,
+                    green_summary_max_lines: 10,
+                    red_failure_chunk_lines: 20,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                    placement: 'after_compile_before_reviews'
+                }
+            }), 'utf8');
+
+            const preflightPath = path.join(reviewsDir, 'T-TIMEOUT-RETRY-EXHAUSTED-preflight.json');
+            writeFullSuitePreflight(tempDir, preflightPath, {
+                task_id: 'T-TIMEOUT-RETRY-EXHAUSTED',
+                changed_files: ['src/changed.ts']
+            });
+
+            const result = await runCliWithCapturedOutput([
+                'gate', 'full-suite-validation',
+                '--task-id', 'T-TIMEOUT-RETRY-EXHAUSTED',
+                '--preflight-path', preflightPath,
+                '--repo-root', tempDir
+            ], { cwd: repoRoot });
+
+            assert.equal(result.exitCode, EXIT_GATE_FAILURE, `stdout=${result.logs.join('\n')}\nstderr=${result.errors.join('\n')}`);
+            const artifactPath = path.join(reviewsDir, 'T-TIMEOUT-RETRY-EXHAUSTED-full-suite-validation.json');
+            const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+            assert.equal(artifact.status, 'FAILED');
+            assert.equal(artifact.timed_out, true);
+            assert.equal(artifact.timeout_policy.timeout_blocker, true);
+            assert.equal(artifact.timeout_policy.timeout_retry_count, 1);
+            assert.equal(artifact.timeout_policy.max_attempts, 2);
+            assert.deepEqual(artifact.timeout_policy.attempts.map((entry: { timed_out: boolean }) => entry.timed_out), [true, true]);
+            assert.equal(artifact.timeout_policy.attempts_exhausted, true);
+            assert.equal(artifact.timeout_policy.warning_only_continuation, false);
+            assert.equal(artifact.timeout_policy.repair_task_proposal.suggested_task_id, 'T-TIMEOUT-RETRY-EXHAUSTED-F1');
+            assert.ok(artifact.compact_summary.some((line: string) => line.includes('FULL_SUITE_TIMEOUT_RETRY attempt=1')));
+            const timeline = fs.readFileSync(path.join(eventsDir, 'T-TIMEOUT-RETRY-EXHAUSTED.jsonl'), 'utf8');
+            assert.match(timeline, /"event_type":"FULL_SUITE_VALIDATION_FAILED"/);
+            assert.match(timeline, /"timeout_policy":\{/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

@@ -62,6 +62,29 @@ export interface FullSuiteTimeoutForecast {
     warning: string | null;
 }
 
+export interface FullSuiteTimeoutAttemptEvidence {
+    attempt: number;
+    exit_code: number | null;
+    timed_out: boolean;
+}
+
+export interface FullSuiteTimeoutRepairTaskProposal {
+    suggested_task_id: string;
+    title: string;
+    area: string;
+    rationale: string;
+}
+
+export interface FullSuiteTimeoutPolicyEvidence {
+    timeout_blocker: boolean;
+    timeout_retry_count: number;
+    max_attempts: number;
+    attempts: FullSuiteTimeoutAttemptEvidence[];
+    attempts_exhausted: boolean;
+    warning_only_continuation: boolean;
+    repair_task_proposal: FullSuiteTimeoutRepairTaskProposal | null;
+}
+
 export interface FullSuitePerformanceGuidance {
     mode: 'standard' | 'optimized_sharded' | 'optimized_reuse_aware' | 'optimized_sharded_reuse_aware';
     optimized: boolean;
@@ -93,6 +116,7 @@ export interface FullSuiteValidationResult {
     output_telemetry?: Record<string, unknown> | null;
     duration_ms?: number | null;
     timeout_forecast?: FullSuiteTimeoutForecast | null;
+    timeout_policy?: FullSuiteTimeoutPolicyEvidence | null;
     cycle_binding?: FullSuiteValidationCycleBinding;
     failure_evidence?: FullSuiteFailureEvidence | null;
 }

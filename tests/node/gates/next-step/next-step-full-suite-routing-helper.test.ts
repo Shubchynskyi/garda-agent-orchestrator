@@ -11,6 +11,8 @@ const BASE_OPTIONS = Object.freeze({
     notRequiredForCurrentScope: false,
     gateStatus: null,
     gatePassed: false,
+    timeoutBlockerExhausted: false,
+    timeoutRepairTaskProposal: null,
     timedOutRetryAvailable: false,
     transientRetryEvidenceAvailable: false,
     transientRetryEvidenceReason: null,
@@ -66,6 +68,21 @@ describe('next-step full-suite route helper', () => {
         assert.equal(route?.title, 'Retry full-suite validation with updated timeout forecast.');
         assert.match(route?.reason || '', /recommends a longer timeout/);
         assert.equal(route?.commands[0]?.command, BASE_OPTIONS.command);
+    });
+
+    it('routes exhausted timeout blockers to repair-task materialization before reviewers', () => {
+        const route = resolveNextStepFullSuiteValidationRoute({
+            ...BASE_OPTIONS,
+            gateStatus: 'FAIL',
+            timeoutBlockerExhausted: true,
+            timeoutRepairTaskProposal: 'id=T-123-F1; title=Fix full-suite timeout blocker'
+        });
+
+        assert.equal(route?.nextGate, 'full-suite-timeout-repair-task');
+        assert.match(route?.title || '', /repair task/i);
+        assert.match(route?.reason || '', /exhausting the configured retry policy/);
+        assert.match(route?.reason || '', /T-123-F1/);
+        assert.equal(route?.commands[0]?.command, BASE_OPTIONS.navigatorCommand);
     });
 
     it('prints a cleanup command only for dead interrupted markers without live descendants', () => {

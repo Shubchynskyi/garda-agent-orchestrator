@@ -321,6 +321,430 @@ describe('gates/next-step', () => {
 
     });
 
+    it('blocks reviewer launch with a repair-task proposal after exhausted full-suite timeout blocker', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        seedFullSuiteValidation(repoRoot, TASK_ID, 'FAILED');
+
+        const fullSuitePath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`);
+        const artifact = JSON.parse(fs.readFileSync(fullSuitePath, 'utf8')) as Record<string, unknown>;
+        artifact.timed_out = true;
+        artifact.timeout_policy = {
+            timeout_blocker: true,
+            timeout_retry_count: 1,
+            max_attempts: 2,
+            attempts: [
+                { attempt: 1, exit_code: 1, timed_out: true },
+                { attempt: 2, exit_code: 1, timed_out: true }
+            ],
+            attempts_exhausted: true,
+            warning_only_continuation: false,
+            repair_task_proposal: {
+                suggested_task_id: `${TASK_ID}-F1`,
+                title: 'Fix full-suite timeout blocker',
+                area: 'workflow/full-suite-timeout',
+                rationale: 'Full-suite validation timed out after configured retries.'
+            }
+        };
+        writeJson(fullSuitePath, artifact);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-timeout-repair-task');
+
+        assert.match(result.title, /repair task/i);
+
+        assert.match(result.reason, new RegExp(`${TASK_ID}-F1`));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+        assert.ok(!result.commands[0].command.includes('--review-type'));
+
+    });
+
+    it('accepts current warning-only full-suite timeout evidence and continues to reviewer launch', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const timelineEvents = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const latestCompile = [...timelineEvents]
+            .reverse()
+            .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const cycleBinding = {
+            task_id: TASK_ID,
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_sha256: fileSha256(preflightPath),
+            compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`), {
+            task_id: TASK_ID,
+            status: 'WARNED',
+            enabled: true,
+            command: 'npm test',
+            exit_code: 1,
+            timed_out: true,
+            cycle_binding: cycleBinding,
+            output_artifact_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-output.log`),
+            timeout_policy: {
+                timeout_blocker: false,
+                timeout_retry_count: 0,
+                max_attempts: 1,
+                attempts: [
+                    { attempt: 1, exit_code: 1, timed_out: true }
+                ],
+                attempts_exhausted: true,
+                warning_only_continuation: true,
+                repair_task_proposal: null
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'FULL_SUITE_VALIDATION_WARNED', 'WARN', {
+            cycle_binding: cycleBinding,
+            timeout_policy: {
+                timeout_blocker: false,
+                warning_only_continuation: true
+            }
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'full-suite-validation', result.reason);
+
+        assert.ok(result.commands[0].command.includes('build-review-context'), result.reason);
+
+        assert.ok(result.commands[0].command.includes('--review-type "code"'), result.commands[0].command);
+
+    });
+
+    it('does not accept warning-only timeout artifacts without durable lifecycle warning evidence', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const timelineEvents = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const latestCompile = [...timelineEvents]
+            .reverse()
+            .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const cycleBinding = {
+            task_id: TASK_ID,
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_sha256: fileSha256(preflightPath),
+            compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`), {
+            task_id: TASK_ID,
+            status: 'WARNED',
+            enabled: true,
+            command: 'npm test',
+            exit_code: 1,
+            timed_out: true,
+            cycle_binding: cycleBinding,
+            output_artifact_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-output.log`),
+            timeout_policy: {
+                timeout_blocker: false,
+                timeout_retry_count: 0,
+                max_attempts: 1,
+                attempts: [
+                    { attempt: 1, exit_code: 1, timed_out: true }
+                ],
+                attempts_exhausted: true,
+                warning_only_continuation: true,
+                repair_task_proposal: null
+            }
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.match(result.title, /Run full-suite validation/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+    });
+
+    it('does not accept warning-only timeout artifacts when durable lifecycle warning omits timeout policy', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const timelineEvents = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const latestCompile = [...timelineEvents]
+            .reverse()
+            .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const cycleBinding = {
+            task_id: TASK_ID,
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_sha256: fileSha256(preflightPath),
+            compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`), {
+            task_id: TASK_ID,
+            status: 'WARNED',
+            enabled: true,
+            command: 'npm test',
+            exit_code: 1,
+            timed_out: true,
+            cycle_binding: cycleBinding,
+            output_artifact_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-output.log`),
+            timeout_policy: {
+                timeout_blocker: false,
+                timeout_retry_count: 0,
+                max_attempts: 1,
+                attempts: [
+                    { attempt: 1, exit_code: 1, timed_out: true }
+                ],
+                attempts_exhausted: true,
+                warning_only_continuation: true,
+                repair_task_proposal: null
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'FULL_SUITE_VALIDATION_WARNED', 'WARN', {
+            cycle_binding: cycleBinding
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.match(result.title, /Run full-suite validation/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+    });
+
+    it('does not accept timed-out WARNED lifecycle evidence without explicit timeout policy metadata', () => {
+
+        const repoRoot = makeTempRepo();
+
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), {
+
+            full_suite_validation: {
+
+                enabled: true,
+
+                command: 'npm test',
+
+                placement: 'after_compile_before_reviews'
+
+            },
+
+            review_execution_policy: {
+
+                mode: 'parallel_all'
+
+            }
+
+        });
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writePreflight(repoRoot, TASK_ID, {
+
+            ...ALL_REVIEW_FLAGS,
+
+            code: true,
+
+            test: true
+
+        }, { reviewPolicyMode: 'parallel_all' });
+
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const timelinePath = path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`);
+        const timelineEvents = fs.readFileSync(timelinePath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => JSON.parse(line) as Record<string, unknown>);
+        const latestCompile = [...timelineEvents]
+            .reverse()
+            .find((event) => event.event_type === 'COMPILE_GATE_PASSED');
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const cycleBinding = {
+            task_id: TASK_ID,
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_sha256: fileSha256(preflightPath),
+            compile_gate_timestamp: String(latestCompile?.timestamp_utc || '')
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-validation.json`), {
+            task_id: TASK_ID,
+            status: 'WARNED',
+            enabled: true,
+            command: 'npm test',
+            exit_code: 1,
+            timed_out: true,
+            cycle_binding: cycleBinding,
+            output_artifact_path: path.join(reviewsRoot(repoRoot), `${TASK_ID}-full-suite-output.log`)
+        });
+        appendEvent(repoRoot, TASK_ID, 'FULL_SUITE_VALIDATION_WARNED', 'WARN', {
+            cycle_binding: cycleBinding
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'full-suite-validation');
+
+        assert.match(result.title, /Run full-suite validation/);
+
+        assert.ok(result.commands[0].command.includes('gate full-suite-validation'));
+
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+
+    });
+
     it('routes targeted diagnostic pass after failed full-suite to mandatory full-suite retry', () => {
 
         const repoRoot = makeTempRepo();

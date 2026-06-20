@@ -452,6 +452,120 @@ function fullSuiteFailedTimeoutRetryAvailable(
     return Number.isFinite(durationMs) && durationMs > 0 && recommendedTimeoutSeconds * 1000 > durationMs;
 }
 
+function getFullSuiteTimeoutPolicy(artifact: Record<string, unknown> | null): Record<string, unknown> | null {
+    return isPlainRecord(artifact?.timeout_policy) ? artifact.timeout_policy : null;
+}
+
+function fullSuiteCycleBindingMatches(left: Record<string, unknown> | null, right: Record<string, unknown> | null): boolean {
+    if (!left || !right) {
+        return false;
+    }
+    const leftPreflightPath = normalizePath(left.preflight_path || '');
+    const rightPreflightPath = normalizePath(right.preflight_path || '');
+    const leftPreflightSha = String(left.preflight_sha256 || '').trim().toLowerCase();
+    const rightPreflightSha = String(right.preflight_sha256 || '').trim().toLowerCase();
+    const leftCompileTimestamp = String(left.compile_gate_timestamp || '').trim();
+    const rightCompileTimestamp = String(right.compile_gate_timestamp || '').trim();
+    return !!leftPreflightPath
+        && leftPreflightPath === rightPreflightPath
+        && !!leftPreflightSha
+        && leftPreflightSha === rightPreflightSha
+        && !!leftCompileTimestamp
+        && leftCompileTimestamp === rightCompileTimestamp;
+}
+
+function hasFullSuiteTimeoutWarningLifecyclePolicy(
+    repoRoot: string,
+    taskId: string,
+    artifact: Record<string, unknown> | null
+): boolean {
+    const artifactCycleBinding = isPlainRecord(artifact?.cycle_binding) ? artifact.cycle_binding : null;
+    if (!artifactCycleBinding) {
+        return false;
+    }
+    const taskEventPath = path.join(
+        joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events')),
+        `${taskId}.jsonl`
+    );
+    const orderedEvents = readOrderedTaskEvents(taskEventPath);
+    return [...orderedEvents.events].reverse().some((event: TaskAuditEvent) => {
+        if (String(event.event_type || '').trim() !== 'FULL_SUITE_VALIDATION_WARNED') {
+            return false;
+        }
+        if (String(event.outcome || '').trim().toUpperCase() !== 'WARN') {
+            return false;
+        }
+        const details = isPlainRecord(event.details) ? event.details : null;
+        const lifecycleTimeoutPolicy = isPlainRecord(details?.timeout_policy) ? details.timeout_policy : null;
+        const lifecycleCycleBinding = isPlainRecord(details?.cycle_binding) ? details.cycle_binding : null;
+        return !!lifecycleTimeoutPolicy
+            && lifecycleTimeoutPolicy.timeout_blocker === false
+            && lifecycleTimeoutPolicy.warning_only_continuation === true
+            && fullSuiteCycleBindingMatches(artifactCycleBinding, lifecycleCycleBinding);
+    });
+}
+
+function getFullSuiteTimeoutRepairTaskProposalSummary(timeoutPolicy: Record<string, unknown> | null): string | null {
+    const proposal = isPlainRecord(timeoutPolicy?.repair_task_proposal)
+        ? timeoutPolicy.repair_task_proposal
+        : null;
+    if (!proposal) {
+        return null;
+    }
+    const taskId = String(proposal.suggested_task_id || '').trim();
+    const title = String(proposal.title || '').trim();
+    const area = String(proposal.area || '').trim();
+    const rationale = String(proposal.rationale || '').trim();
+    return [
+        taskId ? `id=${taskId}` : null,
+        title ? `title=${title}` : null,
+        area ? `area=${area}` : null,
+        rationale ? `rationale=${rationale}` : null
+    ].filter(Boolean).join('; ') || null;
+}
+
+function isFullSuiteWarningOnlyContinuationArtifact(
+    artifact: Record<string, unknown> | null,
+    currentCycle: boolean,
+    lifecycleGatePassed: boolean,
+    lifecycleWarningPolicyPresent: boolean
+): boolean {
+    const timeoutPolicy = getFullSuiteTimeoutPolicy(artifact);
+    return currentCycle
+        && lifecycleGatePassed
+        && lifecycleWarningPolicyPresent
+        && artifact?.status === 'WARNED'
+        && artifact.timed_out === true
+        && timeoutPolicy?.timeout_blocker === false
+        && timeoutPolicy.warning_only_continuation === true;
+}
+
+function isFullSuiteLifecyclePassArtifactAccepted(
+    artifact: Record<string, unknown> | null,
+    currentCycle: boolean,
+    lifecycleGatePassed: boolean
+): boolean {
+    if (!currentCycle || !lifecycleGatePassed) {
+        return false;
+    }
+    if (artifact?.status === 'WARNED' && artifact.timed_out === true) {
+        return false;
+    }
+    return true;
+}
+
+function isFullSuiteTimeoutBlockerExhaustedArtifact(
+    artifact: Record<string, unknown> | null,
+    currentCycle: boolean
+): boolean {
+    const timeoutPolicy = getFullSuiteTimeoutPolicy(artifact);
+    return currentCycle
+        && artifact?.status === 'FAILED'
+        && artifact.timed_out === true
+        && timeoutPolicy?.timeout_blocker !== false
+        && timeoutPolicy?.attempts_exhausted === true;
+}
+
 interface FullSuiteManualRetryEvidence {
     available: boolean;
     reason: string | null;
@@ -1563,6 +1677,31 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const requiredReviewTypes = getRequiredReviewTypes(summary.required_reviews);
     const fullSuiteNotRequiredForZeroDiffNoReviewableScope = hasZeroDiffNoReviewableScopeSuppression(preflight, requiredReviewTypes);
     const fullSuiteNotRequiredForCurrentScope = fullSuiteNotRequiredForDocsOnly || fullSuiteNotRequiredForZeroDiffNoReviewableScope;
+    const fullSuiteLifecycleGatePassed = isGatePassed(summary, 'full-suite-validation');
+    const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
+    const fullSuiteCurrentArtifactMatchesCycle = fullSuiteArtifactMatchesCurrentCycle(
+        readinessArtifacts.fullSuiteValidation,
+        taskId,
+        preflightPath,
+        preflightSha256,
+        summary
+    );
+    const fullSuiteLifecycleWarningPolicyPresent = hasFullSuiteTimeoutWarningLifecyclePolicy(
+        repoRoot,
+        taskId,
+        readinessArtifacts.fullSuiteValidation
+    );
+    const fullSuiteWarningOnlyContinuationAccepted = isFullSuiteWarningOnlyContinuationArtifact(
+        readinessArtifacts.fullSuiteValidation,
+        fullSuiteCurrentArtifactMatchesCycle,
+        fullSuiteLifecycleGatePassed,
+        fullSuiteLifecycleWarningPolicyPresent
+    );
+    const fullSuiteLifecyclePassArtifactAccepted = isFullSuiteLifecyclePassArtifactAccepted(
+        readinessArtifacts.fullSuiteValidation,
+        fullSuiteCurrentArtifactMatchesCycle,
+        fullSuiteLifecycleGatePassed
+    );
     const fullSuiteGatePassed = fullSuiteNotRequiredForDocsOnly
         ? hasAcceptedDocsOnlyFullSuiteSkipArtifact(
                 reviewsRoot,
@@ -1574,14 +1713,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             )
         : fullSuiteNotRequiredForZeroDiffNoReviewableScope
             ? true
-            : isGatePassed(summary, 'full-suite-validation')
-                && fullSuiteArtifactMatchesCurrentCycle(
-                    readinessArtifacts.fullSuiteValidation,
-                    taskId,
-                    preflightPath,
-                    preflightSha256,
-                    summary
-                );
+            : fullSuiteLifecyclePassArtifactAccepted || fullSuiteWarningOnlyContinuationAccepted;
     const fullSuiteSummary: NextStepFullSuiteSummary = {
         enabled: fullSuiteConfig.enabled,
         command: fullSuiteConfig.command,
@@ -1609,19 +1741,18 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     const reviewStates = requiredReviewTypes.map((reviewType) => (
         readReviewArtifactState(reviewsRoot, taskId, reviewType, preflightPath, preflightSha256, preflight)
     ));
-    const fullSuiteGateStatus = getGateStatus(summary, 'full-suite-validation');
     const fullSuiteTimedOutRetryAvailable = fullSuiteFailedTimeoutRetryAvailable(
         readinessArtifacts.fullSuiteValidation,
         fullSuiteTimeoutForecast
     );
     const currentFailedFullSuiteValidation = fullSuiteGateStatus === 'FAIL'
-        && fullSuiteArtifactMatchesCurrentCycle(
-            readinessArtifacts.fullSuiteValidation,
-            taskId,
-            preflightPath,
-            preflightSha256,
-            summary
-        );
+        && fullSuiteCurrentArtifactMatchesCycle;
+    const fullSuiteTimeoutPolicy = getFullSuiteTimeoutPolicy(readinessArtifacts.fullSuiteValidation);
+    const fullSuiteTimeoutBlockerExhausted = isFullSuiteTimeoutBlockerExhaustedArtifact(
+        readinessArtifacts.fullSuiteValidation,
+        fullSuiteCurrentArtifactMatchesCycle
+    );
+    const fullSuiteTimeoutRepairTaskProposal = getFullSuiteTimeoutRepairTaskProposalSummary(fullSuiteTimeoutPolicy);
     const fullSuiteManualRetryEvidence = readFullSuiteManualRetryEvidence({
         repoRoot,
         taskId,
@@ -2466,6 +2597,8 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         notRequiredForCurrentScope: fullSuiteNotRequiredForCurrentScope,
         gateStatus: fullSuiteGateStatus,
         gatePassed: fullSuiteGatePassed,
+        timeoutBlockerExhausted: fullSuiteTimeoutBlockerExhausted,
+        timeoutRepairTaskProposal: fullSuiteTimeoutRepairTaskProposal,
         timedOutRetryAvailable: fullSuiteTimedOutRetryAvailable,
         transientRetryEvidenceAvailable: fullSuiteManualRetryEvidence.available,
         transientRetryEvidenceReason: fullSuiteManualRetryEvidence.reason,

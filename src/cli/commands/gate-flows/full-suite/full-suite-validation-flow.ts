@@ -16,6 +16,8 @@ import {
     loadFullSuiteValidationConfig,
     persistFullSuiteFailureEvidence,
     recordFullSuiteValidationDuration,
+    type FullSuiteTimeoutAttemptEvidence,
+    type FullSuiteTimeoutRepairTaskProposal,
     type FullSuiteValidationCycleBinding
 } from '../../../../gates/full-suite/full-suite-validation';
 import { getTaskModeEvidence } from '../../../../gates/task-mode/task-mode';
@@ -108,6 +110,17 @@ function resolveEffectiveFullSuiteValidationConfig(
     return effectiveTimeoutMs === config.timeout_ms
         ? config
         : { ...config, timeout_ms: effectiveTimeoutMs };
+}
+
+function buildFullSuiteTimeoutRepairTaskProposal(taskId: string): FullSuiteTimeoutRepairTaskProposal {
+    return {
+        suggested_task_id: `${taskId}-F1`,
+        title: 'Fix full-suite timeout blocker',
+        area: 'workflow/full-suite-timeout',
+        rationale:
+            `Full-suite validation for ${taskId} timed out after exhausting the configured timeout retry policy. ` +
+            'Materialize this audited follow-up before launching reviewers or continuing task closeout.'
+    };
 }
 
 export async function runFullSuiteValidationCommand(
@@ -322,6 +335,7 @@ export async function runFullSuiteValidationCommand(
         : 1;
     const maxAttempts = Math.max(1, 1 + timeoutRetryCount);
     const timeoutCleanupObservations: string[] = [];
+    const timeoutAttempts: FullSuiteTimeoutAttemptEvidence[] = [];
     writeFullSuiteValidationRunMarker({
         repoRoot,
         taskId,
@@ -361,6 +375,11 @@ export async function runFullSuiteValidationCommand(
                 message
             ];
         }
+        timeoutAttempts.push({
+            attempt,
+            exit_code: commandExitCode,
+            timed_out: timedOut
+        });
 
         if (timedOut) {
             const generatedLockCleanup = cleanupGeneratedLocksAfterTimedOutFullSuite(repoRoot);
@@ -394,6 +413,23 @@ export async function runFullSuiteValidationCommand(
         changedFiles,
         cycleBinding
     );
+    const timeoutAttemptsExhausted = timedOut && timeoutAttempts.length >= maxAttempts;
+    result.timeout_policy = {
+        timeout_blocker: executionConfig.timeout_blocker !== false,
+        timeout_retry_count: timeoutRetryCount,
+        max_attempts: maxAttempts,
+        attempts: timeoutAttempts,
+        attempts_exhausted: timeoutAttemptsExhausted,
+        warning_only_continuation: timedOut && executionConfig.timeout_blocker === false,
+        repair_task_proposal: timeoutAttemptsExhausted && executionConfig.timeout_blocker !== false
+            ? buildFullSuiteTimeoutRepairTaskProposal(taskId)
+            : null
+    };
+    if (result.timeout_policy.repair_task_proposal) {
+        result.violations.push(
+            'Full-suite timeout blocker exhausted the configured retry policy; materialize the proposed repair follow-up before reviewer launch.'
+        );
+    }
     fs.writeFileSync(outputArtifactPath, rawOutputText, 'utf8');
     result.output_retention = buildRawOutputRetentionEvidence(rawOutputText, true);
     result.failure_evidence = persistFullSuiteFailureEvidence({
@@ -463,6 +499,7 @@ export async function runFullSuiteValidationCommand(
             warnings: blockedResult.warnings,
             output_telemetry: blockedResult.output_telemetry,
             output_retention: blockedResult.output_retention,
+            timeout_policy: blockedResult.timeout_policy,
             failure_evidence: blockedResult.failure_evidence
         });
         clearFullSuiteValidationRunMarker(repoRoot, taskId);
@@ -505,6 +542,7 @@ export async function runFullSuiteValidationCommand(
         warnings: result.warnings,
         output_telemetry: result.output_telemetry,
         output_retention: result.output_retention,
+        timeout_policy: result.timeout_policy,
         failure_evidence: result.failure_evidence
     });
     clearFullSuiteValidationRunMarker(repoRoot, taskId);

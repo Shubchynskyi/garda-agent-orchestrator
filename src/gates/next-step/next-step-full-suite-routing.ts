@@ -47,6 +47,8 @@ export interface NextStepFullSuiteValidationRoutingOptions {
     notRequiredForCurrentScope: boolean;
     gateStatus: GateOutcome['status'] | null;
     gatePassed: boolean;
+    timeoutBlockerExhausted: boolean;
+    timeoutRepairTaskProposal: string | null;
     timedOutRetryAvailable: boolean;
     transientRetryEvidenceAvailable: boolean;
     transientRetryEvidenceReason: string | null;
@@ -113,6 +115,13 @@ function resolveAfterCompileBeforeReviewsRoute(
     options: NextStepFullSuiteValidationRoutingOptions
 ): NextStepFullSuiteValidationRoute | null {
     if (options.gateStatus === 'FAIL') {
+        if (options.timeoutBlockerExhausted) {
+            return buildTimeoutBlockerRepairRoute(
+                options,
+                'Create full-suite timeout repair task before reviewer launch.',
+                'Do not launch independent reviewers until the timeout blocker is resolved or an audited repair task is materialized.'
+            );
+        }
         if (options.timedOutRetryAvailable) {
             return buildRetryRoute(
                 options,
@@ -185,6 +194,13 @@ function resolveBeforeTestReviewRoute(
     options: NextStepFullSuiteValidationRoutingOptions
 ): NextStepFullSuiteValidationRoute | null {
     if (options.gateStatus === 'FAIL') {
+        if (options.timeoutBlockerExhausted) {
+            return buildTimeoutBlockerRepairRoute(
+                options,
+                'Create full-suite timeout repair task before launching test review.',
+                'Do not launch the mandatory test reviewer until the timeout blocker is resolved or an audited repair task is materialized.'
+            );
+        }
         if (options.timedOutRetryAvailable) {
             return buildRetryRoute(
                 options,
@@ -378,6 +394,32 @@ function buildRetryRoute(
             buildCommand(
                 'Retry full-suite validation',
                 options.command
+            )
+        ]
+    };
+}
+
+function buildTimeoutBlockerRepairRoute(
+    options: NextStepFullSuiteValidationRoutingOptions,
+    title: string,
+    blockerInstruction: string
+): NextStepFullSuiteValidationRoute {
+    const proposal = options.timeoutRepairTaskProposal
+        ? ` Proposed repair task: ${options.timeoutRepairTaskProposal}.`
+        : ' No structured repair-task proposal was found in the full-suite artifact; inspect the artifact before continuing.';
+    return {
+        status: 'BLOCKED',
+        nextGate: 'full-suite-timeout-repair-task',
+        title,
+        reason:
+            `Full-suite validation timed out for the current compiled scope after exhausting the configured retry policy. ` +
+            `${blockerInstruction}${proposal} ` +
+            `After the repair task is created or the timeout/runtime issue is fixed, rerun the navigator before any review launch. ` +
+            `Command: ${options.commandText}. ${options.timeoutForecastLine || ''}`.trim(),
+        commands: [
+            buildCommand(
+                'Rerun navigator after audited timeout repair task is materialized',
+                options.navigatorCommand
             )
         ]
     };
