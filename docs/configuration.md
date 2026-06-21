@@ -12,7 +12,7 @@ node bin/garda.js gate validate-config
 
 | File | Purpose | Editable? |
 |---|---|---|
-| `garda.config.json` | Root config manifest referencing the nine managed config files validated by `validate-config` | No, maintained by orchestrator |
+| `garda.config.json` | Root config manifest referencing the 11 managed config files validated by `validate-config` | No, maintained by orchestrator |
 | `token-economy.json` | Reviewer-context compaction and token savings | Yes |
 | `output-filters.json` | Gate output compaction profiles (compile, test, lint, review) | Yes |
 | `review-capabilities.json` | Which specialist reviews are enabled | Yes |
@@ -23,6 +23,7 @@ node bin/garda.js gate validate-config
 | `profiles.json` | Active profile selection plus built-in and user profile definitions | Yes, through `garda profile ...` |
 | `review-artifact-storage.json` | Review artifact retention and storage policy | Yes, through `garda cleanup policy ...` |
 | `runtime-retention.json` | Tiered runtime-retention policy for active evidence, healthy `DONE` ledger compaction, problem-task compression, confirm-only purge, and daily maintenance | Yes, through template/config review for now; `garda cleanup policy` shows it read-only |
+| `workflow-config.json` | Compile-gate, full-suite, optional-check, and workflow command settings | Yes, through `garda workflow ...` and guarded UI settings |
 | `skills-index.json` | Compact optional-skill discovery index; generated runtime index and not part of `garda.config.json` | No, generated from pack manifests |
 | `skills-headlines.json` | Compact task-start optional-skill selection surface with installed skill headlines and pack summaries | No, generated from live skill/pack manifests |
 

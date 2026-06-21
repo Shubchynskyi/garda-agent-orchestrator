@@ -24,7 +24,7 @@ Garda 1.1.x uses Node 24 LTS as the primary runtime line and supports Node 22.13
 ## Execution Modes
 
 - Source-repository mode: run `npm run build`, which compiles `src/bin/garda.ts` into `bin/garda.js`; that launcher then resolves compiled `dist/src/**/*.js`.
-- Source-install mode: `npm install` from a source checkout runs `prepare`, which builds the generated launcher and compiled runtime before first use.
+- Source-checkout install mode: `npm install` installs dependencies only; run `npm run build` explicitly before first CLI use. The package intentionally does not rely on consumer install lifecycle scripts such as `prepare`.
 - Test-staged mode: Node foundation tests may stage `.node-build/src/**/*.js`, and `bin/garda.js` can resolve that compiled output when `dist/` is intentionally absent in the fixture.
 - Packaged-install mode: under `node_modules`, `bin/garda.js` first delegates to a local workspace/source `bin/garda.js` when the current project already contains an orchestrator checkout or deployed bundle; otherwise it falls back to its packaged compiled runtime in `dist/src/**/*.js`.
 - Delegation trust binds the active `bin/garda.js` realpath back to its claimed package root and accepts local source/deployed runtimes only when their repo-owned provenance markers are present. Minimal package-shape lookalikes must fail closed as `runtime_kind=unknown`.
@@ -57,6 +57,7 @@ Zero-argument invocation prints the safe overview. Unknown top-level commands fa
 | Claude | `CLAUDE.md` |
 | Codex | `AGENTS.md` |
 | Cursor | `AGENTS.md` |
+| DeepSeek | `AGENTS.md` |
 | Gemini | `GEMINI.md` |
 | Qwen | `QWEN.md` |
 | GitHubCopilot | `.github/copilot-instructions.md` |
@@ -64,7 +65,7 @@ Zero-argument invocation prints the safe overview. Unknown top-level commands fa
 | Junie | `.junie/guidelines.md` |
 | Antigravity | `.antigravity/rules.md` |
 
-`Codex` and `Cursor` intentionally share `AGENTS.md`; runtime identity must come from explicit provider metadata, not path-only inference.
+`Codex`, `Cursor`, and `DeepSeek` intentionally share `AGENTS.md`; runtime identity must come from explicit provider metadata, not path-only inference.
 
 ## Init Answers Contract
 
@@ -112,9 +113,31 @@ CHANGELOG.md
 HOW_TO.md
 LICENSE
 MANIFEST.md
+NOTICE
 README.md
+SECURITY.md
+TRADEMARKS.md
 VERSION
+docs/assets/garda-github-social-preview.png
+docs/architecture.md
+docs/branch-protection.md
+docs/cli-reference.md
+docs/compatibility-matrix.md
+docs/configuration.md
+docs/control-plane-isolation.md
+docs/node-platform-foundation.md
+docs/node-runtime-contract.md
+docs/operator-consistency-runbook.md
+docs/orchestrator-work-and-isolation.md
+docs/providers.md
+docs/release-readiness.md
+docs/sbom.md
+docs/secret-scanning.md
+docs/threat-model.md
+docs/work-example.md
 package.json
+tsconfig.json
+tsconfig.node-foundation.json
 ```
 
 The runtime materializes:

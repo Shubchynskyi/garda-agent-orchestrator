@@ -69,7 +69,7 @@ Only if answers are still missing, the agent will ask you the missing questions.
 | 1 | Assistant response language | Any language (e.g. English, Russian) |
 | 2 | Default response brevity | `concise` or `detailed` |
 | Required during agent init | Active agent files | Multiple values such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `QWEN.md` |
-| 3 | Source-of-truth entrypoint | Claude, Codex, Gemini, Qwen, GitHubCopilot, Windsurf, Junie, Antigravity |
+| 3 | Source-of-truth entrypoint | Claude, Codex, Cursor, DeepSeek, Gemini, Qwen, GitHubCopilot, Windsurf, Junie, Antigravity |
 | 4 | Hard no-auto-commit guard | `yes` or `no` |
 | 5 | Claude full access to orchestrator | `yes` or `no` |
 | 6 | Token economy enabled | `yes` or `no` |
@@ -105,36 +105,23 @@ See **[docs/architecture.md](docs/architecture.md)** for full list of deployed f
 Tell your agent:
 
 ```
-Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.
+Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator before the first gate, after each suggested command, and after failures.
 ```
 
-The orchestrator then runs this mandatory flow:
-`enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context (for each required review) -> required-reviews-check -> doc-impact-gate -> completion-gate`
+The orchestrator navigator prints the current mandatory command, then must be consulted again after each suggested command and after failures. Do not hardcode the gate order in the task prompt; `next-step` owns routing through task-mode, preflight, compile, review, doc-impact, completion, and recovery steps based on current evidence.
 
 The first fresh main-agent execution reply should emit exactly one English start banner from the repo-owned list (`Garda captures my mind` or `Garda rewrites my code`) before any edits and list the first gates it will run.
 
-| Built-in Profile | Default Depth | When to Use |
+| Built-in Profile | Behavior | When to Use |
 |---|---|---|
-| `balanced` | `2` | Default for most tasks |
-| `fast` | `1` | Small, localized, low-risk tasks |
-| `strict` | `3` | High-risk, cross-module, security-sensitive work |
-| `docs-only` | `1` | Documentation-only tasks |
+| `balanced` | Balanced review/gate policy | Default for most tasks |
+| `fast` | Lighter review/gate policy | Small, localized, low-risk tasks |
+| `strict` | Strict review/gate policy | High-risk, cross-module, security-sensitive work |
+| `docs-only` | Documentation-focused policy | Documentation-only tasks |
 
 The active workspace profile is the default execution mode.
 The `TASK.md` `Profile` column controls which profile applies per task (`default` inherits the workspace active profile).
-
-Use explicit depth only as a one-run override when you intentionally need to override the selected profile:
-
-```
-Execute task T-001 depth=1
-Execute task T-001 depth=3
-```
-
-| Depth Override | When to Use |
-|---|---|
-| `depth=1` | Force a shallow one-run execution |
-| `depth=2` | Force a balanced one-run execution |
-| `depth=3` | Force a strict one-run execution |
+Do not pass `depth=<1|2|3>` in normal task-start prompts; depth is internal gate/profile evidence unless a debug or recovery command explicitly needs an override.
 
 Required gates apply at any depth.
 See **[docs/work-example.md](docs/work-example.md)** for a full task lifecycle walkthrough.
@@ -185,7 +172,7 @@ garda verify --target-root "." --source-of-truth "<provider>" --init-answers-pat
 garda gate validate-manifest --manifest-path "garda-agent-orchestrator/MANIFEST.md"
 ```
 
-**Provider values:** `Claude`, `Codex`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
+**Provider values:** `Claude`, `Codex`, `Cursor`, `DeepSeek`, `Gemini`, `Qwen`, `GitHubCopilot`, `Windsurf`, `Junie`, `Antigravity`.
 
 For day-to-day validation, prefer `garda doctor`, `garda verify`, and `garda gate validate-manifest`.
 Use `garda doctor explain <FAILURE_ID>` when a doctor/gate failure code is known and you want remediation steps, `garda status why-blocked` when a task is stalled and you need the missing-gate or missing-timeline explanation, and `garda doctor --cleanup-stale-locks --dry-run` when task-event locks may be blocking gate writes.

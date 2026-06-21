@@ -56,13 +56,10 @@ Then give [AGENT_INIT_PROMPT.md](AGENT_INIT_PROMPT.md) to your coding agent. The
 After `garda agent-init` passes, pick a task from `TASK.md` and tell the agent:
 
 ```text
-Execute task T-001 from TASK.md strictly through all mandatory orchestrator gates.
+Execute task T-001 from TASK.md strictly through the orchestrator. Use `next-step` as the navigator before the first gate, after each suggested command, and after failures.
 ```
 
-The active profile (`balanced`, `fast`, `strict`, `docs-only`) provides the default execution mode; use explicit `depth=` only as a one-run override.
-
-Mandatory gate order:
-`enter-task-mode -> load-rule-pack -> handshake-diagnostics -> shell-smoke-preflight -> classify-change -> load-rule-pack -> compile-gate -> build-review-context -> required-reviews-check -> doc-impact-gate -> completion-gate`
+The active profile (`balanced`, `fast`, `strict`, `docs-only`) and the `TASK.md` `Profile` column provide the default execution mode. Let `next-step` print the current mandatory command instead of hardcoding gate order in the prompt.
 
 Temporary fallback without global install:
 

@@ -152,9 +152,10 @@ function buildPreflightGateHelpEntries(
             ], false)
         },
         'validate-config': {
-            ...createGateHelpEntry('Validate a Garda JSON config artifact against the expected schema.', [
-                `${cliPrefix} gate validate-config --config-path "${buildBundleRelativePath(bundleName, 'live/config/<name>.json')}"`,
-                `${cliPrefix} gate validate-config --config-path "<config-path>" --repo-root "."`
+            ...createGateHelpEntry('Validate the managed Garda JSON config set referenced by garda.config.json.', [
+                `${cliPrefix} gate validate-config`,
+                `${cliPrefix} gate validate-config --bundle-root "${bundleName}"`,
+                `${cliPrefix} gate validate-config --compact`
             ], false)
         },
         'enter-task-mode': {

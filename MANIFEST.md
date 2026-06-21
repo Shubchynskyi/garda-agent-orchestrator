@@ -99,6 +99,8 @@ Kept inside bundle:
 - CHANGELOG.md
 - HOW_TO.md
 - LICENSE
+- NOTICE
+- TRADEMARKS.md
 - SECURITY.md
 - docs/assets/garda-github-social-preview.png
 - docs/architecture.md
