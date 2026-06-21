@@ -81,6 +81,7 @@ export { formatFinalUserReport } from './task-audit-summary-final-report';
 export { synchronizeFinalCloseoutArtifacts } from './task-audit-summary-closeout-sync';
 export type {
     FinalCloseoutArtifact,
+    FinalCloseoutFullSuiteTimeoutSummary,
     FinalCloseoutProjectMemorySummary,
     FinalCloseoutReviewTimingAuditEntry,
     FinalCloseoutReviewTimingAuditSummary,
@@ -233,6 +234,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
     const pathMode = preflightSummary.pathMode;
     const preflightPath = preflightSummary.path;
     const preflight = preflightSummary.raw;
+    const fullSuiteValidation = safeReadJson(path.join(reviewsRoot, `${safeTaskId}-full-suite-validation.json`));
     const docImpactPath = path.join(reviewsRoot, `${safeTaskId}-doc-impact.json`);
     const docImpact = safeReadJson(docImpactPath);
     const docsSummary = readDocImpactSummary(docImpact);
@@ -584,6 +586,7 @@ export function buildTaskAuditSummary(options: TaskAuditSummaryOptions): TaskAud
         reviewIntegrityAttestation,
         reviewAttemptSummary,
         optionalSkillsSummary,
+        fullSuiteValidation,
         fullSuiteValidationRequiredForLifecycle,
         reviewExecutionPolicyMode,
         projectMemoryImpactEvidence,

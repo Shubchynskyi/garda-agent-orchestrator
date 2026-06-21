@@ -198,6 +198,11 @@ function systemHealthRank(status) {
   if (status === 'ok') return 1;
   return 0;
 }
+function formatBool(value) {
+  if (value === true) return 'true';
+  if (value === false) return 'false';
+  return '-';
+}
 function systemWorstHealth(signals) {
   const ranked = (signals || []).reduce((best, signal) => Math.max(best, systemHealthRank(signal && signal.status)), 0);
   if (ranked === 3) return 'error';
@@ -343,6 +348,12 @@ function renderSystemState(report) {
   const workflowDetails = state.workflow
     ? '<div class="system-inline-details">'
       + '<span>' + safe(t('fullSuiteCommand')) + ': <code>' + safe(state.workflow.full_suite_command || '-') + '</code></span>'
+      + '<span>' + safe(t('fullSuiteTimeoutBlocker')) + ': ' + safe(formatBool(state.workflow.full_suite_timeout_blocker)) + '</span>'
+      + '<span>' + safe(t('fullSuiteTimeoutRetryCount')) + ': ' + safe(state.workflow.full_suite_timeout_retry_count == null ? '-' : String(state.workflow.full_suite_timeout_retry_count)) + '</span>'
+      + '<span>' + safe(t('fullSuiteTimeoutAttempts')) + ': ' + safe(state.workflow.full_suite_timeout_attempts_count == null ? '-' : String(state.workflow.full_suite_timeout_attempts_count)) + ' / ' + safe(state.workflow.full_suite_timeout_max_attempts == null ? '-' : String(state.workflow.full_suite_timeout_max_attempts)) + '</span>'
+      + '<span>' + safe(t('fullSuiteTimeoutAttemptsExhausted')) + ': ' + safe(formatBool(state.workflow.full_suite_timeout_attempts_exhausted)) + '</span>'
+      + '<span>' + safe(t('fullSuiteTimeoutWarningContinuation')) + ': ' + safe(formatBool(state.workflow.full_suite_timeout_warning_only_continuation)) + '</span>'
+      + '<span>' + safe(t('overviewWarnings')) + ': ' + safe(state.workflow.full_suite_timeout_latest_warning || '-') + '</span>'
       + '<span>' + safe(t('fullSuiteTimeoutForecast')) + ': ' + safe(state.workflow.full_suite_timeout_forecast_label || '-') + '</span>'
       + '</div>'
     : '';

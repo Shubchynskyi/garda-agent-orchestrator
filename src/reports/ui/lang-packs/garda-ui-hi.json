@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "अधिकतम",
     "fullSuiteTimeoutForecastSafetyMargin": "अधिकतम से ऊपर सुरक्षा मार्जिन",
     "fullSuiteTimeoutForecastMinimum": "20%, लेकिन कम से कम 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "हाल का मेल खाता पूर्ण जांच अवधि इतिहास नहीं मिला; कॉन्फिगर किया गया टाइमआउट उपयोग हो रहा है"
+    "fullSuiteTimeoutForecastConfiguredReason": "हाल का मेल खाता पूर्ण जांच अवधि इतिहास नहीं मिला; कॉन्फिगर किया गया टाइमआउट उपयोग हो रहा है",
+    "fullSuiteTimeoutBlocker": "टाइमआउट कार्य को रोकता है",
+    "fullSuiteTimeoutRetryCount": "टाइमआउट पुनः प्रयास संख्या",
+    "fullSuiteTimeoutMaxAttempts": "टाइमआउट अधिकतम प्रयास",
+    "fullSuiteTimeoutAttempts": "टाइमआउट प्रयास",
+    "fullSuiteTimeoutAttemptsExhausted": "टाइमआउट प्रयास समाप्त",
+    "fullSuiteTimeoutWarningContinuation": "सिर्फ चेतावनी के साथ टाइमआउट जारी",
+    "fullSuiteTimeoutRepairTask": "टाइमआउट सुधार कार्य प्रस्ताव",
+    "fullSuiteForecastExcludedSamples": "पूर्वानुमान से बाहर किए गए नमूने",
+    "fullSuiteForecastExclusionReasons": "पूर्वानुमान बहिष्करण कारण",
+    "fullSuiteTimeoutAttemptTimedOut": "समय समाप्त",
+    "fullSuiteTimeoutAttemptCancelled": "रद्द",
+    "fullSuiteTimeoutAttemptExitCode": "निकास कोड",
+    "fullSuiteForecastExclusionTimedOut": "समय समाप्त रन",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "बाधित या रद्द रन",
+    "fullSuiteForecastExclusionRetryContaminated": "पुनः प्रयास से दूषित रन",
+    "fullSuiteForecastExclusionNonPassingStatus": "असफल रन",
+    "fullSuiteForecastExclusionNonzeroExit": "गैर-शून्य निकास रन",
+    "fullSuiteForecastExclusionInvalidDuration": "अमान्य अवधि",
+    "fullSuiteForecastExclusionOutlierDuration": "असामान्य अवधि"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

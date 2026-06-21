@@ -352,5 +352,23 @@
         "description": "Der Zugang zur geschützten Control-Plane erfordert ausdrückliche Operator-Bestätigung."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Full-suite-Timeout-Blocker",
+    "description": "Steuert, ob wiederholte Full-suite-Zeitüberschreitungen die Aufgabe blockieren und eine Reparaturaufgabe vorschlagen oder nur als finale Warnung weiterlaufen.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Wiederholte Full-suite-Zeitüberschreitungen blockieren den Abschluss und schlagen eine Reparaturaufgabe vor."
+      },
+      "false": {
+        "label": "false",
+        "description": "Wiederholte Full-suite-Zeitüberschreitungen werden als Warnung gemeldet und blockieren den Abschluss nicht."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Full-suite-Timeout-Wiederholungen",
+    "description": "Wie oft der Full-suite-Befehl nach einer Zeitüberschreitung erneut versucht wird, bevor die Timeout-Regel greift."
   }
 }

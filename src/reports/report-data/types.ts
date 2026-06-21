@@ -3,7 +3,9 @@ import type { TaskStatsResult } from '../../cli/commands/stats';
 import type { CompactLatestCycleTaskEventsSummary } from '../../gates/task-events-summary';
 import type { TaskAuditSummaryResult } from '../../gates/task-audit/task-audit-summary';
 import type {
+    FullSuiteTimeoutAttemptEvidence,
     FullSuiteTimeoutForecast,
+    FullSuiteTimeoutRepairTaskProposal,
     FullSuiteValidationResult
 } from '../../gates/full-suite/full-suite-validation';
 import type {
@@ -74,6 +76,13 @@ export interface ReportFullSuiteSummary {
     duration_human: string | null;
     timed_out: boolean | null;
     exit_code: number | null;
+    timeout_blocker: boolean;
+    timeout_retry_count: number;
+    timeout_max_attempts: number;
+    timeout_attempts: FullSuiteTimeoutAttemptEvidence[];
+    timeout_attempts_exhausted: boolean | null;
+    timeout_warning_only_continuation: boolean | null;
+    timeout_repair_task_proposal: FullSuiteTimeoutRepairTaskProposal | null;
     artifact_path: string;
     artifact_exists: boolean;
     artifact_sha256: string | null;
@@ -290,6 +299,13 @@ export interface ReportSystemState {
         full_suite_enabled: boolean;
         full_suite_command: string | null;
         full_suite_timeout_forecast_label: string | null;
+        full_suite_timeout_blocker: boolean | null;
+        full_suite_timeout_retry_count: number | null;
+        full_suite_timeout_attempts_count: number | null;
+        full_suite_timeout_max_attempts: number | null;
+        full_suite_timeout_attempts_exhausted: boolean | null;
+        full_suite_timeout_warning_only_continuation: boolean | null;
+        full_suite_timeout_latest_warning: string | null;
         task_reset_ready: boolean;
     };
     project_memory: ReportSystemStateSignal;

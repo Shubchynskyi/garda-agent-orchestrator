@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "toi da",
     "fullSuiteTimeoutForecastSafetyMargin": "bien an toan vuot muc toi da",
     "fullSuiteTimeoutForecastMinimum": "20%, nhung toi thieu 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "khong co lich su thoi luong full-suite gan day phu hop; dung thoi gian cho da cau hinh"
+    "fullSuiteTimeoutForecastConfiguredReason": "khong co lich su thoi luong full-suite gan day phu hop; dung thoi gian cho da cau hinh",
+    "fullSuiteTimeoutBlocker": "Hết thời gian sẽ chặn tác vụ",
+    "fullSuiteTimeoutRetryCount": "Số lần thử lại khi hết thời gian",
+    "fullSuiteTimeoutMaxAttempts": "Số lần thử tối đa khi hết thời gian",
+    "fullSuiteTimeoutAttempts": "Các lần thử khi hết thời gian",
+    "fullSuiteTimeoutAttemptsExhausted": "Đã hết số lần thử khi hết thời gian",
+    "fullSuiteTimeoutWarningContinuation": "Tiếp tục khi hết thời gian chỉ dưới dạng cảnh báo",
+    "fullSuiteTimeoutRepairTask": "Đề xuất tác vụ sửa lỗi hết thời gian",
+    "fullSuiteForecastExcludedSamples": "Mẫu bị loại khỏi dự báo",
+    "fullSuiteForecastExclusionReasons": "Lý do loại khỏi dự báo",
+    "fullSuiteTimeoutAttemptTimedOut": "hết thời gian",
+    "fullSuiteTimeoutAttemptCancelled": "đã hủy",
+    "fullSuiteTimeoutAttemptExitCode": "mã thoát",
+    "fullSuiteForecastExclusionTimedOut": "lượt chạy hết thời gian",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "lượt chạy bị gián đoạn hoặc hủy",
+    "fullSuiteForecastExclusionRetryContaminated": "lượt chạy bị nhiễu bởi thử lại",
+    "fullSuiteForecastExclusionNonPassingStatus": "lượt chạy không đạt",
+    "fullSuiteForecastExclusionNonzeroExit": "lượt chạy có mã thoát khác không",
+    "fullSuiteForecastExclusionInvalidDuration": "thời lượng không hợp lệ",
+    "fullSuiteForecastExclusionOutlierDuration": "thời lượng ngoại lệ"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

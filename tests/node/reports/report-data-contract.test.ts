@@ -307,6 +307,17 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(fullSuite.options.some((option) => option.value === 'true'));
     assert.match(fullSuite.command, /garda workflow set --full-suite-enabled <true\|false>/);
     assert.match(fullSuite.description, /full-suite/i);
+    const fullSuiteTimeoutBlocker = tab.settings.find((setting) => setting.key === 'full_suite_validation.timeout_blocker');
+    assert.ok(fullSuiteTimeoutBlocker);
+    assert.equal(fullSuiteTimeoutBlocker.value, true);
+    assert.equal(fullSuiteTimeoutBlocker.label, 'Full-suite timeout blocker');
+    assert.match(fullSuiteTimeoutBlocker.command, /garda workflow set --full-suite-timeout-blocker <true\|false>/);
+    const fullSuiteTimeoutRetryCount = tab.settings.find((setting) => setting.key === 'full_suite_validation.timeout_retry_count');
+    assert.ok(fullSuiteTimeoutRetryCount);
+    assert.equal(fullSuiteTimeoutRetryCount.value, 1);
+    assert.equal(fullSuiteTimeoutRetryCount.label, 'Full-suite timeout retries');
+    assert.equal(fullSuiteTimeoutRetryCount.max, 3);
+    assert.match(fullSuiteTimeoutRetryCount.command, /garda workflow set --full-suite-timeout-retry-count <number>/);
     const selfGuard = tab.settings.find((setting) => setting.key === 'orchestrator_work_policy.mode');
     assert.ok(selfGuard);
     assert.match(selfGuard.command, /garda workflow set --garda-self-guard <on\|off>/);
@@ -400,6 +411,8 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.equal(report.system_state.task_queue.next_task_id, 'T-100');
     assert.equal(report.system_state.workflow.full_suite_enabled, true);
     assert.equal(report.system_state.workflow.full_suite_command, 'npm test');
+    assert.equal(report.system_state.workflow.full_suite_timeout_blocker, true);
+    assert.equal(report.system_state.workflow.full_suite_timeout_retry_count, 1);
     assert.match(report.system_state.workflow.full_suite_timeout_forecast_label || '', /Recommended full-suite command timeout/u);
     assert.equal(report.system_state.workflow.task_reset_ready, false);
     assert.equal(report.system_state.project_memory.status, 'ok');
@@ -469,6 +482,83 @@ test('buildReportDataContract bounds deep task detail collection', () => {
     }));
 });
 
+test('buildReportDataContract reads latest full-suite pointer in System State', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    const reviewsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
+    const metricsRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'metrics');
+    fs.mkdirSync(reviewsRoot, { recursive: true });
+    fs.mkdirSync(metricsRoot, { recursive: true });
+    for (let index = 0; index < 700; index += 1) {
+        const oldArtifactPath = path.join(reviewsRoot, `T-OLD-${String(index).padStart(3, '0')}-full-suite-validation.json`);
+        fs.writeFileSync(
+            oldArtifactPath,
+            JSON.stringify({
+                status: 'PASSED',
+                timed_out: false,
+                warnings: [],
+                timeout_policy: {
+                    timeout_blocker: true,
+                    timeout_retry_count: 1,
+                    max_attempts: 2,
+                    attempts: [],
+                    attempts_exhausted: false,
+                    warning_only_continuation: false
+                }
+            }),
+            'utf8'
+        );
+        fs.utimesSync(oldArtifactPath, new Date('2026-05-15T00:00:00.000Z'), new Date('2026-05-15T00:00:00.000Z'));
+    }
+    const latestArtifactPath = path.join(reviewsRoot, 'T-ZZZ-full-suite-validation.json');
+    fs.writeFileSync(
+        latestArtifactPath,
+        JSON.stringify({
+            status: 'WARNED',
+            timed_out: true,
+            warnings: ['latest timeout warning'],
+            timeout_policy: {
+                timeout_blocker: false,
+                timeout_retry_count: 2,
+                max_attempts: 3,
+                attempts: [{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }],
+                attempts_exhausted: true,
+                warning_only_continuation: true
+            }
+        }),
+        'utf8'
+    );
+    fs.utimesSync(latestArtifactPath, new Date('2026-05-16T00:00:00.000Z'), new Date('2026-05-16T00:00:00.000Z'));
+    fs.writeFileSync(
+        path.join(metricsRoot, 'full-suite-validation-latest.json'),
+        JSON.stringify({
+            schema_version: 1,
+            task_id: 'T-ZZZ',
+            status: 'WARNED',
+            artifact_path: latestArtifactPath.replace(/\\/g, '/'),
+            artifact_sha256: 'fixture',
+            artifact_transaction_id: 'fixture',
+            updated_at_utc: '2026-05-16T00:00:00.000Z'
+        }),
+        'utf8'
+    );
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+
+    assert.equal(report.system_state.workflow.full_suite_timeout_blocker, true);
+    assert.equal(report.system_state.workflow.full_suite_timeout_retry_count, 1);
+    assert.equal(report.system_state.workflow.full_suite_timeout_attempts_count, 3);
+    assert.equal(report.system_state.workflow.full_suite_timeout_attempts_exhausted, true);
+    assert.equal(report.system_state.workflow.full_suite_timeout_warning_only_continuation, true);
+    assert.equal(report.system_state.workflow.full_suite_timeout_latest_warning, 'latest timeout warning');
+    assert.match(report.system_state.workflow.full_suite_timeout_forecast_label || '', /Recommended full-suite command timeout/u);
+});
+
 test('buildReportTaskDetail exposes current full-suite pass duration and forecast', () => {
     const repoRoot = makeTempRepo();
     writeTaskMd(repoRoot);
@@ -489,6 +579,10 @@ test('buildReportTaskDetail exposes current full-suite pass duration and forecas
     assert.equal(detail.full_suite_validation.duration_ms, 123456);
     assert.equal(detail.full_suite_validation.duration_human, '2m 3.5s');
     assert.equal(detail.full_suite_validation.command, 'npm test');
+    assert.equal(detail.full_suite_validation.timeout_blocker, true);
+    assert.equal(detail.full_suite_validation.timeout_retry_count, 1);
+    assert.equal(detail.full_suite_validation.timeout_max_attempts, 2);
+    assert.deepEqual(detail.full_suite_validation.timeout_attempts, []);
     assert.equal(detail.full_suite_validation.timeout_forecast.recommendation_source, 'config_timeout');
     assert.match(detail.full_suite_validation.artifact_path, /T-100-full-suite-validation\.json$/);
 });
@@ -506,6 +600,9 @@ test('buildReportTaskDetail marks required full-suite evidence as not run when a
     assert.equal(detail.full_suite_validation.freshness, 'missing');
     assert.equal(detail.full_suite_validation.required, true);
     assert.equal(detail.full_suite_validation.duration_ms, null);
+    assert.equal(detail.full_suite_validation.timeout_blocker, true);
+    assert.equal(detail.full_suite_validation.timeout_retry_count, 1);
+    assert.equal(detail.full_suite_validation.timeout_max_attempts, 2);
     assert.match(detail.full_suite_validation.mismatch_reason || '', /artifact is missing/);
 });
 

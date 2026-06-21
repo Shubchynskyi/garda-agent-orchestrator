@@ -121,8 +121,47 @@ function fullSuiteForecastRows(forecast) {
     [t('fullSuiteConfiguredTimeout'), fullSuiteDurationSeconds(forecast.configured_timeout_seconds)],
     [t('fullSuiteAverageDuration'), fullSuiteDurationSeconds(forecast.average_duration_seconds)],
     [t('fullSuiteHighWatermarkDuration'), fullSuiteDurationSeconds(forecast.high_watermark_duration_seconds)],
-    [t('fullSuiteRecommendedTimeout'), fullSuiteDurationSeconds(forecast.recommended_timeout_seconds)]
+    [t('fullSuiteRecommendedTimeout'), fullSuiteDurationSeconds(forecast.recommended_timeout_seconds)],
+    [t('fullSuiteForecastExcludedSamples'), Number.isFinite(Number(forecast.excluded_sample_count)) ? Number(forecast.excluded_sample_count) : 0],
+    [t('fullSuiteForecastExclusionReasons'), fullSuiteForecastExclusionReasonsText(forecast.excluded_sample_reasons)]
   ];
+}
+function fullSuiteForecastExclusionReasonsText(reasons) {
+  if (!reasons || typeof reasons !== 'object') {
+    return '-';
+  }
+  const entries = Object.entries(reasons).filter(([, count]) => Number(count) > 0);
+  return entries.length > 0 ? entries.map(([reason, count]) => fullSuiteForecastExclusionReasonLabel(reason) + '=' + Number(count)).join(', ') : '-';
+}
+function fullSuiteForecastExclusionReasonLabel(reason) {
+  const map = {
+    timed_out: 'fullSuiteForecastExclusionTimedOut',
+    interrupted_or_cancelled: 'fullSuiteForecastExclusionInterruptedOrCancelled',
+    retry_contaminated: 'fullSuiteForecastExclusionRetryContaminated',
+    non_passing_status: 'fullSuiteForecastExclusionNonPassingStatus',
+    nonzero_exit: 'fullSuiteForecastExclusionNonzeroExit',
+    invalid_duration: 'fullSuiteForecastExclusionInvalidDuration',
+    outlier_duration: 'fullSuiteForecastExclusionOutlierDuration'
+  };
+  return t(map[reason] || 'fullSuiteForecastExclusionInvalidDuration');
+}
+function fullSuiteTimeoutAttemptsText(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) {
+    return '-';
+  }
+  return attempts.map(attempt => {
+    const parts = ['#' + fullSuiteValue(attempt && attempt.attempt)];
+    if (attempt && attempt.timed_out) parts.push(t('fullSuiteTimeoutAttemptTimedOut'));
+    if (attempt && attempt.cancelled) parts.push(t('fullSuiteTimeoutAttemptCancelled'));
+    if (attempt && attempt.exit_code !== null && attempt.exit_code !== undefined) parts.push(t('fullSuiteTimeoutAttemptExitCode') + '=' + attempt.exit_code);
+    return parts.join(' ');
+  }).join(', ');
+}
+function fullSuiteRepairTaskText(proposal) {
+  if (!proposal || typeof proposal !== 'object') {
+    return '-';
+  }
+  return [proposal.suggested_task_id, proposal.title].filter(Boolean).join(' - ') || '-';
 }
 function fullSuiteTimeoutForecastText(forecast, fallbackLabel) {
   if (!forecast || typeof forecast !== 'object') {
@@ -151,6 +190,13 @@ function fullSuiteSummary(fullSuite) {
     [t('fullSuiteCommand'), fullSuite.command],
     [t('fullSuitePlacement'), fullSuite.placement],
     [t('fullSuiteFreshness'), fullSuite.freshness],
+    [t('fullSuiteTimeoutBlocker'), fullSuite.timeout_blocker],
+    [t('fullSuiteTimeoutRetryCount'), fullSuite.timeout_retry_count],
+    [t('fullSuiteTimeoutMaxAttempts'), fullSuite.timeout_max_attempts],
+    [t('fullSuiteTimeoutAttempts'), fullSuiteTimeoutAttemptsText(fullSuite.timeout_attempts)],
+    [t('fullSuiteTimeoutAttemptsExhausted'), fullSuite.timeout_attempts_exhausted],
+    [t('fullSuiteTimeoutWarningContinuation'), fullSuite.timeout_warning_only_continuation],
+    [t('fullSuiteTimeoutRepairTask'), fullSuiteRepairTaskText(fullSuite.timeout_repair_task_proposal)],
     [t('fullSuiteTimeoutForecast'), fullSuiteTimeoutForecastText(fullSuite.timeout_forecast, fullSuite.timeout_forecast_label)],
     ...fullSuiteForecastRows(fullSuite.timeout_forecast),
     [t('fullSuiteArtifact'), fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (' + t('missing') + ')')],

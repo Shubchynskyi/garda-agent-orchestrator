@@ -352,5 +352,23 @@
         "description": "进入受保护的控制平面需要明确的操作员确认。"
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "full-suite 超时阻塞器",
+    "description": "控制重复 full-suite 超时是阻止任务并建议修复任务，还是作为最终警告继续。",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "重复 full-suite 超时会阻止任务完成并建议修复任务。"
+      },
+      "false": {
+        "label": "false",
+        "description": "重复 full-suite 超时会作为警告报告，不阻止完成。"
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "full-suite 超时重试",
+    "description": "超时后在应用超时策略前重试 full-suite 命令的次数。"
   }
 }

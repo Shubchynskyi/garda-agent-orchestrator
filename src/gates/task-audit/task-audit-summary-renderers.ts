@@ -149,6 +149,18 @@ function formatLateEvidenceFiles(
     return lateEvidenceFiles.join(', ');
 }
 
+function formatFullSuiteTimeoutWarnings(closeout: FinalCloseoutArtifact): string | null {
+    const timeout = closeout.workflow?.full_suite_timeout;
+    if (!timeout) {
+        return null;
+    }
+    const warnings = [
+        ...timeout.warnings,
+        ...(timeout.forecast_warning ? [`Forecast: ${timeout.forecast_warning}`] : [])
+    ];
+    return warnings.length > 0 ? warnings.join(' | ') : null;
+}
+
 function isCommitCommandSuggestion(value: string): boolean {
     const trimmed = String(value || '').trim();
     return /^git\s+commit\s+-m\s+"/u.test(trimmed)
@@ -232,6 +244,14 @@ export function formatFinalCloseoutMarkdown(closeout: FinalCloseoutArtifact): st
 
     if (closeout.workflow?.visible_summary_line) {
         lines.push(closeout.workflow.visible_summary_line);
+    }
+
+    if (closeout.workflow?.full_suite_timeout?.visible_summary_line) {
+        lines.push(closeout.workflow.full_suite_timeout.visible_summary_line);
+        const timeoutWarnings = formatFullSuiteTimeoutWarnings(closeout);
+        if (timeoutWarnings) {
+            lines.push(`Full-suite timeout warnings: ${timeoutWarnings}`);
+        }
     }
 
     if (closeout.workflow?.review_execution_policy_summary_line) {
@@ -469,6 +489,13 @@ export function formatTaskAuditSummaryText(summary: TaskAuditSummaryResult): str
     }
     if (summary.final_closeout.workflow?.visible_summary_line) {
         lines.push(`  ${summary.final_closeout.workflow.visible_summary_line}`);
+    }
+    if (summary.final_closeout.workflow?.full_suite_timeout?.visible_summary_line) {
+        lines.push(`  ${summary.final_closeout.workflow.full_suite_timeout.visible_summary_line}`);
+        const timeoutWarnings = formatFullSuiteTimeoutWarnings(summary.final_closeout);
+        if (timeoutWarnings) {
+            lines.push(`    Warnings: ${timeoutWarnings}`);
+        }
     }
     if (summary.final_closeout.workflow?.review_execution_policy_summary_line) {
         lines.push(`  ${summary.final_closeout.workflow.review_execution_policy_summary_line}`);

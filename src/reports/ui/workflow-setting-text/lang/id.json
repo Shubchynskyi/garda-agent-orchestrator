@@ -352,5 +352,23 @@
         "description": "Masuk ke control-plane yang dilindungi memerlukan konfirmasi eksplisit operator."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Pemblokir timeout full-suite",
+    "description": "Mengatur apakah timeout full-suite berulang memblokir tugas dan mengusulkan tugas perbaikan, atau lanjut sebagai peringatan akhir.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Timeout full-suite berulang memblokir penyelesaian tugas dan mengusulkan tugas perbaikan."
+      },
+      "false": {
+        "label": "false",
+        "description": "Timeout full-suite berulang dilaporkan sebagai peringatan dan tidak memblokir penyelesaian."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Percobaan ulang timeout full-suite",
+    "description": "Berapa kali perintah full-suite dicoba ulang setelah timeout sebelum kebijakan timeout diterapkan."
   }
 }

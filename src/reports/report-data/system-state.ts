@@ -24,6 +24,19 @@ import type {
 } from './types';
 
 const MAX_RUNTIME_SIGNAL_SCAN_ENTRIES = 512;
+const LATEST_FULL_SUITE_VALIDATION_POINTER_PATH = path.join(
+    'runtime',
+    'metrics',
+    'full-suite-validation-latest.json'
+);
+
+interface SystemStateFullSuiteTimeoutEvidence {
+    attempts_count: number | null;
+    max_attempts: number | null;
+    attempts_exhausted: boolean | null;
+    warning_only_continuation: boolean | null;
+    latest_warning: string | null;
+}
 
 function settingValue(workflowTab: ReportWorkflowConfigTab, key: string): unknown {
     return workflowTab.settings.find((setting) => setting.key === key)?.value;
@@ -35,6 +48,67 @@ function valueRowValue(rows: Array<{ id: string; value: unknown }>, id: string):
 
 function booleanValue(value: unknown): boolean {
     return value === true || String(value).trim().toLowerCase() === 'true';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function optionalBoolean(value: unknown): boolean | null {
+    return typeof value === 'boolean' ? value : null;
+}
+
+function optionalNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function safeReadJson(filePath: string): Record<string, unknown> | null {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        return isRecord(parsed) ? parsed : null;
+    } catch {
+        return null;
+    }
+}
+
+function getLatestFullSuiteValidationArtifactPath(repoRoot: string): string | null {
+    const resolvedRoot = path.resolve(repoRoot);
+    const pointerPath = joinOrchestratorPath(resolvedRoot, LATEST_FULL_SUITE_VALIDATION_POINTER_PATH);
+    const pointer = safeReadJson(pointerPath);
+    const rawArtifactPath = String(pointer?.artifact_path || '').trim();
+    if (!rawArtifactPath) {
+        return null;
+    }
+    const reviewsRoot = path.resolve(joinOrchestratorPath(resolvedRoot, 'runtime/reviews'));
+    const artifactPath = path.resolve(path.isAbsolute(rawArtifactPath) ? rawArtifactPath : path.join(resolvedRoot, rawArtifactPath));
+    const relativeToReviews = path.relative(reviewsRoot, artifactPath);
+    if (relativeToReviews.startsWith('..') || path.isAbsolute(relativeToReviews)) {
+        return null;
+    }
+    if (!/-full-suite-validation\.json$/u.test(path.basename(artifactPath))) {
+        return null;
+    }
+    if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        return null;
+    }
+    return artifactPath;
+}
+
+function readLatestFullSuiteTimeoutEvidence(repoRoot: string): SystemStateFullSuiteTimeoutEvidence {
+    const artifactPath = getLatestFullSuiteValidationArtifactPath(repoRoot);
+    const artifact = artifactPath ? safeReadJson(artifactPath) : null;
+    const timeoutPolicy = isRecord(artifact?.timeout_policy) ? artifact.timeout_policy : null;
+    const attempts = Array.isArray(timeoutPolicy?.attempts) ? timeoutPolicy.attempts : null;
+    const warnings = Array.isArray(artifact?.warnings)
+        ? artifact.warnings.map((entry) => String(entry || '').trim()).filter(Boolean)
+        : [];
+    return {
+        attempts_count: attempts ? attempts.length : null,
+        max_attempts: optionalNumber(timeoutPolicy?.max_attempts),
+        attempts_exhausted: optionalBoolean(timeoutPolicy?.attempts_exhausted),
+        warning_only_continuation: optionalBoolean(timeoutPolicy?.warning_only_continuation),
+        latest_warning: warnings.length > 0 ? warnings[warnings.length - 1] : null
+    };
 }
 
 function signal(
@@ -178,12 +252,19 @@ function buildWorkflowSignal(repoRoot: string, workflowTab: ReportWorkflowConfig
     const fullSuiteCommand = String(settingValue(workflowTab, 'full_suite_validation.command') || '').trim() || null;
     const taskReset = resolveTaskResetAvailability(repoRoot);
     let timeoutForecastLabel: string | null = null;
+    let timeoutBlocker: boolean | null = null;
+    let timeoutRetryCount: number | null = null;
     try {
         const config = loadFullSuiteValidationConfig(repoRoot);
         timeoutForecastLabel = formatFullSuiteTimeoutForecast(buildFullSuiteTimeoutForecast(repoRoot, config));
+        timeoutBlocker = config.timeout_blocker !== false;
+        timeoutRetryCount = typeof config.timeout_retry_count === 'number' && Number.isFinite(config.timeout_retry_count)
+            ? config.timeout_retry_count
+            : null;
     } catch {
         timeoutForecastLabel = null;
     }
+    const timeoutEvidence = readLatestFullSuiteTimeoutEvidence(repoRoot);
     const missingCompile = !compileCommand || compileCommand === '__COMPILE_GATE_COMMAND_UNCONFIGURED__';
     const status: ReportSystemStateHealth = workflowTab.status === 'invalid' || missingCompile
         ? 'error'
@@ -217,6 +298,13 @@ function buildWorkflowSignal(repoRoot: string, workflowTab: ReportWorkflowConfig
         full_suite_enabled: fullSuiteEnabled,
         full_suite_command: fullSuiteCommand,
         full_suite_timeout_forecast_label: timeoutForecastLabel,
+        full_suite_timeout_blocker: timeoutBlocker,
+        full_suite_timeout_retry_count: timeoutRetryCount,
+        full_suite_timeout_attempts_count: timeoutEvidence.attempts_count,
+        full_suite_timeout_max_attempts: timeoutEvidence.max_attempts,
+        full_suite_timeout_attempts_exhausted: timeoutEvidence.attempts_exhausted,
+        full_suite_timeout_warning_only_continuation: timeoutEvidence.warning_only_continuation,
+        full_suite_timeout_latest_warning: timeoutEvidence.latest_warning,
         task_reset_ready: taskReset.enabled
     };
 }

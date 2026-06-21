@@ -48,6 +48,8 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.equal(getLocalUiText('ru').initSettingsTab, 'Настройки инициализации');
     assert.equal(getLocalUiText('ru').taskQueueStatus, 'Статус в очереди');
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-enabled'].label, 'Обязательная полная проверка');
+    assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-timeout-blocker'].label, 'Блокер таймаута полной проверки');
+    assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-timeout-retry-count'].label, 'Повторы таймаута полной проверки');
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].label, 'Команда compile-gate');
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].description || '', /compile-gate блокируется/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].description || '', /не берёт fallback из 40-commands\.md/u);
@@ -61,6 +63,8 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.equal(LOCAL_UI_INIT_SETTING_TEXT.ru['UpdatedAt'], undefined);
     assert.match(LOCAL_UI_INIT_SETTING_TEXT.ru['EnforceNoAutoCommit'].description || '', /во всяком случае пытается/u);
     assert.match(getLocalUiText('ru').ordinaryDocsHelp, /не триггерят лишние виды ревью/u);
+    assert.equal(getLocalUiText('ru').fullSuiteTimeoutBlocker, 'Таймаут блокирует задачу');
+    assert.equal(getLocalUiText('ru').fullSuiteForecastExclusionReasons, 'Причины исключения из прогноза');
     assert.equal(getLocalUiText('uk').tasksTab, 'Задачі');
     assert.equal(getLocalUiText('uk').initSettingsTab, 'Параметри ініціалізації');
     assert.equal(getLocalUiText('uk').workflowTab, 'Конфігурація робочого процесу');

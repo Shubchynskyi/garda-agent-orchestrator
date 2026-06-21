@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "Maximum",
     "fullSuiteTimeoutForecastSafetyMargin": "Sicherheitsaufschlag ueber Maximum",
     "fullSuiteTimeoutForecastMinimum": "20%, aber mindestens 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "keine aktuelle passende Full-Suite-Dauerhistorie; konfiguriertes Timeout wird verwendet"
+    "fullSuiteTimeoutForecastConfiguredReason": "keine aktuelle passende Full-Suite-Dauerhistorie; konfiguriertes Timeout wird verwendet",
+    "fullSuiteTimeoutBlocker": "Zeitüberschreitung blockiert Aufgabe",
+    "fullSuiteTimeoutRetryCount": "Wiederholungen bei Zeitüberschreitung",
+    "fullSuiteTimeoutMaxAttempts": "Maximale Timeout-Versuche",
+    "fullSuiteTimeoutAttempts": "Timeout-Versuche",
+    "fullSuiteTimeoutAttemptsExhausted": "Timeout-Versuche ausgeschöpft",
+    "fullSuiteTimeoutWarningContinuation": "Timeout nur als Warnung fortsetzen",
+    "fullSuiteTimeoutRepairTask": "Vorschlag für Timeout-Reparaturaufgabe",
+    "fullSuiteForecastExcludedSamples": "Aus Forecast ausgeschlossene Stichproben",
+    "fullSuiteForecastExclusionReasons": "Ausschlussgründe im Forecast",
+    "fullSuiteTimeoutAttemptTimedOut": "Zeit überschritten",
+    "fullSuiteTimeoutAttemptCancelled": "abgebrochen",
+    "fullSuiteTimeoutAttemptExitCode": "Exit-Code",
+    "fullSuiteForecastExclusionTimedOut": "Läufe mit Zeitüberschreitung",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "unterbrochene oder abgebrochene Läufe",
+    "fullSuiteForecastExclusionRetryContaminated": "durch Wiederholung verunreinigte Läufe",
+    "fullSuiteForecastExclusionNonPassingStatus": "nicht bestandene Läufe",
+    "fullSuiteForecastExclusionNonzeroExit": "Läufe mit Nicht-Null-Exit",
+    "fullSuiteForecastExclusionInvalidDuration": "ungültige Dauern",
+    "fullSuiteForecastExclusionOutlierDuration": "Ausreißer-Dauern"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

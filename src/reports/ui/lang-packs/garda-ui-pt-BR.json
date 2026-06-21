@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "maximo",
     "fullSuiteTimeoutForecastSafetyMargin": "margem de seguranca acima do maximo",
     "fullSuiteTimeoutForecastMinimum": "20%, mas pelo menos 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "sem historico recente correspondente de duracao full-suite; usando o tempo limite configurado"
+    "fullSuiteTimeoutForecastConfiguredReason": "sem historico recente correspondente de duracao full-suite; usando o tempo limite configurado",
+    "fullSuiteTimeoutBlocker": "Timeout bloqueia a tarefa",
+    "fullSuiteTimeoutRetryCount": "Número de novas tentativas por timeout",
+    "fullSuiteTimeoutMaxAttempts": "Máximo de tentativas por timeout",
+    "fullSuiteTimeoutAttempts": "Tentativas por timeout",
+    "fullSuiteTimeoutAttemptsExhausted": "Tentativas por timeout esgotadas",
+    "fullSuiteTimeoutWarningContinuation": "Continuação do timeout apenas como aviso",
+    "fullSuiteTimeoutRepairTask": "Proposta de tarefa de correção de timeout",
+    "fullSuiteForecastExcludedSamples": "Amostras excluídas da previsão",
+    "fullSuiteForecastExclusionReasons": "Motivos de exclusão da previsão",
+    "fullSuiteTimeoutAttemptTimedOut": "tempo esgotado",
+    "fullSuiteTimeoutAttemptCancelled": "cancelado",
+    "fullSuiteTimeoutAttemptExitCode": "código de saída",
+    "fullSuiteForecastExclusionTimedOut": "execuções com timeout",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "execuções interrompidas ou canceladas",
+    "fullSuiteForecastExclusionRetryContaminated": "execuções contaminadas por nova tentativa",
+    "fullSuiteForecastExclusionNonPassingStatus": "execuções não aprovadas",
+    "fullSuiteForecastExclusionNonzeroExit": "execuções com saída diferente de zero",
+    "fullSuiteForecastExclusionInvalidDuration": "durações inválidas",
+    "fullSuiteForecastExclusionOutlierDuration": "durações atípicas"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

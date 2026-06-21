@@ -51,6 +51,7 @@ export interface FinalCloseoutArtifact {
         visible_summary_line: string;
         review_execution_policy_mode?: EffectiveReviewExecutionPolicyMode | null;
         review_execution_policy_summary_line?: string | null;
+        full_suite_timeout?: FinalCloseoutFullSuiteTimeoutSummary | null;
     } | null;
     docs: FinalCloseoutDocsSummary;
     project_memory?: FinalCloseoutProjectMemorySummary | null;
@@ -66,6 +67,29 @@ export interface FinalCloseoutArtifact {
     commit_command_template: string;
     commit_command_suggestion: string;
     commit_question: string;
+}
+
+export interface FinalCloseoutFullSuiteTimeoutSummary {
+    artifact_present: boolean;
+    status: string | null;
+    timed_out: boolean | null;
+    timeout_blocker: boolean | null;
+    timeout_retry_count: number | null;
+    max_attempts: number | null;
+    attempts_count: number;
+    attempts_exhausted: boolean | null;
+    warning_only_continuation: boolean | null;
+    repair_task_proposal: {
+        suggested_task_id: string;
+        title: string;
+        area: string;
+        rationale: string;
+    } | null;
+    warnings: string[];
+    forecast_warning: string | null;
+    forecast_excluded_sample_count: number | null;
+    forecast_excluded_sample_reasons: Record<string, number>;
+    visible_summary_line: string;
 }
 
 export interface TaskAuditSummaryResult {

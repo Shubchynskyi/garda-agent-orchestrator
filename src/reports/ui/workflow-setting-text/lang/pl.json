@@ -352,5 +352,23 @@
         "description": "Wejście w chroniony control-plane wymaga wyraźnego potwierdzenia operatora."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Blokada limitu czasu full-suite",
+    "description": "Kontroluje, czy powtarzające się limity czasu full-suite blokują zadanie i proponują naprawę, czy przechodzą jako końcowe ostrzeżenie.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Powtarzające się limity czasu full-suite blokują ukończenie i proponują zadanie naprawcze."
+      },
+      "false": {
+        "label": "false",
+        "description": "Powtarzające się limity czasu full-suite są zgłaszane jako ostrzeżenie i nie blokują ukończenia."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Ponowienia po limicie czasu full-suite",
+    "description": "Ile razy ponowić komendę full-suite po limicie czasu przed zastosowaniem polityki."
   }
 }

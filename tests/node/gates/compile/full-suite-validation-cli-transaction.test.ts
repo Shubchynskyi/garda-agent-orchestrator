@@ -381,6 +381,20 @@ describe('gates/full-suite-validation', () => {
             assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full-suite-secret-value'));
             assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full suite line one'));
             assert.ok(!fs.readFileSync(artifactPath, 'utf8').includes('full suite line two'));
+            const latestPointerPath = path.join(
+                tempDir,
+                'garda-agent-orchestrator',
+                'runtime',
+                'metrics',
+                'full-suite-validation-latest.json'
+            );
+            assert.ok(fs.existsSync(latestPointerPath));
+            const latestPointer = JSON.parse(fs.readFileSync(latestPointerPath, 'utf8'));
+            assert.equal(latestPointer.schema_version, 1);
+            assert.equal(latestPointer.task_id, 'T-PASS');
+            assert.equal(latestPointer.status, 'PASSED');
+            assert.equal(String(latestPointer.artifact_path).replace(/\\/g, '/'), artifactPath.replace(/\\/g, '/'));
+            assert.equal(typeof latestPointer.artifact_sha256, 'string');
             const timelinePath = path.join(eventsDir, 'T-PASS.jsonl');
             assert.ok(fs.existsSync(timelinePath));
             const timeline = fs.readFileSync(timelinePath, 'utf8');

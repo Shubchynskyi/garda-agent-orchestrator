@@ -107,6 +107,28 @@ function buildReviewTimingWarning(closeout: FinalCloseoutArtifact, attestation: 
     return 'none';
 }
 
+function buildFullSuiteTimeoutEvidenceLines(closeout: FinalCloseoutArtifact): string[] {
+    const timeout = closeout.workflow?.full_suite_timeout;
+    if (!timeout) {
+        return ['none'];
+    }
+    const lines = [timeout.visible_summary_line];
+    const warnings = [
+        ...timeout.warnings,
+        ...(timeout.forecast_warning ? [`Forecast: ${timeout.forecast_warning}`] : [])
+    ];
+    if (warnings.length > 0) {
+        lines.push(`Warnings: ${warnings.join(' | ')}`);
+    }
+    if (timeout.repair_task_proposal) {
+        lines.push(
+            `RepairTask: ${timeout.repair_task_proposal.suggested_task_id} - ` +
+            `${timeout.repair_task_proposal.title}`
+        );
+    }
+    return lines;
+}
+
 export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
     const reviewIntegrityAttestation = getReviewIntegrityAttestation(closeout);
     const profile = closeout.implementation_summary.active_profile || 'unknown';
@@ -141,6 +163,9 @@ export function formatFinalUserReport(closeout: FinalCloseoutArtifact): string {
             lines.push(buildFinalUserReportReviewLine(reviewType, verdict, timingEntries.get(reviewType) || []));
         }
     }
+    lines.push('');
+    lines.push('Full-suite Timeout Evidence:');
+    lines.push(...buildFullSuiteTimeoutEvidenceLines(closeout));
     lines.push('');
     lines.push('Review Timing Warning:');
     lines.push(buildReviewTimingWarning(closeout, reviewIntegrityAttestation));

@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "maximo",
     "fullSuiteTimeoutForecastSafetyMargin": "margen de seguridad sobre el maximo",
     "fullSuiteTimeoutForecastMinimum": "20%, pero al menos 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "no hay historial reciente compatible de duracion completa; se usa el tiempo de espera configurado"
+    "fullSuiteTimeoutForecastConfiguredReason": "no hay historial reciente compatible de duracion completa; se usa el tiempo de espera configurado",
+    "fullSuiteTimeoutBlocker": "El tiempo agotado bloquea la tarea",
+    "fullSuiteTimeoutRetryCount": "Reintentos por tiempo agotado",
+    "fullSuiteTimeoutMaxAttempts": "Intentos máximos por tiempo agotado",
+    "fullSuiteTimeoutAttempts": "Intentos por tiempo agotado",
+    "fullSuiteTimeoutAttemptsExhausted": "Intentos por tiempo agotado agotados",
+    "fullSuiteTimeoutWarningContinuation": "Continuación solo con advertencia por tiempo agotado",
+    "fullSuiteTimeoutRepairTask": "Propuesta de tarea de reparación por tiempo agotado",
+    "fullSuiteForecastExcludedSamples": "Muestras excluidas del pronóstico",
+    "fullSuiteForecastExclusionReasons": "Motivos de exclusión del pronóstico",
+    "fullSuiteTimeoutAttemptTimedOut": "tiempo agotado",
+    "fullSuiteTimeoutAttemptCancelled": "cancelado",
+    "fullSuiteTimeoutAttemptExitCode": "código de salida",
+    "fullSuiteForecastExclusionTimedOut": "ejecuciones con tiempo agotado",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "ejecuciones interrumpidas o canceladas",
+    "fullSuiteForecastExclusionRetryContaminated": "ejecuciones contaminadas por reintento",
+    "fullSuiteForecastExclusionNonPassingStatus": "ejecuciones no aprobadas",
+    "fullSuiteForecastExclusionNonzeroExit": "ejecuciones con salida distinta de cero",
+    "fullSuiteForecastExclusionInvalidDuration": "duraciones no válidas",
+    "fullSuiteForecastExclusionOutlierDuration": "duraciones atípicas"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

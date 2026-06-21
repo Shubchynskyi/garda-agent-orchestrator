@@ -28,6 +28,24 @@
     "label": "Full-suite timeout",
     "description": "Maximum runtime for the full-suite command, in milliseconds."
   },
+  "full-suite-timeout-blocker": {
+    "label": "Full-suite timeout blocker",
+    "description": "Controls whether repeated full-suite timeouts block the task and propose a repair task, or continue as a final warning.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Repeated full-suite timeouts block task completion and propose a repair task."
+      },
+      "false": {
+        "label": "false",
+        "description": "Repeated full-suite timeouts are reported as a warning and do not block completion."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Full-suite timeout retries",
+    "description": "How many times the full-suite command is retried after a timeout before timeout policy is applied."
+  },
   "full-suite-green-summary-max-lines": {
     "label": "Green full-suite summary length",
     "description": "How many successful full-suite output lines stay visible in compact task evidence."

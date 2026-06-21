@@ -118,8 +118,41 @@ function fullSuiteForecastRows(forecast) {
     ['Configured timeout', fullSuiteDurationSeconds(forecast.configured_timeout_seconds)],
     ['Average duration', fullSuiteDurationSeconds(forecast.average_duration_seconds)],
     ['High-watermark duration', fullSuiteDurationSeconds(forecast.high_watermark_duration_seconds)],
-    ['Recommended timeout', fullSuiteDurationSeconds(forecast.recommended_timeout_seconds)]
+    ['Recommended timeout', fullSuiteDurationSeconds(forecast.recommended_timeout_seconds)],
+    ['Forecast excluded samples', Number.isFinite(Number(forecast.excluded_sample_count)) ? Number(forecast.excluded_sample_count) : 0],
+    ['Forecast exclusion reasons', fullSuiteForecastExclusionReasonsText(forecast.excluded_sample_reasons)]
   ];
+}
+function fullSuiteForecastExclusionReasonsText(reasons) {
+  if (!reasons || typeof reasons !== 'object') return '-';
+  const entries = Object.entries(reasons).filter(([, count]) => Number(count) > 0);
+  return entries.length > 0 ? entries.map(([reason, count]) => fullSuiteForecastExclusionReasonLabel(reason) + '=' + Number(count)).join(', ') : '-';
+}
+function fullSuiteForecastExclusionReasonLabel(reason) {
+  const labels = {
+    timed_out: 'timed-out runs',
+    interrupted_or_cancelled: 'interrupted or cancelled runs',
+    retry_contaminated: 'retry-contaminated runs',
+    non_passing_status: 'non-passing runs',
+    nonzero_exit: 'non-zero exit runs',
+    invalid_duration: 'invalid durations',
+    outlier_duration: 'outlier durations'
+  };
+  return labels[reason] || 'invalid durations';
+}
+function fullSuiteTimeoutAttemptsText(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return '-';
+  return attempts.map(attempt => {
+    const parts = ['#' + text(attempt && attempt.attempt)];
+    if (attempt && attempt.timed_out) parts.push('timed out');
+    if (attempt && attempt.cancelled) parts.push('cancelled');
+    if (attempt && attempt.exit_code !== null && attempt.exit_code !== undefined) parts.push('exit code=' + attempt.exit_code);
+    return parts.join(' ');
+  }).join(', ');
+}
+function fullSuiteRepairTaskText(proposal) {
+  if (!proposal || typeof proposal !== 'object') return '-';
+  return [proposal.suggested_task_id, proposal.title].filter(Boolean).join(' - ') || '-';
 }
 function safe(value) {
   return text(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -130,6 +163,13 @@ function fullSuiteRows(fullSuite) {
     ['Command', fullSuite.command],
     ['Placement', fullSuite.placement],
     ['Freshness', fullSuite.freshness],
+    ['Timeout blocks task', fullSuite.timeout_blocker],
+    ['Timeout retry count', fullSuite.timeout_retry_count],
+    ['Timeout max attempts', fullSuite.timeout_max_attempts],
+    ['Timeout attempts', fullSuiteTimeoutAttemptsText(fullSuite.timeout_attempts)],
+    ['Timeout attempts exhausted', fullSuite.timeout_attempts_exhausted],
+    ['Warning-only timeout continuation', fullSuite.timeout_warning_only_continuation],
+    ['Timeout repair task proposal', fullSuiteRepairTaskText(fullSuite.timeout_repair_task_proposal)],
     ['Timeout forecast', fullSuite.timeout_forecast_label],
     ...fullSuiteForecastRows(fullSuite.timeout_forecast),
     ['Evidence artifact', fullSuite.artifact_path + (fullSuite.artifact_exists ? '' : ' (missing)')],
@@ -139,7 +179,12 @@ function fullSuiteRows(fullSuite) {
   const summary = (fullSuite.compact_summary || []).length > 0
     ? '<h4>Summary</h4><pre>' + safe(fullSuite.compact_summary.join(newline)) + '</pre>'
     : '';
-  return '<table><tbody>' + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(value) + '</td></tr>').join('') + '</tbody></table>' + summary;
+  const diagnostics = [fullSuite.mismatch_reason, ...(fullSuite.violations || []), ...(fullSuite.warnings || [])]
+    .filter(Boolean);
+  const diagnosticsList = diagnostics.length > 0
+    ? '<ul class="list">' + diagnostics.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>'
+    : '';
+  return '<table><tbody>' + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(value) + '</td></tr>').join('') + '</tbody></table>' + summary + diagnosticsList;
 }
 function renderList(items, formatter) {
   if (!items || items.length === 0) return '<li>none</li>';

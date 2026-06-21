@@ -301,6 +301,68 @@ describe('gates/task-audit-summary', () => {
             assert.ok(result.final_closeout.token_economy?.visible_summary_line?.includes('full-suite validation output ~420 chars'));
         });
 
+        it('carries full-suite timeout warning evidence into final closeout reports', () => {
+            writeArtifact(reviewsDir, TASK_ID, '-full-suite-validation.json', {
+                status: 'WARNED',
+                enabled: true,
+                command: 'npm test',
+                exit_code: null,
+                timed_out: true,
+                warnings: [
+                    'Full suite validation timed out, but workflow-config.full_suite_validation.timeout_blocker=false.'
+                ],
+                timeout_policy: {
+                    timeout_blocker: false,
+                    timeout_retry_count: 0,
+                    max_attempts: 1,
+                    attempts: [
+                        { attempt: 1, exit_code: null, timed_out: true }
+                    ],
+                    attempts_exhausted: true,
+                    warning_only_continuation: true,
+                    repair_task_proposal: null
+                },
+                timeout_forecast: {
+                    history_path: 'runtime/metrics/full-suite-duration-history.json',
+                    sample_count: 0,
+                    excluded_sample_count: 2,
+                    excluded_sample_reasons: {
+                        timed_out: 1,
+                        retry_contaminated: 1
+                    },
+                    average_duration_seconds: null,
+                    high_watermark_duration_seconds: null,
+                    recommended_timeout_seconds: 600,
+                    safety_margin_seconds: null,
+                    recommendation_source: 'config_timeout',
+                    configured_timeout_seconds: 600,
+                    warning: 'Full-suite duration history was unreadable; using configured timeout fallback.'
+                }
+            });
+
+            const result = buildTaskAuditSummary({
+                taskId: TASK_ID,
+                repoRoot: tmpDir,
+                eventsRoot: eventsDir,
+                reviewsRoot: reviewsDir
+            });
+            const timeout = result.final_closeout.workflow?.full_suite_timeout;
+            const finalUserReport = formatFinalUserReport(result.final_closeout);
+            const finalMarkdown = formatFinalCloseoutMarkdown(result.final_closeout);
+            const summaryText = formatTaskAuditSummaryText(result);
+
+            assert.equal(timeout?.status, 'WARNED');
+            assert.equal(timeout?.timed_out, true);
+            assert.equal(timeout?.timeout_blocker, false);
+            assert.equal(timeout?.warning_only_continuation, true);
+            assert.equal(timeout?.forecast_excluded_sample_reasons.timed_out, 1);
+            assert.ok(timeout?.visible_summary_line.includes('warning_only=true'));
+            assert.ok(finalUserReport.includes('Full-suite Timeout Evidence:'));
+            assert.ok(finalUserReport.includes('workflow-config.full_suite_validation.timeout_blocker=false'));
+            assert.ok(finalMarkdown.includes('Full-suite timeout: status=WARNED'));
+            assert.ok(summaryText.includes('Full-suite timeout: status=WARNED'));
+        });
+
         it('keeps task metadata inference working when TASK.md notes cell is empty', () => {
             const now = new Date().toISOString();
             fs.writeFileSync(path.join(tmpDir, 'TASK.md'), [

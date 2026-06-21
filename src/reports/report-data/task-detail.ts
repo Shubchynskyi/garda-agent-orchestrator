@@ -15,6 +15,9 @@ import {
     formatFullSuiteTimeoutForecast,
     isFullSuiteNotRequiredForZeroDiffNoReviewableScope,
     loadFullSuiteValidationConfig,
+    type FullSuiteTimeoutAttemptEvidence,
+    type FullSuiteTimeoutPolicyEvidence,
+    type FullSuiteTimeoutRepairTaskProposal,
     type FullSuiteValidationResult
 } from '../../gates/full-suite/full-suite-validation';
 import { getTaskModeEvidence, readOptionalMarkdownWorkingPlan } from '../../gates/task-mode';
@@ -137,6 +140,91 @@ function normalizeDurationMs(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value > 0
         ? Math.round(value)
         : null;
+}
+
+function normalizeTimeoutRetryCount(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? Math.floor(value)
+        : 0;
+}
+
+function normalizeTimeoutAttempts(value: unknown): FullSuiteTimeoutAttemptEvidence[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const attempts: FullSuiteTimeoutAttemptEvidence[] = [];
+    for (const entry of value) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+            continue;
+        }
+        const record = entry as Record<string, unknown>;
+        const attempt = typeof record.attempt === 'number' && Number.isFinite(record.attempt)
+            ? Math.floor(record.attempt)
+            : null;
+        if (attempt == null || attempt <= 0) {
+            continue;
+        }
+        attempts.push({
+            attempt,
+            exit_code: typeof record.exit_code === 'number' && Number.isFinite(record.exit_code)
+                ? Math.trunc(record.exit_code)
+                : null,
+            timed_out: record.timed_out === true,
+            ...(typeof record.cancelled === 'boolean' ? { cancelled: record.cancelled } : {})
+        });
+    }
+    return attempts;
+}
+
+function normalizeTimeoutRepairTaskProposal(value: unknown): FullSuiteTimeoutRepairTaskProposal | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return null;
+    }
+    const record = value as Record<string, unknown>;
+    const suggestedTaskId = String(record.suggested_task_id || '').trim();
+    const title = String(record.title || '').trim();
+    const area = String(record.area || '').trim();
+    const rationale = String(record.rationale || '').trim();
+    return suggestedTaskId && title && area && rationale
+        ? {
+            suggested_task_id: suggestedTaskId,
+            title,
+            area,
+            rationale
+        }
+        : null;
+}
+
+function normalizeTimeoutPolicy(
+    value: unknown,
+    config: ReturnType<typeof loadFullSuiteValidationConfig>
+): FullSuiteTimeoutPolicyEvidence {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        const retryCount = normalizeTimeoutRetryCount(config.timeout_retry_count);
+        return {
+            timeout_blocker: config.timeout_blocker !== false,
+            timeout_retry_count: retryCount,
+            max_attempts: retryCount + 1,
+            attempts: [],
+            attempts_exhausted: false,
+            warning_only_continuation: false,
+            repair_task_proposal: null
+        };
+    }
+    const record = value as Record<string, unknown>;
+    const retryCount = normalizeTimeoutRetryCount(record.timeout_retry_count);
+    const maxAttempts = typeof record.max_attempts === 'number' && Number.isFinite(record.max_attempts) && record.max_attempts > 0
+        ? Math.floor(record.max_attempts)
+        : retryCount + 1;
+    return {
+        timeout_blocker: record.timeout_blocker !== false,
+        timeout_retry_count: retryCount,
+        max_attempts: maxAttempts,
+        attempts: normalizeTimeoutAttempts(record.attempts),
+        attempts_exhausted: record.attempts_exhausted === true,
+        warning_only_continuation: record.warning_only_continuation === true,
+        repair_task_proposal: normalizeTimeoutRepairTaskProposal(record.repair_task_proposal)
+    };
 }
 
 function formatDurationMs(durationMs: number | null): string | null {
@@ -287,6 +375,7 @@ function buildFullSuiteSummary(
     const status = normalizeStatus(artifact?.status);
     const durationMs = normalizeDurationMs(artifact?.duration_ms);
     const timedOut = typeof artifact?.timed_out === 'boolean' ? artifact.timed_out : null;
+    const timeoutPolicy = normalizeTimeoutPolicy(artifact?.timeout_policy, config);
     const cycleBinding = artifact && artifact.cycle_binding && typeof artifact.cycle_binding === 'object' && !Array.isArray(artifact.cycle_binding)
         ? artifact.cycle_binding as Record<string, unknown>
         : null;
@@ -317,6 +406,13 @@ function buildFullSuiteSummary(
         duration_human: formatDurationMs(durationMs),
         timed_out: timedOut,
         exit_code: typeof artifact?.exit_code === 'number' && Number.isFinite(artifact.exit_code) ? artifact.exit_code : null,
+        timeout_blocker: timeoutPolicy.timeout_blocker,
+        timeout_retry_count: timeoutPolicy.timeout_retry_count,
+        timeout_max_attempts: timeoutPolicy.max_attempts,
+        timeout_attempts: timeoutPolicy.attempts,
+        timeout_attempts_exhausted: artifact?.timeout_policy ? timeoutPolicy.attempts_exhausted : null,
+        timeout_warning_only_continuation: artifact?.timeout_policy ? timeoutPolicy.warning_only_continuation : null,
+        timeout_repair_task_proposal: timeoutPolicy.repair_task_proposal,
         artifact_path: toPosix(artifactPath),
         artifact_exists: artifactExists,
         artifact_sha256: fileSha256(artifactPath),
@@ -442,6 +538,13 @@ export function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number)
             duration_human: null,
             timed_out: null,
             exit_code: null,
+            timeout_blocker: false,
+            timeout_retry_count: 0,
+            timeout_max_attempts: 1,
+            timeout_attempts: [],
+            timeout_attempts_exhausted: null,
+            timeout_warning_only_continuation: null,
+            timeout_repair_task_proposal: null,
             artifact_path: '',
             artifact_exists: false,
             artifact_sha256: null,

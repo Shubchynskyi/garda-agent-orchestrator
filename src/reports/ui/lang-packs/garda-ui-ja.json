@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "最大",
     "fullSuiteTimeoutForecastSafetyMargin": "最大値に対する安全マージン",
     "fullSuiteTimeoutForecastMinimum": "20%、ただし最低30秒",
-    "fullSuiteTimeoutForecastConfiguredReason": "一致する最近のフルスイート実行時間履歴がないため、設定済みタイムアウトを使用します"
+    "fullSuiteTimeoutForecastConfiguredReason": "一致する最近のフルスイート実行時間履歴がないため、設定済みタイムアウトを使用します",
+    "fullSuiteTimeoutBlocker": "タイムアウトでタスクをブロック",
+    "fullSuiteTimeoutRetryCount": "タイムアウト再試行回数",
+    "fullSuiteTimeoutMaxAttempts": "タイムアウト最大試行回数",
+    "fullSuiteTimeoutAttempts": "タイムアウト試行",
+    "fullSuiteTimeoutAttemptsExhausted": "タイムアウト試行を使い切り",
+    "fullSuiteTimeoutWarningContinuation": "警告のみでタイムアウト後も継続",
+    "fullSuiteTimeoutRepairTask": "タイムアウト修復タスク案",
+    "fullSuiteForecastExcludedSamples": "予測から除外されたサンプル",
+    "fullSuiteForecastExclusionReasons": "予測除外理由",
+    "fullSuiteTimeoutAttemptTimedOut": "タイムアウト",
+    "fullSuiteTimeoutAttemptCancelled": "キャンセル",
+    "fullSuiteTimeoutAttemptExitCode": "終了コード",
+    "fullSuiteForecastExclusionTimedOut": "タイムアウトした実行",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "中断またはキャンセルされた実行",
+    "fullSuiteForecastExclusionRetryContaminated": "再試行で汚染された実行",
+    "fullSuiteForecastExclusionNonPassingStatus": "不合格の実行",
+    "fullSuiteForecastExclusionNonzeroExit": "非ゼロ終了の実行",
+    "fullSuiteForecastExclusionInvalidDuration": "無効な所要時間",
+    "fullSuiteForecastExclusionOutlierDuration": "外れ値の所要時間"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

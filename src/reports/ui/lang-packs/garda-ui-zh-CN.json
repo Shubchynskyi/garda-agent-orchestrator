@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "最大值",
     "fullSuiteTimeoutForecastSafetyMargin": "高于最大值的安全余量",
     "fullSuiteTimeoutForecastMinimum": "20%，但至少 30 秒",
-    "fullSuiteTimeoutForecastConfiguredReason": "没有最近匹配的完整检查耗时历史；使用已配置的超时"
+    "fullSuiteTimeoutForecastConfiguredReason": "没有最近匹配的完整检查耗时历史；使用已配置的超时",
+    "fullSuiteTimeoutBlocker": "超时会阻止任务",
+    "fullSuiteTimeoutRetryCount": "超时重试次数",
+    "fullSuiteTimeoutMaxAttempts": "超时最大尝试次数",
+    "fullSuiteTimeoutAttempts": "超时尝试",
+    "fullSuiteTimeoutAttemptsExhausted": "超时尝试已用尽",
+    "fullSuiteTimeoutWarningContinuation": "超时后仅作为警告继续",
+    "fullSuiteTimeoutRepairTask": "超时修复任务建议",
+    "fullSuiteForecastExcludedSamples": "从预测中排除的样本",
+    "fullSuiteForecastExclusionReasons": "预测排除原因",
+    "fullSuiteTimeoutAttemptTimedOut": "已超时",
+    "fullSuiteTimeoutAttemptCancelled": "已取消",
+    "fullSuiteTimeoutAttemptExitCode": "退出代码",
+    "fullSuiteForecastExclusionTimedOut": "超时运行",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "中断或取消的运行",
+    "fullSuiteForecastExclusionRetryContaminated": "受重试污染的运行",
+    "fullSuiteForecastExclusionNonPassingStatus": "未通过的运行",
+    "fullSuiteForecastExclusionNonzeroExit": "非零退出运行",
+    "fullSuiteForecastExclusionInvalidDuration": "无效时长",
+    "fullSuiteForecastExclusionOutlierDuration": "离群时长"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

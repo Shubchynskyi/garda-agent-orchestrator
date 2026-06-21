@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "massimo",
     "fullSuiteTimeoutForecastSafetyMargin": "margine di sicurezza sopra il massimo",
     "fullSuiteTimeoutForecastMinimum": "20%, ma almeno 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "nessuna cronologia recente compatibile della durata full-suite; viene usato il timeout configurato"
+    "fullSuiteTimeoutForecastConfiguredReason": "nessuna cronologia recente compatibile della durata full-suite; viene usato il timeout configurato",
+    "fullSuiteTimeoutBlocker": "Il timeout blocca l’attività",
+    "fullSuiteTimeoutRetryCount": "Numero di tentativi dopo timeout",
+    "fullSuiteTimeoutMaxAttempts": "Tentativi massimi dopo timeout",
+    "fullSuiteTimeoutAttempts": "Tentativi dopo timeout",
+    "fullSuiteTimeoutAttemptsExhausted": "Tentativi dopo timeout esauriti",
+    "fullSuiteTimeoutWarningContinuation": "Continuazione timeout solo come avviso",
+    "fullSuiteTimeoutRepairTask": "Proposta di attività di riparazione timeout",
+    "fullSuiteForecastExcludedSamples": "Campioni esclusi dalla previsione",
+    "fullSuiteForecastExclusionReasons": "Motivi di esclusione dalla previsione",
+    "fullSuiteTimeoutAttemptTimedOut": "timeout",
+    "fullSuiteTimeoutAttemptCancelled": "annullato",
+    "fullSuiteTimeoutAttemptExitCode": "codice di uscita",
+    "fullSuiteForecastExclusionTimedOut": "esecuzioni in timeout",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "esecuzioni interrotte o annullate",
+    "fullSuiteForecastExclusionRetryContaminated": "esecuzioni contaminate da retry",
+    "fullSuiteForecastExclusionNonPassingStatus": "esecuzioni non superate",
+    "fullSuiteForecastExclusionNonzeroExit": "esecuzioni con uscita non zero",
+    "fullSuiteForecastExclusionInvalidDuration": "durate non valide",
+    "fullSuiteForecastExclusionOutlierDuration": "durate anomale"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

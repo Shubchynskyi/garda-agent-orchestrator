@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "최대",
     "fullSuiteTimeoutForecastSafetyMargin": "최대값 위 안전 여유",
     "fullSuiteTimeoutForecastMinimum": "20%, 단 최소 30초",
-    "fullSuiteTimeoutForecastConfiguredReason": "일치하는 최근 full-suite 지속 시간 기록이 없어 설정된 시간 제한을 사용합니다"
+    "fullSuiteTimeoutForecastConfiguredReason": "일치하는 최근 full-suite 지속 시간 기록이 없어 설정된 시간 제한을 사용합니다",
+    "fullSuiteTimeoutBlocker": "시간 초과 시 작업 차단",
+    "fullSuiteTimeoutRetryCount": "시간 초과 재시도 횟수",
+    "fullSuiteTimeoutMaxAttempts": "시간 초과 최대 시도 횟수",
+    "fullSuiteTimeoutAttempts": "시간 초과 시도",
+    "fullSuiteTimeoutAttemptsExhausted": "시간 초과 시도 소진",
+    "fullSuiteTimeoutWarningContinuation": "시간 초과를 경고로만 계속",
+    "fullSuiteTimeoutRepairTask": "시간 초과 복구 작업 제안",
+    "fullSuiteForecastExcludedSamples": "예측에서 제외된 샘플",
+    "fullSuiteForecastExclusionReasons": "예측 제외 이유",
+    "fullSuiteTimeoutAttemptTimedOut": "시간 초과",
+    "fullSuiteTimeoutAttemptCancelled": "취소됨",
+    "fullSuiteTimeoutAttemptExitCode": "종료 코드",
+    "fullSuiteForecastExclusionTimedOut": "시간 초과 실행",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "중단 또는 취소된 실행",
+    "fullSuiteForecastExclusionRetryContaminated": "재시도로 오염된 실행",
+    "fullSuiteForecastExclusionNonPassingStatus": "통과하지 못한 실행",
+    "fullSuiteForecastExclusionNonzeroExit": "0이 아닌 종료 실행",
+    "fullSuiteForecastExclusionInvalidDuration": "잘못된 지속 시간",
+    "fullSuiteForecastExclusionOutlierDuration": "이상치 지속 시간"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "maksimum",
     "fullSuiteTimeoutForecastSafetyMargin": "margines bezpieczenstwa ponad maksimum",
     "fullSuiteTimeoutForecastMinimum": "20%, ale co najmniej 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "brak ostatniej pasujacej historii czasu pelnego zestawu; uzywany jest skonfigurowany limit"
+    "fullSuiteTimeoutForecastConfiguredReason": "brak ostatniej pasujacej historii czasu pelnego zestawu; uzywany jest skonfigurowany limit",
+    "fullSuiteTimeoutBlocker": "Limit czasu blokuje zadanie",
+    "fullSuiteTimeoutRetryCount": "Liczba ponowień po limicie czasu",
+    "fullSuiteTimeoutMaxAttempts": "Maksymalna liczba prób po limicie czasu",
+    "fullSuiteTimeoutAttempts": "Próby po limicie czasu",
+    "fullSuiteTimeoutAttemptsExhausted": "Próby po limicie czasu wyczerpane",
+    "fullSuiteTimeoutWarningContinuation": "Kontynuacja po limicie czasu tylko jako ostrzeżenie",
+    "fullSuiteTimeoutRepairTask": "Propozycja zadania naprawy limitu czasu",
+    "fullSuiteForecastExcludedSamples": "Próbki wykluczone z prognozy",
+    "fullSuiteForecastExclusionReasons": "Powody wykluczenia z prognozy",
+    "fullSuiteTimeoutAttemptTimedOut": "limit czasu",
+    "fullSuiteTimeoutAttemptCancelled": "anulowano",
+    "fullSuiteTimeoutAttemptExitCode": "kod wyjścia",
+    "fullSuiteForecastExclusionTimedOut": "uruchomienia z limitem czasu",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "uruchomienia przerwane lub anulowane",
+    "fullSuiteForecastExclusionRetryContaminated": "uruchomienia zanieczyszczone ponowieniem",
+    "fullSuiteForecastExclusionNonPassingStatus": "uruchomienia bez sukcesu",
+    "fullSuiteForecastExclusionNonzeroExit": "uruchomienia z niezerowym wyjściem",
+    "fullSuiteForecastExclusionInvalidDuration": "nieprawidłowe czasy trwania",
+    "fullSuiteForecastExclusionOutlierDuration": "odstające czasy trwania"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

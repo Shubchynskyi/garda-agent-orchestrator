@@ -352,5 +352,23 @@
         "description": "Korumalı control-plane girişi açık operatör onayı gerektirir."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Full-suite zaman aşımı engelleyici",
+    "description": "Tekrarlanan full-suite zaman aşımlarının görevi engelleyip onarım görevi önermesini ya da son uyarı olarak devam etmesini kontrol eder.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Tekrarlanan full-suite zaman aşımları tamamlamayı engeller ve onarım görevi önerir."
+      },
+      "false": {
+        "label": "false",
+        "description": "Tekrarlanan full-suite zaman aşımları uyarı olarak bildirilir ve tamamlamayı engellemez."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Full-suite zaman aşımı tekrarları",
+    "description": "Zaman aşımından sonra politika uygulanmadan önce full-suite komutunun kaç kez tekrar deneneceği."
   }
 }

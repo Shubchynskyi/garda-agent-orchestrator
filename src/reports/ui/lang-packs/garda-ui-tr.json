@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "maksimum",
     "fullSuiteTimeoutForecastSafetyMargin": "maksimum uzerinde guvenlik payi",
     "fullSuiteTimeoutForecastMinimum": "20%, ancak en az 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "eslesen guncel full-suite sure gecmisi yok; yapilandirilmis zaman asimi kullaniliyor"
+    "fullSuiteTimeoutForecastConfiguredReason": "eslesen guncel full-suite sure gecmisi yok; yapilandirilmis zaman asimi kullaniliyor",
+    "fullSuiteTimeoutBlocker": "Zaman aşımı görevi engeller",
+    "fullSuiteTimeoutRetryCount": "Zaman aşımı yeniden deneme sayısı",
+    "fullSuiteTimeoutMaxAttempts": "Zaman aşımı azami deneme sayısı",
+    "fullSuiteTimeoutAttempts": "Zaman aşımı denemeleri",
+    "fullSuiteTimeoutAttemptsExhausted": "Zaman aşımı denemeleri tükendi",
+    "fullSuiteTimeoutWarningContinuation": "Zaman aşımından sonra yalnızca uyarı ile devam",
+    "fullSuiteTimeoutRepairTask": "Zaman aşımı onarım görevi önerisi",
+    "fullSuiteForecastExcludedSamples": "Tahminden hariç tutulan örnekler",
+    "fullSuiteForecastExclusionReasons": "Tahmin hariç tutma nedenleri",
+    "fullSuiteTimeoutAttemptTimedOut": "zaman aşımı",
+    "fullSuiteTimeoutAttemptCancelled": "iptal edildi",
+    "fullSuiteTimeoutAttemptExitCode": "çıkış kodu",
+    "fullSuiteForecastExclusionTimedOut": "zaman aşımına uğrayan çalıştırmalar",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "kesilen veya iptal edilen çalıştırmalar",
+    "fullSuiteForecastExclusionRetryContaminated": "yeniden denemeyle kirlenen çalıştırmalar",
+    "fullSuiteForecastExclusionNonPassingStatus": "başarısız çalıştırmalar",
+    "fullSuiteForecastExclusionNonzeroExit": "sıfır olmayan çıkışlı çalıştırmalar",
+    "fullSuiteForecastExclusionInvalidDuration": "geçersiz süreler",
+    "fullSuiteForecastExclusionOutlierDuration": "aykırı süreler"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

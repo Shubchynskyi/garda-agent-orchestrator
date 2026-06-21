@@ -352,5 +352,23 @@
         "description": "Vào control-plane được bảo vệ yêu cầu xác nhận rõ ràng của operator."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Bộ chặn hết thời gian full-suite",
+    "description": "Điều khiển việc các lần hết thời gian full-suite lặp lại chặn tác vụ và đề xuất tác vụ sửa lỗi, hay tiếp tục như cảnh báo cuối.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Các lần hết thời gian full-suite lặp lại chặn hoàn tất tác vụ và đề xuất tác vụ sửa lỗi."
+      },
+      "false": {
+        "label": "false",
+        "description": "Các lần hết thời gian full-suite lặp lại được báo cáo như cảnh báo và không chặn hoàn tất."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Số lần thử lại timeout full-suite",
+    "description": "Số lần thử lại lệnh full-suite sau timeout trước khi áp dụng chính sách timeout."
   }
 }

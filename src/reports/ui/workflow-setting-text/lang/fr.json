@@ -352,5 +352,23 @@
         "description": "L'accès au control-plane protégé exige une confirmation explicite de l'opérateur."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Blocage sur délai full-suite",
+    "description": "Contrôle si des délais full-suite répétés bloquent la tâche et proposent une tâche de correction, ou continuent comme avertissement final.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Les délais full-suite répétés bloquent la fin de tâche et proposent une tâche de correction."
+      },
+      "false": {
+        "label": "false",
+        "description": "Les délais full-suite répétés sont signalés comme avertissement et ne bloquent pas la fin."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Relances après délai full-suite",
+    "description": "Nombre de relances de la commande full-suite après un délai avant application de la politique de délai."
   }
 }

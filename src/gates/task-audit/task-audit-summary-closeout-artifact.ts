@@ -11,6 +11,7 @@ import { toPosix } from '../shared/helpers';
 import type { ProjectMemoryImpactLifecycleEvidence } from '../project-memory-impact';
 import type {
     FinalCloseoutArtifact,
+    FinalCloseoutFullSuiteTimeoutSummary,
     FinalCloseoutProjectMemorySummary,
     FinalCloseoutReviewTimingAuditSummary
 } from './task-audit-summary';
@@ -52,6 +53,7 @@ export interface BuildFinalCloseoutArtifactInput {
     reviewIntegrityAttestation: FinalCloseoutReviewIntegrityAttestation;
     reviewAttemptSummary: ReviewAttemptSummary | null;
     optionalSkillsSummary: FinalCloseoutOptionalSkillsSummary | null;
+    fullSuiteValidation: Record<string, unknown> | null;
     fullSuiteValidationRequiredForLifecycle: boolean;
     reviewExecutionPolicyMode: EffectiveReviewExecutionPolicyMode;
     projectMemoryImpactEvidence: ProjectMemoryImpactLifecycleEvidence;
@@ -86,6 +88,110 @@ function readTaskModeDirtyWorkspaceBaselineChangedFiles(taskMode: Record<string,
         .sort((left, right) => left.localeCompare(right));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeOptionalBoolean(value: unknown): boolean | null {
+    return typeof value === 'boolean' ? value : null;
+}
+
+function normalizeOptionalNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return value
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean);
+}
+
+function normalizeForecastExcludedReasons(value: unknown): Record<string, number> {
+    if (!isRecord(value)) {
+        return {};
+    }
+    const entries: [string, number][] = [];
+    for (const [reason, count] of Object.entries(value)) {
+        const normalizedCount = normalizeOptionalNumber(count);
+        if (normalizedCount != null && normalizedCount > 0) {
+            entries.push([reason, normalizedCount]);
+        }
+    }
+    return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function normalizeRepairTaskProposal(value: unknown): FinalCloseoutFullSuiteTimeoutSummary['repair_task_proposal'] {
+    if (!isRecord(value)) {
+        return null;
+    }
+    const suggestedTaskId = String(value.suggested_task_id || '').trim();
+    const title = String(value.title || '').trim();
+    const area = String(value.area || '').trim();
+    const rationale = String(value.rationale || '').trim();
+    if (!suggestedTaskId || !title || !area || !rationale) {
+        return null;
+    }
+    return {
+        suggested_task_id: suggestedTaskId,
+        title,
+        area,
+        rationale
+    };
+}
+
+function formatForecastExcludedReasons(reasons: Record<string, number>): string {
+    const parts = Object.entries(reasons)
+        .map(([reason, count]) => `${reason}=${count}`);
+    return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
+
+function buildFullSuiteTimeoutSummary(
+    artifact: Record<string, unknown> | null
+): FinalCloseoutFullSuiteTimeoutSummary | null {
+    if (!artifact) {
+        return null;
+    }
+    const timeoutPolicy = isRecord(artifact.timeout_policy) ? artifact.timeout_policy : {};
+    const timeoutForecast = isRecord(artifact.timeout_forecast) ? artifact.timeout_forecast : {};
+    const attempts = Array.isArray(timeoutPolicy.attempts) ? timeoutPolicy.attempts : [];
+    const forecastExcludedSampleReasons = normalizeForecastExcludedReasons(timeoutForecast.excluded_sample_reasons);
+    const forecastExcludedSampleCount = normalizeOptionalNumber(timeoutForecast.excluded_sample_count);
+    const summary: FinalCloseoutFullSuiteTimeoutSummary = {
+        artifact_present: true,
+        status: typeof artifact.status === 'string' && artifact.status.trim() ? artifact.status.trim() : null,
+        timed_out: normalizeOptionalBoolean(artifact.timed_out),
+        timeout_blocker: normalizeOptionalBoolean(timeoutPolicy.timeout_blocker),
+        timeout_retry_count: normalizeOptionalNumber(timeoutPolicy.timeout_retry_count),
+        max_attempts: normalizeOptionalNumber(timeoutPolicy.max_attempts),
+        attempts_count: attempts.length,
+        attempts_exhausted: normalizeOptionalBoolean(timeoutPolicy.attempts_exhausted),
+        warning_only_continuation: normalizeOptionalBoolean(timeoutPolicy.warning_only_continuation),
+        repair_task_proposal: normalizeRepairTaskProposal(timeoutPolicy.repair_task_proposal),
+        warnings: normalizeStringArray(artifact.warnings),
+        forecast_warning: typeof timeoutForecast.warning === 'string' && timeoutForecast.warning.trim()
+            ? timeoutForecast.warning.trim()
+            : null,
+        forecast_excluded_sample_count: forecastExcludedSampleCount,
+        forecast_excluded_sample_reasons: forecastExcludedSampleReasons,
+        visible_summary_line: ''
+    };
+    const attemptsText = summary.max_attempts != null
+        ? `${summary.attempts_count}/${summary.max_attempts}`
+        : String(summary.attempts_count);
+    const warningsCount = summary.warnings.length + (summary.forecast_warning ? 1 : 0);
+    summary.visible_summary_line =
+        `Full-suite timeout: status=${summary.status || 'unknown'}; timed_out=${summary.timed_out ?? 'unknown'}; ` +
+        `blocker=${summary.timeout_blocker ?? 'unknown'}; retry_count=${summary.timeout_retry_count ?? 'unknown'}; ` +
+        `attempts=${attemptsText}; exhausted=${summary.attempts_exhausted ?? 'unknown'}; ` +
+        `warning_only=${summary.warning_only_continuation ?? 'unknown'}; ` +
+        `forecast_excluded=${summary.forecast_excluded_sample_count ?? 0}${formatForecastExcludedReasons(summary.forecast_excluded_sample_reasons)}; ` +
+        `warnings=${warningsCount}`;
+    return summary;
+}
+
 export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInput): FinalCloseoutArtifact {
     let closeoutScopeSnapshot: ReturnType<typeof getWorkspaceSnapshotCached> | null = null;
     if (input.changedFiles.length > 0) {
@@ -105,6 +211,7 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
     const knownNonBlockingSignals = collectKnownNonBlockingSignals({
         projectMemory
     });
+    const fullSuiteTimeoutSummary = buildFullSuiteTimeoutSummary(input.fullSuiteValidation);
 
     return {
         schema_version: 1,
@@ -175,7 +282,8 @@ export function buildFinalCloseoutArtifact(input: BuildFinalCloseoutArtifactInpu
             mandatory_full_suite_enabled: input.fullSuiteValidationRequiredForLifecycle,
             visible_summary_line: `Mandatory full-suite: ${input.fullSuiteValidationRequiredForLifecycle ? 'true' : 'false'}`,
             review_execution_policy_mode: input.reviewExecutionPolicyMode,
-            review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(input.reviewExecutionPolicyMode)
+            review_execution_policy_summary_line: buildReviewExecutionPolicySummaryLine(input.reviewExecutionPolicyMode),
+            full_suite_timeout: fullSuiteTimeoutSummary
         },
         docs: input.docsSummary,
         project_memory: projectMemory,

@@ -352,5 +352,23 @@
         "description": "Inträde i skyddat control-plane kräver uttrycklig operatörsbekräftelse."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Full-suite timeoutblockerare",
+    "description": "Styr om upprepade full-suite-timeouter blockerar uppgiften och föreslår en reparationsuppgift, eller fortsätter som slutlig varning.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Upprepade full-suite-timeouter blockerar slutförande och föreslår en reparationsuppgift."
+      },
+      "false": {
+        "label": "false",
+        "description": "Upprepade full-suite-timeouter rapporteras som varning och blockerar inte slutförande."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Full-suite timeout-omförsök",
+    "description": "Hur många gånger full-suite-kommandot körs om efter timeout innan timeoutpolicyn tillämpas."
   }
 }

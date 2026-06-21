@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "maximum",
     "fullSuiteTimeoutForecastSafetyMargin": "veiligheidsmarge boven maximum",
     "fullSuiteTimeoutForecastMinimum": "20%, maar minimaal 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "geen recente passende full-suite-duurhistorie; geconfigureerde time-out wordt gebruikt"
+    "fullSuiteTimeoutForecastConfiguredReason": "geen recente passende full-suite-duurhistorie; geconfigureerde time-out wordt gebruikt",
+    "fullSuiteTimeoutBlocker": "Time-out blokkeert taak",
+    "fullSuiteTimeoutRetryCount": "Aantal time-outpogingen opnieuw",
+    "fullSuiteTimeoutMaxAttempts": "Maximale time-outpogingen",
+    "fullSuiteTimeoutAttempts": "Time-outpogingen",
+    "fullSuiteTimeoutAttemptsExhausted": "Time-outpogingen opgebruikt",
+    "fullSuiteTimeoutWarningContinuation": "Doorgaan na time-out alleen als waarschuwing",
+    "fullSuiteTimeoutRepairTask": "Voorstel voor time-outreparatietaak",
+    "fullSuiteForecastExcludedSamples": "Uit forecast uitgesloten samples",
+    "fullSuiteForecastExclusionReasons": "Uitsluitingsredenen voor forecast",
+    "fullSuiteTimeoutAttemptTimedOut": "time-out",
+    "fullSuiteTimeoutAttemptCancelled": "geannuleerd",
+    "fullSuiteTimeoutAttemptExitCode": "exitcode",
+    "fullSuiteForecastExclusionTimedOut": "runs met time-out",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "onderbroken of geannuleerde runs",
+    "fullSuiteForecastExclusionRetryContaminated": "door retry vervuilde runs",
+    "fullSuiteForecastExclusionNonPassingStatus": "niet-geslaagde runs",
+    "fullSuiteForecastExclusionNonzeroExit": "runs met niet-nul exit",
+    "fullSuiteForecastExclusionInvalidDuration": "ongeldige duur",
+    "fullSuiteForecastExclusionOutlierDuration": "uitschieterduur"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

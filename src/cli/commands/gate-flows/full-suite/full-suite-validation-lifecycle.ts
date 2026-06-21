@@ -16,6 +16,12 @@ const FULL_SUITE_VALIDATION_EVENT_TYPES = new Set<string>([
     LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_SKIPPED
 ]);
 
+const LATEST_FULL_SUITE_VALIDATION_POINTER_PATH = path.join(
+    'runtime',
+    'metrics',
+    'full-suite-validation-latest.json'
+);
+
 function resolveFullSuiteValidationEventType(status: FullSuiteLifecycleStatus): string {
     return {
         PASSED: LIFECYCLE_EVENT_TYPES.FULL_SUITE_VALIDATION_PASSED,
@@ -72,6 +78,29 @@ function promotePendingFullSuiteValidationArtifact(
 ): void {
     fs.copyFileSync(pendingArtifactPath, artifactPath);
     cleanupPendingFullSuiteValidationArtifact(pendingArtifactPath, pendingMetaPath);
+}
+
+function writeLatestFullSuiteValidationPointer(
+    repoRoot: string,
+    taskId: string,
+    artifactPath: string,
+    status: FullSuiteLifecycleStatus,
+    transactionId: string
+): void {
+    const pointerPath = gateHelpers.joinOrchestratorPath(repoRoot, LATEST_FULL_SUITE_VALIDATION_POINTER_PATH);
+    fs.mkdirSync(path.dirname(pointerPath), { recursive: true });
+    const pointer = {
+        schema_version: 1,
+        task_id: taskId,
+        status,
+        artifact_path: gateHelpers.normalizePath(artifactPath),
+        artifact_sha256: gateHelpers.fileSha256(artifactPath) || null,
+        artifact_transaction_id: transactionId,
+        updated_at_utc: new Date().toISOString()
+    };
+    const pendingPointerPath = `${pointerPath}.pending`;
+    fs.writeFileSync(pendingPointerPath, `${JSON.stringify(pointer, null, 2)}\n`, 'utf8');
+    fs.renameSync(pendingPointerPath, pointerPath);
 }
 
 function recoverPendingFullSuiteValidationArtifact(
@@ -179,4 +208,5 @@ export async function writeArtifactThenEmitMandatoryFullSuiteEvent(
             `Pending artifact retained at '${gateHelpers.normalizePath(pendingArtifactPath)}' for recovery on the next full-suite-validation run.`
         );
     }
+    writeLatestFullSuiteValidationPointer(repoRoot, taskId, artifactPath, status, transactionId);
 }

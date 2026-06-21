@@ -352,5 +352,23 @@
         "description": "保護されたコントロールプレーンへの入場には、明示的なオペレーター確認が必要です。"
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "full-suite タイムアウトブロッカー",
+    "description": "full-suite のタイムアウトが繰り返されたとき、タスクをブロックして修復タスクを提案するか、最終警告として継続するかを制御します。",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "繰り返しの full-suite タイムアウトはタスク完了をブロックし、修復タスクを提案します。"
+      },
+      "false": {
+        "label": "false",
+        "description": "繰り返しの full-suite タイムアウトは警告として報告され、完了をブロックしません。"
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "full-suite タイムアウト再試行",
+    "description": "タイムアウト後、タイムアウトポリシー適用前に full-suite コマンドを再試行する回数。"
   }
 }

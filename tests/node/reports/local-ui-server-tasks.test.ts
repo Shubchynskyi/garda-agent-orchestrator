@@ -435,6 +435,13 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     full_suite_enabled: true,
                     full_suite_command: 'npm test',
                     full_suite_timeout_forecast_label: 'Recommended full-suite command timeout: 476s (last 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).',
+                    full_suite_timeout_blocker: true,
+                    full_suite_timeout_retry_count: 1,
+                    full_suite_timeout_attempts_count: 2,
+                    full_suite_timeout_max_attempts: 2,
+                    full_suite_timeout_attempts_exhausted: false,
+                    full_suite_timeout_warning_only_continuation: false,
+                    full_suite_timeout_latest_warning: null,
                     task_reset_ready: false
                 },
                 project_memory: {
@@ -609,7 +616,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 updated_at_utc: '2026-05-19T00:01:00.000Z',
                 compact_summary: ['# tests 10', '# pass 10'],
                 violations: [],
-                warnings: [],
+                warnings: ['full-suite timeout warning is visible in task detail'],
                 skip_reason: null,
                 mismatch_reason: null,
                 timeout_forecast: {
@@ -1109,6 +1116,10 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Queue status/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Protected controls/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Recommended full-suite command timeout/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout blocks task/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout retry count/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout attempts/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Warning-only timeout continuation/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Config state/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda-agent-orchestrator\/runtime\/init-answers\.json/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="status"/u);
@@ -1212,9 +1223,15 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Recommended full-suite command timeout/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Recommended timeout/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /7m 56s/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Timeout blocks task/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Timeout retry count/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Forecast excluded samples/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /full-suite timeout warning is visible in task detail/u);
         Object.assign(detail.full_suite_validation.timeout_forecast as Record<string, unknown>, {
             history_path: 'runtime/full-suite-duration-history.json',
             sample_count: 0,
+            excluded_sample_count: 2,
+            excluded_sample_reasons: { timed_out: 1, retry_contaminated: 1 },
             average_duration_seconds: null,
             high_watermark_duration_seconds: null,
             recommended_timeout_seconds: 600,
@@ -1230,6 +1247,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Average duration<\/th><td>-<\/td>/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /High-watermark duration<\/th><td>-<\/td>/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Recommended timeout<\/th><td>10m<\/td>/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Forecast excluded samples<\/th><td>2<\/td>/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Forecast exclusion reasons<\/th><td>timed-out runs=1, retry-contaminated runs=1<\/td>/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-full-suite-validation\.json/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /post-done-drift: blocked item/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Audit status/u);

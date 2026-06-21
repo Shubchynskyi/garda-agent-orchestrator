@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "maksimum",
     "fullSuiteTimeoutForecastSafetyMargin": "margin keamanan di atas maksimum",
     "fullSuiteTimeoutForecastMinimum": "20%, tetapi minimal 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "tidak ada riwayat durasi full-suite terbaru yang cocok; memakai timeout terkonfigurasi"
+    "fullSuiteTimeoutForecastConfiguredReason": "tidak ada riwayat durasi full-suite terbaru yang cocok; memakai timeout terkonfigurasi",
+    "fullSuiteTimeoutBlocker": "Timeout memblokir tugas",
+    "fullSuiteTimeoutRetryCount": "Jumlah percobaan ulang timeout",
+    "fullSuiteTimeoutMaxAttempts": "Percobaan timeout maksimum",
+    "fullSuiteTimeoutAttempts": "Percobaan timeout",
+    "fullSuiteTimeoutAttemptsExhausted": "Percobaan timeout habis",
+    "fullSuiteTimeoutWarningContinuation": "Lanjut timeout sebagai peringatan saja",
+    "fullSuiteTimeoutRepairTask": "Usulan tugas perbaikan timeout",
+    "fullSuiteForecastExcludedSamples": "Sampel yang dikecualikan dari prakiraan",
+    "fullSuiteForecastExclusionReasons": "Alasan pengecualian prakiraan",
+    "fullSuiteTimeoutAttemptTimedOut": "habis waktu",
+    "fullSuiteTimeoutAttemptCancelled": "dibatalkan",
+    "fullSuiteTimeoutAttemptExitCode": "kode keluar",
+    "fullSuiteForecastExclusionTimedOut": "run yang habis waktu",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "run terputus atau dibatalkan",
+    "fullSuiteForecastExclusionRetryContaminated": "run terkontaminasi percobaan ulang",
+    "fullSuiteForecastExclusionNonPassingStatus": "run yang tidak lulus",
+    "fullSuiteForecastExclusionNonzeroExit": "run dengan exit nonzero",
+    "fullSuiteForecastExclusionInvalidDuration": "durasi tidak valid",
+    "fullSuiteForecastExclusionOutlierDuration": "durasi pencilan"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

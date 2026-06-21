@@ -1,4 +1,5 @@
 import {
+    FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     FULL_SUITE_VALIDATION_PLACEMENTS,
     PROJECT_MEMORY_MAINTENANCE_MODES,
     PROJECT_MEMORY_READ_STRATEGIES
@@ -219,6 +220,29 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         value_type: 'integer',
         min: 1000,
         max: 86_400_000,
+        options: []
+    },
+    {
+        id: 'full-suite-timeout-blocker',
+        key: 'full_suite_validation.timeout_blocker',
+        label: 'Full-suite timeout blocker',
+        description: 'Controls whether repeated full-suite timeouts block the task and propose a repair task, or continue as a final warning.',
+        flag: '--full-suite-timeout-blocker',
+        value_type: 'boolean',
+        options: booleanOptions(
+            'Repeated full-suite timeouts block task completion and propose a repair task.',
+            'Repeated full-suite timeouts are reported as a warning and do not block completion.'
+        )
+    },
+    {
+        id: 'full-suite-timeout-retry-count',
+        key: 'full_suite_validation.timeout_retry_count',
+        label: 'Full-suite timeout retries',
+        description: 'How many times the full-suite command is retried after a timeout before timeout policy is applied.',
+        flag: '--full-suite-timeout-retry-count',
+        value_type: 'integer',
+        min: 0,
+        max: FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
         options: []
     },
     {

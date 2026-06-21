@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "maximum",
     "fullSuiteTimeoutForecastSafetyMargin": "marge de securite au-dessus du maximum",
     "fullSuiteTimeoutForecastMinimum": "20%, mais au moins 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "aucun historique recent correspondant pour la validation complete; le delai configure est utilise"
+    "fullSuiteTimeoutForecastConfiguredReason": "aucun historique recent correspondant pour la validation complete; le delai configure est utilise",
+    "fullSuiteTimeoutBlocker": "Le délai bloque la tâche",
+    "fullSuiteTimeoutRetryCount": "Nombre de nouvelles tentatives après délai",
+    "fullSuiteTimeoutMaxAttempts": "Nombre maximal de tentatives après délai",
+    "fullSuiteTimeoutAttempts": "Tentatives après délai",
+    "fullSuiteTimeoutAttemptsExhausted": "Tentatives après délai épuisées",
+    "fullSuiteTimeoutWarningContinuation": "Poursuite après délai en avertissement seulement",
+    "fullSuiteTimeoutRepairTask": "Proposition de tâche de correction du délai",
+    "fullSuiteForecastExcludedSamples": "Échantillons exclus de la prévision",
+    "fullSuiteForecastExclusionReasons": "Raisons d’exclusion de la prévision",
+    "fullSuiteTimeoutAttemptTimedOut": "délai dépassé",
+    "fullSuiteTimeoutAttemptCancelled": "annulé",
+    "fullSuiteTimeoutAttemptExitCode": "code de sortie",
+    "fullSuiteForecastExclusionTimedOut": "exécutions en délai dépassé",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "exécutions interrompues ou annulées",
+    "fullSuiteForecastExclusionRetryContaminated": "exécutions contaminées par une relance",
+    "fullSuiteForecastExclusionNonPassingStatus": "exécutions non réussies",
+    "fullSuiteForecastExclusionNonzeroExit": "exécutions avec code non nul",
+    "fullSuiteForecastExclusionInvalidDuration": "durées invalides",
+    "fullSuiteForecastExclusionOutlierDuration": "durées aberrantes"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

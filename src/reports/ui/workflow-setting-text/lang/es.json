@@ -352,5 +352,23 @@
         "description": "El acceso al control-plane protegido exige confirmación explícita del operador."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Bloqueador de tiempo agotado de full-suite",
+    "description": "Controla si los tiempos agotados repetidos de full-suite bloquean la tarea y proponen una tarea de reparación, o continúan como advertencia final.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Los tiempos agotados repetidos de full-suite bloquean la finalización y proponen una tarea de reparación."
+      },
+      "false": {
+        "label": "false",
+        "description": "Los tiempos agotados repetidos de full-suite se informan como advertencia y no bloquean la finalización."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Reintentos por tiempo agotado de full-suite",
+    "description": "Cuántas veces se reintenta el comando full-suite después de un tiempo agotado antes de aplicar la política."
   }
 }

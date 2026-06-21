@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "hogsta varde",
     "fullSuiteTimeoutForecastSafetyMargin": "sakerhetsmarginal over max",
     "fullSuiteTimeoutForecastMinimum": "20%, men minst 30s",
-    "fullSuiteTimeoutForecastConfiguredReason": "ingen ny matchande full-suite-varaktighetshistorik; konfigurerad timeout anvands"
+    "fullSuiteTimeoutForecastConfiguredReason": "ingen ny matchande full-suite-varaktighetshistorik; konfigurerad timeout anvands",
+    "fullSuiteTimeoutBlocker": "Timeout blockerar uppgift",
+    "fullSuiteTimeoutRetryCount": "Antal timeout-omförsök",
+    "fullSuiteTimeoutMaxAttempts": "Maximalt antal timeoutförsök",
+    "fullSuiteTimeoutAttempts": "Timeoutförsök",
+    "fullSuiteTimeoutAttemptsExhausted": "Timeoutförsök förbrukade",
+    "fullSuiteTimeoutWarningContinuation": "Fortsätt efter timeout endast som varning",
+    "fullSuiteTimeoutRepairTask": "Förslag på timeoutreparationsuppgift",
+    "fullSuiteForecastExcludedSamples": "Uteslutna prognosprover",
+    "fullSuiteForecastExclusionReasons": "Uteslutningsorsaker i prognosen",
+    "fullSuiteTimeoutAttemptTimedOut": "timeout",
+    "fullSuiteTimeoutAttemptCancelled": "avbruten",
+    "fullSuiteTimeoutAttemptExitCode": "avslutskod",
+    "fullSuiteForecastExclusionTimedOut": "körningar med timeout",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "avbrutna eller annullerade körningar",
+    "fullSuiteForecastExclusionRetryContaminated": "körningar förorenade av omförsök",
+    "fullSuiteForecastExclusionNonPassingStatus": "icke godkända körningar",
+    "fullSuiteForecastExclusionNonzeroExit": "körningar med icke-noll exit",
+    "fullSuiteForecastExclusionInvalidDuration": "ogiltiga varaktigheter",
+    "fullSuiteForecastExclusionOutlierDuration": "avvikande varaktigheter"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

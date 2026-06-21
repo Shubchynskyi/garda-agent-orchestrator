@@ -222,15 +222,28 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
         duration_human: '2m 3.5s',
         timed_out: false,
         exit_code: 0,
+        timeout_blocker: true,
+        timeout_retry_count: 1,
+        timeout_max_attempts: 2,
+        timeout_attempts: [{ attempt: 1, exit_code: null, timed_out: true }],
+        timeout_attempts_exhausted: false,
+        timeout_warning_only_continuation: false,
+        timeout_repair_task_proposal: {
+            suggested_task_id: 'T-100-F1',
+            title: 'Fix timed-out full-suite validation',
+            area: 'tests',
+            rationale: 'Full-suite timed out before terminal evidence.'
+        },
         artifact_path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-full-suite-validation.json',
         artifact_exists: true,
         output_artifact_path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-full-suite-output.log',
         compact_summary: ['# tests 10'],
+        warnings: ['full-suite timeout warning is visible in static task detail'],
         timeout_forecast: {
             history_path: 'runtime/metrics/full-suite-validation-duration-history.json',
             sample_count: 5,
-            excluded_sample_count: 0,
-            excluded_sample_reasons: {},
+            excluded_sample_count: 1,
+            excluded_sample_reasons: { timed_out: 1 },
             average_duration_seconds: 343.2,
             high_watermark_duration_seconds: 396.3,
             recommended_timeout_seconds: 476,
@@ -269,6 +282,8 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('2m 3.5s'));
     assert.ok(html.includes('Average duration'));
     assert.ok(html.includes('Recommended timeout'));
+    assert.ok(html.includes('Timeout blocks task'));
+    assert.ok(html.includes('Forecast excluded samples'));
     assert.ok(html.includes('fullSuiteDurationSeconds(forecast.average_duration_seconds)'));
     assert.ok(html.includes('"average_duration_seconds":343.2'));
     assert.ok(html.includes('"recommended_timeout_seconds":476'));
@@ -280,6 +295,12 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(renderedDetail.innerHTML.includes('<th>Average duration</th><td>5m 43.2s</td>'));
     assert.ok(renderedDetail.innerHTML.includes('<th>High-watermark duration</th><td>6m 36.3s</td>'));
     assert.ok(renderedDetail.innerHTML.includes('<th>Recommended timeout</th><td>7m 56s</td>'));
+    assert.ok(renderedDetail.innerHTML.includes('<th>Timeout blocks task</th><td>true</td>'));
+    assert.ok(renderedDetail.innerHTML.includes('<th>Timeout attempts</th><td>#1 timed out</td>'));
+    assert.ok(renderedDetail.innerHTML.includes('<th>Timeout repair task proposal</th><td>T-100-F1 - Fix timed-out full-suite validation</td>'));
+    assert.ok(renderedDetail.innerHTML.includes('<th>Forecast excluded samples</th><td>1</td>'));
+    assert.ok(renderedDetail.innerHTML.includes('<th>Forecast exclusion reasons</th><td>timed-out runs=1</td>'));
+    assert.ok(renderedDetail.innerHTML.includes('full-suite timeout warning is visible in static task detail'));
 
     report.tasks_tab.rows[0].detail.full_suite_validation = {
         ...report.tasks_tab.rows[0].detail.full_suite_validation,

@@ -352,5 +352,23 @@
         "description": "Toegang tot beschermd control-plane vereist expliciete operatorbevestiging."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Full-suite time-outblokkering",
+    "description": "Bepaalt of herhaalde full-suite time-outs de taak blokkeren en een reparatietaak voorstellen, of doorgaan als laatste waarschuwing.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Herhaalde full-suite time-outs blokkeren afronding en stellen een reparatietaak voor."
+      },
+      "false": {
+        "label": "false",
+        "description": "Herhaalde full-suite time-outs worden als waarschuwing gemeld en blokkeren afronding niet."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Full-suite time-out retries",
+    "description": "Hoe vaak de full-suite opdracht na een time-out opnieuw wordt geprobeerd voordat de time-outpolicy geldt."
   }
 }

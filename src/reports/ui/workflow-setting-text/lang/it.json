@@ -352,5 +352,23 @@
         "description": "L'accesso al control-plane protetto richiede conferma esplicita dell'operatore."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "Blocco timeout full-suite",
+    "description": "Controlla se timeout full-suite ripetuti bloccano l’attività e propongono una riparazione, o proseguono come avviso finale.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "Timeout full-suite ripetuti bloccano il completamento e propongono una riparazione."
+      },
+      "false": {
+        "label": "false",
+        "description": "Timeout full-suite ripetuti sono riportati come avviso e non bloccano il completamento."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "Retry timeout full-suite",
+    "description": "Quante volte il comando full-suite viene ritentato dopo un timeout prima di applicare la policy."
   }
 }

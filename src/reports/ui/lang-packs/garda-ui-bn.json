@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "সর্বোচ্চ",
     "fullSuiteTimeoutForecastSafetyMargin": "সর্বোচ্চের ওপরে নিরাপত্তা মার্জিন",
     "fullSuiteTimeoutForecastMinimum": "20%, তবে অন্তত 30 সেকেন্ড",
-    "fullSuiteTimeoutForecastConfiguredReason": "সাম্প্রতিক মিল থাকা পূর্ণ পরীক্ষার সময়ের ইতিহাস নেই; কনফিগার করা টাইমআউট ব্যবহার করা হচ্ছে"
+    "fullSuiteTimeoutForecastConfiguredReason": "সাম্প্রতিক মিল থাকা পূর্ণ পরীক্ষার সময়ের ইতিহাস নেই; কনফিগার করা টাইমআউট ব্যবহার করা হচ্ছে",
+    "fullSuiteTimeoutBlocker": "টাইমআউট কাজটি ব্লক করে",
+    "fullSuiteTimeoutRetryCount": "টাইমআউট পুনরায় চেষ্টা সংখ্যা",
+    "fullSuiteTimeoutMaxAttempts": "টাইমআউট সর্বোচ্চ চেষ্টা",
+    "fullSuiteTimeoutAttempts": "টাইমআউট চেষ্টা",
+    "fullSuiteTimeoutAttemptsExhausted": "টাইমআউট চেষ্টা শেষ",
+    "fullSuiteTimeoutWarningContinuation": "শুধু সতর্কতা হিসেবে টাইমআউট চালিয়ে যাওয়া",
+    "fullSuiteTimeoutRepairTask": "টাইমআউট মেরামত টাস্ক প্রস্তাব",
+    "fullSuiteForecastExcludedSamples": "পূর্বাভাস থেকে বাদ দেওয়া নমুনা",
+    "fullSuiteForecastExclusionReasons": "পূর্বাভাস বাদ দেওয়ার কারণ",
+    "fullSuiteTimeoutAttemptTimedOut": "টাইমআউট হয়েছে",
+    "fullSuiteTimeoutAttemptCancelled": "বাতিল হয়েছে",
+    "fullSuiteTimeoutAttemptExitCode": "প্রস্থান কোড",
+    "fullSuiteForecastExclusionTimedOut": "টাইমআউট রান",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "বাধাগ্রস্ত বা বাতিল রান",
+    "fullSuiteForecastExclusionRetryContaminated": "পুনরায় চেষ্টায় দূষিত রান",
+    "fullSuiteForecastExclusionNonPassingStatus": "অ-পাস রান",
+    "fullSuiteForecastExclusionNonzeroExit": "নন-জিরো এক্সিট রান",
+    "fullSuiteForecastExclusionInvalidDuration": "অবৈধ সময়কাল",
+    "fullSuiteForecastExclusionOutlierDuration": "আউটলায়ার সময়কাল"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

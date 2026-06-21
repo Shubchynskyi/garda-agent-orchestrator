@@ -255,7 +255,26 @@
     "fullSuiteTimeoutForecastMaximum": "الحد الأقصى",
     "fullSuiteTimeoutForecastSafetyMargin": "هامش أمان فوق الحد الأقصى",
     "fullSuiteTimeoutForecastMinimum": "20% ولكن 30 ثانية على الأقل",
-    "fullSuiteTimeoutForecastConfiguredReason": "لا يوجد سجل حديث مطابق لمدة الاختبار الكامل؛ يتم استخدام المهلة المضبوطة"
+    "fullSuiteTimeoutForecastConfiguredReason": "لا يوجد سجل حديث مطابق لمدة الاختبار الكامل؛ يتم استخدام المهلة المضبوطة",
+    "fullSuiteTimeoutBlocker": "مهلة الانتظار تمنع المهمة",
+    "fullSuiteTimeoutRetryCount": "عدد إعادة المحاولة عند انتهاء المهلة",
+    "fullSuiteTimeoutMaxAttempts": "الحد الأقصى لمحاولات المهلة",
+    "fullSuiteTimeoutAttempts": "محاولات المهلة",
+    "fullSuiteTimeoutAttemptsExhausted": "استنفدت محاولات المهلة",
+    "fullSuiteTimeoutWarningContinuation": "متابعة المهلة كتحذير فقط",
+    "fullSuiteTimeoutRepairTask": "اقتراح مهمة إصلاح المهلة",
+    "fullSuiteForecastExcludedSamples": "عينات مستبعدة من التوقع",
+    "fullSuiteForecastExclusionReasons": "أسباب استبعاد التوقع",
+    "fullSuiteTimeoutAttemptTimedOut": "انتهت المهلة",
+    "fullSuiteTimeoutAttemptCancelled": "أُلغي",
+    "fullSuiteTimeoutAttemptExitCode": "رمز الخروج",
+    "fullSuiteForecastExclusionTimedOut": "تشغيلات انتهت بالمهلة",
+    "fullSuiteForecastExclusionInterruptedOrCancelled": "تشغيلات متوقفة أو ملغاة",
+    "fullSuiteForecastExclusionRetryContaminated": "تشغيلات ملوثة بإعادة المحاولة",
+    "fullSuiteForecastExclusionNonPassingStatus": "تشغيلات غير ناجحة",
+    "fullSuiteForecastExclusionNonzeroExit": "تشغيلات برمز خروج غير صفري",
+    "fullSuiteForecastExclusionInvalidDuration": "مدد غير صالحة",
+    "fullSuiteForecastExclusionOutlierDuration": "مدد شاذة"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

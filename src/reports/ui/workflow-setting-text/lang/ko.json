@@ -352,5 +352,23 @@
         "description": "보호된 컨트롤 플레인 진입에는 명시적 운영자 확인이 필요합니다."
       }
     }
+  },
+  "full-suite-timeout-blocker": {
+    "label": "full-suite 시간 초과 차단기",
+    "description": "반복되는 full-suite 시간 초과가 작업을 차단하고 복구 작업을 제안할지, 최종 경고로 계속할지 제어합니다.",
+    "options": {
+      "true": {
+        "label": "true",
+        "description": "반복되는 full-suite 시간 초과는 작업 완료를 차단하고 복구 작업을 제안합니다."
+      },
+      "false": {
+        "label": "false",
+        "description": "반복되는 full-suite 시간 초과는 경고로 보고되며 완료를 차단하지 않습니다."
+      }
+    }
+  },
+  "full-suite-timeout-retry-count": {
+    "label": "full-suite 시간 초과 재시도",
+    "description": "시간 초과 후 정책 적용 전 full-suite 명령을 재시도하는 횟수입니다."
   }
 }

@@ -260,4 +260,40 @@ describe('gates/task-audit-summary final user report rendering', () => {
         assert.ok(renderedReport.includes('test(2): passed (0m 50s / 2m 05s)'));
         assert.match(renderedReport.trimEnd(), /Review Timing Warning:\nnone\n\nAdvisory Notes:\nnone$/u);
     });
+
+    it('renders full-suite timeout warning evidence in the final user report', () => {
+        const renderedReport = formatFinalUserReport(makeFinalUserReportCloseout({
+            workflow: {
+                mandatory_full_suite_enabled: true,
+                visible_summary_line: 'Mandatory full-suite: true',
+                full_suite_timeout: {
+                    artifact_present: true,
+                    status: 'WARNED',
+                    timed_out: true,
+                    timeout_blocker: false,
+                    timeout_retry_count: 0,
+                    max_attempts: 1,
+                    attempts_count: 1,
+                    attempts_exhausted: true,
+                    warning_only_continuation: true,
+                    repair_task_proposal: null,
+                    warnings: [
+                        'Full suite validation timed out, but timeout_blocker=false.'
+                    ],
+                    forecast_warning: 'Duration history was unreadable; using configured timeout fallback.',
+                    forecast_excluded_sample_count: 2,
+                    forecast_excluded_sample_reasons: {
+                        timed_out: 1,
+                        retry_contaminated: 1
+                    },
+                    visible_summary_line: 'Full-suite timeout: status=WARNED; timed_out=true; blocker=false; retry_count=0; attempts=1/1; exhausted=true; warning_only=true; forecast_excluded=2 (retry_contaminated=1, timed_out=1); warnings=2'
+                }
+            }
+        }));
+
+        assert.ok(renderedReport.includes('MandatoryFullSuite: enabled'));
+        assert.ok(renderedReport.includes('Full-suite Timeout Evidence:'));
+        assert.ok(renderedReport.includes('status=WARNED; timed_out=true; blocker=false'));
+        assert.ok(renderedReport.includes('Warnings: Full suite validation timed out, but timeout_blocker=false. | Forecast: Duration history was unreadable; using configured timeout fallback.'));
+    });
 });
