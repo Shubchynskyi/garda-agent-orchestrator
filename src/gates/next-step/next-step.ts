@@ -3034,6 +3034,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         const stateViolations = state.violations.length > 0
             ? state.violations.join('; ')
             : 'review artifact or receipt is missing';
+        const reviewCycleTaskIntent = getStringField(taskMode, 'task_summary', taskEntry?.title || taskId);
         const delegatedReadinessRoute = resolveDelegatedReviewDecisionRoute({
             reviewType,
             currentReviewReuseRecorded,
@@ -3100,6 +3101,10 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
                         launchInputArtifactSha256: launchArtifactEvidence.launchInputArtifactSha256 || launchArtifactEvidence.sha256,
                         recordInvocation: true
                     })
+                ),
+                recoverOrphanedLaunch: buildCommand(
+                    'Restart/supersede orphaned delegated reviewer launch',
+                    buildRestartReviewCycleCommand(repoRoot, cliPrefix, taskId, reviewCycleTaskIntent, taskModePath)
                 ),
                 recordInvocation: buildCommand(
                     'Record delegated reviewer launch attestation',

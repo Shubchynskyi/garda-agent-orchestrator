@@ -42,6 +42,7 @@ export interface CurrentReviewerLaunchArtifactEvidence {
     reviewOutputPath: string | null;
     reviewerIdentity: string | null;
     reviewContextSha256: string | null;
+    orphanedReason: string | null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -198,7 +199,19 @@ function hasDelegationStartedEvidence(launchArtifact: Record<string, unknown>): 
     );
 }
 
-function hasMatchingReviewerDelegationStartedTelemetry(options: {
+interface MatchingReviewerDelegationStartedTelemetry {
+    taskSequence: number | null;
+}
+
+function getEventTaskSequence(event: Record<string, unknown>): number | null {
+    const integrity = isPlainRecord(event.integrity) ? event.integrity : null;
+    const sequence = typeof integrity?.task_sequence === 'number'
+        ? integrity.task_sequence
+        : Number(integrity?.task_sequence);
+    return Number.isInteger(sequence) && sequence > 0 ? sequence : null;
+}
+
+function findMatchingReviewerDelegationStartedTelemetry(options: {
     lines: string[];
     taskId: string;
     reviewType: string;
@@ -210,7 +223,7 @@ function hasMatchingReviewerDelegationStartedTelemetry(options: {
     preparedLaunchEventSha256: string;
     providerInvocationId: string;
     delegationStartedAtUtc: string;
-}): boolean {
+}): MatchingReviewerDelegationStartedTelemetry | null {
     const normalizedReviewContextSha256 = options.reviewContextSha256.toLowerCase();
     const normalizedRoutingEventSha256 = options.routingEventSha256.toLowerCase();
     for (let index = options.lines.length - 1; index >= 0; index -= 1) {
@@ -243,6 +256,39 @@ function hasMatchingReviewerDelegationStartedTelemetry(options: {
                 && detailsProviderInvocationId === options.providerInvocationId
                 && String(details.delegation_started_at_utc || details.delegationStartedAtUtc || '').trim() === options.delegationStartedAtUtc
             ) {
+                return {
+                    taskSequence: getEventTaskSequence(event)
+                };
+            }
+        } catch {
+            // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
+        }
+    }
+    return null;
+}
+
+function hasMatchingReviewerDelegationStartedTelemetry(options: Parameters<typeof findMatchingReviewerDelegationStartedTelemetry>[0]): boolean {
+    return findMatchingReviewerDelegationStartedTelemetry(options) != null;
+}
+
+function hasControllerResumeAfterSequence(lines: string[], sequence: number | null): boolean {
+    if (sequence == null) {
+        return false;
+    }
+    const resumeEventTypes = new Set([
+        'CONTROLLER_SESSION_RESUMED',
+        'TASK_MODE_ENTERED',
+        'HANDSHAKE_DIAGNOSTICS_RECORDED',
+        'SHELL_SMOKE_PREFLIGHT_RECORDED'
+    ]);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+        try {
+            const event = JSON.parse(lines[index]) as Record<string, unknown>;
+            if (!resumeEventTypes.has(String(event.event_type || '').trim())) {
+                continue;
+            }
+            const taskSequence = getEventTaskSequence(event);
+            if (taskSequence != null && taskSequence > sequence) {
                 return true;
             }
         } catch {
@@ -444,7 +490,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
         launchInputArtifactSha256: null,
         reviewOutputPath: null,
         reviewerIdentity: null,
-        reviewContextSha256: null
+        reviewContextSha256: null,
+        orphanedReason: null
     };
     const contextReviewerIdentity = String(state.contextReviewerIdentity || '').trim();
     const reviewerIdentity = contextReviewerIdentity || buildPlannedReviewerIdentity(taskId, state.reviewType);
@@ -641,9 +688,40 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 repoRoot,
                 getArtifactStringField(launchArtifact, 'review_output_path', 'reviewOutputPath')
             );
+            let orphanedReason: string | null = null;
+            if (artifactState === 'delegation_started' && reviewOutputPath && !fileExists(reviewOutputPath)) {
+                const delegationStartedAtUtc = getArtifactStringField(
+                    launchArtifact,
+                    'delegation_started_at_utc',
+                    'delegationStartedAtUtc'
+                );
+                const matchingDelegationStarted = findMatchingReviewerDelegationStartedTelemetry({
+                    lines,
+                    taskId,
+                    reviewType: state.reviewType,
+                    reviewerIdentity,
+                    plannedReviewerIdentity,
+                    reviewContextSha256: matchedReviewContextSha256,
+                    routingEventSha256,
+                    launchBindingSha256,
+                    preparedLaunchEventSha256,
+                    providerInvocationId: getArtifactStringField(
+                        launchArtifact,
+                        'provider_invocation_id',
+                        'providerInvocationId',
+                        'controller_invocation_id',
+                        'controllerInvocationId'
+                    ),
+                    delegationStartedAtUtc
+                });
+                if (hasControllerResumeAfterSequence(lines, matchingDelegationStarted?.taskSequence ?? null)) {
+                    artifactState = 'orphaned';
+                    orphanedReason = 'controller_resume_after_delegation_start_with_missing_review_output';
+                }
+            }
             let launchInputArtifactPath: string | null = null;
             let launchInputArtifactSha256: string | null = null;
-            if (artifactState === 'prepared' || artifactState === 'delegation_started') {
+            if (artifactState === 'prepared' || artifactState === 'delegation_started' || artifactState === 'orphaned') {
                 launchInputArtifactPath = resolveReviewerLaunchArtifactPathFromTelemetry(
                     repoRoot,
                     getArtifactStringField(
@@ -677,7 +755,8 @@ export function getCurrentReviewerLaunchArtifactEvidenceForInvocation(
                 launchInputArtifactSha256,
                 reviewOutputPath,
                 reviewerIdentity: artifactReviewerIdentity || null,
-                reviewContextSha256: matchedReviewContextSha256 || null
+                reviewContextSha256: matchedReviewContextSha256 || null,
+                orphanedReason
             };
         } catch {
             // Ignore malformed lines; timeline integrity is reported by task-audit-summary.
@@ -860,9 +939,11 @@ export function buildReviewerReadinessChainSummary(
             ? 'prepared'
             : launchArtifactState === 'delegation_started'
                 ? 'delegation started'
-                : launchArtifactState === 'launched'
-                    ? 'launched'
-                    : 'missing or stale';
+                : launchArtifactState === 'orphaned'
+                    ? 'orphaned'
+                    : launchArtifactState === 'launched'
+                        ? 'launched'
+                        : 'missing or stale';
     const invocationCurrent = Boolean(
         state
         && timelineHasDelegatedReviewInvocationForCurrentContext(repoRoot, eventsRoot, taskId, state)
@@ -871,8 +952,10 @@ export function buildReviewerReadinessChainSummary(
         ? 'attested'
         : launchArtifactState === 'launched'
             ? 'missing current-cycle attestation'
-            : launchArtifactState === 'delegation_started'
-                ? 'blocked until launch completion'
+            : launchArtifactState === 'orphaned'
+                ? 'blocked until launch recovery'
+                : launchArtifactState === 'delegation_started'
+                    ? 'blocked until launch completion'
             : launchArtifactState === 'prepared'
                 ? 'blocked until launch completion'
                 : 'blocked until launch artifact';

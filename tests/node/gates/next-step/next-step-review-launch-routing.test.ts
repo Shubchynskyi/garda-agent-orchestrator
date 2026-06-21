@@ -1866,6 +1866,98 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--launch-input-artifact-sha256'));
     });
 
+    it('routes resumed delegation-started launch with missing review output to orphaned launch recovery', () => {
+        const repoRoot = makeTempRepo();
+        const reviewerIdentity = 'agent:019dc191-3d81-7091-aca0-9f44b440328b';
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewContextOnly(repoRoot, TASK_ID, 'code', reviewerIdentity);
+        const reviewContextPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-code-review-context.json`);
+        const routeIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_DELEGATION_ROUTED', 'INFO', {
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity
+        });
+        const launchBindingSha256 = 'c'.repeat(64);
+        const preparedIntegrity = appendEvent(repoRoot, TASK_ID, 'REVIEWER_LAUNCH_PREPARED', 'INFO', {
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_session_id: reviewerIdentity,
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256
+        });
+        appendDelegationStartedEventForTest({
+            repoRoot,
+            taskId: TASK_ID,
+            reviewType: 'code',
+            reviewerIdentity,
+            reviewContextPath,
+            routingEventSha256: routeIntegrity.event_sha256,
+            launchBindingSha256,
+            preparedLaunchEventSha256: preparedIntegrity.event_sha256,
+            providerInvocationId: 'test-invocation-123'
+        });
+        const launchArtifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'tmp', 'reviews', TASK_ID, 'code', 'reviewer-launch.json');
+        const launchInputArtifactPath = path.join(path.dirname(launchArtifactPath), 'reviewer-launch-input.json');
+        const reviewOutputPath = path.join(path.dirname(launchArtifactPath), 'review-output-from-orphaned-launch.md');
+        appendEvent(repoRoot, TASK_ID, 'CONTROLLER_SESSION_RESUMED', 'INFO', {
+            task_id: TASK_ID,
+            resumed_after_delegated_reviewer_launch: true
+        });
+        const copyPastePrompt = 'Delegated code reviewer launch prompt.';
+        const copyPastePromptSha256 = sha256Text(copyPastePrompt);
+        writeJson(launchArtifactPath, {
+            schema_version: 1,
+            evidence_type: 'delegated_reviewer_launch_preparation',
+            attestation_state: 'prepared',
+            task_id: TASK_ID,
+            review_type: 'code',
+            reviewer_execution_mode: 'delegated_subagent',
+            reviewer_identity: reviewerIdentity,
+            review_context_sha256: fileSha256(reviewContextPath),
+            routing_event_sha256: routeIntegrity.event_sha256,
+            launch_binding_sha256: launchBindingSha256,
+            reviewer_launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
+            prepared_launch_event_sha256: preparedIntegrity.event_sha256,
+            copy_paste_reviewer_launch_prompt: copyPastePrompt,
+            copy_paste_reviewer_launch_prompt_sha256: copyPastePromptSha256,
+            review_output_path: reviewOutputPath.replace(/\\/g, '/')
+        });
+        fs.copyFileSync(launchArtifactPath, launchInputArtifactPath);
+        const pinnedInputArtifactSha256 = fileSha256(launchInputArtifactPath);
+        writeJson(launchArtifactPath, {
+            ...JSON.parse(fs.readFileSync(launchArtifactPath, 'utf8')),
+            attestation_state: 'delegation_started',
+            launch_tool: 'test-subagent-spawn',
+            provider_invocation_id: 'test-invocation-123',
+            delegation_started_at_utc: '2026-04-28T00:00:00.000Z',
+            launched_at_utc: '2026-04-28T00:00:00.000Z',
+            launch_input_mode: 'launch_artifact_path',
+            launch_input_sha256: pinnedInputArtifactSha256,
+            launch_input_artifact_path: launchInputArtifactPath.replace(/\\/g, '/'),
+            launch_input_artifact_sha256: pinnedInputArtifactSha256,
+            prepared_reviewer_launch_artifact_sha256: pinnedInputArtifactSha256,
+            reviewer_launch_input_artifact_sha256: pinnedInputArtifactSha256,
+            fork_context: false
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'restart-review-cycle', result.reason);
+        assert.equal(result.commands[0].label, 'Restart/supersede orphaned delegated reviewer launch');
+        assert.ok(result.commands[0].command.includes('gate restart-review-cycle'));
+        assert.ok(result.reason.includes('abandoned delegated reviewer launch'));
+        assert.ok(result.reason.includes('do not complete the old launch'));
+        assert.ok(result.reason.includes('launch artifact=orphaned'));
+        assert.ok(result.reason.includes('invocation=blocked until launch recovery'));
+        assert.ok(!result.commands[0].command.includes('complete-reviewer-launch'));
+        assert.ok(!result.commands[0].command.includes('record-review-result'));
+    });
+
     it('routes delegation-started refactor launch to completion before record-review-result', () => {
         const repoRoot = makeTempRepo();
         const reviewType = 'refactor';

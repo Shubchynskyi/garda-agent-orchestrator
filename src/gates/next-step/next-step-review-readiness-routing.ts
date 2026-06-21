@@ -6,7 +6,12 @@ import {
     REVIEWER_ONE_SHOT_LAUNCH_DEFAULT_INSTRUCTION
 } from '../../gate-runtime/reviewer-session-contract';
 
-export type DelegatedReviewLaunchArtifactState = 'missing_or_invalid' | 'prepared' | 'delegation_started' | 'launched';
+export type DelegatedReviewLaunchArtifactState =
+    'missing_or_invalid'
+    | 'prepared'
+    | 'delegation_started'
+    | 'orphaned'
+    | 'launched';
 
 export interface DelegatedReviewReadinessCommand {
     label: string;
@@ -59,6 +64,7 @@ export interface DelegatedReviewReadinessRouteOptions {
         prepareLaunch: DelegatedReviewReadinessCommand;
         recordDelegationStarted: DelegatedReviewReadinessCommand;
         completeLaunch: DelegatedReviewReadinessCommand;
+        recoverOrphanedLaunch: DelegatedReviewReadinessCommand;
         recordInvocation: DelegatedReviewReadinessCommand;
         recordResult: DelegatedReviewReadinessCommand;
     };
@@ -95,6 +101,7 @@ export function resolveDelegatedReviewReadinessRoute(
             options.launchArtifactState === 'launched'
             || options.launchArtifactState === 'prepared'
             || options.launchArtifactState === 'delegation_started'
+            || options.launchArtifactState === 'orphaned'
             || (
                 options.launchArtifactState === 'missing_or_invalid'
                 && options.reviewerIdentityIsPlanned
@@ -157,6 +164,21 @@ export function resolveDelegatedReviewReadinessRoute(
                     `Provider-owned placeholders in the command are only --attestation-source; replace it with the delegated reviewer launch result after provider completion. Launch-input artifact path, launch-input hash, reviewer identity, review type, and fork-context are already gate-owned command fragments when printed. ` +
                     `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
                 commands: [options.commands.completeLaunch]
+            };
+        }
+
+        if (options.launchArtifactState === 'orphaned') {
+            return {
+                status: 'BLOCKED',
+                nextGate: 'restart-review-cycle',
+                title: `Recover orphaned '${options.reviewType}' delegated reviewer launch.`,
+                reason:
+                    `Required review '${options.reviewType}' has delegated reviewer start evidence, but the current run appears to be a resumed controller session and the prepared review output artifact is still missing. ` +
+                    `Treat this as an abandoned delegated reviewer launch: do not complete the old launch, do not reuse the lost reviewer session, and do not fabricate review output. ` +
+                    `Restart or supersede the review cycle so a fresh delegated reviewer gets new launch/input evidence. ` +
+                    `${options.providerLaunchTargetSummary} ${options.instructions.opaqueHandoff} ${options.instructions.realSubagentOrStop} ` +
+                    `${options.reviewerReadinessChain} ${options.launchCompletionChain}`,
+                commands: [options.commands.recoverOrphanedLaunch]
             };
         }
 
