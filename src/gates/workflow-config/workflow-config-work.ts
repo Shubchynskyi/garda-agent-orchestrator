@@ -42,6 +42,9 @@ export interface CurrentWorkflowConfigChanges {
 export interface WorkflowConfigPreTaskBaselineState {
     changed_files: string[];
     compatibility_baseline_files: string[];
+    git_changed_files: string[];
+    protected_manifest_changed_files: string[];
+    protected_manifest_status: 'missing' | 'present' | 'invalid';
 }
 
 interface ProtectedManifestWorkflowConfigHashes {
@@ -557,6 +560,8 @@ export function getWorkflowConfigPreTaskBaselineState(
     const manifestHashes = manifestState.hashes;
     const changedFiles = new Set<string>();
     const compatibilityBaselineFiles = new Set<string>();
+    const gitChangedFiles = new Set<string>();
+    const protectedManifestChangedFiles = new Set<string>();
 
     for (const relativePath of workflowConfigPaths) {
         const currentHash = Object.prototype.hasOwnProperty.call(currentFileHashes, relativePath)
@@ -586,9 +591,11 @@ export function getWorkflowConfigPreTaskBaselineState(
 
         if (gitHeadHash !== undefined && gitHeadHash !== currentHash) {
             changedFiles.add(relativePath);
+            gitChangedFiles.add(relativePath);
         }
         if (hasManifestHash && manifestHash !== currentHash) {
             changedFiles.add(relativePath);
+            protectedManifestChangedFiles.add(relativePath);
         }
         if (
             gitHeadHash === undefined
@@ -598,6 +605,7 @@ export function getWorkflowConfigPreTaskBaselineState(
         ) {
             if (hasUnsafeIgnoredWorkflowConfigCompatibilityBaseline(repoRoot, relativePath)) {
                 changedFiles.add(relativePath);
+                gitChangedFiles.add(relativePath);
                 continue;
             }
             compatibilityBaselineFiles.add(relativePath);
@@ -609,12 +617,16 @@ export function getWorkflowConfigPreTaskBaselineState(
             && gitStatusLines.length > 0
         ) {
             changedFiles.add(relativePath);
+            gitChangedFiles.add(relativePath);
         }
     }
 
     return {
         changed_files: [...changedFiles].sort(),
-        compatibility_baseline_files: [...compatibilityBaselineFiles].sort()
+        compatibility_baseline_files: [...compatibilityBaselineFiles].sort(),
+        git_changed_files: [...gitChangedFiles].sort(),
+        protected_manifest_changed_files: [...protectedManifestChangedFiles].sort(),
+        protected_manifest_status: manifestState.status
     };
 }
 

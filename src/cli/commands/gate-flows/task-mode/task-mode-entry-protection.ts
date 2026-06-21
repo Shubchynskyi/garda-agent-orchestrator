@@ -12,6 +12,9 @@ import {
     parseTaskModeDepth
 } from '../../../../gates/task-mode/task-mode';
 import * as gateHelpers from '../../../../gates/shared/helpers';
+import type {
+    WorkflowConfigPreTaskBaselineState
+} from '../../../../gates/workflow-config/workflow-config-work';
 import {
     quotePowerShellCliValue,
     buildGateCommandPrefix
@@ -54,6 +57,7 @@ export interface AssertTaskModeProtectedEntryAllowedOptions {
     protectedPlannedFiles: string[];
     workflowConfigPlannedFiles: string[];
     dirtyWorkflowConfigFiles: string[];
+    workflowConfigPreTaskBaseline: WorkflowConfigPreTaskBaselineState;
     orchestratorWork: boolean;
     workflowConfigWork: boolean;
     taskQueueMetadata: TaskQueueMetadataForProtectedEntry | null;
@@ -160,6 +164,22 @@ export function buildGardaSelfGuardDenialMessage(protectedFiles: readonly string
     });
 }
 
+function buildProtectedManifestRepairCommand(repoRoot: string): string {
+    return `${buildGateCommandPrefix(repoRoot)} repair protected-manifest --target-root "." --confirm`;
+}
+
+function isProtectedManifestOnlyBaselineDrift(
+    dirtyWorkflowConfigFiles: readonly string[],
+    workflowConfigPreTaskBaseline: WorkflowConfigPreTaskBaselineState
+): boolean {
+    const dirtyFiles = [...dirtyWorkflowConfigFiles].sort();
+    const manifestFiles = [...workflowConfigPreTaskBaseline.protected_manifest_changed_files].sort();
+    return dirtyFiles.length > 0
+        && workflowConfigPreTaskBaseline.protected_manifest_status === 'present'
+        && workflowConfigPreTaskBaseline.git_changed_files.length === 0
+        && dirtyFiles.every((entry) => manifestFiles.includes(entry));
+}
+
 export function requireTaskModeOperatorConfirmation(
     options: {
         operatorConfirmed?: unknown;
@@ -190,12 +210,21 @@ export function assertTaskModeProtectedEntryAllowed(input: AssertTaskModeProtect
         protectedPlannedFiles,
         workflowConfigPlannedFiles,
         dirtyWorkflowConfigFiles,
+        workflowConfigPreTaskBaseline,
         orchestratorWork,
         workflowConfigWork,
         taskQueueMetadata
     } = input;
 
     if (dirtyWorkflowConfigFiles.length > 0) {
+        if (isProtectedManifestOnlyBaselineDrift(dirtyWorkflowConfigFiles, workflowConfigPreTaskBaseline)) {
+            throw new Error(
+                `Trusted protected control-plane manifest is stale before task-mode entry for workflow config files: ${dirtyWorkflowConfigFiles.join(', ')}. ` +
+                'Git status is clean for these workflow-config paths; this is trusted baseline drift, not a task-owned workflow-config edit. ' +
+                `Run guarded repair after operator verification: ${buildProtectedManifestRepairCommand(repoRoot)}. ` +
+                'Then rerun next-step for this task.'
+            );
+        }
         throw new Error(
             `Workspace already contains workflow config changes before task-mode entry: ${dirtyWorkflowConfigFiles.join(', ')}. ` +
             'Enter task mode before editing workflow-config.json so the change cannot be laundered into the baseline.'

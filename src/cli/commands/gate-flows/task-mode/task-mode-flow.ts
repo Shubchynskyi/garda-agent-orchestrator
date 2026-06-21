@@ -191,6 +191,7 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         protectedPlannedFiles,
         workflowConfigPlannedFiles,
         dirtyWorkflowConfigFiles,
+        workflowConfigPreTaskBaseline,
         orchestratorWork,
         workflowConfigWork,
         taskQueueMetadata

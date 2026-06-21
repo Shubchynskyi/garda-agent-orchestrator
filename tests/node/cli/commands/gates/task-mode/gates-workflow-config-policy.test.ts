@@ -603,7 +603,7 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
         }
     });
 
-    it('rejects task-mode entry when ignored workflow-config drifted from the trusted manifest', { concurrency: false }, () => {
+    it('routes ignored workflow-config trusted-manifest drift to repair guidance before task-mode entry', { concurrency: false }, () => {
         const taskId = 'T-900workflow-config-ignored-dirty-before-task-mode';
         const repoRoot = createTempRepo();
 
@@ -618,6 +618,12 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
             writeProtectedControlPlaneManifest(repoRoot);
             weakenOutOfScopePolicy(repoRoot);
 
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.git_changed_files, []);
+            assert.deepEqual(baselineState.protected_manifest_changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
+
             assert.throws(
                 () => runEnterTaskMode({
                     repoRoot,
@@ -628,7 +634,13 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                     operatorConfirmedAtUtc: new Date().toISOString(),
                     taskSummary: 'Update orchestrator workflow config'
                 }),
-                /already contains workflow config changes before task-mode entry/
+                (error: unknown) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    assert.match(message, /Trusted protected control-plane manifest is stale before task-mode entry/);
+                    assert.match(message, /repair protected-manifest --target-root "\." --confirm/);
+                    assert.doesNotMatch(message, /already contains workflow config changes before task-mode entry/);
+                    return true;
+                }
             );
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
