@@ -136,6 +136,7 @@ export interface ClassifyChangeTriggers {
     dirty_workspace_protected_files_sha256?: string | null;
     dirty_workspace_protected_file_hashes?: Record<string, string | null>;
     dirty_workspace_protection_status?: string;
+    dirty_workspace_protection_assessment?: string;
     dirty_workspace_protection_changed_files?: string[];
     protected_control_plane_manifest_baseline_allowance_status?: string;
 }

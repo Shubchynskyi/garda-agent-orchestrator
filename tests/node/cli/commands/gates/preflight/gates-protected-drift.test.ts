@@ -1183,6 +1183,11 @@ describe('cli/commands/gates', () => {
 
         const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8'));
         assert.deepEqual(preflight.triggers.dirty_workspace_protected_files, ['src/unrelated.ts']);
+        assert.equal(preflight.triggers.dirty_workspace_protection_status, 'PASS');
+        assert.equal(
+            preflight.triggers.dirty_workspace_protection_assessment,
+            'INFO_IGNORED_PROTECTED_LOCAL_BASELINE'
+        );
 
         fs.writeFileSync(unrelatedPath, 'export const unrelated = "after";\n', 'utf8');
 
@@ -1206,6 +1211,8 @@ describe('cli/commands/gates', () => {
         assert.equal(result.exitCode, EXIT_GATE_FAILURE);
         assert.equal(result.outputLines[0], 'COMPILE_GATE_FAILED');
         assert.ok(result.outputLines.some((line) => line.includes('Protected pre-existing workspace edits changed outside task scope')));
+        assert.ok(result.outputLines.some((line) => line.includes('no longer match the task-mode baseline')));
+        assert.ok(result.outputLines.some((line) => line.includes('Clean/stash the local baseline drift or restart task mode')));
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
@@ -1291,6 +1298,10 @@ describe('cli/commands/gates', () => {
         assert.equal(completionResult.outcome, 'FAIL');
         assert.ok(completionResult.violations.some((item: string) => item.includes('Protected pre-existing workspace edits changed outside task scope')));
         assert.equal(completionResult.dirty_workspace_protection_evidence.status, 'DRIFT_DETECTED');
+        assert.equal(
+            completionResult.dirty_workspace_protection_evidence.assessment,
+            'PROTECTED_LOCAL_BASELINE_DRIFT'
+        );
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

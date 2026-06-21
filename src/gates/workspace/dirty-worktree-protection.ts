@@ -20,6 +20,7 @@ export interface ProtectedDirtyWorkspaceScope {
 
 export interface ProtectedDirtyWorkspaceDriftResult {
     status: 'NOT_APPLICABLE' | 'PASS' | 'DRIFT_DETECTED';
+    assessment: 'NOT_APPLICABLE' | 'INFO_IGNORED_PROTECTED_LOCAL_BASELINE' | 'PROTECTED_LOCAL_BASELINE_DRIFT';
     protected_files: string[];
     protected_files_sha256: string | null;
     baseline_file_hashes: Record<string, string | null>;
@@ -159,6 +160,7 @@ export function detectProtectedDirtyWorkspaceDrift(
     if (!scope || scope.protected_files.length === 0) {
         return {
             status: 'NOT_APPLICABLE',
+            assessment: 'NOT_APPLICABLE',
             protected_files: [],
             protected_files_sha256: null,
             baseline_file_hashes: {},
@@ -175,12 +177,17 @@ export function detectProtectedDirtyWorkspaceDrift(
     const violations = changedFiles.length > 0
         ? [
             `Protected pre-existing workspace edits changed outside task scope: ${changedFiles.join(', ')}. ` +
-            'These files were already dirty at task-mode entry and were not included in the explicit task scope.'
+            'These files were already dirty at task-mode entry, were not included in the explicit task scope, ' +
+            'and no longer match the task-mode baseline. Clean/stash the local baseline drift or restart task mode ' +
+            'with the intended files in scope before continuing.'
         ]
         : [];
 
     return {
         status: changedFiles.length > 0 ? 'DRIFT_DETECTED' : 'PASS',
+        assessment: changedFiles.length > 0
+            ? 'PROTECTED_LOCAL_BASELINE_DRIFT'
+            : 'INFO_IGNORED_PROTECTED_LOCAL_BASELINE',
         protected_files: [...scope.protected_files],
         protected_files_sha256: scope.protected_files_sha256,
         baseline_file_hashes: { ...scope.protected_file_hashes },

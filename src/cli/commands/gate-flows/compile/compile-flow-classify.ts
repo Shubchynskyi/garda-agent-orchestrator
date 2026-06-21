@@ -394,6 +394,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             result.triggers.dirty_workspace_protected_file_hashes =
                 dirtyWorkspaceProtectedScope?.protected_file_hashes || {};
             result.triggers.dirty_workspace_protection_status = dirtyWorkspaceProtectionDrift.status;
+            result.triggers.dirty_workspace_protection_assessment = dirtyWorkspaceProtectionDrift.assessment;
             result.triggers.dirty_workspace_protection_changed_files = dirtyWorkspaceProtectionDrift.changed_files;
         }
         const protectedManifestBaselineAllowance = evaluateProtectedManifestBaselineAllowance({
