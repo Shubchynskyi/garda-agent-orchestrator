@@ -253,6 +253,59 @@ describe('update runtime module cache invalidation', () => {
         }
     });
 
+    it('buildUpdateLifecycleRunner clears stale non-entry bundle modules before loading updated lifecycle', () => {
+        const bundleRoot = makeTempBundleRoot();
+        try {
+            const updatePath = path.join(bundleRoot, 'dist', 'src', 'lifecycle', 'update.js');
+            const migrationsPath = path.join(bundleRoot, 'dist', 'src', 'lifecycle', 'contract-migrations.js');
+            const verifyPath = path.join(bundleRoot, 'dist', 'src', 'validators', 'verify.js');
+            const manifestPath = path.join(bundleRoot, 'dist', 'src', 'validators', 'validate-manifest.js');
+            const taskQueueBuilderPath = path.join(
+                bundleRoot,
+                'dist',
+                'src',
+                'materialization',
+                'content-builders-task-queue.js'
+            );
+
+            writeModule(taskQueueBuilderPath, 'module.exports = { legacyOnly: true };\n');
+            require(taskQueueBuilderPath);
+            assert.notEqual(require.cache[require.resolve(taskQueueBuilderPath)], undefined);
+
+            writeModule(taskQueueBuilderPath, [
+                'module.exports = {',
+                '    formatActiveTaskQueueTable: function formatActiveTaskQueueTable() {',
+                "        return 'new-task-queue-export';",
+                '    }',
+                '};'
+            ].join('\n'));
+            writeModule(updatePath, [
+                "const taskQueue = require('../materialization/content-builders-task-queue');",
+                'module.exports.runUpdate = function runUpdate() {',
+                '    if (typeof taskQueue.formatActiveTaskQueueTable !== "function") {',
+                "        throw new TypeError('formatActiveTaskQueueTable is not a function');",
+                '    }',
+                '    return {',
+                "        previousVersion: '1.0.0',",
+                "        updatedVersion: taskQueue.formatActiveTaskQueueTable(),",
+                "        rollbackSnapshotPath: 'snapshot',",
+                "        rollbackStatus: 'NOT_TRIGGERED'",
+                '    };',
+                '};'
+            ].join('\n'));
+            writeModule(migrationsPath, "module.exports.runContractMigrations = function runContractMigrations() { return { changed: false }; };\n");
+            writeModule(verifyPath, "module.exports.runVerify = function runVerify() { return { passed: true, violations: [] }; };\n");
+            writeModule(manifestPath, "module.exports.validateManifest = function validateManifest() { return { passed: true, errors: [] }; };\n");
+
+            const runLifecycle = buildUpdateLifecycleRunner(bundleRoot, false);
+            const result = runLifecycle(buildRunnerOptions(path.dirname(bundleRoot)));
+
+            assert.equal(result.updatedVersion, 'new-task-queue-export');
+        } finally {
+            cleanupTempRoot(bundleRoot);
+        }
+    });
+
     it('invalidateBundleRuntimeModuleCache clears only bundle runtime modules in full-tree mode', () => {
         const bundleRoot = makeTempBundleRoot();
         try {

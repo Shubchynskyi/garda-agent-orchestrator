@@ -328,12 +328,7 @@ export function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: b
 
         if (fs.existsSync(targetUpdateModulePath)) {
             try {
-                invalidateBundleRuntimeModuleCache(bundlePath, [
-                    targetUpdateModulePath,
-                    targetMigrationModulePath,
-                    targetVerifyModulePath,
-                    targetManifestModulePath
-                ]);
+                invalidateBundleRuntimeModuleCache(bundlePath);
 
                 const newUpdateModule = require(targetUpdateModulePath);
                 if (typeof newUpdateModule.runUpdate === 'function') {
