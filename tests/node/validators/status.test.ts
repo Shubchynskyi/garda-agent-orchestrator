@@ -13,6 +13,8 @@ import {
 import { buildAgentInitOutput } from '../../../src/cli/commands/agent-init';
 import { writeProtectedControlPlaneManifest } from '../../../src/gates/shared/helpers';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
+import { quoteCommandValue } from '../../../src/core/command-quoting';
+import { buildAgentInitializationRecoveryGuidance } from '../../../src/validators/status/status-recommendations';
 
 const MANAGED_START = '<!-- garda-agent-orchestrator:managed-start -->';
 const MANAGED_END = '<!-- garda-agent-orchestrator:managed-end -->';
@@ -575,9 +577,25 @@ test('getStatusSnapshot blocks ready state when compile gate command remains unc
         assert.equal(snapshot.agentInitializationComplete, false);
         assert.equal(snapshot.readyForTasks, false);
         assert.deepEqual(snapshot.missingProjectCommands, ['compile_gate.command']);
+        assert.ok(snapshot.recommendedNextCommand.includes('agent-init --target-root'));
     } finally {
         cleanupStatusTempDir(tmpDir);
     }
+});
+
+test('buildAgentInitializationRecoveryGuidance quotes target roots with shell metacharacters', () => {
+    const targetRoot = 'C:\\tmp\\project $(Invoke-Expression bad) `tick` \'single\' "double"';
+    const guidance = buildAgentInitializationRecoveryGuidance({
+        bundlePath: 'C:\\tmp\\project\\garda-agent-orchestrator',
+        resolvedTargetRoot: targetRoot,
+        agentInitializationPendingReason: 'PROJECT_COMMANDS_PENDING'
+    });
+    const quotedTargetRoot = quoteCommandValue(targetRoot);
+
+    assert.ok(guidance.primary.includes(`agent-init --target-root ${quotedTargetRoot}`));
+    assert.ok(guidance.alternatives.some((command) => command.includes(`--target-root ${quotedTargetRoot}`)));
+    assert.ok(!guidance.primary.includes(`--target-root "${targetRoot}"`));
+    assert.ok(!guidance.alternatives.some((command) => command.includes(`--target-root "${targetRoot}"`)));
 });
 
 test('getStatusSnapshot blocks ready state when workflow config is missing compile gate command source', () => {
@@ -604,6 +622,7 @@ test('getStatusSnapshot blocks ready state when workflow config is missing compi
         assert.equal(snapshot.agentInitializationComplete, false);
         assert.equal(snapshot.readyForTasks, false);
         assert.deepEqual(snapshot.missingProjectCommands, ['compile_gate.command']);
+        assert.ok(snapshot.recommendedNextCommand.includes('agent-init --target-root'));
     } finally {
         cleanupStatusTempDir(tmpDir);
     }

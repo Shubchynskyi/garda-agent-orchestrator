@@ -5,6 +5,7 @@ import {
     DEFAULT_SOURCE_OF_TRUTH,
     SOURCE_OF_TRUTH_VALUES
 } from '../../core/constants';
+import { quoteCommandValue } from '../../core/command-quoting';
 import {
     buildActiveProfileGuidance,
     buildFullSuiteDisabledGuidance,
@@ -304,7 +305,7 @@ export function buildSetupHandoffText(snapshot: StatusSnapshot): string {
     lines.push('');
     lines.push(formatSetupHandoffHeading('Workspace UI'));
     lines.push(`  ${formatSetupHandoffLabel('RecommendedUiCommand:')} Run \`garda ui\` to inspect available commands and workspace state.`);
-    lines.push(`RecommendedNextCommand: Give your agent "${initPromptPath}" and complete the agent-init flow`);
+    lines.push(`RecommendedNextCommand: Give your agent "${initPromptPath}" and complete the agent-init flow, then run ${deployedCliCommand} agent-init --target-root ${quoteCommandValue(path.dirname(snapshot.bundlePath))}`);
     return lines.join('\n');
 }
 

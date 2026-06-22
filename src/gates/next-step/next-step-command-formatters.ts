@@ -7,6 +7,7 @@ import {
 import {
     resolveBundleNameForTarget
 } from '../../core/constants';
+import { quoteCommandValue as quoteShellCommandValue } from '../../core/command-quoting';
 import type {
     NextStepCommand,
     NextStepResult
@@ -62,14 +63,7 @@ export function buildProjectMemoryImpactCommand(
 }
 
 export function quoteCommandValue(value: string): string {
-    const text = String(value);
-    if (/["$`]/.test(text)) {
-        if (process.platform === 'win32') {
-            return `'${text.replace(/'/g, "''")}'`;
-        }
-        return `'${text.replace(/'/g, "'\\''")}'`;
-    }
-    return `"${text.replace(/\\/g, '\\\\')}"`;
+    return quoteShellCommandValue(value);
 }
 
 export function buildBundleRelativePath(repoRoot: string, relativePath: string): string {

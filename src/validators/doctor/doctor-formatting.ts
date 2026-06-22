@@ -6,6 +6,7 @@ import {
     formatProviderComplianceDetail
 } from '../provider-compliance';
 import { buildProfileAwareQueueNextLine } from '../task-command';
+import { buildAgentInitializationRecoveryGuidance } from '../status/status-recommendations';
 import type { DoctorResult } from '../doctor';
 
 const ANSI_RED = '\x1b[31m';
@@ -27,6 +28,22 @@ function pushViolationSamples(lines: string[], violations: readonly string[], li
     }
     if (violations.length > limit) {
         lines.push('  - ... ' + (violations.length - limit) + ' more');
+    }
+}
+
+function hasProjectCommandsPendingViolation(violations: readonly string[]): boolean {
+    return violations.some((violation) => /\bPROJECT_COMMANDS_PENDING\b/.test(violation));
+}
+
+function pushProjectCommandsRecoveryAction(lines: string[], result: DoctorResult): void {
+    const guidance = buildAgentInitializationRecoveryGuidance({
+        bundlePath: getBundlePath(result.targetRoot),
+        resolvedTargetRoot: result.targetRoot,
+        agentInitializationPendingReason: 'PROJECT_COMMANDS_PENDING'
+    });
+    lines.push(guidance.primary);
+    for (const alternative of guidance.alternatives) {
+        lines.push(alternative);
     }
 }
 
@@ -223,6 +240,8 @@ function formatDoctorFailureSummary(result: DoctorResult): string[] {
         actionLines.push('Run: garda doctor --target-root "." --cleanup-stale-locks --dry-run');
     } else if (result.reviewLockHealth && result.reviewLockHealth.stale_count > 0) {
         actionLines.push('Run: garda doctor --target-root "." --cleanup-stale-locks --dry-run');
+    } else if (hasProjectCommandsPendingViolation(verifyViolations)) {
+        pushProjectCommandsRecoveryAction(actionLines, result);
     } else if (!result.runtimeMismatchEvidence.passed) {
         actionLines.push('Inspect runtime compatibility diagnostics, then rerun doctor.');
     } else if (!result.partialStateEvidence.passed) {

@@ -48,6 +48,13 @@ export {
     formatStatusSnapshotJson
 } from './status/status-rendering';
 
+export interface AgentInitializationReadinessSnapshot {
+    bundlePath: string;
+    primaryInitializationComplete: boolean;
+    agentInitializationPendingReason: AgentInitializationPendingReason;
+    missingProjectCommands: string[];
+}
+
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
 }
@@ -361,6 +368,68 @@ function resolveAgentInitializationPendingReason(
         return 'VALIDATION_PENDING';
     }
     return null;
+}
+
+export function getAgentInitializationReadinessSnapshot(
+    targetRoot: string,
+    initAnswersPath?: string
+): AgentInitializationReadinessSnapshot {
+    const resolvedTargetRoot = path.resolve(targetRoot);
+    const bundlePath = getBundlePath(resolvedTargetRoot);
+    const bundlePresent = pathExists(bundlePath) && fs.lstatSync(bundlePath).isDirectory();
+    const livePath = path.join(bundlePath, 'live');
+    const taskPath = path.join(resolvedTargetRoot, 'TASK.md');
+    const usagePath = path.join(livePath, 'USAGE.md');
+    const commandsRulePath = getCommandsRulePath(bundlePath);
+    const commandsContent = readUtf8IfExists(commandsRulePath);
+    const compileGateStatus = readCompileGateCommandStatus(bundlePath);
+    const missingProjectCommands = getMissingProjectCommands(commandsContent || '');
+    if (bundlePresent && !compileGateStatus.configured) {
+        missingProjectCommands.push('compile_gate.command');
+    }
+
+    const agentInitStateResult: AgentInitStateResult = bundlePresent
+        ? readAgentInitStateSafe(
+            resolvedTargetRoot,
+            resolveAgentInitStateRelativePathForTarget(resolvedTargetRoot)
+        )
+        : {
+            statePath: path.join(bundlePath, 'runtime', 'agent-init-state.json'),
+            state: null,
+            error: null
+        };
+    const initAnswersState = resolveInitAnswersState(resolvedTargetRoot, initAnswersPath);
+    const liveVersionState = readLiveVersionState(livePath);
+    const answers = initAnswersState.answers;
+    const sourceOfTruth = resolveSourceOfTruth(answers, liveVersionState.payload);
+    const canonicalEntrypoint = sourceOfTruth ? getCanonicalEntrypoint(sourceOfTruth) : null;
+    const livePresent = pathExists(livePath) && fs.lstatSync(livePath).isDirectory();
+    const taskPresent = pathExists(taskPath) && fs.lstatSync(taskPath).isFile();
+    const usagePresent = pathExists(usagePath) && fs.lstatSync(usagePath).isFile();
+    const primaryInitializationComplete = (
+        bundlePresent
+        && initAnswersState.present
+        && !initAnswersState.error
+        && livePresent
+        && taskPresent
+        && usagePresent
+    );
+    const currentActiveAgentFiles = resolveCurrentActiveAgentFiles(answers, canonicalEntrypoint);
+    const agentInitializationPendingReason = resolveAgentInitializationPendingReason(
+        primaryInitializationComplete,
+        agentInitStateResult,
+        answers,
+        sourceOfTruth,
+        currentActiveAgentFiles,
+        missingProjectCommands
+    );
+
+    return {
+        bundlePath,
+        primaryInitializationComplete,
+        agentInitializationPendingReason,
+        missingProjectCommands
+    };
 }
 
 function readProviderComplianceResult(

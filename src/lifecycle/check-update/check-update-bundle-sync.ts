@@ -18,6 +18,8 @@ import {
 } from '../common';
 import { assertNoRuntimeLocksBeforeUpdateApply } from '../lock/runtime-lock-preflight';
 import { createLifecycleDiagnosticError } from '../update/update-diagnostics';
+import { getAgentInitializationReadinessSnapshot } from '../../validators/status';
+import { buildAgentInitializationRecoveryGuidance } from '../../validators/status/status-recommendations';
 import {
     type AcquiredUpdateSource,
     type CheckUpdateResult,
@@ -313,6 +315,34 @@ function collectRollbackSyncItems(sourceSyncItems: string[], deployedBundleRoot:
     return rollbackItems;
 }
 
+function assertAgentInitReadyBeforeDestructiveApply(normalizedTarget: string, initAnswersPath: string): void {
+    const readiness = getAgentInitializationReadinessSnapshot(normalizedTarget, initAnswersPath);
+    if (!readiness.primaryInitializationComplete || readiness.agentInitializationPendingReason === null) {
+        return;
+    }
+
+    const recoveryGuidance = buildAgentInitializationRecoveryGuidance({
+        bundlePath: readiness.bundlePath,
+        resolvedTargetRoot: normalizedTarget,
+        agentInitializationPendingReason: readiness.agentInitializationPendingReason
+    });
+    const lines = [
+        'GARDA_UPDATE_AGENT_INIT_REQUIRED: update apply cannot apply before agent initialization is complete.',
+        `TargetRoot: ${normalizedTarget}`,
+        `PendingReason: ${readiness.agentInitializationPendingReason}`,
+        `Next: ${recoveryGuidance.primary}, then rerun update.`,
+        'Safety: update apply stopped before bundle sync; no rollback was needed.'
+    ];
+    if (readiness.missingProjectCommands.length > 0) {
+        lines.splice(3, 0, `MissingProjectCommands: ${readiness.missingProjectCommands.join(', ')}`);
+        for (const alternative of recoveryGuidance.alternatives) {
+            lines.splice(5, 0, `Alternative: ${alternative}`);
+        }
+    }
+
+    throw new Error(lines.join('\n'));
+}
+
 function planBundleSyncItems(
     sourceRoot: string,
     deployedBundleRoot: string,
@@ -525,6 +555,12 @@ export async function applyAvailableUpdate(options: ApplyAvailableUpdateOptions)
 
         if (!dryRun) {
             assertNoRuntimeLocksBeforeUpdateApply(deployedBundleRoot);
+            if (String(effectiveDiagnosticTool || '').toLowerCase() === 'git') {
+                assertAgentInitReadyBeforeDestructiveApply(
+                    normalizedTarget,
+                    initAnswersPath
+                );
+            }
         }
 
         const sourceSyncItems = collectExistingSourceSyncItems(source.sourceRoot);

@@ -20,6 +20,7 @@ import {
     UNCONFIGURED_COMPILE_GATE_COMMAND,
     resolveInitAnswersRelativePath
 } from '../../../../src/core/constants';
+import { quoteCommandValue } from '../../../../src/core/command-quoting';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
 
@@ -1022,7 +1023,19 @@ test('buildSetupHandoffText includes agent initialization section', () => {
     assert.ok(!text.includes('Project memory maintenance: update read_strategy=index_first'));
     assert.ok(!text.includes(`Project memory init/refresh prompt: ${PROJECT_MEMORY_INIT_REFRESH_PROMPT}`));
     assert.ok(text.includes('RecommendedUiCommand: Run `garda ui` to inspect available commands and workspace state.'));
-    assert.match(text.trimEnd(), /RecommendedNextCommand: Give your agent ".*AGENT_INIT_PROMPT\.md" and complete the agent-init flow$/);
+    assert.match(text.trimEnd(), /RecommendedNextCommand: Give your agent ".*AGENT_INIT_PROMPT\.md" and complete the agent-init flow, then run .* agent-init --target-root ".*"$/);
+});
+
+test('buildSetupHandoffText quotes target root in recommended agent-init command', () => {
+    const targetRoot = 'C:\\workspace\\project $(Invoke-Expression bad) `tick` \'single\' "double"';
+    const text = stripAnsi(buildSetupHandoffText({
+        bundlePath: path.join(targetRoot, 'garda-agent-orchestrator'),
+        activeAgentFiles: 'AGENTS.md'
+    } as unknown as StatusSnapshot));
+    const quotedTargetRoot = quoteCommandValue(targetRoot);
+
+    assert.ok(text.includes(`agent-init --target-root ${quotedTargetRoot}`));
+    assert.ok(!text.includes(`agent-init --target-root "${targetRoot}"`));
 });
 
 test('buildSetupHandoffText renders scannable plain human sections', () => {
@@ -1046,7 +1059,7 @@ test('buildSetupHandoffText renders scannable plain human sections', () => {
     assert.ok(text.includes('AGENT_INIT_PROMPT.md"'));
     assert.ok(text.includes('Execute task T-001 from TASK.md strictly through the orchestrator.'));
     assert.ok(text.includes('next-step "<task-id>"'));
-    assert.ok(text.trimEnd().endsWith('and complete the agent-init flow'));
+    assert.match(text.trimEnd(), /and complete the agent-init flow, then run .* agent-init --target-root ".*"$/);
 });
 
 test('buildSetupHandoffText colors human setup handoff when FORCE_COLOR is set', () => {

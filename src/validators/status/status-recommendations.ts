@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 
+import { quoteCommandValue } from '../../core/command-quoting';
 import { resolveProfileAwareExecuteTaskRecommendation } from '../task-command';
 import type {
     AgentInitializationPendingReason,
@@ -19,6 +20,31 @@ export interface BuildRecommendedNextCommandOptions {
     initAnswersError: string | null;
     resolvedTargetRoot: string;
     initAnswersPath: string | undefined;
+}
+
+export interface AgentInitializationRecoveryGuidance {
+    primary: string;
+    alternatives: string[];
+}
+
+export function buildAgentInitializationRecoveryGuidance(options: {
+    bundlePath: string;
+    resolvedTargetRoot: string;
+    agentInitializationPendingReason: AgentInitializationPendingReason;
+}): AgentInitializationRecoveryGuidance {
+    const promptPath = path.join(options.bundlePath, 'AGENT_INIT_PROMPT.md');
+    const quotedTargetRoot = quoteCommandValue(options.resolvedTargetRoot);
+    const agentInitCommand = `node garda-agent-orchestrator/bin/garda.js agent-init --target-root ${quotedTargetRoot}`;
+    const primary = `Give your agent "${promptPath}" and complete the agent-init flow, then run ${agentInitCommand}`;
+    const alternatives: string[] = [];
+
+    if (options.agentInitializationPendingReason === 'PROJECT_COMMANDS_PENDING') {
+        alternatives.push(
+            `garda workflow set --compile-gate-command "<compile/build/type-check command>" --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root ${quotedTargetRoot}`
+        );
+    }
+
+    return { primary, alternatives };
 }
 
 export function buildRecommendedNextCommand(options: BuildRecommendedNextCommandOptions): string {
@@ -48,7 +74,11 @@ export function buildRecommendedNextCommand(options: BuildRecommendedNextCommand
         return `npx garda-agent-orchestrator update --target-root "${resolvedTargetRoot}"`;
     }
     if (primaryInitializationComplete && agentInitializationPendingReason !== null) {
-        return `Give your agent "${path.join(bundlePath, 'AGENT_INIT_PROMPT.md')}" and complete the agent-init flow`;
+        return buildAgentInitializationRecoveryGuidance({
+            bundlePath,
+            resolvedTargetRoot,
+            agentInitializationPendingReason
+        }).primary;
     }
     if (bundlePresent && (!initAnswersPresent || initAnswersError)) {
         return `npx garda-agent-orchestrator setup --target-root "${resolvedTargetRoot}"`;

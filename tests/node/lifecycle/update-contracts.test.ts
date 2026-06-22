@@ -9,8 +9,11 @@ import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
 import { runUpdateFromGit } from '../../../src/lifecycle/update-git';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
-import { getLifecycleOperationLockPath, removePathRecursive, writeUpdateSentinel } from '../../../src/lifecycle/common';
+import { getLifecycleOperationLockPath, getUpdateSentinelPath, removePathRecursive, writeUpdateSentinel } from '../../../src/lifecycle/common';
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../src/core/constants';
+import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import { createAgentInitState, writeAgentInitState } from '../../../src/runtime/agent-init-state';
 
 type CapturedMaterializationOptions = {
     claudeOrchestratorFullAccess?: boolean;
@@ -117,6 +120,70 @@ function seedOffModeState(bundleRoot: string) {
         off_storage_files: [],
         on_storage_files: []
     }, null, 2), 'utf8');
+}
+
+function seedPrimaryInitializedWorkspace(projectRoot: string, bundleRoot: string, options: {
+    compileGateCommand?: string;
+    agentInitComplete?: boolean;
+} = {}) {
+    fs.writeFileSync(path.join(projectRoot, 'TASK.md'), '# TASK.md\n', 'utf8');
+    fs.writeFileSync(path.join(bundleRoot, 'live', 'USAGE.md'), '# Usage\n', 'utf8');
+    fs.mkdirSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.writeFileSync(
+        path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+        '# Commands\n\n- Compile: npm run build\n- Test: npm test\n',
+        'utf8'
+    );
+    fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+    const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.compile_gate.command = options.compileGateCommand ?? UNCONFIGURED_COMPILE_GATE_COMMAND;
+    fs.writeFileSync(
+        path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+        JSON.stringify(workflowConfig, null, 2) + '\n',
+        'utf8'
+    );
+
+    writeAgentInitState(projectRoot, createAgentInitState({
+        AssistantLanguage: 'English',
+        SourceOfTruth: 'Claude',
+        AssistantLanguageConfirmed: true,
+        ActiveAgentFilesConfirmed: true,
+        ProjectRulesUpdated: true,
+        SkillsPromptCompleted: true,
+        OrdinaryDocPathsConfirmed: true,
+        VerificationPassed: options.agentInitComplete === true,
+        ManifestValidationPassed: options.agentInitComplete === true,
+        ActiveAgentFiles: ['CLAUDE.md'],
+        ProjectMemoryInitialized: true,
+        ProjectMemoryValidated: true,
+        ProjectMemoryMode: 'update',
+        ProjectMemoryDir: 'garda-agent-orchestrator/live/docs/project-memory',
+        ProjectMemoryReadFirst: ['README.md'],
+        ProjectMemorySummaryRule: 'garda-agent-orchestrator/live/docs/agent-rules/15-project-memory.md'
+    }));
+}
+
+function seedPrimaryInitializedWorkspaceWithoutAgentInitState(
+    projectRoot: string,
+    bundleRoot: string,
+    options: { compileGateCommand?: string } = {}
+) {
+    fs.writeFileSync(path.join(projectRoot, 'TASK.md'), '# TASK.md\n', 'utf8');
+    fs.writeFileSync(path.join(bundleRoot, 'live', 'USAGE.md'), '# Usage\n', 'utf8');
+    fs.mkdirSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules'), { recursive: true });
+    fs.writeFileSync(
+        path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+        '# Commands\n\n- Compile: npm run build\n- Test: npm test\n',
+        'utf8'
+    );
+    fs.mkdirSync(path.join(bundleRoot, 'live', 'config'), { recursive: true });
+    const workflowConfig = buildDefaultWorkflowConfig();
+    workflowConfig.compile_gate.command = options.compileGateCommand ?? 'npm run build';
+    fs.writeFileSync(
+        path.join(bundleRoot, 'live', 'config', 'workflow-config.json'),
+        JSON.stringify(workflowConfig, null, 2) + '\n',
+        'utf8'
+    );
 }
 
 function seedGitRepository(repoPath: string) {
@@ -372,6 +439,7 @@ describe('runUpdate', () => {
                 targetRoot: projectRoot,
                 bundleRoot,
                 sourcePath: sourceBundleRoot,
+                diagnosticTool: 'git',
                 apply: true,
                 noPrompt: true,
                 trustOverride: true,
@@ -483,6 +551,189 @@ describe('runUpdate', () => {
             assert.equal(result.checkUpdateResult, 'UPDATE_AVAILABLE');
             assert.equal(result.updateAvailable, true);
             assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'check-only off-mode update git must not sync bundle items');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks update apply before bundle sync when agent-init project commands are pending', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            seedPrimaryInitializedWorkspace(projectRoot, bundleRoot, {
+                compileGateCommand: UNCONFIGURED_COMPILE_GATE_COMMAND,
+                agentInitComplete: true
+            });
+            const originalReadme = fs.readFileSync(path.join(bundleRoot, 'README.md'), 'utf8');
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'README.md'), `${originalReadme}\nupdated before agent init\n`, 'utf8');
+
+            let updateRunnerCalled = false;
+            await assert.rejects(() => runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                diagnosticTool: 'git',
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner() {
+                    updateRunnerCalled = true;
+                }
+            }), /GARDA_UPDATE_AGENT_INIT_REQUIRED[\s\S]*PROJECT_COMMANDS_PENDING[\s\S]*MissingProjectCommands: [^\n]*compile_gate\.command[\s\S]*agent-init --target-root[\s\S]*workflow set[\s\S]*--target-root/);
+
+            assert.equal(updateRunnerCalled, false, 'updateRunner must not execute before agent-init readiness');
+            assert.equal(fs.readFileSync(path.join(bundleRoot, 'README.md'), 'utf8'), originalReadme);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'blocked update must stop before bundle sync backup');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('blocks update apply before bundle sync after fresh setup before agent handoff', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            seedPrimaryInitializedWorkspaceWithoutAgentInitState(projectRoot, bundleRoot);
+            const originalReadme = fs.readFileSync(path.join(bundleRoot, 'README.md'), 'utf8');
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'README.md'), `${originalReadme}\nfresh setup update\n`, 'utf8');
+
+            let updateRunnerCalled = false;
+            await assert.rejects(() => runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                diagnosticTool: 'git',
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner() {
+                    updateRunnerCalled = true;
+                }
+            }), /GARDA_UPDATE_AGENT_INIT_REQUIRED[\s\S]*AGENT_HANDOFF_REQUIRED[\s\S]*AGENT_INIT_PROMPT\.md[\s\S]*agent-init --target-root/);
+
+            assert.equal(updateRunnerCalled, false, 'updateRunner must not execute before fresh setup agent handoff');
+            assert.equal(fs.readFileSync(path.join(bundleRoot, 'README.md'), 'utf8'), originalReadme);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'fresh setup block must stop before bundle sync backup');
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'update-rollbacks')), 'fresh setup block must stop before rollback snapshots');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('keeps rollback and protected-manifest recovery artifacts untouched when readiness blocks update apply', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            seedPrimaryInitializedWorkspace(projectRoot, bundleRoot, {
+                compileGateCommand: UNCONFIGURED_COMPILE_GATE_COMMAND,
+                agentInitComplete: true
+            });
+            const manifestPath = path.join(bundleRoot, 'runtime', 'protected-control-plane-manifest.json');
+            const manifestPayload = JSON.stringify({ marker: 'preserve-before-readiness-block' }, null, 2) + '\n';
+            fs.writeFileSync(manifestPath, manifestPayload, 'utf8');
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'README.md'), 'blocked before recovery paths\n', 'utf8');
+
+            await assert.rejects(() => runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                diagnosticTool: 'git',
+                apply: true,
+                noPrompt: true,
+                trustOverride: true
+            }), /Safety: update apply stopped before bundle sync; no rollback was needed/);
+
+            assert.equal(fs.readFileSync(manifestPath, 'utf8'), manifestPayload);
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'blocked update must not create sync backups');
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'update-rollbacks')), 'blocked update must not create rollback snapshots');
+            assert.ok(!fs.existsSync(getUpdateSentinelPath(bundleRoot)), 'blocked update must not write update sentinel');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('uses lightweight agent-init readiness for pre-apply update guards', () => {
+        const syncSource = fs.readFileSync(
+            path.join(repoRoot, 'src', 'lifecycle', 'check-update', 'check-update-bundle-sync.ts'),
+            'utf8'
+        );
+
+        assert.match(syncSource, /getAgentInitializationReadinessSnapshot/);
+        assert.doesNotMatch(syncSource, /getStatusSnapshot/);
+    });
+
+    it('keeps check-only and dry-run update readable before agent-init readiness', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            seedPrimaryInitializedWorkspace(projectRoot, bundleRoot, {
+                compileGateCommand: UNCONFIGURED_COMPILE_GATE_COMMAND,
+                agentInitComplete: true
+            });
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'README.md'), 'dry run drift\n', 'utf8');
+
+            const checkOnly = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                diagnosticTool: 'git',
+                apply: false,
+                trustOverride: true
+            });
+            assert.equal(checkOnly.updateApplied, false);
+            assert.equal(checkOnly.updateAvailable, true);
+            assert.equal(checkOnly.checkUpdateResult, 'UPDATE_AVAILABLE');
+
+            const dryRun = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                diagnosticTool: 'git',
+                apply: true,
+                dryRun: true,
+                trustOverride: true
+            });
+            assert.equal(dryRun.updateApplied, false);
+            assert.equal(dryRun.checkUpdateResult, 'DRY_RUN_UPDATE_AVAILABLE');
+            assert.ok(!fs.existsSync(path.join(bundleRoot, 'runtime', 'bundle-backups')), 'read-only update modes must not create bundle sync backups');
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('allows update apply when agent-init project commands are configured', async () => {
+        const { projectRoot, bundleRoot } = setupSyncedUpdateWorkspace(repoRoot);
+        try {
+            seedPrimaryInitializedWorkspace(projectRoot, bundleRoot, {
+                compileGateCommand: 'npm run build',
+                agentInitComplete: true
+            });
+            const sourceBundleRoot = path.join(projectRoot, 'update-source');
+            copyDirRecursive(bundleRoot, sourceBundleRoot);
+            fs.writeFileSync(path.join(sourceBundleRoot, 'README.md'), 'configured workspace update\n', 'utf8');
+
+            let updateRunnerCalled = false;
+            const result = await runCheckUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                sourcePath: sourceBundleRoot,
+                diagnosticTool: 'git',
+                apply: true,
+                noPrompt: true,
+                trustOverride: true,
+                updateRunner() {
+                    updateRunnerCalled = true;
+                }
+            });
+
+            assert.equal(updateRunnerCalled, true);
+            assert.equal(result.updateApplied, true);
+            assert.equal(result.checkUpdateResult, 'UPDATED');
+            assert.equal(fs.readFileSync(path.join(bundleRoot, 'README.md'), 'utf8'), 'configured workspace update\n');
         } finally {
             removePathRecursive(projectRoot);
         }

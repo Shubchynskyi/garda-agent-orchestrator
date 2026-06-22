@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 
 import {
     buildScopedDiff,
@@ -16,6 +16,42 @@ function sha256Text(value: string): string {
     return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
+function sleepSync(delayMs: number): void {
+    if (delayMs <= 0) {
+        return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+function runGit(args: readonly string[]): void {
+    const gitArgs = [
+        '-c', 'init.defaultBranch=main',
+        '-c', 'commit.gpgsign=false',
+        '-c', 'tag.gpgsign=false',
+        '-c', 'core.autocrlf=false',
+        '-c', 'core.eol=lf',
+        '-c', 'core.safecrlf=false',
+        ...args
+    ];
+    const retryDelaysMs = [0, 25, 100];
+    let lastResult: ReturnType<typeof spawnSync> | null = null;
+    for (const delayMs of retryDelaysMs) {
+        sleepSync(delayMs);
+        const result = spawnSync('git', gitArgs, {
+            encoding: 'utf8',
+            windowsHide: true
+        });
+        lastResult = result;
+        if (result.status === 0) {
+            return;
+        }
+    }
+
+    const stdout = String(lastResult?.stdout || '').trim();
+    const stderr = String(lastResult?.stderr || '').trim();
+    assert.fail(`git ${args.join(' ')} failed with status ${lastResult?.status}: ${[stdout, stderr].filter(Boolean).join('\n')}`);
+}
+
 test('runGitDiff handles repo roots and pathspecs with spaces', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-diff-'));
     const repoRoot = path.join(tempDir, 'repo with spaces');
@@ -24,13 +60,13 @@ test('runGitDiff handles repo roots and pathspecs with spaces', () => {
 
     try {
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
 
         fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
 
         fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
 
@@ -50,14 +86,14 @@ test('runGitDiff disables configured external diff and textconv helpers', () => 
 
     try {
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
 
         fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'diff.external', 'definitely-missing-garda-diff-helper'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
+        runGit(['-C', repoRoot, 'config', 'diff.external', 'definitely-missing-garda-diff-helper']);
         fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
 
         const diff = runGitDiff(repoRoot, false, ['src/app.ts']);
@@ -80,13 +116,13 @@ test('buildScopedDiff fails fast when the metadata artifact is locked by a live 
         fs.mkdirSync(reviewsRoot, { recursive: true });
         fs.mkdirSync(liveConfigRoot, { recursive: true });
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
 
         fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
         fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
 
         const preflightPath = path.join(reviewsRoot, 'T-700-preflight.json');
@@ -141,13 +177,13 @@ test('buildScopedDiff treats git pathspecs literally and rejects pathspec magic'
         fs.mkdirSync(reviewsRoot, { recursive: true });
         fs.mkdirSync(liveConfigRoot, { recursive: true });
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
         fs.writeFileSync(path.join(srcDir, '[ab].ts'), 'export const literal = 1;\n', 'utf8');
         fs.writeFileSync(path.join(srcDir, 'a.ts'), 'export const broadened = 1;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
         fs.writeFileSync(path.join(srcDir, '[ab].ts'), 'export const literal = 2;\n', 'utf8');
         fs.writeFileSync(path.join(srcDir, 'a.ts'), 'export const broadened = 2;\n', 'utf8');
 
@@ -212,15 +248,15 @@ test('buildScopedDiff derives staged mode from staged-only preflight scope', () 
         fs.mkdirSync(reviewsRoot, { recursive: true });
         fs.mkdirSync(liveConfigRoot, { recursive: true });
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
         fs.writeFileSync(changedFilePath, 'export const value = 1;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
 
         fs.writeFileSync(changedFilePath, 'export const value = 2;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', 'src/app.ts'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', 'src/app.ts']);
         fs.writeFileSync(changedFilePath, 'export const value = 3;\n', 'utf8');
 
         const preflightPath = path.join(reviewsRoot, 'T-703-preflight.json');
@@ -271,13 +307,13 @@ test('buildScopedDiff fallback stays limited to preflight changed files', () => 
         fs.mkdirSync(reviewsRoot, { recursive: true });
         fs.mkdirSync(liveConfigRoot, { recursive: true });
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
         fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const scoped = 1;\n', 'utf8');
         fs.writeFileSync(path.join(srcDir, 'unrelated.ts'), 'export const unrelated = 1;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
         fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const scoped = 2;\n', 'utf8');
         fs.writeFileSync(path.join(srcDir, 'unrelated.ts'), 'export const unrelated = 2;\n', 'utf8');
 
@@ -326,13 +362,13 @@ test('buildScopedDiff artifact fallback stays limited to preflight changed files
         fs.mkdirSync(reviewsRoot, { recursive: true });
         fs.mkdirSync(liveConfigRoot, { recursive: true });
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
         fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const scoped = 1;\n', 'utf8');
         fs.writeFileSync(path.join(srcDir, 'unrelated.ts'), 'export const unrelated = 1;\n', 'utf8');
-        execFileSync('git', ['-C', repoRoot, 'add', '.'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['-C', repoRoot, 'add', '.']);
+        runGit(['-C', repoRoot, 'commit', '-m', 'initial']);
         fs.writeFileSync(path.join(srcDir, 'app.ts'), 'export const scoped = 2;\n', 'utf8');
         fs.writeFileSync(path.join(srcDir, 'unrelated.ts'), 'export const unrelated = 2;\n', 'utf8');
 
@@ -386,10 +422,10 @@ test('buildScopedDiff includes untracked explicit changed files in scoped metada
         fs.mkdirSync(reviewsRoot, { recursive: true });
         fs.mkdirSync(liveConfigRoot, { recursive: true });
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '--allow-empty', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
+        runGit(['-C', repoRoot, 'commit', '--allow-empty', '-m', 'initial']);
         fs.writeFileSync(changedFilePath, 'export const auth = true;\n', 'utf8');
 
         const preflightPath = path.join(reviewsRoot, 'T-701-preflight.json');
@@ -453,10 +489,10 @@ test('buildScopedDiff bounds large untracked file content in scoped output', () 
         fs.mkdirSync(reviewsRoot, { recursive: true });
         fs.mkdirSync(liveConfigRoot, { recursive: true });
         fs.mkdirSync(srcDir, { recursive: true });
-        execFileSync('git', ['init', repoRoot], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.name', 'Garda Test'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'config', 'user.email', 'garda@example.com'], { stdio: 'ignore' });
-        execFileSync('git', ['-C', repoRoot, 'commit', '--allow-empty', '-m', 'initial'], { stdio: 'ignore' });
+        runGit(['init', repoRoot]);
+        runGit(['-C', repoRoot, 'config', 'user.name', 'Garda Test']);
+        runGit(['-C', repoRoot, 'config', 'user.email', 'garda@example.com']);
+        runGit(['-C', repoRoot, 'commit', '--allow-empty', '-m', 'initial']);
         fs.writeFileSync(
             changedFilePath,
             `${'x'.repeat(SCOPED_DIFF_UNTRACKED_TOTAL_MAX_CHARS + 4096)}\nTAIL_SHOULD_NOT_APPEAR\n`,

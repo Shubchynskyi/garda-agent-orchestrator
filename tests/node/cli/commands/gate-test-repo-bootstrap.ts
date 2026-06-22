@@ -253,7 +253,7 @@ export function initializeGitRepo(repoRoot: string): void {
     // 2. Direct write of user and GPG properties to .git/config to save process spawning
     const configPath = path.join(repoRoot, '.git', 'config');
     if (fs.existsSync(configPath)) {
-        const userConfig = '\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
+        const userConfig = '\n[core]\n\tautocrlf = false\n\teol = lf\n\tsafecrlf = false\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[user]\n\tname = Garda Tests\n\temail = garda-tests@example.com\n';
         fs.appendFileSync(configPath, userConfig, 'utf8');
     }
 

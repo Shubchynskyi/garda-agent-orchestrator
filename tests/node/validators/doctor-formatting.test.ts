@@ -9,6 +9,7 @@ import {
     formatDoctorResultCompact,
     runDoctor
 } from '../../../src/validators/doctor';
+import { quoteCommandValue } from '../../../src/core/command-quoting';
 import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
 import { buildFakeDoctorResult, createDoctorWorkspace, DEFAULT_NEW_EVIDENCE } from './doctor-workspace-builder';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
@@ -58,6 +59,99 @@ test('formatDoctorResult does not default to T-001 when TASK.md has no executabl
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+});
+
+test('formatDoctorResult recommends exact recovery commands for PROJECT_COMMANDS_PENDING', () => {
+    const fakeResult = buildFakeDoctorResult({
+        passed: false,
+        targetRoot: '/tmp/project-with-spaces',
+        verifyResult: {
+            passed: false,
+            targetRoot: '/tmp/project-with-spaces',
+            sourceOfTruth: 'Claude',
+            canonicalEntrypoint: 'CLAUDE.md',
+            bundleVersion: '1.1.0',
+            requiredPathsChecked: 10,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [
+                    'garda-agent-orchestrator/live/config/workflow-config.json compile_gate.command is unconfigured; PROJECT_COMMANDS_PENDING until agent-init or workflow set records a project-specific command.'
+                ],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 1
+        }
+    });
+
+    const output = formatDoctorResult(fakeResult);
+
+    assert.ok(output.includes('agent-init --target-root "/tmp/project-with-spaces"'));
+    assert.ok(output.includes('workflow set --compile-gate-command'));
+    assert.ok(output.includes('--target-root "/tmp/project-with-spaces"'));
+});
+
+test('formatDoctorResult quotes PROJECT_COMMANDS_PENDING target root recovery commands', () => {
+    const targetRoot = 'C:\\tmp\\project $(Invoke-Expression bad) `tick` \'single\' "double"';
+    const fakeResult = buildFakeDoctorResult({
+        targetRoot,
+        passed: false,
+        verifyResult: {
+            passed: false,
+            targetRoot,
+            sourceOfTruth: 'Codex',
+            canonicalEntrypoint: 'AGENTS.md',
+            bundleVersion: '1.1.0',
+            requiredPathsChecked: 58,
+            violations: {
+                missingPaths: [],
+                initAnswersContractViolations: [],
+                versionContractViolations: [],
+                reviewCapabilitiesContractViolations: [],
+                pathsContractViolations: [],
+                tokenEconomyContractViolations: [],
+                outputFiltersContractViolations: [],
+                skillPacksConfigContractViolations: [],
+                skillsIndexConfigContractViolations: [],
+                ruleFileViolations: [],
+                templatePlaceholderViolations: [],
+                commandsContractViolations: [
+                    'garda-agent-orchestrator/live/config/workflow-config.json compile_gate.command is unconfigured; PROJECT_COMMANDS_PENDING until agent-init or workflow set records a project-specific command.'
+                ],
+                manifestContractViolations: [],
+                coreRuleContractViolations: [],
+                entrypointContractViolations: [],
+                taskContractViolations: [],
+                qwenSettingsViolations: [],
+                skillsIndexContractViolations: [],
+                skillPackContractViolations: [],
+                gitignoreMissing: []
+            },
+            totalViolationCount: 1
+        }
+    });
+    const output = formatDoctorResult(fakeResult);
+    const quotedTargetRoot = quoteCommandValue(targetRoot);
+
+    assert.ok(output.includes(`agent-init --target-root ${quotedTargetRoot}`));
+    assert.ok(output.includes(`--target-root ${quotedTargetRoot}`));
+    assert.ok(!output.includes(`--target-root "${targetRoot}"`));
 });
 
 
