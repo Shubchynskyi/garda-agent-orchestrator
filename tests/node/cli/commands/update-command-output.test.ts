@@ -846,13 +846,15 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
                             trustOverrideUsed: true,
                             trustOverrideSource: 'cli',
                             sourceType: 'git',
-                            sourceReference: 'fixture'
+                            sourceReference: 'fixture',
+                            gitCommitSha: '0123456789abcdef0123456789abcdef01234567'
                         });
                     }
                     return {
                         targetRoot: fixture.workspaceRoot,
                         repoUrl: 'https://example.test/repo.git',
                         branch: 'main',
+                        gitCommitSha: '0123456789abcdef0123456789abcdef01234567',
                         sourceType: 'git',
                         sourceReference: 'fixture',
                         releaseProvenanceStatus: 'TRUSTED_GIT_NO_RELEASE_SIGNATURE',
@@ -888,6 +890,7 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
             assert.match(plainTextLines[4], /\u001b\[1mVersion applied\u001b\[0m \u001b\[33m1\.0\.0\u001b\[0m \u001b\[2m->\u001b\[0m \u001b\[32m1\.1\.0\u001b\[0m/);
             assertPlainLine(plainTextLines, '  Repo: https://example.test/repo.git');
             assertPlainLine(plainTextLines, '  Branch: main');
+            assertPlainLine(plainTextLines, '  Git commit: 0123456789abcdef0123456789abcdef01234567');
             assertPlainLine(plainTextLines, '  Version: 1.0.0 -> 1.1.0');
             assertPlainLine(plainTextLines, '  Provenance: trusted git source; no release signature for git sources (details in update report)');
             assertPlainLine(plainTextLines, '  Report: garda-agent-orchestrator/runtime/update-reports/update-1.md');
@@ -910,6 +913,7 @@ test('handleUpdateGit surfaces the shared status banner in plain text without ch
             assert.equal(parsed.checkUpdateResult, 'UPDATED');
             assert.equal(parsed.sourceType, 'git');
             assert.equal(parsed.repoUrl, 'https://example.test/repo.git');
+            assert.equal(parsed.gitCommitSha, '0123456789abcdef0123456789abcdef01234567');
             assert.equal(parsed.updatedVersion, '1.1.0');
             assert.equal(parsed.releaseProvenanceSummary, 'Trusted git source details should stay out of default stdout.');
         } finally {

@@ -84,6 +84,7 @@ export interface CheckUpdateRunnerOptions {
     trustOverrideSource: string;
     sourceType: string;
     sourceReference: string;
+    gitCommitSha?: string | null;
     requestedPackageSpec?: string | null;
     exactPackageSpec?: string | null;
     resolvedPackageVersion?: string | null;

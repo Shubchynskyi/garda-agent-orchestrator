@@ -31,6 +31,7 @@ export interface UpdateLifecycleResult extends Record<string, unknown> {
     releaseProvenanceStatus?: unknown;
     releaseProvenanceSummary?: unknown;
     releaseProvenanceRecommendation?: unknown;
+    gitCommitSha?: unknown;
     updateMessages?: unknown;
     releaseNotes?: unknown;
     updateAnnouncementWarnings?: unknown;
@@ -364,6 +365,7 @@ export function buildUpdateLifecycleRunner(bundlePath: string, fallbackDryRun: b
                 overrideSource: runnerOptions.trustOverrideSource,
                 sourceType: runnerOptions.sourceType,
                 sourceReference: runnerOptions.sourceReference,
+                gitCommitSha: runnerOptions.gitCommitSha || null,
                 requestedPackageSpec: runnerOptions.requestedPackageSpec || null,
                 exactPackageSpec: runnerOptions.exactPackageSpec || null,
                 resolvedPackageVersion: runnerOptions.resolvedPackageVersion || null,
@@ -423,6 +425,7 @@ export function mergeUpdateLifecycleOutput(
         releaseProvenanceStatus: lifecycleResult.releaseProvenanceStatus ?? baseResult.releaseProvenanceStatus,
         releaseProvenanceSummary: lifecycleResult.releaseProvenanceSummary ?? baseResult.releaseProvenanceSummary,
         releaseProvenanceRecommendation: lifecycleResult.releaseProvenanceRecommendation ?? baseResult.releaseProvenanceRecommendation,
+        gitCommitSha: lifecycleResult.gitCommitSha ?? baseResult.gitCommitSha,
         updateMessages: lifecycleResult.updateMessages,
         releaseNotes: lifecycleResult.releaseNotes,
         updateAnnouncementWarnings: lifecycleResult.updateAnnouncementWarnings

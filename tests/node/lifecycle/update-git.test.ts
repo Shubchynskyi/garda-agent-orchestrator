@@ -21,6 +21,21 @@ function git(args: string[], cwd: string) {
     }
 }
 
+function gitText(args: string[], cwd: string): string {
+    const result = childProcess.spawnSync('git', args, {
+        cwd,
+        stdio: 'pipe',
+        encoding: 'utf8'
+    });
+
+    if (result.status !== 0) {
+        const errorText = String(result.stderr || result.stdout || '').trim();
+        throw new Error(`git ${args.join(' ')} failed: ${errorText}`);
+    }
+
+    return String(result.stdout || '').trim();
+}
+
 function createGitUpdateRepo(version: string) {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-update-git-repo-'));
     fs.mkdirSync(path.join(repoRoot, 'scripts'), { recursive: true });
@@ -99,6 +114,7 @@ describe('runUpdateFromGit', () => {
 
             assert.equal(result.sourceType, 'git');
             assert.equal(result.repoUrl, repoRoot);
+            assert.equal(result.gitCommitSha, gitText(['rev-parse', 'HEAD'], repoRoot));
             assert.equal(result.checkUpdateResult, 'UPDATE_AVAILABLE');
             assert.equal(result.updateAvailable, true);
             assert.equal(result.updateApplied, false);
@@ -116,19 +132,23 @@ describe('runUpdateFromGit', () => {
         const repoRoot = createGitUpdateRepo('2.1.0');
         const { targetRoot, bundleRoot } = createDeployedWorkspace('2.0.0');
         try {
+            const branchName = gitText(['branch', '--show-current'], repoRoot);
             let updateRunnerCalled = false;
             let updateRunnerSourceType = '';
             let updateRunnerSourceReference = '';
+            let updateRunnerGitCommitSha = '';
             const result = await runUpdateFromGit({
                 targetRoot,
                 bundleRoot,
                 repoUrl: repoRoot,
+                branch: branchName,
                 noPrompt: true,
                 trustOverride: true,
                 updateRunner: (options) => {
                     updateRunnerCalled = true;
                     updateRunnerSourceType = options.sourceType;
                     updateRunnerSourceReference = options.sourceReference;
+                    updateRunnerGitCommitSha = String(options.gitCommitSha || '');
                 }
             });
 
@@ -136,7 +156,10 @@ describe('runUpdateFromGit', () => {
             assert.equal(result.updateApplied, true);
             assert.equal(updateRunnerCalled, true);
             assert.equal(updateRunnerSourceType, 'git');
-            assert.equal(updateRunnerSourceReference, repoRoot);
+            assert.equal(updateRunnerSourceReference, `${repoRoot}#${branchName}`);
+            assert.equal(updateRunnerGitCommitSha, gitText(['rev-parse', 'HEAD'], repoRoot));
+            assert.equal(result.gitCommitSha, updateRunnerGitCommitSha);
+            assert.equal(result.sourceReference, `${repoRoot}#${branchName}`);
             assert.equal(result.trustOverrideSource, 'cli-flag');
             assert.equal(result.releaseProvenanceStatus, 'TRUST_OVERRIDE_UNVERIFIED');
             assert.ok(fs.existsSync(path.join(bundleRoot, 'dist', 'src', 'index.js')));

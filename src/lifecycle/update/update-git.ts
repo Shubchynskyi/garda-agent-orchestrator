@@ -210,6 +210,20 @@ function ensureGitAvailable() {
     }
 }
 
+function readGitCommitSha(repoRoot: string): string | null {
+    const result = spawnSyncWithTimeout('git', ['rev-parse', 'HEAD'], {
+        cwd: repoRoot,
+        stdio: 'pipe',
+        encoding: 'utf8',
+        timeoutMs: DEFAULT_GIT_TIMEOUT_MS
+    });
+    if (result.error || result.status !== 0) {
+        return null;
+    }
+    const sha = String(result.stdout || '').trim();
+    return /^[0-9a-f]{40}$/iu.test(sha) ? sha : null;
+}
+
 export async function cloneGitUpdateSource(repoUrl: string, branch: string | null): Promise<GitCloneHandle> {
     ensureGitAvailable();
 
@@ -275,6 +289,7 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
 
     const normalizedRepoUrl = String(repoUrl || DEFAULT_GIT_UPDATE_REPO_URL).trim();
     const normalizedBranch = branch ? String(branch).trim() : null;
+    const diagnosticSource = normalizedBranch ? `${normalizedRepoUrl}#${normalizedBranch}` : normalizedRepoUrl;
 
     const trustResult = validateGitSourceTrust(normalizedRepoUrl, { trustOverride });
     assertUpdateApplyAllowedInSwitchMode({
@@ -288,10 +303,12 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
     const gitSource = await cloneGitUpdateSource(normalizedRepoUrl, normalizedBranch);
 
     try {
+        const gitCommitSha = readGitCommitSha(gitSource.clonePath);
+
         if (!checkOnly && !dryRun) {
             await prepareGitUpdateSource(
                 gitSource.clonePath,
-                normalizedBranch ? `${normalizedRepoUrl}#${normalizedBranch}` : normalizedRepoUrl
+                diagnosticSource
             );
         }
 
@@ -300,7 +317,7 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
             bundleRoot,
             initAnswersPath,
             sourcePath: gitSource.clonePath,
-            diagnosticSourceReference: normalizedBranch ? `${normalizedRepoUrl}#${normalizedBranch}` : normalizedRepoUrl,
+            diagnosticSourceReference: diagnosticSource,
             diagnosticTool: 'git',
             apply: !checkOnly,
             noPrompt,
@@ -313,7 +330,8 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
                 ? (runnerOptions) => updateRunner({
                     ...runnerOptions,
                     sourceType: 'git',
-                    sourceReference: normalizedRepoUrl
+                    sourceReference: diagnosticSource,
+                    gitCommitSha
                 })
                 : null
         });
@@ -321,10 +339,11 @@ export async function runUpdateFromGit(options: RunUpdateFromGitOptions) {
         return {
             ...result,
             sourceType: 'git',
-            sourceReference: normalizedRepoUrl,
+            sourceReference: diagnosticSource,
             sourcePath: null,
             repoUrl: normalizedRepoUrl,
             branch: normalizedBranch,
+            gitCommitSha,
             trustPolicy: trustResult.policy
         };
     } finally {

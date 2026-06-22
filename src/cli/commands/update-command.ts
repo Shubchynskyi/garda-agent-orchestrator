@@ -208,6 +208,7 @@ function formatHumanUpdateOutput(result: Record<string, unknown>): void {
         ['Integrity', result.resolvedPackageIntegrity],
         ['Repo', result.repoUrl],
         ['Branch', result.branch],
+        ['Git commit', result.gitCommitSha],
         ['Target', result.targetRoot]
     ]);
 

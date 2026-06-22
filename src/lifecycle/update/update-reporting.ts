@@ -10,6 +10,7 @@ interface UpdateTrustContext {
     overrideSource: string;
     sourceType: string;
     sourceReference: string;
+    gitCommitSha?: string | null;
     requestedPackageSpec?: string | null;
     exactPackageSpec?: string | null;
     resolvedPackageVersion?: string | null;
@@ -56,6 +57,7 @@ export function buildUpdateReportLines(data: UpdateReportData): string[] {
         '## Trust',
         `SourceType: ${trustContext.sourceType}`,
         `SourceReference: ${trustContext.sourceReference}`,
+        `GitCommitSha: ${trustContext.gitCommitSha || 'n/a'}`,
         `RequestedPackageSpec: ${trustContext.requestedPackageSpec || 'n/a'}`,
         `ExactPackageSpec: ${trustContext.exactPackageSpec || 'n/a'}`,
         `ResolvedPackageVersion: ${trustContext.resolvedPackageVersion || 'n/a'}`,
@@ -180,6 +182,7 @@ export function buildUpdateResult(input: UpdateResultInput) {
         trustPolicy: trustContext.policy,
         trustOverrideUsed: trustContext.overrideUsed,
         trustOverrideSource: trustContext.overrideSource,
+        gitCommitSha: trustContext.gitCommitSha || null,
         requestedPackageSpec: trustContext.requestedPackageSpec || null,
         exactPackageSpec: trustContext.exactPackageSpec || null,
         resolvedPackageVersion: trustContext.resolvedPackageVersion || null,

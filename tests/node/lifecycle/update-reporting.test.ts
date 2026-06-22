@@ -53,6 +53,7 @@ function makeTrustContext(overrides: Record<string, unknown> = {}) {
         overrideSource: 'cli-flag',
         sourceType: 'path',
         sourceReference: '/local-source',
+        gitCommitSha: null,
         requestedPackageSpec: null,
         exactPackageSpec: null,
         resolvedPackageVersion: null,
@@ -84,6 +85,7 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('# Update Report'));
         assert.ok(text.includes('TargetRoot: /project'));
         assert.ok(text.includes('RollbackSnapshotRecordCount: 5'));
+        assert.ok(text.includes('GitCommitSha: n/a'));
         assert.ok(text.includes('TrustPolicy: overridden'));
         assert.ok(text.includes('RequestedPackageSpec: n/a'));
         assert.ok(text.includes('ExactPackageSpec: n/a'));
@@ -213,6 +215,32 @@ describe('buildUpdateReportLines', () => {
         assert.ok(text.includes('ResolvedPackageIntegrity: sha512-resolved'));
         assert.ok(text.includes('ReleaseProvenanceStatus: NPM_REGISTRY_INTEGRITY_RECORDED'));
     });
+
+    it('includes git commit identity when available', () => {
+        const lines = buildUpdateReportLines({
+            normalizedTarget: '/project',
+            initAnswersResolvedPath: '/project/answers.json',
+            rollbackSnapshotRelativePath: 'snapshot',
+            rollbackRecordsRelativePath: 'snapshot/records.json',
+            rollbackRecordCount: 0,
+            rollbackStatus: 'NOT_TRIGGERED',
+            trustContext: makeTrustContext({
+                sourceType: 'git',
+                sourceReference: 'https://example.test/repo.git#dev',
+                gitCommitSha: '0123456789abcdef0123456789abcdef01234567',
+                releaseProvenanceStatus: 'TRUSTED_GIT_NO_RELEASE_SIGNATURE'
+            }),
+            previousVersion: '1.0.0',
+            previousVersionSource: 'live/version.json',
+            bundleVersion: '2.0.0',
+            stageResult: makeStageResult()
+        });
+
+        const text = lines.join('\n');
+        assert.ok(text.includes('SourceType: git'));
+        assert.ok(text.includes('SourceReference: https://example.test/repo.git#dev'));
+        assert.ok(text.includes('GitCommitSha: 0123456789abcdef0123456789abcdef01234567'));
+    });
 });
 
 describe('buildUpdateResult', () => {
@@ -247,6 +275,7 @@ describe('buildUpdateResult', () => {
         assert.equal(result.assistantLanguage, 'English');
         assert.equal(result.trustPolicy, 'overridden');
         assert.equal(result.trustOverrideUsed, true);
+        assert.equal(result.gitCommitSha, null);
         assert.equal(result.requestedPackageSpec, 'garda-agent-orchestrator@latest');
         assert.equal(result.exactPackageSpec, 'garda-agent-orchestrator@2.0.0');
         assert.equal(result.resolvedPackageVersion, '2.0.0');

@@ -40,6 +40,7 @@ interface UpdateTrustContext {
     overrideSource: string;
     sourceType: string;
     sourceReference: string;
+    gitCommitSha?: string | null;
     requestedPackageSpec?: string | null;
     exactPackageSpec?: string | null;
     resolvedPackageVersion?: string | null;
@@ -165,6 +166,7 @@ function runValidatedUpdate(
         overrideSource: 'none',
         sourceType: 'unknown',
         sourceReference: 'unknown',
+        gitCommitSha: null,
         requestedPackageSpec: null,
         exactPackageSpec: null,
         resolvedPackageVersion: null,
