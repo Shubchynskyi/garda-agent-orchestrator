@@ -1292,7 +1292,7 @@ describe('gates/next-step', () => {
 
         assert.match(result.reason, /Recommended full-suite command timeout: 130s/);
 
-        assert.match(result.reason, /last 1 run\(s\) avg 100s/);
+        assert.match(result.reason, /target sample 5 recent run\(s\); eligible 1 run\(s\) avg 100s/);
 
         assert.match(result.reason, /max 100s/);
 

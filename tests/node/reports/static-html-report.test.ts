@@ -252,7 +252,7 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
             configured_timeout_seconds: 600,
             warning: null
         },
-        timeout_forecast_label: 'Recommended full-suite command timeout: 476s (last 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).'
+        timeout_forecast_label: 'Recommended full-suite command timeout: 476s (target sample 5 recent run(s); eligible 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).'
     };
     const html = renderStaticHtmlReport(report);
 

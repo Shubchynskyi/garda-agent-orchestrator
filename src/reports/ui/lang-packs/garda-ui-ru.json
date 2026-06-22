@@ -250,7 +250,7 @@
     "taskCommandDiscard": "Отбросить задачу",
     "taskCommandDiscardDescription": "Завершает задачу как отброшенную через защищённый gate task-reset, очищает runtime-артефакты и помечает её как DONE.",
     "fullSuiteTimeoutForecastRecommendedPrefix": "Рекомендуемый таймаут полной проверки:",
-    "fullSuiteTimeoutForecastRecentRuns": "последние",
+    "fullSuiteTimeoutForecastRecentRuns": "целевой сэмпл",
     "fullSuiteTimeoutForecastRunsAverage": "запуск(ов), среднее",
     "fullSuiteTimeoutForecastMaximum": "максимум",
     "fullSuiteTimeoutForecastSafetyMargin": "запас сверх максимума",
@@ -358,7 +358,7 @@
       "description": "Объясняет, почему видимые задачи заблокированы, не изменяя файлы."
     },
     "repair-inspect": {
-      "label": "Проверить восстановление",
+      "label": "Проверить состояние runtime",
       "description": "Проверяет каноническое и производное состояние runtime без пересборки или удаления файлов."
     },
     "repair-rebuild-indexes": {

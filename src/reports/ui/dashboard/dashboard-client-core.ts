@@ -176,8 +176,8 @@ function fullSuiteTimeoutForecastText(forecast, fallbackLabel) {
   const highWatermark = fullSuiteDurationSeconds(forecast.high_watermark_duration_seconds);
   const safetyMargin = fullSuiteDurationSeconds(forecast.safety_margin_seconds);
   return t('fullSuiteTimeoutForecastRecommendedPrefix') + ' ' + recommended
-    + ' (' + t('fullSuiteTimeoutForecastRecentRuns') + ' ' + (Number.isFinite(sampleCount) ? sampleCount : '-')
-    + ' ' + t('fullSuiteTimeoutForecastRunsAverage') + ' ' + average
+    + ' (' + t('fullSuiteTimeoutForecastRecentRuns') + ' 5; '
+    + (Number.isFinite(sampleCount) ? sampleCount : '-') + ' ' + t('fullSuiteTimeoutForecastRunsAverage') + ' ' + average
     + '; ' + t('fullSuiteTimeoutForecastMaximum') + ' ' + highWatermark
     + '; ' + t('fullSuiteTimeoutForecastSafetyMargin') + ' +' + safetyMargin
     + ' = ' + t('fullSuiteTimeoutForecastMinimum') + ').';

@@ -56,7 +56,7 @@ async function markActivity(force) {
     await refreshSession();
   }
 }
-const SYSTEM_STATE_DIAGNOSTIC_ACTION_IDS = ['status', 'doctor', 'status-why-blocked', 'repair-inspect'];
+const SYSTEM_STATE_DIAGNOSTIC_ACTION_IDS = ['status', 'doctor', 'status-why-blocked'];
 const SYSTEM_STATE_REPAIR_ACTION_BY_SIGNAL = {
   'protected-manifest': 'repair-protected-manifest',
   'runtime-locks': 'repair-locks-cleanup-stale',
@@ -219,10 +219,15 @@ function isPrimarySystemHealthSignal(signal) {
   const id = signal && signal.id ? String(signal.id) : '';
   return !id.startsWith('config-file-');
 }
-function systemOverallSummary(status, fallback) {
+function systemOverallSummary(status, fallback, state) {
   if (status === 'ok') return fallback || 'Core System State signals look healthy.';
   if (status === 'unknown') return fallback || 'System State health is not available.';
-  return 'One or more System State signals need attention.';
+  const blockedCount = Number(state && state.task_queue && state.task_queue.counts && state.task_queue.counts.blocked);
+  if (Number.isFinite(blockedCount) && blockedCount > 0) {
+    return t('blockers') + ': ' + (state.task_queue.summary || (String(blockedCount) + ' blocked task(s).'));
+  }
+  if (status === 'error') return fallback || t('blockers');
+  return t('overviewWarnings') + ': ' + t('noBlockers');
 }
 function systemSignalLabel(signal) {
   const id = signal && signal.id;
@@ -349,7 +354,7 @@ function renderSystemState(report) {
   const signals = mergeSystemSignals(primarySignals, allSignals);
   const renderedOverallStatus = systemWorstHealth(allSignals.filter(isPrimarySystemHealthSignal));
   const renderedOverallLabel = systemHealthLabel(renderedOverallStatus, state.overall.label);
-  const renderedOverallSummary = systemOverallSummary(renderedOverallStatus, state.overall.summary);
+  const renderedOverallSummary = systemOverallSummary(renderedOverallStatus, state.overall.summary, state);
   node.innerHTML = gardaSwitchMarkup(currentActionsPayload)
     + '<section class="system-health-summary">'
     + '<div><h3>' + safe(t('actionsTab')) + '</h3><p>' + safe(renderedOverallSummary || '-') + '</p><p class="empty">' + safe(state.overall.generated_at_utc || report.generated_at_utc || '-') + '</p></div>'

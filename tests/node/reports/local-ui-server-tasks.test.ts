@@ -565,7 +565,7 @@ test('local UI server exposes report and lazy task detail endpoints', async () =
     }
 });
 
-test('local UI browser smoke opens checks cycle tab and renders diagnostics', async (context) => {
+test('local UI browser smoke opens checks cycle tab with compact forecast and settings only', async (context) => {
     const browserPath = findBrowserSmokeExecutable();
     const WebSocketCtor = (globalThis as unknown as { WebSocket?: unknown }).WebSocket;
     if (!browserPath || !WebSocketCtor) {
@@ -619,16 +619,18 @@ test('local UI browser smoke opens checks cycle tab and renders diagnostics', as
         const settingsText = await waitForCdpText(
             cdp,
             'document.getElementById("settings-editor") ? document.getElementById("settings-editor").innerText : ""',
-            /Runtime diagnostics|Диагностика выполнения/u
+            /Full-suite command|Команда полной проверки/u
         );
-        assert.match(settingsText, /No blockers reported|Блокеры не найдены/u);
-        assert.match(settingsText, /Full-suite validation|Валидация полного набора/u);
+        assert.match(settingsText, /Timeout forecast|Прогноз таймаута/u);
+        assert.doesNotMatch(settingsText, /Runtime diagnostics|Диагностика выполнения/u);
+        assert.doesNotMatch(settingsText, /No blockers reported|Блокеры не найдены/u);
+        assert.doesNotMatch(settingsText, /Timeout attempts|Попытки при таймауте/u);
         const settingsHtml = await waitForCdpText(
             cdp,
             'document.getElementById("settings-editor") ? document.getElementById("settings-editor").innerHTML : ""',
-            /data-validation-action-id="doctor"/u
+            /data-setting-id="full-suite-command"/u
         );
-        assert.match(settingsHtml, /data-validation-action-id="status-why-blocked"/u);
+        assert.doesNotMatch(settingsHtml, /data-validation-action-id=/u);
     } finally {
         cdp?.close();
         await terminateBrowserSmokeProcess(browser);
@@ -676,8 +678,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 task_queue: {
                     id: 'task-queue',
                     label: 'Task queue readiness',
-                    status: 'ok',
-                    summary: 'Next executable task is T-100.',
+                    status: 'attention',
+                    summary: '1 task(s) are blocked.',
                     remediation: null,
                     value: {},
                     source_path: 'TASK.md',
@@ -685,7 +687,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         total: 2,
                         active: 0,
                         todo: 1,
-                        blocked: 0,
+                        blocked: 1,
                         done: 1,
                         decomposed: 0
                     },
@@ -702,7 +704,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     compile_command: 'npm run build',
                     full_suite_enabled: true,
                     full_suite_command: 'npm test',
-                    full_suite_timeout_forecast_label: 'Recommended full-suite command timeout: 476s (last 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).',
+                    full_suite_timeout_forecast_label: 'Recommended full-suite command timeout: 476s (target sample 5 recent run(s); eligible 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).',
                     full_suite_timeout_blocker: true,
                     full_suite_timeout_retry_count: 1,
                     full_suite_timeout_attempts_count: 2,
@@ -898,7 +900,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     configured_timeout_seconds: 600,
                     warning: null
                 },
-                timeout_forecast_label: 'Recommended full-suite command timeout: 476s (last 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).'
+                timeout_forecast_label: 'Recommended full-suite command timeout: 476s (target sample 5 recent run(s); eligible 5 run(s) avg 343.2s; max 396.3s; safety margin over max +79.7s = 20% but at least 30s).'
             },
             audit: {
                 status: 'BLOCKED',
@@ -979,7 +981,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 {
                     id: 'repair-inspect',
                     category: 'Inspection',
-                    label: 'Repair inspect',
+                    label: 'Inspect runtime state',
                     description: 'Inspect runtime repair state',
                     command: 'node bin/garda.js repair inspect --target-root "."',
                     mutates: false,
@@ -1383,7 +1385,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         resolveReportFetch();
         await flushPromises();
         assert.equal(initialReportFetchResolved, true);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Runtime diagnostics/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout forecast/u);
 
         const tasksNode = fakeDocument.elements.tasks;
         assert.match(tasksNode.innerHTML, /T-100/u);
@@ -1427,41 +1429,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full_suite_validation\.green_summary_max_lines/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Recommended full-suite command timeout/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout blocks task/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout retry count/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout attempts/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Runtime diagnostics/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /No blockers reported/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Timeout attempts/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Runtime diagnostics/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /No blockers reported/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /<h3 class="task-section-title">Blockers<\/h3>/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id="doctor"/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id="status-why-blocked"/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id=/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Gate Timeline/u);
-        const validationDoctorButton = fakeDocument.elements['settings-editor'].querySelectorAll('button[data-validation-action-id]')
-            .find((button) => button.dataset.validationActionId === 'doctor' && button.dataset.validationActionMode === 'execute');
-        assert.ok(validationDoctorButton);
-        await validationDoctorButton.dispatch('click');
-        await flushPromises();
-        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /Doctor/u);
-        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /GARDA_DOCTOR ok/u);
-        assert.equal(fakeDocument.elements['validation-action-status'].getAttribute('tabindex'), '-1');
-        const validationWhyBlockedButton = fakeDocument.elements['settings-editor'].querySelectorAll('button[data-validation-action-id]')
-            .find((button) => button.dataset.validationActionId === 'status-why-blocked' && button.dataset.validationActionMode === 'execute');
-        assert.ok(validationWhyBlockedButton);
-        await validationWhyBlockedButton.dispatch('click');
-        await flushPromises();
-        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /Why blocked/u);
-        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /GARDA_WHY_BLOCKED ok/u);
-        whyBlockedShouldFail = true;
-        await validationWhyBlockedButton.dispatch('click');
-        await flushPromises();
-        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /GARDA_WHY_BLOCKED failed/u);
-        whyBlockedShouldFail = false;
         report.tasks_tab.rows[1].status = 'BLOCKED';
         report.tasks_tab.rows[1].status_token = 'BLOCKED';
         await fakeDocument.elements['language-select'].dispatch('change');
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /<h3 class="task-section-title">Blockers<\/h3>/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /T-200/u);
-        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /No blockers reported/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /<h3 class="task-section-title">Blockers<\/h3>/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /T-200/u);
         (report.unavailable as Array<{ reason: string; scope: string }>).push({
             scope: 'full-suite-validation',
             reason: 'Full-suite timeout continued as warning-only evidence.'
@@ -1475,9 +1454,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         workflowState.full_suite_timeout_warning_only_continuation = true;
         workflowState.full_suite_timeout_latest_warning = 'Full-suite timeout continued as warning-only evidence.';
         await fakeDocument.elements['language-select'].dispatch('change');
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite timeout continued as warning-only evidence/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation: true/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warnings: Full-suite timeout continued as warning-only evidence/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite timeout continued as warning-only evidence/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /No runtime diagnostics reported/u);
         report.unavailable.splice(0, report.unavailable.length);
         workflowState.full_suite_timeout_blocker = true;
@@ -1552,10 +1530,11 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Garda switch/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Switch action is hidden/u);
         assert.ok(
-            fakeDocument.elements['system-state-panel'].innerHTML.indexOf('Garda switch')
-            < fakeDocument.elements['system-state-panel'].innerHTML.indexOf('One or more System State signals need attention')
+            fakeDocument.elements['system-state-panel'].innerHTML.indexOf('system-garda-switch')
+            < fakeDocument.elements['system-state-panel'].innerHTML.indexOf('system-health-summary')
         );
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Blockers: 1 task\(s\) are blocked/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /No blockers reported/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Queue status/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Protected controls/u);
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Recommended full-suite command timeout/u);
@@ -1568,7 +1547,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="status"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="doctor"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="status-why-blocked"/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-inspect"/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-inspect"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-protected-manifest"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-locks-cleanup-stale"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-rebuild-indexes"/u);
@@ -1602,15 +1581,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await flushPromises();
         assert.match(fakeDocument.elements['action-status'].innerHTML, /Why blocked/u);
         assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_WHY_BLOCKED ok/u);
-        const repairInspectDiagnosticButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
-            .find((button) => button.dataset.actionId === 'repair-inspect' && button.dataset.actionMode === 'execute');
-        assert.ok(repairInspectDiagnosticButton);
-        await repairInspectDiagnosticButton.dispatch('click');
-        await flushPromises();
-        assert.match(fakeDocument.elements['action-status'].innerHTML, /Repair inspect/u);
-        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_INSPECT ok/u);
-        assert.equal(fakeDocument.elements['action-status'].scrollCount, 4);
-        assert.equal(fakeDocument.elements['action-status'].focusCount, 4);
+        assert.equal(fakeDocument.elements['action-status'].scrollCount, 3);
+        assert.equal(fakeDocument.elements['action-status'].focusCount, 3);
         const protectedManifestRepairButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
             .find((button) => button.dataset.actionId === 'repair-protected-manifest' && button.dataset.actionMode === 'execute');
         assert.ok(protectedManifestRepairButton);
@@ -1632,8 +1604,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         await flushPromises();
         assert.match(fakeDocument.elements['action-status'].innerHTML, /Rebuild indexes/u);
         assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_REBUILD_INDEXES ok/u);
-        assert.equal(fakeDocument.elements['action-status'].scrollCount, 7);
-        assert.equal(fakeDocument.elements['action-status'].focusCount, 7);
+        assert.equal(fakeDocument.elements['action-status'].scrollCount, 6);
+        assert.equal(fakeDocument.elements['action-status'].focusCount, 6);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Shutdown in/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /15m/u);
         assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /16m/u);
@@ -1657,10 +1629,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         const taskButton = tasksNode.querySelectorAll('button[data-task-id]')[0];
         await taskButton.dispatch('click');
         await flushPromises();
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Gate Timeline/u);
-        assert.equal((fakeDocument.elements['settings-editor'].innerHTML.match(/Full-suite validation/gu) || []).length, 1);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite state/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite validation/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Gate Timeline/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite state/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite validation/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Gate Timeline/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Runtime diagnostics/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Full-suite validation/u);
@@ -1733,7 +1704,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Статус/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Диагностика/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Почему заблокировано/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Проверить восстановление/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Проверить восстановление/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Проверить состояние runtime/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Обновить защищенный manifest/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Очистить устаревшие блокировки/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Пересобрать индексы/u);
@@ -1759,15 +1731,19 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         actions.enabled = false;
         await fakeDocument.elements['language-select'].dispatch('change');
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Защищённые режимы/u);
-        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Действия отключены/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Действия отключены/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id="doctor"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Предупреждения/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Блокеры: 1 task\(s\) are blocked/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Блокеры не найдены/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Guarded UI actions are disabled/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Действия отключены/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /чтобы показать разрешённые команды/u);
 
         actions.enabled = true;
+        report.system_state.task_queue.status = 'ok';
+        report.system_state.task_queue.summary = 'Next executable task is T-100.';
+        report.system_state.task_queue.counts.blocked = 0;
         (report.system_state.signals as unknown[]) = [
             report.system_state.garda,
             report.system_state.ui_actions,

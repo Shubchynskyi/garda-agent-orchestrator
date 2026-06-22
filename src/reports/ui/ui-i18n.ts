@@ -264,7 +264,7 @@ const ENGLISH_LOCAL_UI_TEXT = Object.freeze({
     fullSuiteTimeoutAttemptExitCode: 'exit code',
     fullSuiteTimeoutForecast: 'Timeout forecast',
     fullSuiteTimeoutForecastRecommendedPrefix: 'Recommended full-suite command timeout:',
-    fullSuiteTimeoutForecastRecentRuns: 'last',
+    fullSuiteTimeoutForecastRecentRuns: 'target sample',
     fullSuiteTimeoutForecastRunsAverage: 'run(s) avg',
     fullSuiteTimeoutForecastMaximum: 'max',
     fullSuiteTimeoutForecastSafetyMargin: 'safety margin over max',
@@ -504,7 +504,7 @@ const CORE_LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<string,
             description: 'Explain why visible tasks are blocked without changing files.'
         },
         'repair-inspect': {
-            label: 'Repair inspect',
+            label: 'Inspect runtime state',
             description: 'Inspect canonical and derived runtime state without rebuilding or deleting files.'
         },
         'repair-rebuild-indexes': {

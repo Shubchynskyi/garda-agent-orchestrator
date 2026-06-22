@@ -194,7 +194,7 @@ describe('gates/full-suite-validation', () => {
             assert.equal(forecast.high_watermark_duration_seconds, 100);
             assert.equal(forecast.recommended_timeout_seconds, 130);
             const text = formatFullSuiteTimeoutForecast(forecast);
-            assert.match(text, /last 1 run\(s\) avg 100s/);
+            assert.match(text, /target sample 5 recent run\(s\); eligible 1 run\(s\) avg 100s/);
             assert.match(text, /2 matching run\(s\) excluded from forecast/);
             assert.match(text, /interrupted_or_cancelled=1/);
             assert.match(text, /timed_out=1/);

@@ -182,84 +182,15 @@ function renderSettingRow(setting, disabled, controlScope) {
     + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled, controlScope) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'
     + '</tr>';
 }
-function renderValidationRuntimeInfo(report) {
+function renderValidationForecastLine(report) {
   if (currentWorkflowSettingGroup !== 'validation' || !report || !report.system_state || !report.system_state.workflow) {
     return '';
   }
   const workflow = report.system_state.workflow;
-  return '<section class="workflow-group full-suite-runtime-info"><h3>' + safe(t('fullSuiteTitle')) + '</h3>'
-    + '<div class="system-inline-details">'
-    + '<span>' + safe(t('fullSuiteCommand')) + ': <code>' + safe(workflow.full_suite_command || '-') + '</code></span>'
-    + '<span>' + safe(t('fullSuiteTimeoutBlocker')) + ': ' + safe(formatBool(workflow.full_suite_timeout_blocker)) + '</span>'
-    + '<span>' + safe(t('fullSuiteTimeoutRetryCount')) + ': ' + safe(workflow.full_suite_timeout_retry_count == null ? '-' : String(workflow.full_suite_timeout_retry_count)) + '</span>'
-    + '<span>' + safe(t('fullSuiteTimeoutAttempts')) + ': ' + safe(workflow.full_suite_timeout_attempts_count == null ? '-' : String(workflow.full_suite_timeout_attempts_count)) + ' / ' + safe(workflow.full_suite_timeout_max_attempts == null ? '-' : String(workflow.full_suite_timeout_max_attempts)) + '</span>'
-    + '<span>' + safe(t('fullSuiteTimeoutAttemptsExhausted')) + ': ' + safe(formatBool(workflow.full_suite_timeout_attempts_exhausted)) + '</span>'
-    + '<span>' + safe(t('fullSuiteTimeoutWarningContinuation')) + ': ' + safe(formatBool(workflow.full_suite_timeout_warning_only_continuation)) + '</span>'
-    + '<span>' + safe(t('overviewWarnings')) + ': ' + safe(workflow.full_suite_timeout_latest_warning || '-') + '</span>'
-    + '<span>' + safe(t('fullSuiteTimeoutForecast')) + ': ' + safe(workflow.full_suite_timeout_forecast_label || '-') + '</span>'
-    + '</div></section>';
-}
-function validationBlockedTasks(report) {
-  const rows = report && report.tasks_tab && report.tasks_tab.rows ? report.tasks_tab.rows : [];
-  return rows.filter(task => (task.status_token || task.status) === 'BLOCKED');
-}
-function renderValidationActionButton(actionId) {
-  const payload = currentActionsPayload;
-  if (!payload || !payload.enabled) {
+  if (!workflow.full_suite_timeout_forecast_label) {
     return '';
   }
-  const action = (payload.actions || []).find(item => item.id === actionId);
-  if (!action || !action.enabled) {
-    return '';
-  }
-  return '<button type="button" data-validation-action-id="' + safe(action.id) + '" data-validation-action-mode="execute">' + safe(actionLabel(action)) + '</button>';
-}
-function renderValidationChecksState(report) {
-  if (currentWorkflowSettingGroup !== 'validation' || !report) {
-    return '';
-  }
-  const blockedTasks = validationBlockedTasks(report);
-  const warnings = report.unavailable || [];
-  const fullSuite = currentTaskDetail && currentTaskDetail.full_suite_validation ? currentTaskDetail.full_suite_validation : null;
-  const timeline = currentTaskDetail && currentTaskDetail.latest_cycle_events ? currentTaskDetail.latest_cycle_events : null;
-  const actionsDisabled = !currentActionsPayload || !currentActionsPayload.enabled;
-  const actionButtons = ['doctor', 'status-why-blocked'].map(renderValidationActionButton).join('');
-  return '<section class="workflow-group validation-check-state">'
-    + '<h3>' + safe(t('runtimeDiagnosticsTitle')) + '</h3>'
-    + (actionsDisabled
-      ? '<p class="empty">' + safe(t('actionsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('actionsDisabledTail')) + '</p>'
-      : '<p class="empty">' + safe(t('actionsPreviewHelp')) + '</p><div class="action-buttons">' + actionButtons + '</div>')
-    + '<div id="validation-action-status" class="action-status empty"></div>'
-    + (blockedTasks.length > 0
-      ? '<h3 class="task-section-title">' + safe(t('blockers')) + '</h3><ul class="list">' + blockedTasks.map(task => '<li><code>' + safe(task.task_id) + '</code>: ' + safe(task.title || task.area || '-') + '</li>').join('') + '</ul>'
-      : '<p class="empty">' + safe(t('noBlockers')) + '</p>')
-    + (warnings.length > 0
-      ? '<h3 class="task-section-title">' + safe(t('warningsTitle')) + '</h3><ul class="list">' + warnings.map(item => '<li><code>' + safe(item.scope || '-') + '</code>: ' + safe(item.reason || item.message || item) + '</li>').join('') + '</ul>'
-      : '<p class="empty">' + safe(t('noRuntimeDiagnostics')) + '</p>')
-    + (fullSuite ? '<h3 class="task-section-title">' + safe(t('fullSuiteState')) + '</h3>' + fullSuiteSummary(fullSuite) : '')
-    + (timeline ? '<h3 class="task-section-title">' + safe(t('gateTimeline')) + '</h3><p class="empty">' + safe(t('gateTimelineHelp')) + '</p><pre>' + safe(JSON.stringify(timeline, null, 2)) + '</pre>' : '')
-    + '</section>';
-}
-async function runValidationAction(actionId, mode) {
-  const response = await fetch('/api/actions', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-garda-action-token': actionToken },
-    body: JSON.stringify({ action_id: actionId, mode })
-  });
-  const result = await response.json();
-  const node = document.getElementById('validation-action-status');
-  if (!node) {
-    return;
-  }
-  const label = localizedField(actionTextPacks, result.action_id || actionId, 'label', result.action_id || actionId || t('action'));
-  node.innerHTML = '<section class="command-preview-panel">'
-    + '<div class="command-preview-main"><strong>' + safe(label) + '</strong></div>'
-    + '<div class="command-preview-meta"><span>' + safe(t('statusColumn')) + '<code>' + safe(resultStatusText(result.status)) + '</code></span></div>'
-    + (result.audit_path ? '<p><strong>' + safe(t('audit')) + ':</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')
-    + outputBlock('stdout', result.stdout)
-    + outputBlock('stderr', result.stderr)
-    + '</section>';
-  focusVisibleActionResult(node);
+  return '<p class="setting-note full-suite-runtime-info"><strong>' + safe(t('fullSuiteTimeoutForecast')) + ':</strong> ' + safe(workflow.full_suite_timeout_forecast_label) + '</p>';
 }
 function renderSettingsEditor(payload) {
   currentSettingsPayload = payload;
@@ -282,8 +213,7 @@ function renderSettingsEditor(payload) {
   updateWorkflowPanelTitle();
   const reportForRuntimeInfo = typeof currentReport === 'undefined' ? null : currentReport;
   settingsEditorNode.innerHTML = disabledNotice
-    + renderValidationChecksState(reportForRuntimeInfo)
-    + renderValidationRuntimeInfo(reportForRuntimeInfo)
+    + renderValidationForecastLine(reportForRuntimeInfo)
     + (() => {
       const groupSettings = settings.filter(setting => settingGroupId(setting) === currentWorkflowSettingGroup);
       if (groupSettings.length === 0) return '<p class="empty">' + safe(t('noWorkflowSettings')) + '</p>';
@@ -303,11 +233,6 @@ function renderSettingsEditor(payload) {
         return;
       }
       submitSetting(button.dataset.settingId, mode, settingSubmitValue(setting, input, controlScope), confirmation);
-    });
-  }
-  for (const button of settingsEditorNode.querySelectorAll('button[data-validation-action-id]')) {
-    button.addEventListener('click', () => {
-      runValidationAction(button.dataset.validationActionId, button.dataset.validationActionMode || 'execute');
     });
   }
 }
