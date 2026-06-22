@@ -30,6 +30,14 @@ test('every non-English UI language has a complete cleanup setting text pack', (
 test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported translations', () => {
     assert.deepEqual(Object.keys(LOCAL_UI_CLEANUP_SETTING_TEXT.en).sort(), EXPECTED_SETTING_IDS);
     assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.en.eligible_older_than_days.label,
+        'Delete tasks older than (days)'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.en.keep_latest_tasks.label,
+        'Keep at least newest tasks (count)'
+    );
+    assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.purge_require_confirm.label,
         'Automatic cleanup confirmation safeguard'
     );
@@ -55,7 +63,7 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.run_preview.label,
-        'Preview: do not delete'
+        'Preview calculation'
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.run_apply.label,
@@ -72,6 +80,14 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.report_removed.label,
         'Removed'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.eligible_older_than_days.label,
+        'Удалить задачи старше (дней)'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.keep_latest_tasks.label,
+        'Оставить минимум последних задач'
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.ru.daily_maintenance_enabled.label,
@@ -91,7 +107,7 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.ru.run_preview.label,
-        'Предпросмотр: ничего не удалять'
+        'Предварительный расчет'
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.ru.run_apply.label,
@@ -123,6 +139,15 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
         LOCAL_UI_CLEANUP_SETTING_TEXT.de.eligible_older_than_days.description || '',
         /A task must be at least this many days old/u
     );
+    assert.doesNotMatch(
+        [
+            LOCAL_UI_CLEANUP_SETTING_TEXT.en.eligible_older_than_days.label,
+            LOCAL_UI_CLEANUP_SETTING_TEXT.en.keep_latest_tasks.label,
+            LOCAL_UI_CLEANUP_SETTING_TEXT.ru.eligible_older_than_days.label,
+            LOCAL_UI_CLEANUP_SETTING_TEXT.ru.keep_latest_tasks.label
+        ].join('\n'),
+        /Minimum task age|Keep newest tasks|Минимальный возраст|Сохранять новейшие/u
+    );
 });
 
 test('manual cleanup descriptions name the localized run cleanup action', () => {
@@ -136,6 +161,19 @@ test('manual cleanup descriptions name the localized run cleanup action', () => 
             description,
             new RegExp(runLabel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'),
             `manual cleanup description should mention localized run action for ${language.id}`
+        );
+    }
+});
+
+test('manual cleanup descriptions refer to row controls instead of stale rows-above command wording', () => {
+    for (const language of LOCAL_UI_LANGUAGES) {
+        const pack = LOCAL_UI_CLEANUP_SETTING_TEXT[language.id];
+        assert.ok(pack, `missing cleanup setting text for ${language.id}`);
+        const description = pack.manual_runtime_cleanup.description || '';
+        assert.doesNotMatch(
+            description,
+            /`garda cleanup`|rows above|строк выше|Zeilen oben|filas superiores|lignes ci-dessus|righe sopra|rijen hierboven|wierszy powyżej|linhas acima|raderna ovan|Yukarıdaki|рядків вище|hàng ở trên|উপরের|ऊपर की|上の行|위 행|上方行/u,
+            `manual cleanup description should not use stale rows-above wording for ${language.id}`
         );
     }
 });

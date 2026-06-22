@@ -138,6 +138,9 @@ tr.selected { background: #eef8f6; }
 .cleanup-settings-table th:nth-child(3) { width: 16%; }
 .cleanup-settings-table th:nth-child(4) { width: 34%; }
 .cleanup-settings-table td:last-child .setting-buttons { margin-top: 6px; }
+.cleanup-run-options { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+.cleanup-progress-panel { max-width: 720px; }
+.cleanup-progress { display: block; width: 100%; height: 12px; accent-color: var(--accent); }
 .cleanup-settings-table .setting-control select,
 .cleanup-settings-table .setting-control input[type="number"],
 .cleanup-settings-table .setting-control input[type="text"] { width: 100%; max-width: 220px; min-height: 34px; }

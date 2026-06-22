@@ -11,12 +11,12 @@
     "description": "每日维护在单次运行中可处理的合格任务数量上限。如果阈值配置错误，它可以限制影响范围。"
   },
   "eligible_older_than_days": {
-    "label": "任务最小保留天数",
-    "description": "任务至少达到这个天数后，维护或手动清理才可以触碰它的 runtime 制品。活动中的任务和较新的任务仍会受到保护。"
+    "label": "删除早于指定天数的任务",
+    "description": "手动清理会选择早于此天数的任务 runtime artifacts。活动任务和较新的任务会保持受保护。"
   },
   "keep_latest_tasks": {
-    "label": "保留最新任务数",
-    "description": "即使任务已经超过年龄阈值，也始终至少保留这么多最近的任务。设置为 0 时，仅依赖年龄规则和活动任务保护。"
+    "label": "至少保留的最新任务数",
+    "description": "即使任务早于年龄阈值，也始终至少保留这么多最新任务。设置为 0 可仅依赖年龄和活动任务保护。"
   },
   "daily_maintenance_dry_run": {
     "label": "每日维护 dry-run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "手动 runtime cleanup",
-    "description": "使用上方行中的年龄和 keep-latest 值运行一次 `garda cleanup`。预览是 dry-run，只显示候选项；运行清理 会应用策略、删除或压缩，并要求输入确认短语。"
+    "description": "删除此行的年龄和 keep-latest 控件所选的非活动任务拥有的 runtime artifacts。预览是 dry-run 报告；运行清理 会删除选中的任务 artifacts，修复一次共享索引，并要求输入确认短语。"
   },
   "task_purge": {
     "label": "任务 runtime artifact cleanup",
@@ -49,7 +49,7 @@
     "label": "清理 runtime artifact"
   },
   "run_preview": {
-    "label": "dry-run 预览"
+    "label": "预先计算"
   },
   "value_true": {
     "label": "true — 已启用"

@@ -11,12 +11,12 @@
     "description": "Bovengrens voor hoeveel geschikte taken het dagelijkse onderhoud in één run verwerkt. Beperkt de impact als drempels verkeerd zijn geconfigureerd."
   },
   "eligible_older_than_days": {
-    "label": "Minimale taakleeftijd (dagen)",
-    "description": "Een taak moet minstens zo oud zijn voordat onderhoud of handmatige opschoning de runtime-artefacten ervan mag aanraken. Actieve en recentere taken blijven beschermd."
+    "label": "Taken ouder dan verwijderen (dagen)",
+    "description": "Handmatige opschoning selecteert runtime-artefacten van taken die ouder zijn dan dit aantal dagen. Actieve en nieuwere taken blijven beschermd."
   },
   "keep_latest_tasks": {
-    "label": "Nieuwste taken behouden (aantal)",
-    "description": "Behoud altijd minstens zoveel van de meest recente taken, ook als ze ouder zijn dan de leeftijdsdrempel. Stel 0 in om alleen op leeftijd en bescherming van actieve taken te vertrouwen."
+    "label": "Minstens nieuwste taken behouden (aantal)",
+    "description": "Bewaart altijd minstens zoveel meest recente taken, zelfs als ze ouder zijn dan de leeftijdsdrempel. Zet op 0 om alleen leeftijd en actieve-taakbescherming te gebruiken."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run voor dagelijks onderhoud",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Handmatige runtime-cleanup",
-    "description": "Voert `garda cleanup` eenmaal uit met de leeftijds- en keep-latest-waarden uit de rijen hierboven. De preview is een dry-run die alleen kandidaten toont; Opschoning uitvoeren past het beleid toe, verwijdert of comprimeert en vereist getypte bevestiging."
+    "description": "Verwijdert runtime-artefacten van niet-actieve taken die zijn geselecteerd met de leeftijds- en keep-latest-bediening in deze rij. De preview is een dry-run-rapport; Opschoning uitvoeren verwijdert de geselecteerde taakartefacten, herstelt gedeelde indexen eenmaal en vereist getypte bevestiging."
   },
   "task_purge": {
     "label": "Runtime-artefacten van taak opschonen",
@@ -49,7 +49,7 @@
     "label": "Runtime-artefacten opschonen"
   },
   "run_preview": {
-    "label": "Dry-run voorbeeld"
+    "label": "Voorberekening"
   },
   "value_true": {
     "label": "true — ingeschakeld"

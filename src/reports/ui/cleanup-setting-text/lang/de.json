@@ -11,12 +11,12 @@
     "description": "Obergrenze dafür, wie viele geeignete Aufgaben die tägliche Wartung in einem einzelnen Lauf verarbeitet. Begrenzt den möglichen Schaden, wenn Schwellenwerte falsch konfiguriert sind."
   },
   "eligible_older_than_days": {
-    "label": "Mindestalter der Aufgabe (Tage)",
-    "description": "Eine Aufgabe muss mindestens so viele Tage alt sein, bevor Wartung oder manuelle Bereinigung ihre Runtime-Artefakte anfassen dürfen. Aktive und neuere Aufgaben bleiben geschützt."
+    "label": "Aufgaben älter als löschen (Tage)",
+    "description": "Die manuelle Bereinigung wählt Runtime-Artefakte von Aufgaben aus, die älter als diese Anzahl von Tagen sind. Aktive und neuere Aufgaben bleiben geschützt."
   },
   "keep_latest_tasks": {
-    "label": "Neueste Aufgaben behalten (Anzahl)",
-    "description": "Bewahrt immer mindestens so viele der neuesten Aufgaben auf, auch wenn sie älter als die Altersgrenze sind. Auf 0 setzen, um sich nur auf Alter und Schutz aktiver Aufgaben zu verlassen."
+    "label": "Mindestens neueste Aufgaben behalten (Anzahl)",
+    "description": "Bewahrt immer mindestens so viele neueste Aufgaben auf, auch wenn sie älter als der Altersgrenzwert sind. Setzen Sie 0, um nur Alter und Schutz aktiver Aufgaben zu verwenden."
   },
   "daily_maintenance_dry_run": {
     "label": "Tägliche Wartung als Dry-Run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Manuelle Runtime-Bereinigung",
-    "description": "Führt `garda cleanup` einmal mit den Alters- und keep-latest-Werten aus den Zeilen oben aus. Die Vorschau ist ein Dry-run und zeigt nur Kandidaten; Bereinigung starten wendet die Policy an, löscht oder komprimiert und verlangt die eingegebene Bestätigung."
+    "description": "Löscht task-eigene Runtime-Artefakte für nicht aktive Aufgaben, die über die Alters- und keep-latest-Steuerfelder in dieser Zeile ausgewählt werden. Die Vorschau ist ein Dry-run-Bericht; Bereinigung starten löscht die ausgewählten Aufgaben-Artefakte, repariert gemeinsame Indizes einmal und verlangt die eingegebene Bestätigung."
   },
   "task_purge": {
     "label": "Runtime-Artefakte einer Aufgabe bereinigen",
@@ -49,7 +49,7 @@
     "label": "Runtime-Artefakte bereinigen"
   },
   "run_preview": {
-    "label": "Dry-run-Vorschau"
+    "label": "Vorberechnung"
   },
   "value_true": {
     "label": "true — aktiviert"

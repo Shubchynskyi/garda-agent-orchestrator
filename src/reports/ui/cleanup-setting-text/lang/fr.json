@@ -11,12 +11,12 @@
     "description": "Limite supérieure du nombre de tâches éligibles que la maintenance quotidienne traite en une seule exécution. Réduit l’ampleur de l’impact si les seuils sont mal configurés."
   },
   "eligible_older_than_days": {
-    "label": "Âge minimal de la tâche (jours)",
-    "description": "Une tâche doit avoir au moins cet âge avant que la maintenance ou le nettoyage manuel puissent toucher à ses artefacts runtime. Les tâches actives et plus récentes restent protégées."
+    "label": "Supprimer les tâches plus anciennes que (jours)",
+    "description": "Le nettoyage manuel sélectionne les artefacts runtime des tâches plus anciennes que ce nombre de jours. Les tâches actives et plus récentes restent protégées."
   },
   "keep_latest_tasks": {
-    "label": "Conserver les tâches les plus récentes (nombre)",
-    "description": "Conserve toujours au moins ce nombre de tâches les plus récentes, même si elles sont plus anciennes que le seuil d’âge. Mettez 0 pour ne vous appuyer que sur l’âge et la protection des tâches actives."
+    "label": "Conserver au moins les tâches les plus récentes (nombre)",
+    "description": "Préserve toujours au moins ce nombre de tâches les plus récentes, même si elles dépassent le seuil d’âge. Utilisez 0 pour ne dépendre que de l’âge et de la protection des tâches actives."
   },
   "daily_maintenance_dry_run": {
     "label": "Maintenance quotidienne en dry-run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Nettoyage runtime manuel",
-    "description": "Exécute `garda cleanup` une fois avec les valeurs age et keep-latest des lignes ci-dessus. La prévisualisation est un dry-run qui montre seulement les candidats ; Lancer le nettoyage applique la politique, supprime ou compresse et exige la confirmation saisie."
+    "description": "Supprime les artefacts runtime appartenant aux tâches non actives sélectionnées par les contrôles age et keep-latest de cette ligne. La prévisualisation est un rapport dry-run ; Lancer le nettoyage supprime les artefacts de tâches sélectionnés, répare les index partagés une fois et exige la confirmation saisie."
   },
   "task_purge": {
     "label": "Nettoyage des artefacts runtime d une tache",
@@ -49,7 +49,7 @@
     "label": "Nettoyer les artefacts runtime"
   },
   "run_preview": {
-    "label": "Apercu dry-run"
+    "label": "Calcul préalable"
   },
   "value_true": {
     "label": "true — activé"

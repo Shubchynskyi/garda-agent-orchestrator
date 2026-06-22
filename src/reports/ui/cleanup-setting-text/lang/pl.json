@@ -11,12 +11,12 @@
     "description": "Górny limit liczby kwalifikujących się zadań przetwarzanych przez codzienną konserwację w jednym przebiegu. Ogranicza skalę skutków, jeśli progi są źle skonfigurowane."
   },
   "eligible_older_than_days": {
-    "label": "Minimalny wiek zadania (dni)",
-    "description": "Zadanie musi mieć co najmniej tyle dni, zanim konserwacja lub ręczne czyszczenie będą mogły dotknąć jego artefaktów runtime. Aktywne i nowsze zadania pozostają chronione."
+    "label": "Usuń zadania starsze niż (dni)",
+    "description": "Ręczne czyszczenie wybiera artefakty runtime zadań starszych niż ta liczba dni. Aktywne i nowsze zadania pozostają chronione."
   },
   "keep_latest_tasks": {
-    "label": "Zachowaj najnowsze zadania (liczba)",
-    "description": "Zawsze zachowuje co najmniej tyle najnowszych zadań, nawet jeśli są starsze niż próg wieku. Ustaw 0, aby polegać wyłącznie na wieku i ochronie aktywnych zadań."
+    "label": "Zachowaj co najmniej najnowsze zadania (liczba)",
+    "description": "Zawsze zachowuje co najmniej tyle najnowszych zadań, nawet jeśli są starsze niż próg wieku. Ustaw 0, aby polegać tylko na wieku i ochronie aktywnych zadań."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run codziennej konserwacji",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Reczny cleanup runtime",
-    "description": "Uruchamia `garda cleanup` raz z wartościami wieku i keep-latest z wierszy powyżej. Podgląd to dry-run pokazujący tylko kandydatów; Uruchom czyszczenie stosuje politykę, usuwa lub kompresuje i wymaga wpisanego potwierdzenia."
+    "description": "Usuwa artefakty runtime należące do nieaktywnych zadań wybranych przez kontrolki wieku i keep-latest w tym wierszu. Podgląd to raport dry-run; Uruchom czyszczenie usuwa wybrane artefakty zadań, jednorazowo naprawia współdzielone indeksy i wymaga wpisanego potwierdzenia."
   },
   "task_purge": {
     "label": "Cleanup artefaktow runtime zadania",
@@ -49,7 +49,7 @@
     "label": "Wyczysc artefakty runtime"
   },
   "run_preview": {
-    "label": "Podglad dry-run"
+    "label": "Obliczenie wstępne"
   },
   "value_true": {
     "label": "true — włączone"

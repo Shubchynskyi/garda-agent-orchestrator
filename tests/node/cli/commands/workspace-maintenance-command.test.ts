@@ -163,7 +163,7 @@ test('handleCleanup routes batch task purge selection to task-owned dry-run repo
             '--runtime-retention-older-than-days',
             '30',
             '--runtime-retention-keep-latest-tasks',
-            '1'
+            '0'
         ], PACKAGE_JSON));
 
         assert.ok(lines.some((line) => line.includes('BatchPurgeCandidateTasks: 1')));

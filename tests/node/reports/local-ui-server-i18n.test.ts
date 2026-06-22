@@ -660,9 +660,43 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
 
         vm.runInNewContext(extractDashboardScript(html), context);
         await flushPromises();
-        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Minimum task age \(days\)/u);
-        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Preview: do not delete/u);
-        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Run cleanup/u);
+        const cleanupSettingsHtml = fakeDocument.elements['cleanup-settings'].innerHTML;
+        assert.match(cleanupSettingsHtml, /Delete tasks older than \(days\)/u);
+        assert.match(cleanupSettingsHtml, /Keep at least newest tasks \(count\)/u);
+        assert.match(cleanupSettingsHtml, /Preview calculation/u);
+        assert.match(cleanupSettingsHtml, /Run cleanup/u);
+        assert.ok(
+            cleanupSettingsHtml.indexOf('id="cleanup-run-apply"') < cleanupSettingsHtml.indexOf('id="cleanup-older-than-days"'),
+            'manual cleanup age input should render immediately after the run buttons'
+        );
+        assert.ok(
+            cleanupSettingsHtml.indexOf('id="cleanup-older-than-days"') < cleanupSettingsHtml.indexOf('id="cleanup-keep-latest"'),
+            'manual cleanup keep-latest input should render after the age input'
+        );
+        assert.doesNotMatch(cleanupSettingsHtml, /data-cleanup-field="eligible_older_than_days"/u);
+        assert.doesNotMatch(cleanupSettingsHtml, /data-cleanup-field="keep_latest_tasks"/u);
+        fakeDocument.getElementById('cleanup-older-than-days').value = '11';
+        fakeDocument.getElementById('cleanup-keep-latest').value = '2';
+        const cleanupRunSelectionFromInputs = context.cleanupRunSelectionFromInputs as (() => unknown) | undefined;
+        assert.equal(typeof cleanupRunSelectionFromInputs, 'function');
+        assert.ok(cleanupRunSelectionFromInputs);
+        const cleanupRunSelection = cleanupRunSelectionFromInputs() as {
+            eligible_older_than_days?: unknown;
+            keep_latest_tasks?: unknown;
+        };
+        assert.equal(cleanupRunSelection.eligible_older_than_days, '11');
+        assert.equal(cleanupRunSelection.keep_latest_tasks, '2');
+
+        const renderCleanupProgress = context.renderCleanupProgress as ((actionId: string) => void) | undefined;
+        assert.equal(typeof renderCleanupProgress, 'function');
+        assert.ok(renderCleanupProgress);
+        renderCleanupProgress('cleanup-preview-custom');
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /cleanup-progress-panel/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /<progress class="cleanup-progress"/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview calculation/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Manual runtime cleanup/u);
+        assert.equal(fakeDocument.elements['cleanup-status'].focused, true);
+        assert.equal(fakeDocument.elements['cleanup-status'].scrolled, true);
 
         const renderCleanupResult = context.renderCleanupResult as ((result: unknown) => void) | undefined;
         assert.equal(typeof renderCleanupResult, 'function');
@@ -679,7 +713,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
                 '\u001b[32mWould free:\u001b[0m 1.00 MB'
             ].join('\n')
         });
-        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview: do not delete/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview calculation/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Manual runtime cleanup/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Cleanup result/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Dry-run only/u);
@@ -746,8 +780,8 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         fakeDocument.elements['language-select'].value = 'de';
         await fakeDocument.elements['language-select'].dispatch('change');
 
-        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Mindestalter der Aufgabe|Mindestaufgabenalter|Tägliche Wartung|Speichern/u);
-        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Dry-run-Vorschau/u);
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Aufgaben älter als löschen|Tägliche Wartung|Speichern/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Vorberechnung/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Manuelle Runtime-Bereinigung/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Dry-run/u);
     } finally {

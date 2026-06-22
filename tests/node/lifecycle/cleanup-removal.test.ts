@@ -1160,7 +1160,7 @@ describe('runTaskRuntimeBatchPurge', () => {
         }
     });
 
-    it('purges non-active task-owned artifacts selected by age or keep-latest count and repairs shared indexes once', () => {
+    it('purges aged non-active task-owned artifacts while protecting newest tasks', () => {
         const oldTask = seedHealthyDoneTaskArtifacts({
             bundleRoot,
             taskId: 'T-900',
@@ -1169,7 +1169,7 @@ describe('runTaskRuntimeBatchPurge', () => {
             includeCompletenessCache: true,
             ageDays: 90
         });
-        const countSelectedTask = seedHealthyDoneTaskArtifacts({
+        const youngerTask = seedHealthyDoneTaskArtifacts({
             bundleRoot,
             taskId: 'T-901',
             includePlan: true,
@@ -1209,13 +1209,23 @@ describe('runTaskRuntimeBatchPurge', () => {
 
         assert.equal(dryRun.result, 'SUCCESS');
         assert.equal(dryRun.dryRun, true);
-        assert.deepEqual(dryRun.selectedTaskIds, ['T-900', 'T-901']);
+        assert.deepEqual(dryRun.selectedTaskIds, ['T-900']);
         assert.deepEqual(dryRun.selectedByAgeTaskIds, ['T-900']);
-        assert.deepEqual(dryRun.selectedByCountTaskIds, ['T-900', 'T-901']);
+        assert.deepEqual(dryRun.selectedByCountTaskIds, []);
         assert.deepEqual(dryRun.protectedNewestTaskIds, ['T-902']);
         assert.ok(dryRun.sharedIndexOperations.includes('prune-all-tasks-aggregate'));
         assert.ok(dryRun.sharedIndexOperations.includes('prune-timeline-summary'));
         assert.equal(fs.existsSync(oldTask.timelinePath), true, 'dry-run preserves old task timeline');
+
+        const protectedDryRun = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            keepLatestTasks: 3
+        });
+        assert.deepEqual(protectedDryRun.selectedTaskIds, []);
+        assert.deepEqual(protectedDryRun.selectedByAgeTaskIds, ['T-900']);
+        assert.deepEqual(protectedDryRun.protectedNewestTaskIds, ['T-900', 'T-901', 'T-902']);
 
         const result = runTaskRuntimeBatchPurge({
             targetRoot: tmpDir,
@@ -1226,18 +1236,18 @@ describe('runTaskRuntimeBatchPurge', () => {
         });
 
         assert.equal(result.result, 'SUCCESS');
-        assert.deepEqual(result.selectedTaskIds, ['T-900', 'T-901']);
+        assert.deepEqual(result.selectedTaskIds, ['T-900']);
         assert.equal(result.errors.length, 0);
-        for (const taskId of ['T-900', 'T-901']) {
+        for (const taskId of ['T-900']) {
             for (const category of ['reviews', 'task-events', 'plans', 'project-memory', 'task-ledger']) {
                 assert.ok(result.removed.some((item) => item.category === category && item.taskId === taskId),
                     `batch purge should remove ${category} for ${taskId}`);
             }
         }
         assert.equal(fs.existsSync(oldTask.timelinePath), false);
-        assert.equal(fs.existsSync(countSelectedTask.timelinePath), false);
+        assert.equal(fs.existsSync(youngerTask.timelinePath), true, 'younger task timeline remains');
         assert.equal(fs.existsSync(oldTask.planPath!), false);
-        assert.equal(fs.existsSync(countSelectedTask.planPath!), false);
+        assert.equal(fs.existsSync(youngerTask.planPath!), true, 'younger task plan remains');
         assert.equal(fs.existsSync(newestTask.timelinePath), true, 'newest retained task timeline remains');
         assert.equal(fs.existsSync(newestTask.planPath!), true, 'newest retained task plan remains');
         assert.equal(fs.existsSync(reviewsIndexPath), false, 'review side effect invalidates reviews index once');
@@ -1246,10 +1256,10 @@ describe('runTaskRuntimeBatchPurge', () => {
             .split('\n')
             .filter((line) => line.trim())
             .map((line) => (JSON.parse(line) as { task_id?: string }).task_id);
-        assert.deepEqual(remainingTaskIds, ['T-902']);
+        assert.deepEqual(remainingTaskIds, ['T-901', 'T-902']);
         const summary = JSON.parse(fs.readFileSync(path.join(runtimeDir, 'task-events', '.timeline-summary.json'), 'utf8'));
         assert.equal(summary.entries['T-900'], undefined);
-        assert.equal(summary.entries['T-901'], undefined);
+        assert.ok(summary.entries['T-901']);
         assert.ok(summary.entries['T-902']);
     });
 

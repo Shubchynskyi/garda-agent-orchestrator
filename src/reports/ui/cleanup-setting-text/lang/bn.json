@@ -11,12 +11,12 @@
     "description": "একটি রানে দৈনিক রক্ষণাবেক্ষণ কতগুলো উপযুক্ত টাস্ক প্রক্রিয়া করতে পারবে তার ঊর্ধ্বসীমা। থ্রেশহোল্ড ভুল কনফিগার হলে প্রভাবের পরিধি সীমিত রাখে।"
   },
   "eligible_older_than_days": {
-    "label": "টাস্কের ন্যূনতম বয়স (দিন)",
-    "description": "রক্ষণাবেক্ষণ বা ম্যানুয়াল ক্লিনআপ কোনো টাস্কের runtime আর্টিফ্যাক্ট স্পর্শ করার আগে টাস্কটির বয়স অন্তত এত দিন হতে হবে। সক্রিয় এবং নতুন টাস্ক সুরক্ষিত থাকে।"
+    "label": "এর চেয়ে পুরোনো task মুছুন (দিন)",
+    "description": "Manual cleanup এই সংখ্যক দিনের চেয়ে পুরোনো task runtime artifacts নির্বাচন করে। Active এবং নতুন tasks সুরক্ষিত থাকে।"
   },
   "keep_latest_tasks": {
-    "label": "সর্বশেষ টাস্ক রেখে দিন (সংখ্যা)",
-    "description": "বয়সসীমা পেরিয়ে গেলেও অন্তত এতগুলো সর্বশেষ টাস্ক সব সময় সংরক্ষিত থাকবে। শুধুমাত্র বয়স এবং সক্রিয় টাস্ক সুরক্ষার ওপর নির্ভর করতে 0 দিন।"
+    "label": "কমপক্ষে সর্বশেষ task রাখুন (সংখ্যা)",
+    "description": "বয়সসীমার চেয়ে পুরোনো হলেও অন্তত এতগুলি সর্বশেষ task সবসময় সংরক্ষণ করে। শুধু বয়স এবং active-task protection ব্যবহার করতে 0 দিন।"
   },
   "daily_maintenance_dry_run": {
     "label": "দৈনিক রক্ষণাবেক্ষণ dry-run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "ম্যানুয়াল runtime cleanup",
-    "description": "উপরের age এবং keep-latest মান দিয়ে একবার `garda cleanup` চালায়। Preview হলো dry-run এবং শুধু candidates দেখায়; ক্লিনআপ চালান policy প্রয়োগ করে delete বা compress করে এবং typed confirmation চায়।"
+    "description": "এই সারির age এবং keep-latest controls দিয়ে নির্বাচিত non-active task-owned runtime artifacts মুছে দেয়। Preview হলো dry-run report; ক্লিনআপ চালান নির্বাচিত task artifacts মুছে দেয়, shared indexes একবার repair করে এবং typed confirmation চায়।"
   },
   "task_purge": {
     "label": "টাস্ক runtime artifact পরিষ্কার",
@@ -49,7 +49,7 @@
     "label": "Task runtime artifacts পরিষ্কার করুন"
   },
   "run_preview": {
-    "label": "Dry-run preview"
+    "label": "প্রাথমিক হিসাব"
   },
   "value_true": {
     "label": "true — সক্রিয়"

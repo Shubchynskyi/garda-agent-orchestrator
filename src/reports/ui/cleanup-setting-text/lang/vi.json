@@ -11,12 +11,12 @@
     "description": "Giới hạn trên về số tác vụ đủ điều kiện mà bảo trì hằng ngày xử lý trong một lần chạy. Giảm phạm vi ảnh hưởng nếu các ngưỡng bị cấu hình sai."
   },
   "eligible_older_than_days": {
-    "label": "Tuổi tối thiểu của tác vụ (ngày)",
-    "description": "Một tác vụ phải cũ ít nhất chừng này ngày trước khi bảo trì hoặc dọn dẹp thủ công được phép chạm vào các artefact runtime của nó. Các tác vụ đang hoạt động và mới hơn vẫn được bảo vệ."
+    "label": "Xóa task cũ hơn (ngày)",
+    "description": "Cleanup thủ công chọn runtime artifacts của task cũ hơn số ngày này. Task đang hoạt động và task mới hơn vẫn được bảo vệ."
   },
   "keep_latest_tasks": {
-    "label": "Giữ lại các tác vụ mới nhất (số lượng)",
-    "description": "Luôn giữ lại ít nhất chừng này tác vụ mới nhất ngay cả khi chúng cũ hơn ngưỡng tuổi. Đặt 0 để chỉ dựa vào tuổi và cơ chế bảo vệ tác vụ đang hoạt động."
+    "label": "Giữ lại ít nhất các task mới nhất (số lượng)",
+    "description": "Luôn giữ lại ít nhất số task mới nhất này ngay cả khi chúng cũ hơn ngưỡng tuổi. Đặt 0 để chỉ dựa vào tuổi và bảo vệ task đang hoạt động."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run bảo trì hằng ngày",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Cleanup runtime thu cong",
-    "description": "Chạy `garda cleanup` một lần với các giá trị tuổi và keep-latest từ các hàng ở trên. Xem trước là dry-run chỉ hiển thị ứng viên; Chạy dọn dẹp áp dụng policy, xóa hoặc nén và yêu cầu cụm xác nhận đã nhập."
+    "description": "Xóa runtime artifacts thuộc về task không hoạt động được chọn bằng các điều khiển tuổi và keep-latest trong hàng này. Xem trước là báo cáo dry-run; Chạy dọn dẹp xóa các task artifacts đã chọn, sửa shared indexes một lần và yêu cầu cụm xác nhận đã nhập."
   },
   "task_purge": {
     "label": "Cleanup artifact runtime cua task",
@@ -49,7 +49,7 @@
     "label": "Don artifact runtime"
   },
   "run_preview": {
-    "label": "Xem truoc dry-run"
+    "label": "Tính toán trước"
   },
   "value_true": {
     "label": "true — bật"

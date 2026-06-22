@@ -11,12 +11,12 @@
     "description": "Batas atas jumlah tugas yang memenuhi syarat yang diproses pemeliharaan harian dalam satu kali jalan. Membatasi dampak jika ambang dikonfigurasi secara keliru."
   },
   "eligible_older_than_days": {
-    "label": "Usia minimum tugas (hari)",
-    "description": "Sebuah tugas harus berusia setidaknya selama ini sebelum pemeliharaan atau pembersihan manual boleh menyentuh artefak runtime miliknya. Tugas aktif dan tugas yang lebih baru tetap dilindungi."
+    "label": "Hapus task lebih lama dari (hari)",
+    "description": "Cleanup manual memilih runtime artifacts task yang lebih lama dari jumlah hari ini. Task aktif dan task yang lebih baru tetap dilindungi."
   },
   "keep_latest_tasks": {
-    "label": "Pertahankan tugas terbaru (jumlah)",
-    "description": "Selalu simpan setidaknya sebanyak ini tugas terbaru meskipun usianya melebihi ambang umur. Setel ke 0 untuk hanya mengandalkan umur dan perlindungan tugas aktif."
+    "label": "Pertahankan minimal task terbaru (jumlah)",
+    "description": "Selalu mempertahankan setidaknya sejumlah task paling baru ini meskipun lebih lama dari ambang umur. Set 0 untuk hanya memakai umur dan perlindungan task aktif."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run pemeliharaan harian",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Cleanup runtime manual",
-    "description": "Menjalankan `garda cleanup` sekali dengan nilai age dan keep-latest dari baris di atas. Pratinjau adalah dry-run yang hanya menampilkan kandidat; Jalankan pembersihan menerapkan policy, menghapus atau mengompresi, dan meminta konfirmasi yang diketik."
+    "description": "Menghapus runtime artifacts milik task nonaktif yang dipilih oleh kontrol age dan keep-latest di baris ini. Pratinjau adalah laporan dry-run; Jalankan pembersihan menghapus task artifacts yang dipilih, memperbaiki shared indexes sekali, dan meminta konfirmasi yang diketik."
   },
   "task_purge": {
     "label": "Cleanup artefak runtime tugas",
@@ -49,7 +49,7 @@
     "label": "Bersihkan artefak runtime"
   },
   "run_preview": {
-    "label": "Pratinjau dry-run"
+    "label": "Perhitungan pratinjau"
   },
   "value_true": {
     "label": "true — aktif"

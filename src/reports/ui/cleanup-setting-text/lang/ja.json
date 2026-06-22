@@ -11,12 +11,12 @@
     "description": "日次メンテナンスが 1 回の実行で処理する適格タスク数の上限です。しきい値設定を誤った場合の影響範囲を抑えます。"
   },
   "eligible_older_than_days": {
-    "label": "タスクの最小経過日数",
-    "description": "メンテナンスまたは手動クリーンアップがその runtime アーティファクトに触れる前に、タスクは少なくともこの日数だけ経過している必要があります。アクティブなタスクと新しいタスクは保護されます。"
+    "label": "指定日数より古いタスクを削除",
+    "description": "手動クリーンアップは、この日数より古いタスクの runtime artifacts を選択します。アクティブなタスクと新しいタスクは保護されます。"
   },
   "keep_latest_tasks": {
-    "label": "最新タスクを保持する数",
-    "description": "経過日数のしきい値を超えていても、少なくともこの数の最新タスクを常に保持します。経過日数とアクティブタスク保護のみに依存する場合は 0 を設定します。"
+    "label": "最低限保持する最新タスク数",
+    "description": "最新のタスクを少なくともこの数だけ常に保持します。年齢しきい値より古い場合も保持されます。年齢とアクティブタスク保護だけに頼る場合は 0 に設定します。"
   },
   "daily_maintenance_dry_run": {
     "label": "日次メンテナンスの dry-run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "手動 runtime cleanup",
-    "description": "上の行の age と keep-latest の値で `garda cleanup` を1回実行します。プレビューは候補だけを表示する dry-run です。クリーンアップを実行 はポリシーを適用し、削除または圧縮して、入力確認を要求します。"
+    "description": "この行の age と keep-latest コントロールで選択された、非アクティブなタスク所有の runtime artifacts を削除します。プレビューは dry-run レポートです。クリーンアップを実行 は選択されたタスク artifacts を削除し、共有インデックスを一度修復して、入力確認を要求します。"
   },
   "task_purge": {
     "label": "タスク runtime アーティファクト cleanup",
@@ -49,7 +49,7 @@
     "label": "runtime アーティファクトを cleanup"
   },
   "run_preview": {
-    "label": "dry-run プレビュー"
+    "label": "事前計算"
   },
   "value_true": {
     "label": "true — 有効"

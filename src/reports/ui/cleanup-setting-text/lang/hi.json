@@ -11,12 +11,12 @@
     "description": "एक रन में दैनिक रखरखाव कितने योग्य कार्य प्रोसेस करेगा इसकी ऊपरी सीमा। यदि थ्रेशहोल्ड गलत कॉन्फ़िगर हों तो प्रभाव का दायरा सीमित रहता है।"
   },
   "eligible_older_than_days": {
-    "label": "कार्य की न्यूनतम आयु (दिन)",
-    "description": "किसी कार्य के runtime artifact को maintenance या manual cleanup छू सके, उससे पहले उसका इतना पुराना होना आवश्यक है। सक्रिय और नए कार्य सुरक्षित रहते हैं।"
+    "label": "इससे पुराने tasks हटाएँ (दिन)",
+    "description": "Manual cleanup इतने दिनों से पुराने task runtime artifacts चुनता है। Active और नए tasks सुरक्षित रहते हैं।"
   },
   "keep_latest_tasks": {
-    "label": "नवीनतम कार्य सुरक्षित रखें (संख्या)",
-    "description": "उम्र सीमा पार होने पर भी कम से कम इतने सबसे हाल के कार्य हमेशा सुरक्षित रखे जाते हैं। केवल उम्र और active-task सुरक्षा पर निर्भर रहने के लिए 0 सेट करें।"
+    "label": "कम से कम नवीनतम tasks रखें (संख्या)",
+    "description": "Age threshold से पुराने होने पर भी कम से कम इतने newest tasks हमेशा सुरक्षित रखता है। केवल age और active-task protection पर निर्भर रहने के लिए 0 सेट करें।"
   },
   "daily_maintenance_dry_run": {
     "label": "दैनिक रखरखाव dry-run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "मैनुअल runtime cleanup",
-    "description": "ऊपर की age और keep-latest values के साथ `garda cleanup` को एक बार चलाता है। Preview dry-run है और केवल candidates दिखाता है; सफाई चलाएँ policy लागू करता है, delete या compress करता है, और typed confirmation मांगता है।"
+    "description": "इस पंक्ति के age और keep-latest controls से चुने गए non-active task-owned runtime artifacts हटाता है। Preview dry-run report है; सफाई चलाएँ चुने गए task artifacts हटाता है, shared indexes को एक बार repair करता है, और typed confirmation मांगता है।"
   },
   "task_purge": {
     "label": "टास्क runtime artifact cleanup",
@@ -49,7 +49,7 @@
     "label": "Task runtime artifacts साफ करें"
   },
   "run_preview": {
-    "label": "Dry-run preview"
+    "label": "प्रारंभिक गणना"
   },
   "value_true": {
     "label": "true — सक्षम"

@@ -11,12 +11,12 @@
     "description": "Límite superior de cuántas tareas aptas procesa el mantenimiento diario en una sola ejecución. Reduce el alcance del impacto si los umbrales están mal configurados."
   },
   "eligible_older_than_days": {
-    "label": "Edad mínima de la tarea (días)",
-    "description": "Una tarea debe tener al menos esta cantidad de días antes de que el mantenimiento o la limpieza manual puedan tocar sus artefactos de runtime. Las tareas activas y más recientes permanecen protegidas."
+    "label": "Eliminar tareas anteriores a (días)",
+    "description": "La limpieza manual selecciona artefactos de runtime de tareas con más de esta cantidad de días. Las tareas activas y más nuevas permanecen protegidas."
   },
   "keep_latest_tasks": {
-    "label": "Conservar las tareas más recientes (cantidad)",
-    "description": "Conserva siempre al menos esta cantidad de tareas más recientes, aunque sean más antiguas que el umbral de edad. Usa 0 para depender solo de la edad y de la protección de tareas activas."
+    "label": "Conservar al menos las tareas más recientes (cantidad)",
+    "description": "Siempre conserva al menos esta cantidad de tareas más recientes aunque superen el umbral de edad. Use 0 para depender solo de la edad y la protección de tareas activas."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run de mantenimiento diario",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Limpieza manual de runtime",
-    "description": "Ejecuta `garda cleanup` una vez con los valores de edad y keep-latest de las filas superiores. La vista previa es un dry-run que solo muestra candidatos; Ejecutar limpieza aplica la política, elimina o comprime y requiere la confirmación escrita."
+    "description": "Elimina artefactos de runtime propiedad de tareas no activas seleccionadas por los controles de edad y keep-latest de esta fila. La vista previa es un informe dry-run; Ejecutar limpieza elimina los artefactos de tareas seleccionados, repara los índices compartidos una vez y requiere la confirmación escrita."
   },
   "task_purge": {
     "label": "Limpieza de artefactos runtime de tarea",
@@ -49,7 +49,7 @@
     "label": "Limpiar artefactos runtime"
   },
   "run_preview": {
-    "label": "Vista previa dry-run"
+    "label": "Cálculo previo"
   },
   "value_true": {
     "label": "true — habilitado"

@@ -11,12 +11,12 @@
     "description": "Limite superiore di quante attività idonee la manutenzione giornaliera elabora in una singola esecuzione. Riduce l’ampiezza dell’impatto se le soglie sono configurate in modo errato."
   },
   "eligible_older_than_days": {
-    "label": "Età minima dell’attività (giorni)",
-    "description": "Un’attività deve avere almeno questa età prima che la manutenzione o la pulizia manuale possano toccare i suoi artefatti di runtime. Le attività attive e più recenti restano protette."
+    "label": "Elimina task più vecchi di (giorni)",
+    "description": "La pulizia manuale seleziona gli artefatti runtime dei task più vecchi di questo numero di giorni. I task attivi e più recenti restano protetti."
   },
   "keep_latest_tasks": {
-    "label": "Mantieni le attività più recenti (numero)",
-    "description": "Conserva sempre almeno questo numero di attività più recenti anche se sono più vecchie della soglia di età. Imposta 0 per affidarti solo all’età e alla protezione delle attività attive."
+    "label": "Mantieni almeno i task più recenti (numero)",
+    "description": "Conserva sempre almeno questo numero di task più recenti anche se superano la soglia di età. Imposta 0 per affidarti solo all’età e alla protezione dei task attivi."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run della manutenzione giornaliera",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Pulizia runtime manuale",
-    "description": "Esegue `garda cleanup` una volta con i valori di età e keep-latest delle righe sopra. L’anteprima è un dry-run che mostra solo i candidati; Esegui pulizia applica la policy, elimina o comprime e richiede la conferma digitata."
+    "description": "Elimina gli artefatti runtime appartenenti a task non attivi selezionati dai controlli età e keep-latest in questa riga. L’anteprima è un report dry-run; Esegui pulizia elimina gli artefatti dei task selezionati, ripara una volta gli indici condivisi e richiede la conferma digitata."
   },
   "task_purge": {
     "label": "Pulizia artefatti runtime attivita",
@@ -49,7 +49,7 @@
     "label": "Pulisci artefatti runtime"
   },
   "run_preview": {
-    "label": "Anteprima dry-run"
+    "label": "Calcolo preliminare"
   },
   "value_true": {
     "label": "true — abilitato"

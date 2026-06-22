@@ -822,6 +822,14 @@ export function selectTaskRuntimeBatchPurgeTaskIds(
     }
     const candidates = Array.from(summaries.values());
     const candidateTaskIds = candidates.map((summary) => summary.taskId).sort(compareTaskIds);
+    const protectedNewestTaskIds = new Set<string>();
+    const keepLatestTasks = normalizeNonNegativeIntegerLimit(options.keepLatestTasks);
+    if (keepLatestTasks !== null && keepLatestTasks > 0) {
+        for (const summary of [...candidates].sort(compareTaskArtifactsByNewestFirst).slice(0, keepLatestTasks)) {
+            protectedNewestTaskIds.add(summary.taskId);
+        }
+    }
+
     const selectedByAgeTaskIds = new Set<string>();
     const eligibleOlderThanDays = normalizeNonNegativeIntegerLimit(options.eligibleOlderThanDays);
     if (eligibleOlderThanDays !== null) {
@@ -834,12 +842,7 @@ export function selectTaskRuntimeBatchPurgeTaskIds(
     }
 
     const selectedByCountTaskIds = new Set<string>();
-    const protectedNewestTaskIds = new Set<string>();
-    const keepLatestTasks = normalizeNonNegativeIntegerLimit(options.keepLatestTasks);
-    if (keepLatestTasks !== null && keepLatestTasks > 0) {
-        for (const summary of [...candidates].sort(compareTaskArtifactsByNewestFirst).slice(0, keepLatestTasks)) {
-            protectedNewestTaskIds.add(summary.taskId);
-        }
+    if (eligibleOlderThanDays === null && keepLatestTasks !== null && keepLatestTasks > 0) {
         for (const summary of candidates) {
             if (!protectedNewestTaskIds.has(summary.taskId)) {
                 selectedByCountTaskIds.add(summary.taskId);
@@ -847,7 +850,9 @@ export function selectTaskRuntimeBatchPurgeTaskIds(
         }
     }
 
-    const selectedTaskIds = new Set([...selectedByAgeTaskIds, ...selectedByCountTaskIds]);
+    const selectedTaskIds = eligibleOlderThanDays !== null
+        ? new Set(Array.from(selectedByAgeTaskIds).filter((taskId) => !protectedNewestTaskIds.has(taskId)))
+        : new Set(selectedByCountTaskIds);
     return {
         candidateTaskIds,
         selectedTaskIds: Array.from(selectedTaskIds).sort(compareTaskIds),

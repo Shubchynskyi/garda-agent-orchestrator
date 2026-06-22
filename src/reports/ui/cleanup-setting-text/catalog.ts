@@ -44,11 +44,11 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
             description: 'Upper bound on how many eligible tasks daily maintenance processes in a single run. Limits blast radius if thresholds are misconfigured.'
         },
         eligible_older_than_days: {
-            label: 'Minimum task age (days)',
-            description: 'A task must be at least this many days old before maintenance or manual cleanup may touch its runtime artifacts. Active tasks and newer tasks stay protected.'
+            label: 'Delete tasks older than (days)',
+            description: 'Manual cleanup selects task runtime artifacts older than this many days. Active tasks and newer tasks stay protected.'
         },
         keep_latest_tasks: {
-            label: 'Keep newest tasks (count)',
+            label: 'Keep at least newest tasks (count)',
             description: 'Always preserve at least this many most-recent tasks even if they are older than the age threshold. Set 0 to rely only on age and active-task protection.'
         },
         daily_maintenance_dry_run: {
@@ -69,7 +69,7 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
         },
         manual_runtime_cleanup: {
             label: 'Manual runtime cleanup',
-            description: 'Purges task-owned runtime artifacts for non-active tasks selected by the age or keep-latest values from the rows above. Preview is a dry-run report; Run cleanup removes the selected task artifacts, repairs shared indexes once, and requires typed confirmation.'
+            description: 'Purges task-owned runtime artifacts for non-active tasks selected by the age and keep-latest controls in this row. Preview is a dry-run report; Run cleanup removes the selected task artifacts, repairs shared indexes once, and requires typed confirmation.'
         },
         task_purge: {
             label: 'Task runtime artifact cleanup',
@@ -82,7 +82,7 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
             label: 'Clean task runtime artifacts'
         },
         run_preview: {
-            label: 'Preview: do not delete'
+            label: 'Preview calculation'
         },
         run_apply: {
             label: 'Run cleanup'

@@ -11,12 +11,12 @@
     "description": "Övre gräns för hur många kvalificerade uppgifter det dagliga underhållet behandlar i en enda körning. Begränsar påverkan om tröskelvärdena är felkonfigurerade."
   },
   "eligible_older_than_days": {
-    "label": "Minsta uppgiftsålder (dagar)",
-    "description": "En uppgift måste vara minst så här gammal innan underhåll eller manuell rensning får röra dess runtime-artefakter. Aktiva och nyare uppgifter förblir skyddade."
+    "label": "Ta bort uppgifter äldre än (dagar)",
+    "description": "Manuell rensning väljer runtime-artefakter för uppgifter som är äldre än detta antal dagar. Aktiva och nyare uppgifter förblir skyddade."
   },
   "keep_latest_tasks": {
-    "label": "Behåll de senaste uppgifterna (antal)",
-    "description": "Bevarar alltid minst så många av de senaste uppgifterna även om de är äldre än ålderströskeln. Sätt 0 för att bara förlita dig på ålder och skydd för aktiva uppgifter."
+    "label": "Behåll minst de senaste uppgifterna (antal)",
+    "description": "Bevarar alltid minst så här många senaste uppgifter även om de är äldre än åldersgränsen. Sätt 0 för att bara använda ålder och skydd för aktiva uppgifter."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run för dagligt underhåll",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Manuell runtime-cleanup",
-    "description": "Kör `garda cleanup` en gång med ålder- och keep-latest-värdena från raderna ovan. Förhandsgranskning är en dry-run som bara visar kandidater; Kör rensning tillämpar policyn, tar bort eller komprimerar och kräver inskriven bekräftelse."
+    "description": "Tar bort runtime-artefakter som ägs av icke-aktiva uppgifter som valts med ålder- och keep-latest-kontrollerna i den här raden. Förhandsgranskning är en dry-run-rapport; Kör rensning tar bort de valda uppgiftsartefakterna, reparerar delade index en gång och kräver inskriven bekräftelse."
   },
   "task_purge": {
     "label": "Cleanup av runtime-artefakter for uppgift",
@@ -49,7 +49,7 @@
     "label": "Rensa runtime-artefakter"
   },
   "run_preview": {
-    "label": "Dry-run-forhandsvisning"
+    "label": "Förhandsberäkning"
   },
   "value_true": {
     "label": "true — aktiverad"

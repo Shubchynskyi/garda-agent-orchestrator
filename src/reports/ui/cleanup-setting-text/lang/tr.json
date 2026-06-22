@@ -11,12 +11,12 @@
     "description": "Günlük bakımın tek bir çalıştırmada işleyeceği uygun görev sayısının üst sınırı. Eşikler yanlış yapılandırılmışsa etki alanını sınırlar."
   },
   "eligible_older_than_days": {
-    "label": "Görevin asgari yaşı (gün)",
-    "description": "Bakım veya manuel temizlik bir görevin runtime artefaktlarına dokunmadan önce görev en az bu kadar günlük olmalıdır. Etkin ve daha yeni görevler korunur."
+    "label": "Şundan eski task kayıtlarını sil (gün)",
+    "description": "Manuel temizlik bu gün sayısından daha eski task runtime artifacts verilerini seçer. Etkin ve daha yeni task kayıtları korunur."
   },
   "keep_latest_tasks": {
-    "label": "En yeni görevleri koru (adet)",
-    "description": "Yaş eşiğini aşsalar bile en az bu sayıdaki en yeni görevi her zaman korur. Yalnızca yaşa ve etkin görev korumasına güvenmek için 0 ayarlayın."
+    "label": "En az en yeni task kayıtlarını koru (adet)",
+    "description": "Yaş eşiğinden eski olsalar bile en yeni task kayıtlarından en az bu kadarını her zaman korur. Yalnızca yaş ve etkin task korumasına güvenmek için 0 ayarlayın."
   },
   "daily_maintenance_dry_run": {
     "label": "Günlük bakım dry-run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Manuel runtime cleanup",
-    "description": "Yukarıdaki satırlardaki yaş ve keep-latest değerleriyle `garda cleanup` komutunu bir kez çalıştırır. Önizleme yalnızca adayları gösteren bir dry-run işlemidir; Temizliği çalıştır policy uygular, siler veya sıkıştırır ve yazılı onay ister."
+    "description": "Bu satırdaki yaş ve keep-latest kontrolleriyle seçilen etkin olmayan görevlere ait runtime artifacts verilerini siler. Önizleme bir dry-run raporudur; Temizliği çalıştır seçilen görev artifacts verilerini siler, paylaşılan indeksleri bir kez onarır ve yazılı onay ister."
   },
   "task_purge": {
     "label": "Gorev runtime artefakti cleanup",
@@ -49,7 +49,7 @@
     "label": "Runtime artefaktlarini temizle"
   },
   "run_preview": {
-    "label": "Dry-run onizleme"
+    "label": "Ön hesaplama"
   },
   "value_true": {
     "label": "true — etkin"

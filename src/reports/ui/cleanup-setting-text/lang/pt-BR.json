@@ -11,12 +11,12 @@
     "description": "Limite superior de quantas tarefas elegíveis a manutenção diária processa em uma única execução. Reduz o alcance do impacto se os limites estiverem configurados incorretamente."
   },
   "eligible_older_than_days": {
-    "label": "Idade mínima da tarefa (dias)",
-    "description": "Uma tarefa precisa ter pelo menos essa idade antes que a manutenção ou a limpeza manual possam tocar em seus artefatos de runtime. Tarefas ativas e mais recentes permanecem protegidas."
+    "label": "Remover tarefas mais antigas que (dias)",
+    "description": "A limpeza manual seleciona artefatos de runtime de tarefas mais antigas que este número de dias. Tarefas ativas e mais novas permanecem protegidas."
   },
   "keep_latest_tasks": {
-    "label": "Manter as tarefas mais recentes (quantidade)",
-    "description": "Sempre preserva pelo menos essa quantidade das tarefas mais recentes, mesmo que sejam mais antigas que o limite de idade. Defina 0 para depender apenas da idade e da proteção das tarefas ativas."
+    "label": "Manter pelo menos as tarefas mais recentes (quantidade)",
+    "description": "Sempre preserva pelo menos esta quantidade de tarefas mais recentes, mesmo que sejam mais antigas que o limite de idade. Use 0 para depender apenas da idade e da proteção de tarefas ativas."
   },
   "daily_maintenance_dry_run": {
     "label": "Dry-run da manutenção diária",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Limpeza manual de runtime",
-    "description": "Executa `garda cleanup` uma vez com os valores de idade e keep-latest das linhas acima. A prévia é um dry-run que só mostra candidatos; Executar limpeza aplica a política, remove ou compacta e exige confirmação digitada."
+    "description": "Remove artefatos de runtime pertencentes a tarefas não ativas selecionadas pelos controles de idade e keep-latest nesta linha. A prévia é um relatório dry-run; Executar limpeza remove os artefatos de tarefas selecionados, repara índices compartilhados uma vez e exige confirmação digitada."
   },
   "task_purge": {
     "label": "Limpeza de artefatos runtime da tarefa",
@@ -49,7 +49,7 @@
     "label": "Limpar artefatos runtime"
   },
   "run_preview": {
-    "label": "Previa dry-run"
+    "label": "Cálculo prévio"
   },
   "value_true": {
     "label": "true — ativado"

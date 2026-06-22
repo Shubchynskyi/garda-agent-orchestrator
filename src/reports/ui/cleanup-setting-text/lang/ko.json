@@ -11,12 +11,12 @@
     "description": "일일 유지보수가 한 번 실행될 때 처리할 적격 작업 수의 상한입니다. 임계값이 잘못 구성되었을 때 영향 범위를 제한합니다."
   },
   "eligible_older_than_days": {
-    "label": "작업 최소 경과 일수",
-    "description": "유지보수나 수동 정리가 작업의 runtime 아티팩트를 건드리려면 해당 작업이 최소 이 일수만큼 오래되어야 합니다. 활성 작업과 더 최근 작업은 보호됩니다."
+    "label": "다음 일수보다 오래된 task 삭제",
+    "description": "수동 정리는 이 일수보다 오래된 task runtime artifacts를 선택합니다. 활성 task와 더 새로운 task는 보호됩니다."
   },
   "keep_latest_tasks": {
-    "label": "최신 작업 유지 수",
-    "description": "나이 임계값을 넘었더라도 최소한 이 수만큼의 최신 작업은 항상 보존합니다. 나이와 활성 작업 보호만 사용하려면 0으로 설정하세요."
+    "label": "최소 최신 task 유지 수",
+    "description": "나이 임계값보다 오래되었더라도 최신 task를 최소 이 수만큼 항상 보존합니다. 나이와 활성 task 보호만 사용하려면 0으로 설정합니다."
   },
   "daily_maintenance_dry_run": {
     "label": "일일 유지보수 dry-run",
@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "수동 runtime cleanup",
-    "description": "위 행의 age와 keep-latest 값으로 `garda cleanup`을 한 번 실행합니다. 미리보기는 후보만 보여주는 dry-run입니다. 정리 실행은 policy를 적용해 삭제 또는 압축하며 입력 확인을 요구합니다."
+    "description": "이 행의 age 및 keep-latest 컨트롤로 선택된 비활성 task-owned runtime artifacts를 삭제합니다. 미리보기는 dry-run 보고서입니다. 정리 실행은 선택된 task artifacts를 삭제하고 공유 인덱스를 한 번 복구하며 입력 확인을 요구합니다."
   },
   "task_purge": {
     "label": "작업 runtime artifact cleanup",
@@ -49,7 +49,7 @@
     "label": "runtime artifact 정리"
   },
   "run_preview": {
-    "label": "dry-run 미리보기"
+    "label": "사전 계산"
   },
   "value_true": {
     "label": "true — 활성화"
