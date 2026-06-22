@@ -43,7 +43,7 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     );
     assert.match(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.manual_runtime_cleanup.description || '',
-        /Preview is a dry-run.*Run cleanup deletes/u
+        /Preview is a dry-run report.*Run cleanup removes/u
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.task_purge.label,

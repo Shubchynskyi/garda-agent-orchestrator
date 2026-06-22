@@ -10,6 +10,8 @@ import {
     runCleanupWithLock,
     runGc,
     runGcWithLock,
+    runTaskRuntimeBatchPurge,
+    runTaskRuntimeBatchPurgeWithLock,
     runTaskRuntimePurge,
     runTaskRuntimePurgeWithLock,
     buildDefaultRetentionPolicy,
@@ -25,6 +27,7 @@ import {
     type RetentionPolicy,
     type ReviewArtifactStoragePolicy,
     type StoragePolicyResult,
+    type TaskRuntimeBatchPurgeResult,
     type TaskRuntimePurgeResult
 } from '../../../src/lifecycle/cleanup';
 import { processCleanupCandidates } from '../../../src/lifecycle/cleanup-removal';
@@ -44,6 +47,8 @@ export {
     runCleanupWithLock,
     runGc,
     runGcWithLock,
+    runTaskRuntimeBatchPurge,
+    runTaskRuntimeBatchPurgeWithLock,
     runTaskRuntimePurge,
     runTaskRuntimePurgeWithLock,
     buildDefaultRetentionPolicy,
@@ -61,6 +66,7 @@ export {
     type RetentionPolicy,
     type ReviewArtifactStoragePolicy,
     type StoragePolicyResult,
+    type TaskRuntimeBatchPurgeResult,
     type TaskRuntimePurgeResult
 };
 

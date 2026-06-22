@@ -69,7 +69,7 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
         },
         manual_runtime_cleanup: {
             label: 'Manual runtime cleanup',
-            description: 'Runs garda cleanup once with the age and keep-latest values from the rows above. Preview is a dry-run that only shows candidates; Run cleanup deletes or compresses according to policy and requires typed confirmation.'
+            description: 'Purges task-owned runtime artifacts for non-active tasks selected by the age or keep-latest values from the rows above. Preview is a dry-run report; Run cleanup removes the selected task artifacts, repairs shared indexes once, and requires typed confirmation.'
         },
         task_purge: {
             label: 'Task runtime artifact cleanup',

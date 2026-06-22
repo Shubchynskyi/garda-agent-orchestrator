@@ -338,17 +338,19 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
         usage: Object.freeze([
             `${PRIMARY_CLI_NAME} cleanup [--target-root PATH] [--dry-run] [--confirm] [--max-age-days N] [--runtime-retention-older-than-days N] [--runtime-retention-keep-latest-tasks N] [--max-backups N] [--max-working-plans N] [--max-aggregate-lines N] [--max-metrics-lines N]`,
             `${PRIMARY_CLI_NAME} cleanup policy [show|edit] [--target-root PATH]`,
+            `${PRIMARY_CLI_NAME} cleanup batch-task-purge [--target-root PATH] [--runtime-retention-older-than-days N] [--runtime-retention-keep-latest-tasks N] [--dry-run|--confirm] [--json]`,
             `${PRIMARY_CLI_NAME} cleanup task-purge --task-id "<task-id>" [--target-root PATH] [--dry-run|--confirm] [--json]`
         ]),
         examples: Object.freeze([
             `${PRIMARY_CLI_NAME} cleanup --dry-run`,
             `${PRIMARY_CLI_NAME} cleanup policy`,
             `${PRIMARY_CLI_NAME} cleanup policy edit`,
+            `${PRIMARY_CLI_NAME} cleanup batch-task-purge --runtime-retention-older-than-days 30 --runtime-retention-keep-latest-tasks 20 --dry-run`,
             `${PRIMARY_CLI_NAME} cleanup task-purge --task-id "T-100" --dry-run`
         ]),
         hints: Object.freeze([
             'Use dry-run first when removing runtime artifacts.',
-            'Manual runtime retention can be limited to tasks older than N days and/or tasks outside the latest N by filesystem recency.',
+            'Manual runtime cleanup batch purge selects non-active task-owned artifacts older than N days or outside the latest N by filesystem recency, then repairs shared indexes once.',
             'Runtime retention tiers are active evidence, ledger history for healthy DONE tasks, compressed forensic evidence for problem tasks, and confirmed purge.',
             'Clean-success compile/full-suite raw logs may be omitted at gate time; warnings, failures, and non-clean runs retain raw output.',
             'Working-plan cleanup is limited to runtime/plans/*.md and preserves active task plans.',

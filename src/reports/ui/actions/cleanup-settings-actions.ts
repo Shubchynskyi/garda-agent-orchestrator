@@ -170,7 +170,7 @@ function applyCleanupSettingsPatch(
 }
 
 function buildCleanupCommand(repoRoot: string, request: CleanupRunRequest, execute: boolean): ReturnType<typeof buildUiActionCommand> {
-    const args = ['cleanup', '--target-root', repoRoot];
+    const args = ['cleanup', 'batch-task-purge', '--target-root', repoRoot];
     if (!execute) {
         args.push('--dry-run');
     } else {
@@ -346,7 +346,7 @@ export async function handleUiCleanupRunRequest(
         id: mode === 'execute' ? 'cleanup-apply-custom' : 'cleanup-preview-custom',
         category: 'Maintenance',
         label: mode === 'execute' ? 'Apply Runtime Cleanup' : 'Preview Runtime Cleanup',
-        description: 'Run runtime cleanup with UI-provided runtime-retention selection bounds.',
+        description: 'Purge old task-owned runtime artifacts selected by UI-provided age and keep-latest bounds.',
         mutates: mode === 'execute',
         enabled: true,
         unavailable_reason: null,

@@ -9,6 +9,7 @@ import {
     runCleanup,
     runCleanupWithLock,
     runGc,
+    runTaskRuntimeBatchPurge,
     runTaskRuntimePurge,
     runTaskRuntimePurgeWithLock,
     appendTaskEvent,
@@ -21,6 +22,7 @@ import {
     writeTaskTimeline,
     writeTimelineSummary,
     createReviewArtifacts,
+    writeVerifiedLedger,
     seedHealthyDoneTaskArtifacts,
     writeTaskQueue
 } from './cleanup-fixtures';
@@ -1131,6 +1133,294 @@ describe('runTaskRuntimePurge', () => {
                 true,
                 'failed aggregate rewrite must be reported while orphan records remain'
             );
+        } finally {
+            realFs.renameSync = originalRenameSync;
+        }
+    });
+});
+
+describe('runTaskRuntimeBatchPurge', () => {
+    let tmpDir: string;
+    let bundleRoot: string;
+    let runtimeDir: string;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir('gao-task-batch-purge-');
+        bundleRoot = path.join(tmpDir, 'garda-agent-orchestrator');
+        fs.mkdirSync(bundleRoot, { recursive: true });
+        fs.writeFileSync(path.join(bundleRoot, 'VERSION'), '1.0.0\n');
+        runtimeDir = setupRuntimeDir(bundleRoot);
+    });
+
+    afterEach(() => {
+        try {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+            // Best-effort
+        }
+    });
+
+    it('purges non-active task-owned artifacts selected by age or keep-latest count and repairs shared indexes once', () => {
+        const oldTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-900',
+            includePlan: true,
+            includeProjectMemory: true,
+            includeCompletenessCache: true,
+            ageDays: 90
+        });
+        const countSelectedTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-901',
+            includePlan: true,
+            includeProjectMemory: true,
+            includeCompletenessCache: true,
+            ageDays: 5
+        });
+        const newestTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-902',
+            includePlan: true,
+            includeProjectMemory: true,
+            includeCompletenessCache: true,
+            ageDays: 1
+        });
+        writeTaskQueue(tmpDir, [
+            { id: 'T-900', status: '🟩 DONE', title: 'Old target' },
+            { id: 'T-901', status: '🟩 DONE', title: 'Count target' },
+            { id: 'T-902', status: '🟩 DONE', title: 'Newest retained' }
+        ]);
+
+        const reviewsIndexPath = path.join(runtimeDir, 'reviews', 'reviews-index.json');
+        const allTasksPath = path.join(runtimeDir, 'task-events', 'all-tasks.jsonl');
+        fs.writeFileSync(reviewsIndexPath, JSON.stringify({ version: 1, entries: [] }), 'utf8');
+        fs.writeFileSync(
+            allTasksPath,
+            '{"task_id":"T-900"}\n{"task_id":"T-901"}\n{"task_id":"T-902"}\n',
+            'utf8'
+        );
+
+        const dryRun = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            keepLatestTasks: 1
+        });
+
+        assert.equal(dryRun.result, 'SUCCESS');
+        assert.equal(dryRun.dryRun, true);
+        assert.deepEqual(dryRun.selectedTaskIds, ['T-900', 'T-901']);
+        assert.deepEqual(dryRun.selectedByAgeTaskIds, ['T-900']);
+        assert.deepEqual(dryRun.selectedByCountTaskIds, ['T-900', 'T-901']);
+        assert.deepEqual(dryRun.protectedNewestTaskIds, ['T-902']);
+        assert.ok(dryRun.sharedIndexOperations.includes('prune-all-tasks-aggregate'));
+        assert.ok(dryRun.sharedIndexOperations.includes('prune-timeline-summary'));
+        assert.equal(fs.existsSync(oldTask.timelinePath), true, 'dry-run preserves old task timeline');
+
+        const result = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            keepLatestTasks: 1,
+            confirm: true
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.deepEqual(result.selectedTaskIds, ['T-900', 'T-901']);
+        assert.equal(result.errors.length, 0);
+        for (const taskId of ['T-900', 'T-901']) {
+            for (const category of ['reviews', 'task-events', 'plans', 'project-memory', 'task-ledger']) {
+                assert.ok(result.removed.some((item) => item.category === category && item.taskId === taskId),
+                    `batch purge should remove ${category} for ${taskId}`);
+            }
+        }
+        assert.equal(fs.existsSync(oldTask.timelinePath), false);
+        assert.equal(fs.existsSync(countSelectedTask.timelinePath), false);
+        assert.equal(fs.existsSync(oldTask.planPath!), false);
+        assert.equal(fs.existsSync(countSelectedTask.planPath!), false);
+        assert.equal(fs.existsSync(newestTask.timelinePath), true, 'newest retained task timeline remains');
+        assert.equal(fs.existsSync(newestTask.planPath!), true, 'newest retained task plan remains');
+        assert.equal(fs.existsSync(reviewsIndexPath), false, 'review side effect invalidates reviews index once');
+
+        const remainingTaskIds = fs.readFileSync(allTasksPath, 'utf8')
+            .split('\n')
+            .filter((line) => line.trim())
+            .map((line) => (JSON.parse(line) as { task_id?: string }).task_id);
+        assert.deepEqual(remainingTaskIds, ['T-902']);
+        const summary = JSON.parse(fs.readFileSync(path.join(runtimeDir, 'task-events', '.timeline-summary.json'), 'utf8'));
+        assert.equal(summary.entries['T-900'], undefined);
+        assert.equal(summary.entries['T-901'], undefined);
+        assert.ok(summary.entries['T-902']);
+    });
+
+    it('skips active tasks selected by the batch filters without deleting their artifacts', () => {
+        const activeTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-910',
+            includePlan: true,
+            ageDays: 90
+        });
+
+        const result = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            confirm: true,
+            activeTaskIds: ['T-910']
+        });
+
+        assert.equal(result.result, 'PARTIAL');
+        assert.deepEqual(result.matchedTaskIds, ['T-910']);
+        assert.deepEqual(result.selectedTaskIds, []);
+        assert.deepEqual(result.activeTaskSkips, ['T-910']);
+        assert.equal(result.removed.length, 0);
+        assert.equal(fs.existsSync(activeTask.timelinePath), true);
+        assert.equal(fs.existsSync(activeTask.planPath!), true);
+    });
+
+    it('is a successful no-op when the same batch purge is applied twice', () => {
+        seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-920',
+            includePlan: true,
+            ageDays: 90
+        });
+        const allTasksPath = path.join(runtimeDir, 'task-events', 'all-tasks.jsonl');
+        fs.writeFileSync(allTasksPath, '{"task_id":"T-920"}\n', 'utf8');
+
+        const first = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            confirm: true
+        });
+        assert.equal(first.result, 'SUCCESS');
+        assert.deepEqual(first.selectedTaskIds, ['T-920']);
+
+        const second = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            confirm: true
+        });
+        assert.equal(second.result, 'SUCCESS');
+        assert.deepEqual(second.selectedTaskIds, []);
+        assert.equal(second.removed.length, 0);
+        assert.equal(fs.readFileSync(allTasksPath, 'utf8').trim(), '');
+    });
+
+    it('selects and purges ledger-only old task-owned artifacts', () => {
+        const ledgerPath = writeVerifiedLedger(bundleRoot, 'T-935');
+        const past = daysAgo(90);
+        fs.utimesSync(ledgerPath, past, past);
+
+        const dryRun = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30
+        });
+        assert.deepEqual(dryRun.candidateTaskIds, ['T-935']);
+        assert.deepEqual(dryRun.selectedTaskIds, ['T-935']);
+        assert.equal(dryRun.skipped.some((item) => item.category === 'task-ledger' && item.taskId === 'T-935'), true);
+
+        const result = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            confirm: true
+        });
+
+        assert.equal(result.result, 'SUCCESS');
+        assert.deepEqual(result.selectedTaskIds, ['T-935']);
+        assert.equal(result.removed.some((item) => item.category === 'task-ledger' && item.taskId === 'T-935'), true);
+        assert.equal(fs.existsSync(ledgerPath), false);
+    });
+
+    it('keeps shared aggregate records when a selected task still has purge artifacts after deletion errors', () => {
+        const failedTask = seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-940',
+            includePlan: true,
+            includeCompletenessCache: true,
+            ageDays: 90
+        });
+        const allTasksPath = path.join(runtimeDir, 'task-events', 'all-tasks.jsonl');
+        fs.writeFileSync(allTasksPath, '{"task_id":"T-940"}\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalUnlinkSync = realFs.unlinkSync;
+        let intercepted = false;
+        try {
+            realFs.unlinkSync = function (...args: unknown[]) {
+                const targetPath = typeof args[0] === 'string' ? path.resolve(args[0]) : '';
+                if (!intercepted && targetPath === path.resolve(failedTask.timelinePath)) {
+                    intercepted = true;
+                    throw new Error('simulated batch timeline deletion failure');
+                }
+                return originalUnlinkSync.apply(realFs, args as [fs.PathLike]);
+            };
+
+            const result = runTaskRuntimeBatchPurge({
+                targetRoot: tmpDir,
+                bundleRoot,
+                eligibleOlderThanDays: 30,
+                confirm: true
+            });
+
+            assert.equal(intercepted, true);
+            assert.equal(result.result, 'PARTIAL');
+            assert.equal(result.selectedTaskIds.includes('T-940'), true);
+            assert.equal(result.sharedIndexOperations.includes('prune-all-tasks-aggregate'), false);
+            assert.equal(result.errors.length, 1);
+            assert.match(result.errors[0].message, /simulated batch timeline deletion failure/);
+            assert.equal(fs.existsSync(failedTask.timelinePath), true);
+            assert.equal(
+                fs.readFileSync(allTasksPath, 'utf8').includes('"task_id":"T-940"'),
+                true,
+                'aggregate records must remain for a task whose purge did not fully remove task-owned artifacts'
+            );
+            const summary = JSON.parse(fs.readFileSync(path.join(runtimeDir, 'task-events', '.timeline-summary.json'), 'utf8'));
+            assert.ok(summary.entries['T-940']);
+        } finally {
+            realFs.unlinkSync = originalUnlinkSync;
+        }
+    });
+
+    it('reports PARTIAL when shared aggregate pruning fails during batch purge', () => {
+        seedHealthyDoneTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-930',
+            includePlan: true,
+            ageDays: 90
+        });
+        const allTasksPath = path.join(runtimeDir, 'task-events', 'all-tasks.jsonl');
+        fs.writeFileSync(allTasksPath, '{"task_id":"T-930"}\n', 'utf8');
+
+        const realFs = require('node:fs');
+        const originalRenameSync = realFs.renameSync;
+        let intercepted = false;
+        try {
+            realFs.renameSync = function (...args: unknown[]) {
+                const destinationPath = typeof args[1] === 'string' ? path.resolve(args[1]) : '';
+                if (!intercepted && destinationPath === path.resolve(allTasksPath)) {
+                    intercepted = true;
+                    throw new Error('simulated batch aggregate rewrite failure');
+                }
+                return originalRenameSync.apply(realFs, args as [fs.PathLike, fs.PathLike]);
+            };
+
+            const result = runTaskRuntimeBatchPurge({
+                targetRoot: tmpDir,
+                bundleRoot,
+                eligibleOlderThanDays: 30,
+                confirm: true
+            });
+
+            assert.equal(intercepted, true);
+            assert.equal(result.result, 'PARTIAL');
+            assert.equal(result.errors.length, 1);
+            assert.match(result.errors[0].message, /simulated batch aggregate rewrite failure/);
+            assert.equal(fs.readFileSync(allTasksPath, 'utf8').includes('"task_id":"T-930"'), true);
         } finally {
             realFs.renameSync = originalRenameSync;
         }

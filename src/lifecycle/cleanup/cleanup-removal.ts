@@ -49,6 +49,21 @@ export interface RuntimeRetentionSelectionOptions {
 interface TaskArtifactSummary {
     taskId: string;
     newestMtimeMs: number;
+    artifactCount?: number;
+}
+
+export interface TaskRuntimeBatchPurgeSelectionOptions {
+    eligibleOlderThanDays?: number;
+    keepLatestTasks?: number;
+    now?: Date;
+}
+
+export interface TaskRuntimeBatchPurgeTaskSelection {
+    candidateTaskIds: string[];
+    selectedTaskIds: string[];
+    selectedByAgeTaskIds: string[];
+    selectedByCountTaskIds: string[];
+    protectedNewestTaskIds: string[];
 }
 
 interface TaskScopedCollectorContext {
@@ -736,8 +751,17 @@ function collectTaskScopedArtifactInventory(
 
 export function collectTaskRuntimePurgeCandidates(runtimeDir: string, taskId: string): CleanupItem[] {
     const taskIdFilter = new Set([taskId]);
-    return collectTaskScopedArtifactInventory(runtimeDir, new Set<string>(), taskIdFilter)
-        .filter((item) => item.taskId === taskId && isRuntimeCleanupTaskPurgeDeletionCategory(item.category))
+    return collectTaskRuntimePurgeInventory(runtimeDir, new Set<string>(), taskIdFilter)
+        .filter((item) => item.taskId === taskId);
+}
+
+export function collectTaskRuntimePurgeInventory(
+    runtimeDir: string,
+    activeTaskIds: ReadonlySet<string> = new Set<string>(),
+    taskIdFilter?: ReadonlySet<string>
+): CleanupItem[] {
+    return collectTaskScopedArtifactInventory(runtimeDir, activeTaskIds, taskIdFilter)
+        .filter((item) => item.taskId && isRuntimeCleanupTaskPurgeDeletionCategory(item.category))
         .map((item) => ({ ...item, reason: 'task-runtime-purge' }));
 }
 
@@ -755,11 +779,16 @@ function normalizeNonNegativeIntegerLimit(value: unknown): number | null {
     return Math.floor(value);
 }
 
+function contributesToTaskRuntimeBatchPurgeSelectionAge(category: string): boolean {
+    return isRuntimeCleanupTaskPurgeDeletionCategory(category);
+}
+
 function updateTaskArtifactSummary(
     summaries: Map<string, TaskArtifactSummary>,
-    item: CleanupItem
+    item: CleanupItem,
+    contributesToAge: (category: string) => boolean = contributesToRetentionAge
 ): void {
-    if (!item.taskId || !contributesToRetentionAge(item.category)) {
+    if (!item.taskId || !contributesToAge(item.category)) {
         return;
     }
     let newestMtimeMs = 0;
@@ -769,9 +798,63 @@ function updateTaskArtifactSummary(
         // Keep unreadable artifacts eligible for preview with the lowest age priority.
     }
     const existing = summaries.get(item.taskId);
-    if (!existing || newestMtimeMs > existing.newestMtimeMs) {
-        summaries.set(item.taskId, { taskId: item.taskId, newestMtimeMs });
+    if (!existing) {
+        summaries.set(item.taskId, { taskId: item.taskId, newestMtimeMs, artifactCount: 1 });
+        return;
     }
+    existing.artifactCount = (existing.artifactCount || 0) + 1;
+    if (newestMtimeMs > existing.newestMtimeMs) {
+        existing.newestMtimeMs = newestMtimeMs;
+    }
+}
+
+function compareTaskIds(left: string, right: string): number {
+    return left.localeCompare(right);
+}
+
+export function selectTaskRuntimeBatchPurgeTaskIds(
+    inventory: readonly CleanupItem[],
+    options: TaskRuntimeBatchPurgeSelectionOptions = {}
+): TaskRuntimeBatchPurgeTaskSelection {
+    const summaries = new Map<string, TaskArtifactSummary>();
+    for (const item of inventory) {
+        updateTaskArtifactSummary(summaries, item, contributesToTaskRuntimeBatchPurgeSelectionAge);
+    }
+    const candidates = Array.from(summaries.values());
+    const candidateTaskIds = candidates.map((summary) => summary.taskId).sort(compareTaskIds);
+    const selectedByAgeTaskIds = new Set<string>();
+    const eligibleOlderThanDays = normalizeNonNegativeIntegerLimit(options.eligibleOlderThanDays);
+    if (eligibleOlderThanDays !== null) {
+        const cutoffMs = (options.now ?? new Date()).getTime() - eligibleOlderThanDays * MS_PER_DAY;
+        for (const summary of candidates) {
+            if (summary.newestMtimeMs <= cutoffMs) {
+                selectedByAgeTaskIds.add(summary.taskId);
+            }
+        }
+    }
+
+    const selectedByCountTaskIds = new Set<string>();
+    const protectedNewestTaskIds = new Set<string>();
+    const keepLatestTasks = normalizeNonNegativeIntegerLimit(options.keepLatestTasks);
+    if (keepLatestTasks !== null && keepLatestTasks > 0) {
+        for (const summary of [...candidates].sort(compareTaskArtifactsByNewestFirst).slice(0, keepLatestTasks)) {
+            protectedNewestTaskIds.add(summary.taskId);
+        }
+        for (const summary of candidates) {
+            if (!protectedNewestTaskIds.has(summary.taskId)) {
+                selectedByCountTaskIds.add(summary.taskId);
+            }
+        }
+    }
+
+    const selectedTaskIds = new Set([...selectedByAgeTaskIds, ...selectedByCountTaskIds]);
+    return {
+        candidateTaskIds,
+        selectedTaskIds: Array.from(selectedTaskIds).sort(compareTaskIds),
+        selectedByAgeTaskIds: Array.from(selectedByAgeTaskIds).sort(compareTaskIds),
+        selectedByCountTaskIds: Array.from(selectedByCountTaskIds).sort(compareTaskIds),
+        protectedNewestTaskIds: Array.from(protectedNewestTaskIds).sort(compareTaskIds)
+    };
 }
 
 function compareTaskArtifactsByNewestFirst(left: TaskArtifactSummary, right: TaskArtifactSummary): number {

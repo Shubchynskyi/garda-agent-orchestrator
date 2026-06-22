@@ -151,6 +151,32 @@ test('handleCleanup routes manual runtime-retention age selection to preview', a
     }
 });
 
+test('handleCleanup routes batch task purge selection to task-owned dry-run report', async () => {
+    const { projectRoot } = setupRetentionPreviewWorkspace();
+
+    try {
+        const { lines } = await captureConsoleAsync(() => handleCleanup([
+            'batch-task-purge',
+            '--target-root',
+            projectRoot,
+            '--dry-run',
+            '--runtime-retention-older-than-days',
+            '30',
+            '--runtime-retention-keep-latest-tasks',
+            '1'
+        ], PACKAGE_JSON));
+
+        assert.ok(lines.some((line) => line.includes('BatchPurgeCandidateTasks: 1')));
+        assert.ok(lines.some((line) => line.includes('BatchPurgeMatchedTasks: 1')));
+        assert.ok(lines.some((line) => line.includes('BatchPurgeSelectedTasks: 1')));
+        assert.ok(lines.some((line) => line.includes('BatchPurgeSelectedTaskSample: T-002')));
+        assert.ok(lines.some((line) => line.includes('BatchPurgeSharedIndexOperations:')));
+        assert.ok(lines.some((line) => line.includes('Result: SUCCESS')));
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+});
+
 test('workspace maintenance rejects malformed runtime-retention integer flags', async () => {
     const cases: Array<{
         name: string;

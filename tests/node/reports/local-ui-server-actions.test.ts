@@ -875,8 +875,10 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
                 signal: null,
                 stdout: action.id === 'cleanup-preview-custom'
                     ? [
-                        'RuntimeRetentionPreviewTasks: 12',
-                        'RuntimeRetentionEligibleNow: 4',
+                        'BatchPurgeCandidateTasks: 12',
+                        'BatchPurgeSelectedTasks: 4',
+                        'BatchPurgeSelectedTaskSample: T-001, T-002, T-003, T-004',
+                        'BatchPurgeSharedIndexOperations: invalidate-reviews-index, prune-all-tasks-aggregate, prune-timeline-summary',
                         'Would remove (reviews): 3',
                         'Would remove (task-events): 1',
                         'Would free: 1.00 MB'
@@ -968,10 +970,11 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         assert.equal(runPreviewResponse.status, 200);
         const runPreview = await runPreviewResponse.json() as { status: string; command: string; stdout: string };
         assert.equal(runPreview.status, 'previewed');
-        assert.match(runPreview.command, /cleanup --target-root \. --dry-run/u);
+        assert.match(runPreview.command, /cleanup batch-task-purge --target-root \. --dry-run/u);
         assert.match(runPreview.command, /--runtime-retention-older-than-days 11/u);
         assert.match(runPreview.command, /--runtime-retention-keep-latest-tasks 2/u);
-        assert.match(runPreview.stdout, /RuntimeRetentionPreviewTasks: 12/u);
+        assert.match(runPreview.stdout, /BatchPurgeCandidateTasks: 12/u);
+        assert.match(runPreview.stdout, /BatchPurgeSelectedTasks: 4/u);
         assert.match(runPreview.stdout, /Would remove \(reviews\): 3/u);
         assert.equal(executedCommands.length, 1);
 
@@ -993,7 +996,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         };
         assert.equal(runBlocked.status, 'confirmation_required');
         assert.equal(runBlocked.confirmation_phrase, 'RUN GARDA CLEANUP');
-        assert.match(runBlocked.command, /cleanup --target-root \. --confirm/u);
+        assert.match(runBlocked.command, /cleanup batch-task-purge --target-root \. --confirm/u);
         assert.equal(executedCommands.length, 1);
 
         const runApplyResponse = await fetch(`${server.url}api/cleanup-run`, {
@@ -1009,7 +1012,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         assert.equal(runApplyResponse.status, 200);
         const runApply = await runApplyResponse.json() as { status: string; command: string; stdout: string };
         assert.equal(runApply.status, 'executed');
-        assert.match(runApply.command, /cleanup --target-root \. --confirm/u);
+        assert.match(runApply.command, /cleanup batch-task-purge --target-root \. --confirm/u);
         assert.match(runApply.command, /--runtime-retention-older-than-days 11/u);
         assert.match(runApply.command, /--runtime-retention-keep-latest-tasks 2/u);
         assert.equal(runApply.stdout, 'cleanup ok');

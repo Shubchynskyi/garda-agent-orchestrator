@@ -526,6 +526,30 @@ async function terminateBrowserSmokeProcess(browser: ChildProcess | null): Promi
     ]);
 }
 
+function isTransientBrowserSmokeRmError(error: unknown): boolean {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EACCES';
+}
+
+async function removeBrowserSmokeUserDataDir(userDataDir: string): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+            fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+            return;
+        } catch (error) {
+            if (process.platform !== 'win32' || !isTransientBrowserSmokeRmError(error)) {
+                throw error;
+            }
+            lastError = error;
+            await sleep(Math.min(500, 100 * (attempt + 1)));
+        }
+    }
+    throw lastError instanceof Error
+        ? lastError
+        : new Error(`Failed to remove browser smoke user data directory: ${userDataDir}`);
+}
+
 test('local UI server exposes report and lazy task detail endpoints', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
@@ -634,7 +658,7 @@ test('local UI browser smoke opens checks cycle tab with compact forecast and se
     } finally {
         cdp?.close();
         await terminateBrowserSmokeProcess(browser);
-        fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+        await removeBrowserSmokeUserDataDir(userDataDir);
         await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });

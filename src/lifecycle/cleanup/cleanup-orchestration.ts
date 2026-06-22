@@ -16,6 +16,8 @@ import {
     collectRuntimeRetentionCandidates,
     type RuntimeRetentionSelectionOptions,
     collectTaskRuntimePurgeCandidates,
+    collectTaskRuntimePurgeInventory,
+    selectTaskRuntimeBatchPurgeTaskIds,
     collectStaleLifecycleLock,
     collectStaleTaskEventLockCandidates,
     collectStandardCandidates,
@@ -28,6 +30,7 @@ import {
     type CleanupItem,
     type RetentionPolicy,
     type ReviewArtifactStoragePolicy,
+    type TaskRuntimeBatchPurgeResult,
     type TaskRuntimePurgeResult
 } from './cleanup-types';
 import { listRuntimeCleanupSideEffectActionsForRemovedCategories } from './runtime-cleanup-ownership';
@@ -82,25 +85,25 @@ function applyTaskPurgeSharedSideEffects(
     runtimeDir: string,
     removed: CleanupItem[],
     dryRun: boolean,
-    explicitTaskIds: readonly string[] = []
+    taskIdsForSharedPrune?: readonly string[]
 ): Array<{ path: string; message: string }> {
     const errors: Array<{ path: string; message: string }> = [];
-    if (dryRun || (removed.length === 0 && explicitTaskIds.length === 0)) {
+    const taskIdsToPrune = Array.from(new Set(
+        taskIdsForSharedPrune ?? removed.map((item) => item.taskId).filter((taskId): taskId is string => Boolean(taskId))
+    ));
+    if (dryRun || (removed.length === 0 && taskIdsToPrune.length === 0)) {
         return errors;
     }
     const actions = listRuntimeCleanupSideEffectActionsForRemovedCategories(
         new Set(removed.map((item) => item.category))
     );
-    const removedTaskIds = Array.from(new Set(
-        [
-            ...explicitTaskIds,
-            ...removed.map((item) => item.taskId).filter((taskId): taskId is string => Boolean(taskId))
-        ]
-    ));
     const effectiveActions = new Set(actions);
-    if (explicitTaskIds.length > 0) {
+    if (taskIdsForSharedPrune && taskIdsToPrune.length > 0) {
         effectiveActions.add('prune-all-tasks-aggregate');
         effectiveActions.add('prune-timeline-summary');
+    }
+    if (taskIdsToPrune.length === 0) {
+        effectiveActions.delete('prune-all-tasks-aggregate');
     }
     for (const action of effectiveActions) {
         const targetPath = action === 'invalidate-reviews-index'
@@ -112,7 +115,7 @@ function applyTaskPurgeSharedSideEffects(
             } else if (action === 'prune-timeline-summary') {
                 pruneTimelineSummaryEntries(targetPath);
             } else if (action === 'prune-all-tasks-aggregate') {
-                for (const taskId of removedTaskIds) {
+                for (const taskId of taskIdsToPrune) {
                     pruneAggregateTaskRecordsLocked(targetPath, taskId);
                 }
             }
@@ -124,6 +127,17 @@ function applyTaskPurgeSharedSideEffects(
         }
     }
     return errors;
+}
+
+function collectTaskIdsWithoutRemainingPurgeCandidates(runtimeDir: string, taskIds: readonly string[]): string[] {
+    const taskIdsWithoutRemainingArtifacts: string[] = [];
+    for (const taskId of Array.from(new Set(taskIds)).sort()) {
+        const remainingCandidates = collectTaskRuntimePurgeInventory(runtimeDir, new Set<string>(), new Set([taskId]));
+        if (remainingCandidates.length === 0) {
+            taskIdsWithoutRemainingArtifacts.push(taskId);
+        }
+    }
+    return taskIdsWithoutRemainingArtifacts;
 }
 
 export interface CleanupOptions {
@@ -278,7 +292,10 @@ export function runTaskRuntimePurge(options: TaskRuntimePurgeOptions): TaskRunti
 
     const candidates = collectTaskRuntimePurgeCandidates(runtimeDir, taskId);
     const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun, runtimeDir);
-    errors.push(...applyTaskPurgeSharedSideEffects(runtimeDir, removed, dryRun, [taskId]));
+    const taskIdsForSharedPrune = dryRun
+        ? [taskId]
+        : collectTaskIdsWithoutRemainingPurgeCandidates(runtimeDir, [taskId]);
+    errors.push(...applyTaskPurgeSharedSideEffects(runtimeDir, removed, dryRun, taskIdsForSharedPrune));
 
     return {
         targetRoot,
@@ -295,6 +312,92 @@ export function runTaskRuntimePurge(options: TaskRuntimePurgeOptions): TaskRunti
 
 export function runTaskRuntimePurgeWithLock(options: TaskRuntimePurgeOptions): TaskRuntimePurgeResult {
     return withLifecycleOperationLock(options.targetRoot, 'task-runtime-purge', () => runTaskRuntimePurge(options));
+}
+
+export interface TaskRuntimeBatchPurgeOptions {
+    targetRoot: string;
+    bundleRoot: string;
+    confirm?: boolean;
+    activeTaskIds?: string[];
+    eligibleOlderThanDays?: number;
+    keepLatestTasks?: number;
+    now?: Date;
+}
+
+function buildTaskPurgeSharedIndexOperations(removed: readonly CleanupItem[], explicitTaskIds: readonly string[]): string[] {
+    const actions = listRuntimeCleanupSideEffectActionsForRemovedCategories(
+        new Set(removed.map((item) => item.category))
+    );
+    const effectiveActions = new Set(actions);
+    if (explicitTaskIds.length > 0) {
+        effectiveActions.add('prune-all-tasks-aggregate');
+        effectiveActions.add('prune-timeline-summary');
+    } else {
+        effectiveActions.delete('prune-all-tasks-aggregate');
+    }
+    return Array.from(effectiveActions).sort();
+}
+
+export function runTaskRuntimeBatchPurge(options: TaskRuntimeBatchPurgeOptions): TaskRuntimeBatchPurgeResult {
+    const { targetRoot, bundleRoot, confirm = false } = options;
+    validateTargetRoot(targetRoot, bundleRoot);
+
+    const runtimeDir = path.join(bundleRoot, 'runtime');
+    const dryRun = !confirm;
+    const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds);
+    const allInventory = collectTaskRuntimePurgeInventory(runtimeDir, new Set<string>());
+    const taskSelection = selectTaskRuntimeBatchPurgeTaskIds(allInventory, {
+        eligibleOlderThanDays: options.eligibleOlderThanDays,
+        keepLatestTasks: options.keepLatestTasks,
+        now: options.now
+    });
+    const activeTaskSkips: string[] = [];
+    const selectedTaskIds: string[] = [];
+    for (const taskId of taskSelection.selectedTaskIds) {
+        const activeTaskIdMatch = findActiveTaskIdMatch(activeTaskIds, taskId);
+        if (activeTaskIdMatch) {
+            activeTaskSkips.push(activeTaskIdMatch);
+            continue;
+        }
+        selectedTaskIds.push(taskId);
+    }
+
+    const selectedTaskIdSet = new Set(selectedTaskIds);
+    const candidates = selectedTaskIds.length > 0
+        ? collectTaskRuntimePurgeInventory(runtimeDir, new Set<string>(), selectedTaskIdSet)
+        : [];
+    const { removed, skipped, errors, totalFreedBytes } = processCleanupCandidates(candidates, dryRun, runtimeDir);
+    const taskIdsForSharedPrune = dryRun
+        ? selectedTaskIds
+        : collectTaskIdsWithoutRemainingPurgeCandidates(runtimeDir, selectedTaskIds);
+    const sharedIndexOperations = buildTaskPurgeSharedIndexOperations(dryRun ? skipped : removed, taskIdsForSharedPrune);
+    errors.push(...applyTaskPurgeSharedSideEffects(runtimeDir, removed, dryRun, taskIdsForSharedPrune));
+
+    return {
+        targetRoot,
+        dryRun,
+        filters: {
+            eligibleOlderThanDays: options.eligibleOlderThanDays ?? null,
+            keepLatestTasks: options.keepLatestTasks ?? null
+        },
+        candidateTaskIds: taskSelection.candidateTaskIds,
+        matchedTaskIds: taskSelection.selectedTaskIds,
+        selectedTaskIds,
+        activeTaskSkips: Array.from(new Set(activeTaskSkips)).sort(),
+        protectedNewestTaskIds: taskSelection.protectedNewestTaskIds,
+        selectedByAgeTaskIds: taskSelection.selectedByAgeTaskIds,
+        selectedByCountTaskIds: taskSelection.selectedByCountTaskIds,
+        sharedIndexOperations,
+        removed,
+        skipped,
+        errors,
+        totalFreedBytes,
+        result: errors.length > 0 || activeTaskSkips.length > 0 ? 'PARTIAL' : 'SUCCESS'
+    };
+}
+
+export function runTaskRuntimeBatchPurgeWithLock(options: TaskRuntimeBatchPurgeOptions): TaskRuntimeBatchPurgeResult {
+    return withLifecycleOperationLock(options.targetRoot, 'task-runtime-batch-purge', () => runTaskRuntimeBatchPurge(options));
 }
 
 export interface GcOptions {

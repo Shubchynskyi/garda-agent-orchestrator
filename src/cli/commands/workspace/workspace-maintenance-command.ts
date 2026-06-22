@@ -7,6 +7,7 @@ import {
 import {
     runCleanupWithLock,
     runGcWithLock,
+    runTaskRuntimeBatchPurgeWithLock,
     runTaskRuntimePurgeWithLock,
     RETENTION_POLICY_DEFAULTS,
     validateGcCategories
@@ -306,6 +307,110 @@ export function handleUninstall(commandArgv: string[], packageJson: PackageJsonL
 
 export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLike): Promise<void> | void {
     const firstArg = String(commandArgv[0] || '').trim();
+    if (firstArg === 'batch-task-purge') {
+        const batchPurgeDefinitions = {
+            '--target-root': { key: 'targetRoot', type: 'string' },
+            '--confirm': { key: 'confirm', type: 'boolean' },
+            '--dry-run': { key: 'dryRun', type: 'boolean' },
+            '--json': { key: 'json', type: 'boolean' },
+            '--runtime-retention-older-than-days': { key: 'runtimeRetentionOlderThanDays', type: 'string' },
+            '--runtime-retention-keep-latest-tasks': { key: 'runtimeRetentionKeepLatestTasks', type: 'string' }
+        };
+        const { options: rawBatchPurgeOptions } = parseOptions(commandArgv.slice(1), batchPurgeDefinitions);
+        const batchPurgeOptions = rawBatchPurgeOptions as ParsedOptionsRecord;
+
+        if (handleStandardFlags(batchPurgeOptions, packageJson)) return;
+
+        const { targetRoot, bundlePath } = resolveWorkspacePaths(batchPurgeOptions.targetRoot, 'cleanup batch-task-purge');
+        const confirm = batchPurgeOptions.confirm === true && batchPurgeOptions.dryRun !== true;
+        const result = runTaskRuntimeBatchPurgeWithLock({
+            targetRoot,
+            bundleRoot: bundlePath,
+            confirm,
+            eligibleOlderThanDays: parseNonNegativeIntegerOption(
+                batchPurgeOptions.runtimeRetentionOlderThanDays,
+                '--runtime-retention-older-than-days'
+            ),
+            keepLatestTasks: parseNonNegativeIntegerOption(
+                batchPurgeOptions.runtimeRetentionKeepLatestTasks,
+                '--runtime-retention-keep-latest-tasks'
+            )
+        });
+
+        if (batchPurgeOptions.json === true) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+        }
+
+        printBanner(packageJson, 'Batch task runtime purge', targetRoot, {
+            versionOverride: resolveWorkspaceDisplayVersion(targetRoot, packageJson.version)
+        });
+        if (!confirm) {
+            console.log(yellow('Dry run (default) — no files were removed. Pass --confirm to purge selected task runtime artifacts.'));
+        }
+        formatKeyValueOutput(result as unknown as Record<string, unknown>, [
+            'targetRoot', 'dryRun', 'totalFreedBytes', 'result'
+        ]);
+        printHighlightedPair('BatchPurgeCandidateTasks:', String(result.candidateTaskIds.length), {
+            labelColor: cyan,
+            valueColor: green
+        });
+        printHighlightedPair('BatchPurgeMatchedTasks:', String(result.matchedTaskIds.length), {
+            labelColor: cyan,
+            valueColor: green
+        });
+        printHighlightedPair('BatchPurgeSelectedTasks:', String(result.selectedTaskIds.length), {
+            labelColor: cyan,
+            valueColor: green
+        });
+        if (result.selectedTaskIds.length > 0) {
+            const sample = result.selectedTaskIds.slice(0, 10).join(', ');
+            const suffix = result.selectedTaskIds.length > 10 ? `, ... +${result.selectedTaskIds.length - 10}` : '';
+            printHighlightedPair('BatchPurgeSelectedTaskSample:', `${sample}${suffix}`, {
+                labelColor: cyan,
+                valueColor: green
+            });
+        }
+        if (result.activeTaskSkips.length > 0) {
+            printHighlightedPair('BatchPurgeActiveTaskSkips:', result.activeTaskSkips.join(', '), {
+                labelColor: cyan,
+                valueColor: yellow
+            });
+        }
+        if (result.sharedIndexOperations.length > 0) {
+            printHighlightedPair('BatchPurgeSharedIndexOperations:', result.sharedIndexOperations.join(', '), {
+                labelColor: cyan,
+                valueColor: green
+            });
+        }
+        const actionItems = result.dryRun ? result.skipped : result.removed;
+        const byCategory = new Map<string, number>();
+        for (const item of actionItems) {
+            byCategory.set(item.category, (byCategory.get(item.category) || 0) + 1);
+        }
+        const action = result.dryRun ? 'Would remove' : 'Removed';
+        for (const [category, count] of byCategory) {
+            printHighlightedPair(`${action} (${category}):`, String(count), {
+                labelColor: cyan,
+                valueColor: green
+            });
+        }
+        const freedLabel = result.dryRun ? 'Would free' : 'Freed';
+        const freedMB = (result.totalFreedBytes / (1024 * 1024)).toFixed(2);
+        printHighlightedPair(`${freedLabel}:`, `${freedMB} MB`, {
+            labelColor: cyan,
+            valueColor: green
+        });
+        if (result.errors.length > 0) {
+            console.log(yellow(`Errors: ${result.errors.length}`));
+            for (const err of result.errors) {
+                console.log(`  ${err.path}: ${err.message}`);
+            }
+        }
+        console.log(`Result: ${result.result}`);
+        return;
+    }
+
     if (firstArg === 'task-purge') {
         const taskPurgeDefinitions = {
             '--target-root': { key: 'targetRoot', type: 'string' },

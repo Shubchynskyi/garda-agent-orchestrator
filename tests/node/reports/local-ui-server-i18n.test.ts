@@ -670,10 +670,10 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         renderCleanupResult({
             status: 'previewed',
             action_id: 'cleanup-preview-custom',
-            command: 'garda cleanup --dry-run',
+            command: 'garda cleanup batch-task-purge --dry-run',
             stdout: [
-                '\u001b[36mRuntimeRetentionPreviewTasks:\u001b[0m 12',
-                'RuntimeRetentionEligibleNow: 4',
+                '\u001b[36mBatchPurgeCandidateTasks:\u001b[0m 12',
+                'BatchPurgeSelectedTasks: 4',
                 '\u001b[33mWould remove\u001b[0m (reviews): 3',
                 'Would remove (task-events): 1',
                 '\u001b[32mWould free:\u001b[0m 1.00 MB'
@@ -696,7 +696,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
             action_id: 'cleanup-apply-custom',
             exit_code: 0,
             stdout: [
-                'RuntimeRetentionEligibleNow: 4',
+                'BatchPurgeSelectedTasks: 4',
                 '\u001b[33mRemoved\u001b[0m (reviews): 2',
                 'Removed (task-events): 1',
                 '\u001b[32mFreed:\u001b[0m 768.00 KB'
@@ -735,10 +735,10 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         renderCleanupResult({
             status: 'previewed',
             action_id: 'cleanup-preview-custom',
-            command: 'garda cleanup --dry-run',
+            command: 'garda cleanup batch-task-purge --dry-run',
             stdout: [
-                'RuntimeRetentionPreviewTasks: 12',
-                'RuntimeRetentionEligibleNow: 4',
+                'BatchPurgeCandidateTasks: 12',
+                'BatchPurgeSelectedTasks: 4',
                 'Would remove (reviews): 3',
                 'Would free: 1.00 MB'
             ].join('\n')

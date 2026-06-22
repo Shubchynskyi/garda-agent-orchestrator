@@ -88,6 +88,28 @@ export interface TaskRuntimePurgeResult {
     activeTaskProtected: boolean;
 }
 
+export interface TaskRuntimeBatchPurgeResult {
+    targetRoot: string;
+    dryRun: boolean;
+    filters: {
+        eligibleOlderThanDays: number | null;
+        keepLatestTasks: number | null;
+    };
+    candidateTaskIds: string[];
+    matchedTaskIds: string[];
+    selectedTaskIds: string[];
+    activeTaskSkips: string[];
+    protectedNewestTaskIds: string[];
+    selectedByAgeTaskIds: string[];
+    selectedByCountTaskIds: string[];
+    sharedIndexOperations: string[];
+    removed: CleanupItem[];
+    skipped: CleanupItem[];
+    errors: Array<{ path: string; message: string }>;
+    totalFreedBytes: number;
+    result: string;
+}
+
 export interface GcResult extends CleanupResult {
     staleLocksCleaned: number;
     isolationSandboxCleaned: boolean;
