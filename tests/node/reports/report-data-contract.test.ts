@@ -297,7 +297,7 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.match(compileGate.description, /never falls back to 40-commands\.md/);
     const fullSuiteCommand = tab.settings.find((setting) => setting.key === 'full_suite_validation.command');
     assert.ok(fullSuiteCommand);
-    assert.equal(fullSuiteCommand.editable, false);
+    assert.equal(fullSuiteCommand.editable, true);
     const fullSuite = tab.settings.find((setting) => setting.key === 'full_suite_validation.enabled');
     assert.ok(fullSuite);
     assert.equal(fullSuite.value, true);

@@ -9,12 +9,42 @@ import type { ParsedUiSettingValue, UiActionDefinition, UiSettingDefinition } fr
 
 const UI_SETTING_CONFIRMATION_PHRASE = 'APPLY GARDA SETTING';
 
+function buildWarningOnlyTimeoutContinuationSetting(settings: ReturnType<typeof buildWorkflowConfigTab>['settings']): UiSettingDefinition | null {
+    const timeoutBlocker = settings.find((setting) => setting.id === 'full-suite-timeout-blocker');
+    if (!timeoutBlocker) {
+        return null;
+    }
+    return {
+        id: 'full-suite-timeout-warning-continuation',
+        key: timeoutBlocker.key,
+        label: 'Warning-only timeout continuation',
+        description: 'Controls the same timeout policy as full-suite timeout blocker from the warning-only perspective. Turning this on applies --full-suite-timeout-blocker false; turning it off applies --full-suite-timeout-blocker true.',
+        flag: timeoutBlocker.flag,
+        value_type: 'boolean',
+        options: [
+            {
+                value: 'true',
+                label: 'On',
+                description: 'Repeated full-suite timeouts continue as warning-only evidence and do not block completion.'
+            },
+            {
+                value: 'false',
+                label: 'Off',
+                description: 'Repeated full-suite timeouts block task completion and propose a repair task.'
+            }
+        ],
+        current_value: timeoutBlocker.value === false,
+        confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE,
+        command_value_inverts_boolean: true
+    };
+}
+
 export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition[] {
     const settings = buildWorkflowConfigTab(repoRoot).settings;
-    return WORKFLOW_SETTING_DEFINITIONS
+    const definitions = WORKFLOW_SETTING_DEFINITIONS
         .filter((definition) => definition.editable !== false)
         .map((definition) => {
-            const reportSetting = settings.find((setting) => setting.key === definition.key);
+            const reportSetting = settings.find((setting) => setting.id === definition.id);
             return {
                 ...definition,
                 options: reportSetting?.options ?? definition.options,
@@ -23,6 +53,8 @@ export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition
                 readiness: reportSetting?.readiness
             };
         });
+    const warningOnlyTimeoutContinuation = buildWarningOnlyTimeoutContinuationSetting(settings);
+    return warningOnlyTimeoutContinuation ? [...definitions, warningOnlyTimeoutContinuation] : definitions;
 }
 
 export function findSetting(settings: UiSettingDefinition[], settingId: unknown): UiSettingDefinition | null {
@@ -69,7 +101,7 @@ export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown
         }
         const enabled = ['true', 'on', 'yes', '1'].includes(normalized);
         return {
-            command_value: String(enabled),
+            command_value: String(setting.command_value_inverts_boolean ? !enabled : enabled),
             proposed_value: enabled
         };
     }

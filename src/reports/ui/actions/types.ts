@@ -34,6 +34,7 @@ export interface UiSettingDefinition {
     min?: number;
     max?: number;
     placeholder?: string;
+    command_value_inverts_boolean?: boolean;
     confirmation_phrase: string;
     readiness?: import('../../report-data/types').ReportWorkflowSetting['readiness'];
 }

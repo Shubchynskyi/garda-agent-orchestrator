@@ -344,7 +344,8 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         };
         assert.equal(list.enabled, true);
         assert.ok(!list.settings.some((setting) => setting.id === 'compile-gate-command'));
-        assert.ok(!list.settings.some((setting) => setting.id === 'full-suite-command'));
+        assert.ok(list.settings.some((setting) => setting.id === 'full-suite-command'));
+        assert.ok(list.settings.some((setting) => setting.id === 'full-suite-timeout-warning-continuation'));
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
         assert.ok(list.settings.some((setting) => setting.id === 'project-memory-max-compact-summary-chars'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
@@ -375,8 +376,54 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             headers: actionHeaders,
             body: JSON.stringify({ setting_id: 'full-suite-command', mode: 'preview', value: 'npm test -- --runInBand' })
         });
-        assert.equal(fullSuiteCommandPreviewResponse.status, 400);
-        assert.equal((await fullSuiteCommandPreviewResponse.json() as { code: string }).code, 'unknown_setting');
+        assert.equal(fullSuiteCommandPreviewResponse.status, 200);
+        const fullSuiteCommandPreview = await fullSuiteCommandPreviewResponse.json() as {
+            key: string;
+            proposed_value: string;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(fullSuiteCommandPreview.key, 'full_suite_validation.command');
+        assert.equal(fullSuiteCommandPreview.proposed_value, 'npm test -- --runInBand');
+        assert.deepEqual(fullSuiteCommandPreview.changed_keys, ['full_suite_validation.command']);
+        assert.match(fullSuiteCommandPreview.command, /workflow set --full-suite-command "npm test -- --runInBand"/u);
+        assert.match(fullSuiteCommandPreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
+
+        const timeoutBlockerPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'full-suite-timeout-blocker', mode: 'preview', value: 'false' })
+        });
+        assert.equal(timeoutBlockerPreviewResponse.status, 200);
+        const timeoutBlockerPreview = await timeoutBlockerPreviewResponse.json() as {
+            key: string;
+            proposed_value: boolean;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(timeoutBlockerPreview.key, 'full_suite_validation.timeout_blocker');
+        assert.equal(timeoutBlockerPreview.proposed_value, false);
+        assert.deepEqual(timeoutBlockerPreview.changed_keys, ['full_suite_validation.timeout_blocker']);
+        assert.match(timeoutBlockerPreview.command, /workflow set --full-suite-timeout-blocker false/u);
+        assert.match(timeoutBlockerPreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
+
+        const warningOnlyContinuationPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'full-suite-timeout-warning-continuation', mode: 'preview', value: 'true' })
+        });
+        assert.equal(warningOnlyContinuationPreviewResponse.status, 200);
+        const warningOnlyContinuationPreview = await warningOnlyContinuationPreviewResponse.json() as {
+            key: string;
+            proposed_value: boolean;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(warningOnlyContinuationPreview.key, 'full_suite_validation.timeout_blocker');
+        assert.equal(warningOnlyContinuationPreview.proposed_value, true);
+        assert.deepEqual(warningOnlyContinuationPreview.changed_keys, ['full_suite_validation.timeout_blocker']);
+        assert.match(warningOnlyContinuationPreview.command, /workflow set --full-suite-timeout-blocker false/u);
+        assert.match(warningOnlyContinuationPreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
 
         const enumListPreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
@@ -475,6 +522,47 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(auditLines.length >= 3);
         assert.match(auditLines[auditLines.length - 1], /"action_id":"setting:full-suite-green-summary-max-lines"/u);
         assert.match(auditLines[auditLines.length - 1], /"status":"executed"/u);
+
+        const timeoutBlockerExecuteResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                setting_id: 'full-suite-timeout-blocker',
+                mode: 'execute',
+                value: 'false',
+                confirmation: 'APPLY GARDA SETTING'
+            })
+        });
+        assert.equal(timeoutBlockerExecuteResponse.status, 200);
+        const timeoutBlockerExecute = await timeoutBlockerExecuteResponse.json() as { status: string; audit_path: string };
+        assert.equal(timeoutBlockerExecute.status, 'executed');
+        assert.equal(executedCommands.length, 2);
+        assert.match(executedCommands[1], /workflow set --full-suite-timeout-blocker false/u);
+        const timeoutBlockerAuditLines = fs.readFileSync(timeoutBlockerExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.ok(timeoutBlockerAuditLines.length >= 3);
+        assert.match(timeoutBlockerAuditLines[timeoutBlockerAuditLines.length - 1], /"action_id":"setting:full-suite-timeout-blocker"/u);
+        assert.match(timeoutBlockerAuditLines[timeoutBlockerAuditLines.length - 1], /"status":"executed"/u);
+
+        const warningOnlyContinuationExecuteResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                setting_id: 'full-suite-timeout-warning-continuation',
+                mode: 'execute',
+                value: 'false',
+                confirmation: 'APPLY GARDA SETTING'
+            })
+        });
+        assert.equal(warningOnlyContinuationExecuteResponse.status, 200);
+        const warningOnlyContinuationExecute = await warningOnlyContinuationExecuteResponse.json() as { status: string; proposed_value: boolean; audit_path: string };
+        assert.equal(warningOnlyContinuationExecute.status, 'executed');
+        assert.equal(warningOnlyContinuationExecute.proposed_value, false);
+        assert.equal(executedCommands.length, 3);
+        assert.match(executedCommands[2], /workflow set --full-suite-timeout-blocker true/u);
+        const warningOnlyContinuationAuditLines = fs.readFileSync(warningOnlyContinuationExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.ok(warningOnlyContinuationAuditLines.length >= 3);
+        assert.match(warningOnlyContinuationAuditLines[warningOnlyContinuationAuditLines.length - 1], /"action_id":"setting:full-suite-timeout-warning-continuation"/u);
+        assert.match(warningOnlyContinuationAuditLines[warningOnlyContinuationAuditLines.length - 1], /"status":"executed"/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }

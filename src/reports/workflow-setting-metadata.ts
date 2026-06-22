@@ -204,12 +204,11 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'full-suite-command',
         key: 'full_suite_validation.command',
         label: 'Full-suite command',
-        description: 'Command the full-suite gate runs when mandatory full-suite validation is enabled. This shell-command setting is CLI-only in the local UI; use audited `garda workflow set` from a terminal to change it.',
+        description: 'Command the full-suite gate runs when mandatory full-suite validation is enabled. Local UI edits use the same audited `garda workflow set` path and require explicit confirmation.',
         flag: '--full-suite-command',
         value_type: 'string',
         options: [],
-        placeholder: 'npm test',
-        editable: false
+        placeholder: 'npm test'
     },
     {
         id: 'full-suite-timeout-ms',

@@ -786,6 +786,47 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
             enabled: true,
             settings: [
                 {
+                    id: 'full-suite-command',
+                    key: 'full_suite_validation.command',
+                    label: 'Full-suite command',
+                    description: 'Run full suite',
+                    current_value: 'npm run test:sharded',
+                    value_type: 'string',
+                    options: [],
+                    flag: '--full-suite-command',
+                    placeholder: 'npm test',
+                    confirmation_phrase: 'APPLY GARDA SETTING'
+                },
+                {
+                    id: 'full-suite-timeout-blocker',
+                    key: 'full_suite_validation.timeout_blocker',
+                    label: 'Full-suite timeout blocker',
+                    description: 'Timeout blocks task',
+                    current_value: true,
+                    value_type: 'boolean',
+                    options: [
+                        { value: 'true', label: 'true', description: 'Block on timeout' },
+                        { value: 'false', label: 'false', description: 'Warn on timeout' }
+                    ],
+                    flag: '--full-suite-timeout-blocker',
+                    confirmation_phrase: 'APPLY GARDA SETTING'
+                },
+                {
+                    id: 'full-suite-timeout-warning-continuation',
+                    key: 'full_suite_validation.timeout_blocker',
+                    label: 'Warning-only timeout continuation',
+                    description: 'Continue after timeout as warning only',
+                    current_value: false,
+                    value_type: 'boolean',
+                    options: [
+                        { value: 'true', label: 'true', description: 'Warn on timeout' },
+                        { value: 'false', label: 'false', description: 'Block on timeout' }
+                    ],
+                    flag: '--full-suite-timeout-blocker',
+                    confirmation_phrase: 'APPLY GARDA SETTING',
+                    command_value_inverts_boolean: true
+                },
+                {
                     id: 'full-suite-green-summary-max-lines',
                     key: 'full_suite_validation.green_summary_max_lines',
                     label: 'Full-suite green summary lines',
@@ -989,6 +1030,29 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                     }
                     if (url === '/api/settings') {
                         if (options?.method === 'POST') {
+                            const requestedSetting = options.body
+                                ? JSON.parse(options.body) as { setting_id?: string; value?: unknown }
+                                : {};
+                            if (requestedSetting.setting_id === 'full-suite-command') {
+                                report.system_state.workflow.full_suite_command = String(requestedSetting.value || '');
+                                const fullSuiteCommand = settings.settings.find((setting) => setting.id === 'full-suite-command');
+                                if (fullSuiteCommand) {
+                                    fullSuiteCommand.current_value = String(requestedSetting.value || '');
+                                }
+                                return {
+                                    setting_id: 'full-suite-command',
+                                    status: 'executed',
+                                    label: 'Full-suite command',
+                                    key: 'full_suite_validation.command',
+                                    command: 'node bin/garda.js workflow set --full-suite-command "' + String(requestedSetting.value || '') + '" --target-root "."',
+                                    exit_code: 0,
+                                    stdout: 'updated',
+                                    current_value: 'npm run test:sharded',
+                                    proposed_value: String(requestedSetting.value || ''),
+                                    changed_keys: ['full_suite_validation.command'],
+                                    audit_path: 'runtime/ui-actions/audit.jsonl'
+                                };
+                            }
                             return {
                                 setting_id: 'auto-backup-enabled',
                                 status: 'executed',
@@ -1054,9 +1118,27 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements['tasks-tab'].hidden, true);
         assert.equal(fakeDocument.elements['workflow-tab'].hidden, false);
         assert.equal(fakeDocument.elements['task-detail-panel'].hidden, false);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-command/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-full-suite-command"/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-timeout-blocker/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-timeout-warning-continuation/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-full-suite-timeout-warning-continuation"/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-green-summary-max-lines/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full_suite_validation\.green_summary_max_lines/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Recommended full-suite command timeout/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout blocks task/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout retry count/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout attempts/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-auto-backup-enabled"/u);
+        fakeDocument.getElementById('setting-input-workflow-full-suite-command').value = 'npm run test:refreshed';
+        const fullSuiteCommandSaveButton = fakeDocument.elements['settings-editor'].querySelectorAll('button[data-setting-id]')
+            .find((button) => button.dataset.settingId === 'full-suite-command' && button.dataset.settingMode === 'execute');
+        assert.ok(fullSuiteCommandSaveButton);
+        await fullSuiteCommandSaveButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /npm run test:refreshed/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /<code>npm test<\/code>/u);
         assert.match(fakeDocument.elements.instructions.innerHTML, /Read-only/u);
         assert.equal(fakeDocument.elements.actions.innerHTML, '');
         assert.doesNotMatch(fakeDocument.elements.actions.innerHTML, /backup-restore/u);
@@ -1108,18 +1190,25 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['backup-action-status'].innerHTML, />OK</u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /workflow set --auto-backup-enabled/u);
         assert.doesNotMatch(fakeDocument.elements['backup-action-status'].innerHTML, /verbose workflow output/u);
-        assert.match(fakeDocument.elements['garda-switch-panel'].innerHTML, /Switch action is hidden/u);
+        assert.equal(fakeDocument.elements['garda-switch-panel'].hidden, true);
+        assert.equal(fakeDocument.elements['garda-switch-panel'].innerHTML, '');
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-on"/u);
         assert.doesNotMatch(fakeDocument.elements['garda-switch-panel'].innerHTML, /data-action-id="garda-off"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /System state/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Garda switch/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Switch action is hidden/u);
+        assert.ok(
+            fakeDocument.elements['system-state-panel'].innerHTML.indexOf('Garda switch')
+            < fakeDocument.elements['system-state-panel'].innerHTML.indexOf('One or more System State signals need attention')
+        );
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Queue status/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Protected controls/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Recommended full-suite command timeout/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout blocks task/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout retry count/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout attempts/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Warning-only timeout continuation/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Recommended full-suite command timeout/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout blocks task/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout retry count/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout attempts/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Warning-only timeout continuation/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Config state/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda-agent-orchestrator\/runtime\/init-answers\.json/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="status"/u);
@@ -1290,6 +1379,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Обновить защищенный manifest/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Очистить устаревшие блокировки/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Пересобрать индексы/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Продолжение после таймаута только как предупреждение/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);
         const localizedManualBackupButton = fakeDocument.elements['backups-table'].querySelectorAll('button[data-backup-action-id]')
             .find((button) => button.dataset.backupActionId === 'backup-create-manual' && button.dataset.actionMode === 'execute');
@@ -1309,6 +1400,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         report.system_state.protected_manifest.remediation = '';
         actions.enabled = false;
         await fakeDocument.elements['language-select'].dispatch('change');
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Защищённые режимы/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Предупреждения/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Guarded UI actions are disabled/u);

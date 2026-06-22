@@ -54,13 +54,17 @@ async function submitSetting(settingId, mode, value, confirmation, resultRendere
     resultRenderer(result);
   }
   if (result && result.status === 'executed') {
-    await refreshSettingsPayload();
     if (currentReport) {
-      fetch('/api/report').then(reportResponse => reportResponse.json()).then(report => {
+      try {
+        const reportResponse = await fetch('/api/report');
+        const report = await reportResponse.json();
         currentReport = report;
         renderWorkflow(report);
-      }).catch(() => undefined);
+      } catch {
+        // Keep the successfully refreshed settings visible even if report refresh fails.
+      }
     }
+    await refreshSettingsPayload();
   }
 }
 function settingInputValue(setting) {
@@ -151,9 +155,21 @@ function settingReadinessNote(setting) {
   const remediation = readiness.remediation_command ? '<div>' + safe(t('taskResetRemediation')) + ' <code>' + safe(readiness.remediation_command) + '</code></div>' : '';
   return '<div class="setting-note"><strong>' + safe(state) + '</strong>' + reason + remediation + '</div>';
 }
+function settingLabelText(setting) {
+  if (setting && setting.id === 'full-suite-timeout-warning-continuation') {
+    return t('fullSuiteTimeoutWarningContinuation');
+  }
+  return localizedField(settingTextPacks, setting.id, 'label', setting.label);
+}
+function settingDescriptionText(setting) {
+  if (setting && setting.id === 'full-suite-timeout-warning-continuation') {
+    return t('fullSuiteTimeoutWarningContinuation') + ': ' + t('fullSuiteTimeoutBlocker');
+  }
+  return localizedField(settingTextPacks, setting.id, 'description', setting.description);
+}
 function renderSettingRow(setting, disabled, controlScope) {
-  const label = localizedField(settingTextPacks, setting.id, 'label', setting.label);
-  const description = localizedField(settingTextPacks, setting.id, 'description', setting.description);
+  const label = settingLabelText(setting);
+  const description = settingDescriptionText(setting);
   const dependencyNote = setting.id === 'review-cycle-auto-split-enabled'
     ? '<div class="setting-note">' + safe(t('reviewCycleAutoSplitDependency')) + '</div>'
     : '';
@@ -165,6 +181,23 @@ function renderSettingRow(setting, disabled, controlScope) {
     + '<td>' + renderSettingOptions(setting) + '</td>'
     + '<td><label class="setting-control"><span>' + safe(t('newValue')) + '</span>' + renderSettingControl(setting, disabled, controlScope) + '</label><div class="setting-buttons"><button type="button" data-setting-id="' + safe(setting.id) + '" data-setting-control-scope="' + safe(controlScope || 'workflow') + '" data-setting-mode="execute"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button></div></td>'
     + '</tr>';
+}
+function renderValidationRuntimeInfo(report) {
+  if (currentWorkflowSettingGroup !== 'validation' || !report || !report.system_state || !report.system_state.workflow) {
+    return '';
+  }
+  const workflow = report.system_state.workflow;
+  return '<section class="workflow-group full-suite-runtime-info"><h3>' + safe(t('fullSuiteTitle')) + '</h3>'
+    + '<div class="system-inline-details">'
+    + '<span>' + safe(t('fullSuiteCommand')) + ': <code>' + safe(workflow.full_suite_command || '-') + '</code></span>'
+    + '<span>' + safe(t('fullSuiteTimeoutBlocker')) + ': ' + safe(formatBool(workflow.full_suite_timeout_blocker)) + '</span>'
+    + '<span>' + safe(t('fullSuiteTimeoutRetryCount')) + ': ' + safe(workflow.full_suite_timeout_retry_count == null ? '-' : String(workflow.full_suite_timeout_retry_count)) + '</span>'
+    + '<span>' + safe(t('fullSuiteTimeoutAttempts')) + ': ' + safe(workflow.full_suite_timeout_attempts_count == null ? '-' : String(workflow.full_suite_timeout_attempts_count)) + ' / ' + safe(workflow.full_suite_timeout_max_attempts == null ? '-' : String(workflow.full_suite_timeout_max_attempts)) + '</span>'
+    + '<span>' + safe(t('fullSuiteTimeoutAttemptsExhausted')) + ': ' + safe(formatBool(workflow.full_suite_timeout_attempts_exhausted)) + '</span>'
+    + '<span>' + safe(t('fullSuiteTimeoutWarningContinuation')) + ': ' + safe(formatBool(workflow.full_suite_timeout_warning_only_continuation)) + '</span>'
+    + '<span>' + safe(t('overviewWarnings')) + ': ' + safe(workflow.full_suite_timeout_latest_warning || '-') + '</span>'
+    + '<span>' + safe(t('fullSuiteTimeoutForecast')) + ': ' + safe(workflow.full_suite_timeout_forecast_label || '-') + '</span>'
+    + '</div></section>';
 }
 function renderSettingsEditor(payload) {
   currentSettingsPayload = payload;
@@ -185,7 +218,9 @@ function renderSettingsEditor(payload) {
     currentWorkflowSettingGroup = availableGroups[0] || 'validation';
   }
   updateWorkflowPanelTitle();
+  const reportForRuntimeInfo = typeof currentReport === 'undefined' ? null : currentReport;
   settingsEditorNode.innerHTML = disabledNotice
+    + renderValidationRuntimeInfo(reportForRuntimeInfo)
     + (() => {
       const groupSettings = settings.filter(setting => settingGroupId(setting) === currentWorkflowSettingGroup);
       if (groupSettings.length === 0) return '<p class="empty">' + safe(t('noWorkflowSettings')) + '</p>';

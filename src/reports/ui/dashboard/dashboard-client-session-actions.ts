@@ -148,6 +148,15 @@ function wireActionButtons(rootNode, actions) {
   }
 }
 function renderGardaSwitch(payload) {
+  if (gardaSwitchNode) {
+    gardaSwitchNode.hidden = true;
+    gardaSwitchNode.innerHTML = '';
+  }
+}
+function gardaSwitchMarkup(payload) {
+  if (!payload) {
+    return '';
+  }
   const state = payload.switch_state || 'unknown';
   const stateClass = state === 'on' ? 'data-full' : state === 'off' ? 'data-compact' : 'data-blockers';
   const actions = payload.actions || [];
@@ -163,11 +172,7 @@ function renderGardaSwitch(payload) {
         return '<button type="button" data-action-id="' + safe(action.id) + '" data-action-mode="execute">' + safe(label) + '</button>';
       }).join('');
   const help = state === 'unknown' ? t('gardaSwitchUnknownHelp') : t('gardaSwitchHelp');
-  gardaSwitchNode.hidden = false;
-  gardaSwitchNode.innerHTML = '<div><strong>' + safe(t('gardaSwitchTitle')) + '</strong><span class="badge ' + stateClass + '">' + safe(t('gardaSwitchState')) + ': ' + safe(switchStateText(state)) + '</span><p>' + safe(help) + '</p></div><div class="switch-buttons">' + buttons + '</div>';
-  if (payload.enabled && state !== 'unknown') {
-    wireActionButtons(gardaSwitchNode, actions);
-  }
+  return '<section class="switch-strip system-garda-switch"><div><strong>' + safe(t('gardaSwitchTitle')) + '</strong><span class="badge ' + stateClass + '">' + safe(t('gardaSwitchState')) + ': ' + safe(switchStateText(state)) + '</span><p>' + safe(help) + '</p></div><div class="switch-buttons">' + buttons + '</div></section>';
 }
 function configFileStatusClass(status) {
   if (status === 'present') return 'data-full';
@@ -345,23 +350,11 @@ function renderSystemState(report) {
   const renderedOverallStatus = systemWorstHealth(allSignals.filter(isPrimarySystemHealthSignal));
   const renderedOverallLabel = systemHealthLabel(renderedOverallStatus, state.overall.label);
   const renderedOverallSummary = systemOverallSummary(renderedOverallStatus, state.overall.summary);
-  const workflowDetails = state.workflow
-    ? '<div class="system-inline-details">'
-      + '<span>' + safe(t('fullSuiteCommand')) + ': <code>' + safe(state.workflow.full_suite_command || '-') + '</code></span>'
-      + '<span>' + safe(t('fullSuiteTimeoutBlocker')) + ': ' + safe(formatBool(state.workflow.full_suite_timeout_blocker)) + '</span>'
-      + '<span>' + safe(t('fullSuiteTimeoutRetryCount')) + ': ' + safe(state.workflow.full_suite_timeout_retry_count == null ? '-' : String(state.workflow.full_suite_timeout_retry_count)) + '</span>'
-      + '<span>' + safe(t('fullSuiteTimeoutAttempts')) + ': ' + safe(state.workflow.full_suite_timeout_attempts_count == null ? '-' : String(state.workflow.full_suite_timeout_attempts_count)) + ' / ' + safe(state.workflow.full_suite_timeout_max_attempts == null ? '-' : String(state.workflow.full_suite_timeout_max_attempts)) + '</span>'
-      + '<span>' + safe(t('fullSuiteTimeoutAttemptsExhausted')) + ': ' + safe(formatBool(state.workflow.full_suite_timeout_attempts_exhausted)) + '</span>'
-      + '<span>' + safe(t('fullSuiteTimeoutWarningContinuation')) + ': ' + safe(formatBool(state.workflow.full_suite_timeout_warning_only_continuation)) + '</span>'
-      + '<span>' + safe(t('overviewWarnings')) + ': ' + safe(state.workflow.full_suite_timeout_latest_warning || '-') + '</span>'
-      + '<span>' + safe(t('fullSuiteTimeoutForecast')) + ': ' + safe(state.workflow.full_suite_timeout_forecast_label || '-') + '</span>'
-      + '</div>'
-    : '';
-  node.innerHTML = '<section class="system-health-summary">'
+  node.innerHTML = gardaSwitchMarkup(currentActionsPayload)
+    + '<section class="system-health-summary">'
     + '<div><h3>' + safe(t('actionsTab')) + '</h3><p>' + safe(renderedOverallSummary || '-') + '</p><p class="empty">' + safe(state.overall.generated_at_utc || report.generated_at_utc || '-') + '</p></div>'
     + '<span class="badge ' + safe(systemHealthClass(renderedOverallStatus)) + '">' + safe(renderedOverallLabel) + '</span>'
     + '</section>'
-    + workflowDetails
     + systemDiagnosticActionsHtml(currentActionsPayload)
     + '<section class="system-signal-grid">' + signals.map(renderSystemSignal).join('') + '</section>'
     + renderSystemConfigurationFiles(state.configuration_files || []);
@@ -372,6 +365,9 @@ function renderSystemState(report) {
 function renderActions(payload) {
   currentActionsPayload = payload;
   renderGardaSwitch(payload);
+  if (currentReport) {
+    renderSystemState(currentReport);
+  }
   if (!payload.enabled) {
     actionsNode.innerHTML = '<p class="empty">' + safe(t('actionsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('actionsDisabledTail')) + '</p><p class="empty">' + safe(t('actionsTaskMoved')) + '</p>';
     return;
@@ -388,7 +384,6 @@ function renderActions(payload) {
   }).join('');
   wireActionButtons(actionsNode, payload.actions);
   if (currentReport) {
-    renderSystemState(currentReport);
     renderBackups(currentReport);
   }
 }
