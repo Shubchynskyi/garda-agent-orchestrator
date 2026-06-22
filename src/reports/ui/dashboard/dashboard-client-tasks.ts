@@ -55,6 +55,9 @@ function renderTasks(report) {
   renderBackups(report);
   renderInstructions(report);
   renderSystemState(report);
+  if (currentSettingsPayload) {
+    renderSettingsEditor(currentSettingsPayload);
+  }
 }
 function renderTaskRows() {
   const rows = currentReport ? currentReport.tasks_tab.rows.filter(matchesFilters) : [];

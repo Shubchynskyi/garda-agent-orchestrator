@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
 import * as vm from 'node:vm';
@@ -56,8 +58,7 @@ class FakeElement {
     textContent = '';
     value = '';
     hidden = false;
-    private buttonCacheHtml = '';
-    private buttonCache: FakeElement[] = [];
+    private readonly buttonCacheBySelector = new Map<string, { html: string; buttons: FakeElement[] }>();
     private html = '';
 
     constructor(readonly id: string, initialClasses: string[] = []) {
@@ -70,8 +71,7 @@ class FakeElement {
 
     set innerHTML(value: string) {
         this.html = value;
-        this.buttonCacheHtml = '';
-        this.buttonCache = [];
+        this.buttonCacheBySelector.clear();
     }
 
     addEventListener(eventName: string, listener: FakeListener): void {
@@ -105,6 +105,7 @@ class FakeElement {
     querySelectorAll(selector: string): FakeElement[] {
         if (selector !== 'button[data-task-id]'
             && selector !== 'button[data-action-id]'
+            && selector !== 'button[data-validation-action-id]'
             && selector !== 'button[data-setting-id]'
             && selector !== 'button[data-task-action-id]'
             && selector !== 'button[data-backup-action-id]'
@@ -112,45 +113,54 @@ class FakeElement {
             && selector !== 'button[data-instruction-tab]') {
             return [];
         }
-        if (this.buttonCacheHtml !== this.innerHTML) {
-            this.buttonCacheHtml = this.innerHTML;
+        const cached = this.buttonCacheBySelector.get(selector);
+        if (!cached || cached.html !== this.innerHTML) {
             const attributeName = selector === 'button[data-task-id]'
                 ? 'task-id'
                 : selector === 'button[data-action-id]'
                     ? 'action-id'
-                    : selector === 'button[data-setting-id]'
-                    ? 'setting-id'
-                    : selector === 'button[data-task-action-id]'
-                        ? 'task-action-id'
-                        : selector === 'button[data-backup-action-id]'
-                            ? 'backup-action-id'
-                            : selector === 'button[data-file-path]'
-                                ? 'file-path'
-                                : 'instruction-tab';
+                    : selector === 'button[data-validation-action-id]'
+                        ? 'validation-action-id'
+                        : selector === 'button[data-setting-id]'
+                            ? 'setting-id'
+                            : selector === 'button[data-task-action-id]'
+                                ? 'task-action-id'
+                                : selector === 'button[data-backup-action-id]'
+                                    ? 'backup-action-id'
+                                    : selector === 'button[data-file-path]'
+                                        ? 'file-path'
+                                        : 'instruction-tab';
             const dataKey = selector === 'button[data-task-id]'
                 ? 'taskId'
                 : selector === 'button[data-action-id]'
                     ? 'actionId'
-                    : selector === 'button[data-setting-id]'
-                        ? 'settingId'
-                        : selector === 'button[data-task-action-id]'
-                            ? 'taskActionId'
-                            : selector === 'button[data-backup-action-id]'
-                                ? 'backupActionId'
-                                : selector === 'button[data-file-path]'
-                                    ? 'filePath'
-                                    : 'instructionTab';
+                    : selector === 'button[data-validation-action-id]'
+                        ? 'validationActionId'
+                        : selector === 'button[data-setting-id]'
+                            ? 'settingId'
+                            : selector === 'button[data-task-action-id]'
+                                ? 'taskActionId'
+                                : selector === 'button[data-backup-action-id]'
+                                    ? 'backupActionId'
+                                    : selector === 'button[data-file-path]'
+                                        ? 'filePath'
+                                        : 'instructionTab';
             const modePattern = /data-action-mode="([^"]+)"/u;
+            const validationModePattern = /data-validation-action-mode="([^"]+)"/u;
             const settingModePattern = /data-setting-mode="([^"]+)"/u;
             const taskActionModePattern = /data-task-action-mode="([^"]+)"/u;
             const fileTargetPattern = /data-file-target="([^"]+)"/u;
-            this.buttonCache = Array.from(this.innerHTML.matchAll(new RegExp(`data-${attributeName}="([^"]+)"`, 'gu')), (match) => {
+            const buttons = Array.from(this.innerHTML.matchAll(new RegExp(`data-${attributeName}="([^"]+)"`, 'gu')), (match) => {
                 const button = new FakeElement(`button-${match[1]}`);
                 button.dataset[dataKey] = match[1];
                 const buttonHtml = this.innerHTML.slice(Math.max(0, match.index || 0), this.innerHTML.indexOf('</button>', match.index || 0));
                 const modeMatch = buttonHtml.match(modePattern);
                 if (modeMatch) {
                     button.dataset.actionMode = modeMatch[1];
+                }
+                const validationModeMatch = buttonHtml.match(validationModePattern);
+                if (validationModeMatch) {
+                    button.dataset.validationActionMode = validationModeMatch[1];
                 }
                 const settingModeMatch = buttonHtml.match(settingModePattern);
                 if (settingModeMatch) {
@@ -166,8 +176,9 @@ class FakeElement {
                 }
                 return button;
             });
+            this.buttonCacheBySelector.set(selector, { html: this.innerHTML, buttons });
         }
-        return this.buttonCache;
+        return this.buttonCacheBySelector.get(selector)?.buttons || [];
     }
 }
 
@@ -275,6 +286,11 @@ async function flushPromises(): Promise<void> {
     await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+async function flushMicrotasks(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
 const makeTempRepo = makeLocalUiTempRepo;
 const writeRepo = writeLocalUiRepoFixture;
 const writeTaskQueue = writeLocalUiTaskQueue;
@@ -285,6 +301,12 @@ function reservePort(): Promise<net.Server> {
         server.once('error', reject);
         server.listen(0, DEFAULT_UI_HOST, () => resolve(server));
     });
+}
+
+function serverPort(server: net.Server): number {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    return address.port;
 }
 
 function reserveSpecificPort(port: number): Promise<net.Server | null> {
@@ -330,6 +352,180 @@ function closeNetServer(server: net.Server): Promise<void> {
     });
 }
 
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function firstExistingPath(candidates: string[]): string | null {
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+function firstExecutableFromPath(commandNames: string[]): string | null {
+    const lookupCommand = process.platform === 'win32' ? 'where' : 'which';
+    for (const commandName of commandNames) {
+        const result = spawnSync(lookupCommand, [commandName], { encoding: 'utf8' });
+        if (result.status === 0) {
+            const firstLine = result.stdout.split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
+            if (firstLine) {
+                return firstLine;
+            }
+        }
+    }
+    return null;
+}
+
+function findBrowserSmokeExecutable(): string | null {
+    if (process.env.GARDA_BROWSER_SMOKE_EXECUTABLE) {
+        return process.env.GARDA_BROWSER_SMOKE_EXECUTABLE;
+    }
+    if (process.platform === 'win32') {
+        return firstExistingPath([
+            path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Google', 'Chrome', 'Application', 'chrome.exe'),
+            path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+            path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe')
+        ]);
+    }
+    if (process.platform === 'darwin') {
+        return firstExistingPath([
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+            '/Applications/Chromium.app/Contents/MacOS/Chromium'
+        ]);
+    }
+    return firstExecutableFromPath(['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium', 'microsoft-edge']);
+}
+
+async function fetchBrowserJson<T>(url: string): Promise<T> {
+    const response = await fetch(url);
+    assert.equal(response.status, 200);
+    return await response.json() as T;
+}
+
+interface BrowserSmokeWebSocket {
+    addEventListener: (eventName: string, listener: (event: { data?: unknown; error?: unknown }) => void) => void;
+    close: () => void;
+    send: (data: string) => void;
+}
+
+class BrowserSmokeCdpClient {
+    private nextId = 1;
+    private readonly pending = new Map<number, {
+        reject: (error: Error) => void;
+        resolve: (value: unknown) => void;
+    }>();
+
+    constructor(private readonly socket: BrowserSmokeWebSocket) {
+        socket.addEventListener('message', (event) => {
+            const payload = typeof event.data === 'string' ? event.data : String(event.data || '');
+            const message = JSON.parse(payload) as { id?: number; result?: unknown; error?: { message?: string } };
+            if (!message.id || !this.pending.has(message.id)) {
+                return;
+            }
+            const callbacks = this.pending.get(message.id);
+            this.pending.delete(message.id);
+            if (!callbacks) {
+                return;
+            }
+            if (message.error) {
+                callbacks.reject(new Error(message.error.message || 'CDP command failed'));
+                return;
+            }
+            callbacks.resolve(message.result);
+        });
+        socket.addEventListener('error', (event) => {
+            for (const callbacks of this.pending.values()) {
+                callbacks.reject(new Error(String(event.error || 'CDP socket error')));
+            }
+            this.pending.clear();
+        });
+    }
+
+    send<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+        const id = this.nextId;
+        this.nextId += 1;
+        const promise = new Promise<T>((resolve, reject) => {
+            this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+        });
+        this.socket.send(JSON.stringify({ id, method, params }));
+        return promise;
+    }
+
+    close(): void {
+        this.socket.close();
+    }
+}
+
+async function connectBrowserSmokeCdp(url: string): Promise<BrowserSmokeCdpClient> {
+    const WebSocketCtor = (globalThis as unknown as {
+        WebSocket?: new(url: string) => BrowserSmokeWebSocket;
+    }).WebSocket;
+    assert.ok(WebSocketCtor, 'Node WebSocket global is required for browser smoke CDP');
+    const socket = new WebSocketCtor(url);
+    await new Promise<void>((resolve, reject) => {
+        socket.addEventListener('open', () => resolve());
+        socket.addEventListener('error', (event) => reject(new Error(String(event.error || 'CDP socket open failed'))));
+    });
+    return new BrowserSmokeCdpClient(socket);
+}
+
+async function waitForBrowserDebugTarget(debugPort: number): Promise<string> {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+        try {
+            const targets = await fetchBrowserJson<Array<{ type: string; webSocketDebuggerUrl?: string }>>(
+                `http://127.0.0.1:${debugPort}/json/list`
+            );
+            const page = targets.find((target) => target.type === 'page' && target.webSocketDebuggerUrl);
+            if (page?.webSocketDebuggerUrl) {
+                return page.webSocketDebuggerUrl;
+            }
+        } catch {
+            // Browser is still starting.
+        }
+        await sleep(100);
+    }
+    throw new Error('Timed out waiting for browser debug target.');
+}
+
+async function waitForCdpText(cdp: BrowserSmokeCdpClient, expression: string, pattern: RegExp): Promise<string> {
+    let lastValue = '';
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+        const result = await cdp.send<{ result?: { value?: string } }>('Runtime.evaluate', {
+            expression,
+            returnByValue: true
+        });
+        const value = String(result.result?.value || '');
+        lastValue = value;
+        if (pattern.test(value)) {
+            return value;
+        }
+        await sleep(100);
+    }
+    throw new Error(`Timed out waiting for browser text matching ${String(pattern)}. Last text: ${lastValue.slice(0, 800)}`);
+}
+
+async function terminateBrowserSmokeProcess(browser: ChildProcess | null): Promise<void> {
+    if (!browser || browser.exitCode !== null || browser.signalCode !== null) {
+        return;
+    }
+    if (process.platform === 'win32' && browser.pid) {
+        spawnSync('taskkill', ['/PID', String(browser.pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+        browser.kill('SIGKILL');
+    }
+    await Promise.race([
+        new Promise<void>((resolve) => {
+            browser.once('exit', () => resolve());
+        }),
+        sleep(3000)
+    ]);
+}
+
 test('local UI server exposes report and lazy task detail endpoints', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
@@ -365,6 +561,78 @@ test('local UI server exposes report and lazy task detail endpoints', async () =
         assert.ok('audit' in detail);
         assert.ok(Array.isArray(detail.artifact_links));
     } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
+});
+
+test('local UI browser smoke opens checks cycle tab and renders diagnostics', async (context) => {
+    const browserPath = findBrowserSmokeExecutable();
+    const WebSocketCtor = (globalThis as unknown as { WebSocket?: unknown }).WebSocket;
+    if (!browserPath || !WebSocketCtor) {
+        context.skip('Chrome/Edge executable and Node WebSocket global are required for browser smoke.');
+        return;
+    }
+
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({ repoRoot, port: 0, actionsEnabled: true });
+    const reservedDebug = await reservePort();
+    const debugPort = serverPort(reservedDebug);
+    await closeNetServer(reservedDebug);
+    const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-local-ui-browser-smoke-'));
+    let browser: ChildProcess | null = null;
+    let cdp: BrowserSmokeCdpClient | null = null;
+    try {
+        browser = spawn(browserPath, [
+            '--headless=new',
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--no-first-run',
+            '--no-default-browser-check',
+            '--no-sandbox',
+            `--remote-debugging-port=${debugPort}`,
+            '--remote-debugging-address=127.0.0.1',
+            `--user-data-dir=${userDataDir}`,
+            'about:blank'
+        ], {
+            stdio: 'ignore'
+        });
+        const pageSocketUrl = await waitForBrowserDebugTarget(debugPort);
+        cdp = await connectBrowserSmokeCdp(pageSocketUrl);
+        await cdp.send('Page.enable');
+        await cdp.send('Runtime.enable');
+        await cdp.send('Page.navigate', { url: server.url });
+        await waitForCdpText(
+            cdp,
+            'document.body ? document.body.innerText : ""',
+            /Tasks|Задачи/u
+        );
+        await waitForCdpText(
+            cdp,
+            'document.querySelector("nav button[data-tab=\\"workflow-tab\\"]") ? "workflow tab ready" : ""',
+            /workflow tab ready/u
+        );
+        await cdp.send('Runtime.evaluate', {
+            expression: 'document.querySelector("nav button[data-tab=\\"workflow-tab\\"]").click(); true',
+            returnByValue: true
+        });
+        const settingsText = await waitForCdpText(
+            cdp,
+            'document.getElementById("settings-editor") ? document.getElementById("settings-editor").innerText : ""',
+            /Runtime diagnostics|Диагностика выполнения/u
+        );
+        assert.match(settingsText, /No blockers reported|Блокеры не найдены/u);
+        assert.match(settingsText, /Full-suite validation|Валидация полного набора/u);
+        const settingsHtml = await waitForCdpText(
+            cdp,
+            'document.getElementById("settings-editor") ? document.getElementById("settings-editor").innerHTML : ""',
+            /data-validation-action-id="doctor"/u
+        );
+        assert.match(settingsHtml, /data-validation-action-id="status-why-blocked"/u);
+    } finally {
+        cdp?.close();
+        await terminateBrowserSmokeProcess(browser);
+        fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
         await cleanupLocalUiTestResources({ repoRoot, server });
     }
 });
@@ -871,6 +1139,12 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         const storedLanguageCalls: Array<[string, string]> = [];
         let sessionFetchFails = false;
         let manualBackupShouldFail = false;
+        let whyBlockedShouldFail = false;
+        let initialReportFetchResolved = false;
+        let resolveReportFetch: () => void = () => {
+            initialReportFetchResolved = true;
+        };
+        let delayNextReportFetch = true;
         let reportFetchCount = 0;
         vm.runInNewContext(extractDashboardScript(html), {
             document: fakeDocument,
@@ -948,6 +1222,15 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         return session;
                     }
                     if (url === '/api/report') {
+                        if (delayNextReportFetch) {
+                            delayNextReportFetch = false;
+                            await new Promise<void>((resolve) => {
+                                resolveReportFetch = () => {
+                                    initialReportFetchResolved = true;
+                                    resolve();
+                                };
+                            });
+                        }
                         reportFetchCount += 1;
                         return report;
                     }
@@ -976,6 +1259,17 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                                 };
                             }
                             if (requestedAction === 'status' || requestedAction === 'doctor' || requestedAction === 'status-why-blocked' || requestedAction === 'repair-inspect') {
+                                if (requestedAction === 'status-why-blocked' && whyBlockedShouldFail) {
+                                    return {
+                                        action_id: requestedAction,
+                                        status: 'executed',
+                                        command: 'node bin/garda.js status why-blocked --target-root "."',
+                                        exit_code: 1,
+                                        stdout: '',
+                                        stderr: 'GARDA_WHY_BLOCKED failed',
+                                        audit_path: 'runtime/ui-actions/audit.jsonl'
+                                    };
+                                }
                                 return {
                                     action_id: requestedAction,
                                     status: 'executed',
@@ -1083,7 +1377,13 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 });
             }
         });
+        await flushMicrotasks();
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Runtime diagnostics/u);
+        assert.equal(initialReportFetchResolved, false);
+        resolveReportFetch();
         await flushPromises();
+        assert.equal(initialReportFetchResolved, true);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Runtime diagnostics/u);
 
         const tasksNode = fakeDocument.elements.tasks;
         assert.match(tasksNode.innerHTML, /T-100/u);
@@ -1130,6 +1430,60 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout retry count/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Timeout attempts/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Runtime diagnostics/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /No blockers reported/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /<h3 class="task-section-title">Blockers<\/h3>/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id="doctor"/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id="status-why-blocked"/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Gate Timeline/u);
+        const validationDoctorButton = fakeDocument.elements['settings-editor'].querySelectorAll('button[data-validation-action-id]')
+            .find((button) => button.dataset.validationActionId === 'doctor' && button.dataset.validationActionMode === 'execute');
+        assert.ok(validationDoctorButton);
+        await validationDoctorButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /Doctor/u);
+        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /GARDA_DOCTOR ok/u);
+        assert.equal(fakeDocument.elements['validation-action-status'].getAttribute('tabindex'), '-1');
+        const validationWhyBlockedButton = fakeDocument.elements['settings-editor'].querySelectorAll('button[data-validation-action-id]')
+            .find((button) => button.dataset.validationActionId === 'status-why-blocked' && button.dataset.validationActionMode === 'execute');
+        assert.ok(validationWhyBlockedButton);
+        await validationWhyBlockedButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /Why blocked/u);
+        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /GARDA_WHY_BLOCKED ok/u);
+        whyBlockedShouldFail = true;
+        await validationWhyBlockedButton.dispatch('click');
+        await flushPromises();
+        assert.match(fakeDocument.elements['validation-action-status'].innerHTML, /GARDA_WHY_BLOCKED failed/u);
+        whyBlockedShouldFail = false;
+        report.tasks_tab.rows[1].status = 'BLOCKED';
+        report.tasks_tab.rows[1].status_token = 'BLOCKED';
+        await fakeDocument.elements['language-select'].dispatch('change');
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /<h3 class="task-section-title">Blockers<\/h3>/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /T-200/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /No blockers reported/u);
+        (report.unavailable as Array<{ reason: string; scope: string }>).push({
+            scope: 'full-suite-validation',
+            reason: 'Full-suite timeout continued as warning-only evidence.'
+        });
+        const workflowState = report.system_state.workflow as {
+            full_suite_timeout_blocker: boolean;
+            full_suite_timeout_latest_warning: string | null;
+            full_suite_timeout_warning_only_continuation: boolean;
+        };
+        workflowState.full_suite_timeout_blocker = false;
+        workflowState.full_suite_timeout_warning_only_continuation = true;
+        workflowState.full_suite_timeout_latest_warning = 'Full-suite timeout continued as warning-only evidence.';
+        await fakeDocument.elements['language-select'].dispatch('change');
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite timeout continued as warning-only evidence/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation: true/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Warnings: Full-suite timeout continued as warning-only evidence/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /No runtime diagnostics reported/u);
+        report.unavailable.splice(0, report.unavailable.length);
+        workflowState.full_suite_timeout_blocker = true;
+        workflowState.full_suite_timeout_warning_only_continuation = false;
+        workflowState.full_suite_timeout_latest_warning = null;
+        await fakeDocument.elements['language-select'].dispatch('change');
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-auto-backup-enabled"/u);
         fakeDocument.getElementById('setting-input-workflow-full-suite-command').value = 'npm run test:refreshed';
         const fullSuiteCommandSaveButton = fakeDocument.elements['settings-editor'].querySelectorAll('button[data-setting-id]')
@@ -1303,6 +1657,10 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         const taskButton = tasksNode.querySelectorAll('button[data-task-id]')[0];
         await taskButton.dispatch('click');
         await flushPromises();
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Gate Timeline/u);
+        assert.equal((fakeDocument.elements['settings-editor'].innerHTML.match(/Full-suite validation/gu) || []).length, 1);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite state/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Full-suite validation/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Gate Timeline/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Runtime diagnostics/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Full-suite validation/u);
@@ -1401,6 +1759,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         actions.enabled = false;
         await fakeDocument.elements['language-select'].dispatch('change');
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Защищённые режимы/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Действия отключены/u);
+        assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /data-validation-action-id="doctor"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Предупреждения/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /One or more System State signals need attention/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Guarded UI actions are disabled/u);

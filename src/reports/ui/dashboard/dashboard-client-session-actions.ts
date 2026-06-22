@@ -368,6 +368,9 @@ function renderActions(payload) {
   if (currentReport) {
     renderSystemState(currentReport);
   }
+  if (currentSettingsPayload) {
+    renderSettingsEditor(currentSettingsPayload);
+  }
   if (!payload.enabled) {
     actionsNode.innerHTML = '<p class="empty">' + safe(t('actionsDisabled')) + ' <code>garda ui --actions</code> ' + safe(t('actionsDisabledTail')) + '</p><p class="empty">' + safe(t('actionsTaskMoved')) + '</p>';
     return;

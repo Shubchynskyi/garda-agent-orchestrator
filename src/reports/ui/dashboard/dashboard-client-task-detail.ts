@@ -161,6 +161,9 @@ async function loadDetail(taskId) {
   loadedTaskDetails[detail.task_id] = detail;
   renderTaskDetail(detail);
   renderTaskRows();
+  if (currentSettingsPayload) {
+    renderSettingsEditor(currentSettingsPayload);
+  }
 }
 function renderTaskDetail(detail) {
   const task = findReportTask(detail.task_id);
