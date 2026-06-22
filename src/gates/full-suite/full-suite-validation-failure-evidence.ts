@@ -186,6 +186,7 @@ function classifyFailureLine(line: string): FullSuiteFailureKind {
     if (
         (shardDone !== null && shardDone.timed_out === true)
         || /\b(?:Process|Command|Full suite|Shard|Test command)\b.*\btimed out\b/iu.test(line)
+        || /^(?:Error:\s+)?Timed out\b/iu.test(line)
         || /\btimed out after \d+\s*ms\b/iu.test(line)
     ) {
         return 'timeout';
@@ -227,6 +228,31 @@ function pushTopFailure(
     }
     seenKeys.add(key);
     failures.push(failure);
+}
+
+function hasConcreteFailedTest(failure: FullSuiteTopFailure): boolean {
+    return !!failure.test_name?.trim();
+}
+
+function getTopFailurePriority(failure: FullSuiteTopFailure): number {
+    if (hasConcreteFailedTest(failure)) {
+        const kindPriority: Record<FullSuiteFailureKind, number> = {
+            assertion: 50,
+            timeout: 40,
+            process_hang: 30,
+            process_exit: 20,
+            unknown: 10
+        };
+        return 100 + kindPriority[failure.kind];
+    }
+    const infrastructurePriority: Record<FullSuiteFailureKind, number> = {
+        process_hang: 50,
+        timeout: 40,
+        assertion: 30,
+        process_exit: 20,
+        unknown: 10
+    };
+    return infrastructurePriority[failure.kind];
 }
 
 function isNonFailureNodeTestLine(line: string): boolean {
@@ -293,16 +319,12 @@ function collectTopFailuresFromLines(options: {
     sourcePath: string | null;
     artifactPath: string | null;
     seenKeys: Set<string>;
-    maxFailures: number;
 }): FullSuiteTopFailure[] {
     const failures: FullSuiteTopFailure[] = [];
     let pendingLocation: { filePath: string | null; line: number | null; } | null = null;
     let lastFailure: FullSuiteTopFailure | null = null;
 
     for (const rawLine of options.lines) {
-        if (failures.length >= options.maxFailures) {
-            break;
-        }
         const line = redactFailureEvidenceSummaryLine(rawLine.trim());
         if (!line) {
             continue;
@@ -369,32 +391,33 @@ function collectTopFailures(options: {
         source: 'main_output',
         sourcePath: options.outputArtifactPath,
         artifactPath: options.outputArtifactPath,
-        seenKeys,
-        maxFailures: DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES
+        seenKeys
     });
     for (const copiedLog of options.copiedLogs) {
-        if (topFailures.length >= DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES) {
-            break;
-        }
         topFailures.push(...collectTopFailuresFromLines({
             lines: copiedLog.sourceLines,
             source: 'copied_log',
             sourcePath: copiedLog.copiedLog.source_path,
             artifactPath: copiedLog.copiedLog.artifact_path,
-            seenKeys,
-            maxFailures: DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES - topFailures.length
+            seenKeys
         }));
     }
     const actionableFailures = topFailures.filter((failure) => (
         failure.kind !== 'process_exit'
-        && failure.kind !== 'unknown'
+        && (failure.kind !== 'unknown' || hasConcreteFailedTest(failure))
     ));
     return (actionableFailures.length > 0 ? actionableFailures : topFailures)
+        .sort((left, right) => getTopFailurePriority(right) - getTopFailurePriority(left))
         .slice(0, DEFAULT_FAILURE_EVIDENCE_MAX_TOP_FAILURES);
 }
 
 function resolveFailureKind(topFailures: FullSuiteTopFailure[], timedOut: boolean): FullSuiteFailureKind {
     let kind: FullSuiteFailureKind = timedOut ? 'timeout' : 'unknown';
+    const concreteTestFailures = topFailures.filter(hasConcreteFailedTest);
+    if (concreteTestFailures.length > 0) {
+        const primaryKind = concreteTestFailures[0].kind;
+        return primaryKind === 'unknown' ? kind : primaryKind;
+    }
     for (const failure of topFailures) {
         kind = mergeFailureKind(kind, failure.kind);
     }

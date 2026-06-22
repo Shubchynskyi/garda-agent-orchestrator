@@ -827,6 +827,61 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
+        it('prioritizes concrete failing node tests over timeout fixture diagnostics', () => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-failing-test-priority-'));
+            const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
+            fs.mkdirSync(reviewsDir, { recursive: true });
+            const result: FullSuiteValidationResult = {
+                status: 'FAILED',
+                enabled: true,
+                command: 'npm run test:sharded',
+                exit_code: 1,
+                timed_out: false,
+                output_artifact_path: path.join(reviewsDir, 'T-FAILURE-PRIORITY-full-suite-output.log'),
+                compact_summary: [],
+                failure_chunks: [],
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
+                out_of_scope_failure_detected: false,
+                out_of_scope_audit_verdict: 'NOT_APPLICABLE',
+                violations: [],
+                warnings: []
+            };
+
+            const evidence = persistFullSuiteFailureEvidence({
+                repoRoot: tempDir,
+                reviewsRoot: reviewsDir,
+                taskId: 'T-FAILURE-PRIORITY',
+                result,
+                outputLines: [
+                    '✔ preserves NODE_FOUNDATION_TEST_SHARD_TIMEOUT fixture output in passing tests (1.0000ms)',
+                    ...Array.from({ length: 10 }, (_unused, index) => (
+                        `NODE_FOUNDATION_TEST_SHARD_TIMEOUT 1/2 pid=${100 + index} elapsed_ms=759 last_output_age_ms=758 log=.node-build/test-shard-logs/run-1/shard-01-of-02.log cleanup=child_kill_sigkill`
+                    )),
+                    'process_hang fixture diagnostic retained for wrapper coverage',
+                    'real test failure fixture diagnostic retained for wrapper coverage',
+                    '✖ failing tests:',
+                    'test at .node-build\\tests\\node\\ui\\local-ui-smoke.test.js:87:7',
+                    '✖ local UI browser smoke opens checks cycle tab and renders diagnostics (30012.1234ms)',
+                    '  Error: Timed out waiting for browser text matching /Tasks/u',
+                    '# fail 1'
+                ],
+                maxCopiedLogs: 0
+            });
+
+            assert.ok(evidence);
+            assert.equal(evidence.failure_kind, 'timeout');
+            assert.equal(evidence.top_failures[0].kind, 'timeout');
+            assert.equal(evidence.top_failures[0].test_name, 'local UI browser smoke opens checks cycle tab and renders diagnostics');
+            assert.equal(evidence.top_failures[0].file_path, '.node-build/tests/node/ui/local-ui-smoke.test.js');
+            assert.equal(evidence.top_failures[0].line, 87);
+            assert.doesNotMatch(evidence.top_failures[0].summary, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT/u);
+            const summary = JSON.parse(fs.readFileSync(String(evidence.summary_artifact_path), 'utf8'));
+            assert.equal(summary.failure_kind, 'timeout');
+            assert.equal(summary.top_failures[0].test_name, 'local UI browser smoke opens checks cycle tab and renders diagnostics');
+            assert.doesNotMatch(summary.top_failures[0].summary, /NODE_FOUNDATION_TEST_SHARD_TIMEOUT/u);
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        });
+
         it('classifies shard timeout diagnostics as process hangs', () => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-process-hang-'));
             const reviewsDir = path.join(tempDir, 'garda-agent-orchestrator', 'runtime', 'reviews');
