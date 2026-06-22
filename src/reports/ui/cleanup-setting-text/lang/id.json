@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Cleanup runtime manual",
-    "description": "Menjalankan `garda cleanup` sekali dengan nilai umur dan keep-latest dari baris di atas. Pratinjau adalah dry-run yang hanya menampilkan kandidat; Terapkan menghapus atau mengompresi sesuai kebijakan dan memerlukan konfirmasi tertulis."
+    "description": "Menjalankan `garda cleanup` sekali dengan nilai age dan keep-latest dari baris di atas. Pratinjau adalah dry-run yang hanya menampilkan kandidat; Jalankan pembersihan menerapkan policy, menghapus atau mengompresi, dan meminta konfirmasi yang diketik."
   },
   "task_purge": {
     "label": "Cleanup artefak runtime tugas",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — nonaktif"
+  },
+  "run_apply": {
+    "label": "Jalankan pembersihan"
+  },
+  "cleanup_report": {
+    "label": "Laporan pembersihan"
+  },
+  "cleanup_result": {
+    "label": "Hasil pembersihan"
+  },
+  "report_preview_tasks": {
+    "label": "Kandidat pratinjau"
+  },
+  "report_eligible_now": {
+    "label": "Memenuhi syarat sekarang"
+  },
+  "report_would_remove": {
+    "label": "Akan menghapus"
+  },
+  "report_would_free": {
+    "label": "Akan membebaskan"
+  },
+  "report_removed": {
+    "label": "Dihapus"
+  },
+  "report_freed": {
+    "label": "Dibebaskan"
   }
 }

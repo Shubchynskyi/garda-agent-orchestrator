@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Limpeza manual de runtime",
-    "description": "Executa `garda cleanup` uma vez com os valores de idade e manter-mais-recentes das linhas acima. Previa e um dry-run que mostra apenas candidatos; Aplicar remove ou comprime conforme a politica e exige confirmacao digitada."
+    "description": "Executa `garda cleanup` uma vez com os valores de idade e keep-latest das linhas acima. A pré-visualização é um dry-run que só mostra candidatos; Executar limpeza aplica a política, remove ou comprime e exige confirmação digitada."
   },
   "task_purge": {
     "label": "Limpeza de artefatos runtime da tarefa",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — desativado"
+  },
+  "run_apply": {
+    "label": "Executar limpeza"
+  },
+  "cleanup_report": {
+    "label": "Relatório de limpeza"
+  },
+  "cleanup_result": {
+    "label": "Resultado da limpeza"
+  },
+  "report_preview_tasks": {
+    "label": "Candidatos da pré-visualização"
+  },
+  "report_eligible_now": {
+    "label": "Elegível agora"
+  },
+  "report_would_remove": {
+    "label": "Removeria"
+  },
+  "report_would_free": {
+    "label": "Libertaria"
+  },
+  "report_removed": {
+    "label": "Removido"
+  },
+  "report_freed": {
+    "label": "Libertado"
   }
 }

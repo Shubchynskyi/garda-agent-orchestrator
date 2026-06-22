@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "手动 runtime cleanup",
-    "description": "使用上方的年龄和保留最新值执行一次 `garda cleanup`。预览是 dry-run，只显示候选项；应用会按策略删除或压缩，并要求输入确认短语。"
+    "description": "使用上方行中的年龄和 keep-latest 值运行一次 `garda cleanup`。预览是 dry-run，只显示候选项；运行清理 会应用策略、删除或压缩，并要求输入确认短语。"
   },
   "task_purge": {
     "label": "任务 runtime artifact cleanup",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — 已禁用"
+  },
+  "run_apply": {
+    "label": "运行清理"
+  },
+  "cleanup_report": {
+    "label": "清理报告"
+  },
+  "cleanup_result": {
+    "label": "清理结果"
+  },
+  "report_preview_tasks": {
+    "label": "预览候选项"
+  },
+  "report_eligible_now": {
+    "label": "当前符合条件"
+  },
+  "report_would_remove": {
+    "label": "将删除"
+  },
+  "report_would_free": {
+    "label": "将释放"
+  },
+  "report_removed": {
+    "label": "已删除"
+  },
+  "report_freed": {
+    "label": "已释放"
   }
 }

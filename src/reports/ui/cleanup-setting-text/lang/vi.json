@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Cleanup runtime thu cong",
-    "description": "Chay `garda cleanup` mot lan voi gia tri tuoi va giu-moi-nhat tu cac dong phia tren. Xem truoc la dry-run chi hien thi ung vien; Ap dung xoa hoac nen theo chinh sach va yeu cau cum xac nhan da nhap."
+    "description": "Chạy `garda cleanup` một lần với các giá trị tuổi và keep-latest từ các hàng ở trên. Xem trước là dry-run chỉ hiển thị ứng viên; Chạy dọn dẹp áp dụng policy, xóa hoặc nén và yêu cầu cụm xác nhận đã nhập."
   },
   "task_purge": {
     "label": "Cleanup artifact runtime cua task",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — tắt"
+  },
+  "run_apply": {
+    "label": "Chạy dọn dẹp"
+  },
+  "cleanup_report": {
+    "label": "Báo cáo dọn dẹp"
+  },
+  "cleanup_result": {
+    "label": "Kết quả dọn dẹp"
+  },
+  "report_preview_tasks": {
+    "label": "Ứng viên xem trước"
+  },
+  "report_eligible_now": {
+    "label": "Đủ điều kiện ngay"
+  },
+  "report_would_remove": {
+    "label": "Sẽ xóa"
+  },
+  "report_would_free": {
+    "label": "Sẽ giải phóng"
+  },
+  "report_removed": {
+    "label": "Đã xóa"
+  },
+  "report_freed": {
+    "label": "Đã giải phóng"
   }
 }

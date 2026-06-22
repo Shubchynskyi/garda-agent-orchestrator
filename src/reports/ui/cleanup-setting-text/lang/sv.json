@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Manuell runtime-cleanup",
-    "description": "Kor `garda cleanup` en gang med alder- och behall-senaste-vardena fran raderna ovan. Forhandsvisning ar en dry-run som bara visar kandidater; Verkstall tar bort eller komprimerar enligt policyn och kraver inskriven bekraftelse."
+    "description": "Kör `garda cleanup` en gång med ålder- och keep-latest-värdena från raderna ovan. Förhandsgranskning är en dry-run som bara visar kandidater; Kör rensning tillämpar policyn, tar bort eller komprimerar och kräver inskriven bekräftelse."
   },
   "task_purge": {
     "label": "Cleanup av runtime-artefakter for uppgift",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — inaktiverad"
+  },
+  "run_apply": {
+    "label": "Kör rensning"
+  },
+  "cleanup_report": {
+    "label": "Rensningsrapport"
+  },
+  "cleanup_result": {
+    "label": "Rensningsresultat"
+  },
+  "report_preview_tasks": {
+    "label": "Förhandsgranskningskandidater"
+  },
+  "report_eligible_now": {
+    "label": "Kvalificerad nu"
+  },
+  "report_would_remove": {
+    "label": "Skulle ta bort"
+  },
+  "report_would_free": {
+    "label": "Skulle frigöra"
+  },
+  "report_removed": {
+    "label": "Borttaget"
+  },
+  "report_freed": {
+    "label": "Frigjort"
   }
 }

@@ -15,6 +15,15 @@ export const CLEANUP_SETTING_TEXT_IDS = Object.freeze([
     'task_id',
     'purge_task_button',
     'run_preview',
+    'run_apply',
+    'cleanup_report',
+    'cleanup_result',
+    'report_preview_tasks',
+    'report_eligible_now',
+    'report_would_remove',
+    'report_would_free',
+    'report_removed',
+    'report_freed',
     'value_true',
     'value_false'
 ] as const);
@@ -60,7 +69,7 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
         },
         manual_runtime_cleanup: {
             label: 'Manual runtime cleanup',
-            description: 'Runs garda cleanup once with the age and keep-latest values from the rows above. Preview is a dry-run that only shows candidates; Apply deletes or compresses according to policy and requires typed confirmation.'
+            description: 'Runs garda cleanup once with the age and keep-latest values from the rows above. Preview is a dry-run that only shows candidates; Run cleanup deletes or compresses according to policy and requires typed confirmation.'
         },
         task_purge: {
             label: 'Task runtime artifact cleanup',
@@ -73,7 +82,34 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
             label: 'Clean task runtime artifacts'
         },
         run_preview: {
-            label: 'Preview dry-run'
+            label: 'Preview: do not delete'
+        },
+        run_apply: {
+            label: 'Run cleanup'
+        },
+        cleanup_report: {
+            label: 'Cleanup report'
+        },
+        cleanup_result: {
+            label: 'Cleanup result'
+        },
+        report_preview_tasks: {
+            label: 'Preview candidates'
+        },
+        report_eligible_now: {
+            label: 'Eligible now'
+        },
+        report_would_remove: {
+            label: 'Would remove'
+        },
+        report_would_free: {
+            label: 'Would free'
+        },
+        report_removed: {
+            label: 'Removed'
+        },
+        report_freed: {
+            label: 'Freed'
         },
         value_true: {
             label: 'true — enabled'

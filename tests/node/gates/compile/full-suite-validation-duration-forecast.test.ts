@@ -268,7 +268,7 @@ describe('gates/full-suite-validation', () => {
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 
-        it('excludes retry-contaminated successful runs from timeout forecasts', () => {
+        it('uses retry-contaminated successful runs as conservative timeout forecast samples', () => {
             const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-fsv-duration-retry-contaminated-'));
             const repoRoot = path.join(tempDir, 'repo');
             fs.mkdirSync(repoRoot, { recursive: true });
@@ -285,10 +285,14 @@ describe('gates/full-suite-validation', () => {
             });
 
             const forecast = buildFullSuiteTimeoutForecast(repoRoot, config);
-            assert.equal(forecast.sample_count, 0);
-            assert.equal(forecast.excluded_sample_count, 1);
-            assert.equal(forecast.excluded_sample_reasons.retry_contaminated, 1);
-            assert.match(formatFullSuiteTimeoutForecast(forecast), /retry_contaminated=1/);
+            assert.equal(forecast.sample_count, 1);
+            assert.equal(forecast.excluded_sample_count, 0);
+            assert.equal(forecast.excluded_sample_reasons.retry_contaminated, undefined);
+            assert.equal(forecast.high_watermark_duration_seconds, 600);
+            assert.equal(forecast.recommended_timeout_seconds, 720);
+            const text = formatFullSuiteTimeoutForecast(forecast);
+            assert.match(text, /eligible 1 run\(s\) avg 600s/);
+            assert.doesNotMatch(text, /retry_contaminated=1/);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });
 

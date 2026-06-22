@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "手動 runtime cleanup",
-    "description": "上の行の age と keep-latest 値で `garda cleanup` を 1 回実行します。プレビューは候補だけを表示する dry-run です。適用はポリシーに従って削除または圧縮し、入力確認を要求します。"
+    "description": "上の行の age と keep-latest の値で `garda cleanup` を1回実行します。プレビューは候補だけを表示する dry-run です。クリーンアップを実行 はポリシーを適用し、削除または圧縮して、入力確認を要求します。"
   },
   "task_purge": {
     "label": "タスク runtime アーティファクト cleanup",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — 無効"
+  },
+  "run_apply": {
+    "label": "クリーンアップを実行"
+  },
+  "cleanup_report": {
+    "label": "クリーンアップレポート"
+  },
+  "cleanup_result": {
+    "label": "クリーンアップ結果"
+  },
+  "report_preview_tasks": {
+    "label": "プレビュー候補"
+  },
+  "report_eligible_now": {
+    "label": "現在対象"
+  },
+  "report_would_remove": {
+    "label": "削除予定"
+  },
+  "report_would_free": {
+    "label": "解放予定"
+  },
+  "report_removed": {
+    "label": "削除済み"
+  },
+  "report_freed": {
+    "label": "解放済み"
   }
 }

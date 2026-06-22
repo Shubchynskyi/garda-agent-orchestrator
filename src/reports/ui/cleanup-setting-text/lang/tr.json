@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Manuel runtime cleanup",
-    "description": "Yukaridaki yas ve en-yenileri-koru degerleriyle `garda cleanup` komutunu bir kez calistirir. Onizleme yalniz adaylari gosteren dry-run olur; Uygula politikaya gore siler veya sikistirir ve yazili onay ister."
+    "description": "Yukarıdaki satırlardaki yaş ve keep-latest değerleriyle `garda cleanup` komutunu bir kez çalıştırır. Önizleme yalnızca adayları gösteren bir dry-run işlemidir; Temizliği çalıştır policy uygular, siler veya sıkıştırır ve yazılı onay ister."
   },
   "task_purge": {
     "label": "Gorev runtime artefakti cleanup",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — devre dışı"
+  },
+  "run_apply": {
+    "label": "Temizliği çalıştır"
+  },
+  "cleanup_report": {
+    "label": "Temizlik raporu"
+  },
+  "cleanup_result": {
+    "label": "Temizlik sonucu"
+  },
+  "report_preview_tasks": {
+    "label": "Önizleme adayları"
+  },
+  "report_eligible_now": {
+    "label": "Şimdi uygun"
+  },
+  "report_would_remove": {
+    "label": "Kaldırılırdı"
+  },
+  "report_would_free": {
+    "label": "Alan açardı"
+  },
+  "report_removed": {
+    "label": "Kaldırıldı"
+  },
+  "report_freed": {
+    "label": "Alan açıldı"
   }
 }

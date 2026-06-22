@@ -1,5 +1,6 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -14,6 +15,17 @@ function makeTempRepo(): string {
     fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const value = 1;\n', 'utf8');
     return repoRoot;
+}
+
+function gitResult(status: number, stderr = ''): childProcess.SpawnSyncReturns<string> {
+    return {
+        pid: 1,
+        output: ['', '', stderr],
+        stdout: '',
+        stderr,
+        status,
+        signal: null
+    };
 }
 
 describe('gates/git-fixtures', () => {
@@ -46,5 +58,27 @@ describe('gates/git-fixtures', () => {
 
         const status = runGitFixtureCommand(repoRoot, ['status', '--porcelain']).stdout;
         assert.match(status, /^ M src\/app\.ts/u);
+    });
+
+    it('retries transient Windows git init config failures', () => {
+        const repoRoot = makeTempRepo();
+        let calls = 0;
+
+        const result = runGitFixtureCommand(repoRoot, ['init'], {
+            retryDelaysMs: [0, 0],
+            spawnSync() {
+                calls += 1;
+                if (calls === 1) {
+                    return gitResult(
+                        128,
+                        "error: opening C:/Temp/example/.git/config: Permission denied\nfatal: could not set 'core.logallrefupdates' to 'true'"
+                    );
+                }
+                return gitResult(0);
+            }
+        });
+
+        assert.equal(result.status, 0);
+        assert.equal(calls, 2);
     });
 });

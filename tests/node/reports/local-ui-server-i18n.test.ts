@@ -661,6 +661,8 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         vm.runInNewContext(extractDashboardScript(html), context);
         await flushPromises();
         assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Minimum task age \(days\)/u);
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Preview: do not delete/u);
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Run cleanup/u);
 
         const renderCleanupResult = context.renderCleanupResult as ((result: unknown) => void) | undefined;
         assert.equal(typeof renderCleanupResult, 'function');
@@ -668,13 +670,42 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         renderCleanupResult({
             status: 'previewed',
             action_id: 'cleanup-preview-custom',
-            command: 'garda cleanup --dry-run'
+            command: 'garda cleanup --dry-run',
+            stdout: [
+                '\u001b[36mRuntimeRetentionPreviewTasks:\u001b[0m 12',
+                'RuntimeRetentionEligibleNow: 4',
+                '\u001b[33mWould remove\u001b[0m (reviews): 3',
+                'Would remove (task-events): 1',
+                '\u001b[32mWould free:\u001b[0m 1.00 MB'
+            ].join('\n')
         });
-        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview dry-run/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview: do not delete/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Manual runtime cleanup/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Cleanup result/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Dry-run only/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Cleanup report/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Preview candidates: 12/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Eligible now: 4/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Would remove: 4 \(reviews: 3, task-events: 1\)/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Would free: 1\.00 MB/u);
         assert.equal(fakeDocument.elements['cleanup-status'].focused, true);
         assert.equal(fakeDocument.elements['cleanup-status'].scrolled, true);
+
+        renderCleanupResult({
+            status: 'executed',
+            action_id: 'cleanup-apply-custom',
+            exit_code: 0,
+            stdout: [
+                'RuntimeRetentionEligibleNow: 4',
+                '\u001b[33mRemoved\u001b[0m (reviews): 2',
+                'Removed (task-events): 1',
+                '\u001b[32mFreed:\u001b[0m 768.00 KB'
+            ].join('\n')
+        });
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Run cleanup/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Removed: 3 \(reviews: 2, task-events: 1\)/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Freed: 768\.00 KB/u);
+        assert.doesNotMatch(fakeDocument.elements['cleanup-status'].innerHTML, /Would remove/u);
 
         renderCleanupResult({
             status: 'executed',
@@ -682,7 +713,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
             exit_code: 1,
             stderr: 'cleanup failed'
         });
-        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Apply/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Run cleanup/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Exit code 1/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /cleanup failed/u);
         assert.doesNotMatch(fakeDocument.elements['cleanup-status'].innerHTML, /<code>Applied/u);
@@ -704,7 +735,13 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         renderCleanupResult({
             status: 'previewed',
             action_id: 'cleanup-preview-custom',
-            command: 'garda cleanup --dry-run'
+            command: 'garda cleanup --dry-run',
+            stdout: [
+                'RuntimeRetentionPreviewTasks: 12',
+                'RuntimeRetentionEligibleNow: 4',
+                'Would remove (reviews): 3',
+                'Would free: 1.00 MB'
+            ].join('\n')
         });
         fakeDocument.elements['language-select'].value = 'de';
         await fakeDocument.elements['language-select'].dispatch('change');

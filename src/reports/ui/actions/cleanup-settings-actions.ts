@@ -357,18 +357,21 @@ export async function handleUiCleanupRunRequest(
     };
 
     if (mode === 'preview') {
+        const result = normalizeUiActionRunnerResult(action, await options.actionRunner(action, repoRoot));
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: new Date().toISOString(),
             action_id: 'cleanup-preview-custom',
             mode,
             status: 'previewed',
-            command: command.display
+            command: command.display,
+            ...uiActionExecutionAuditFields(result)
         });
-        sendJson(response, 200, {
+        sendJson(response, uiActionHttpStatus(result), {
             action_id: action.id,
             mode,
             status: 'previewed',
             command: command.display,
+            ...uiActionExecutionPayload(result),
             audit_path: auditPath
         });
         return;

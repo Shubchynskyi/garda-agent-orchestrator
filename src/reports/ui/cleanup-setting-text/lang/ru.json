@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Ручная очистка runtime",
-    "description": "Запускает `garda cleanup` один раз с возрастом и значением keep-latest из строк выше. Предпросмотр — это dry-run: он только показывает кандидатов; Применить удаляет или сжимает по политике и требует введённую фразу подтверждения."
+    "description": "Запускает `garda cleanup` один раз с возрастом и значением keep-latest из строк выше. Предпросмотр — это dry-run: он только показывает кандидатов; Запустить очистку удаляет или сжимает по политике и требует введённую фразу подтверждения."
   },
   "task_purge": {
     "label": "Очистка runtime-артефактов задачи",
@@ -49,12 +49,39 @@
     "label": "Очистить runtime-артефакты"
   },
   "run_preview": {
-    "label": "Предпросмотр dry-run"
+    "label": "Предпросмотр: ничего не удалять"
+  },
+  "run_apply": {
+    "label": "Запустить очистку"
+  },
+  "cleanup_report": {
+    "label": "Отчёт очистки"
+  },
+  "cleanup_result": {
+    "label": "Результат очистки"
+  },
+  "report_preview_tasks": {
+    "label": "Кандидаты предпросмотра"
+  },
+  "report_eligible_now": {
+    "label": "Подходит сейчас"
+  },
+  "report_would_remove": {
+    "label": "Будет удалено"
+  },
+  "report_would_free": {
+    "label": "Освободит"
   },
   "value_true": {
     "label": "true — включено"
   },
   "value_false": {
     "label": "false — выключено"
+  },
+  "report_removed": {
+    "label": "Удалено"
+  },
+  "report_freed": {
+    "label": "Освобождено"
   }
 }

@@ -1086,8 +1086,8 @@ describe('gates/full-suite-validation', () => {
                 status: 'PASSED',
                 timed_out: false,
                 retry_contaminated: true,
-                forecast_sample_eligible: false,
-                forecast_exclusion_reason: 'retry_contaminated'
+                forecast_sample_eligible: true,
+                forecast_exclusion_reason: 'none'
             }]);
             fs.rmSync(tempDir, { recursive: true, force: true });
         });

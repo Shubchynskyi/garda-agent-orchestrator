@@ -96,6 +96,24 @@ function badge(value, prefix, extraClass) {
 function metric(label, value) {
   return '<div class="metric"><span>' + safe(label) + '</span><strong>' + safe(value ?? '-') + '</strong></div>';
 }
+function formatUiTimestamp(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '-';
+  }
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return text;
+  }
+  try {
+    return new Intl.DateTimeFormat(currentLanguage || undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'medium'
+    }).format(date);
+  } catch {
+    return date.toLocaleString();
+  }
+}
 function fullSuiteValue(value) {
   return value === null || value === undefined || value === '' ? '-' : value;
 }

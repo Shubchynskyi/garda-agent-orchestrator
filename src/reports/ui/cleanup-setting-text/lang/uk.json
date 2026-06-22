@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Ручний cleanup runtime",
-    "description": "Запускає `garda cleanup` один раз зі значеннями віку та keep-latest з рядків вище. Попередній перегляд є dry-run і лише показує кандидатів; Застосувати видаляє або стискає за політикою та вимагає введену фразу підтвердження."
+    "description": "Запускає `garda cleanup` один раз із віком і значенням keep-latest з рядків вище. Попередній перегляд — це dry-run, який лише показує кандидатів; Запустити очищення застосовує політику, видаляє або стискає та вимагає введену фразу підтвердження."
   },
   "task_purge": {
     "label": "Cleanup runtime-артефактів задачі",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — вимкнено"
+  },
+  "run_apply": {
+    "label": "Запустити очищення"
+  },
+  "cleanup_report": {
+    "label": "Звіт очищення"
+  },
+  "cleanup_result": {
+    "label": "Результат очищення"
+  },
+  "report_preview_tasks": {
+    "label": "Кандидати попереднього перегляду"
+  },
+  "report_eligible_now": {
+    "label": "Підходить зараз"
+  },
+  "report_would_remove": {
+    "label": "Буде видалено"
+  },
+  "report_would_free": {
+    "label": "Звільнить"
+  },
+  "report_removed": {
+    "label": "Видалено"
+  },
+  "report_freed": {
+    "label": "Звільнено"
   }
 }

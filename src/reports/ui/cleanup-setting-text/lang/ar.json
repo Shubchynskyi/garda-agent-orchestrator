@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "تنظيف runtime يدوي",
-    "description": "يشغّل `garda cleanup` مرة واحدة بقيم العمر والاحتفاظ بالأحدث من الصفوف أعلاه. المعاينة dry-run تعرض المرشحين فقط؛ التطبيق يحذف أو يضغط حسب السياسة ويتطلب تأكيداً مكتوباً."
+    "description": "يشغل `garda cleanup` مرة واحدة باستخدام قيم العمر و keep-latest من الصفوف أعلاه. المعاينة هي dry-run يعرض المرشحين فقط؛ تشغيل التنظيف يطبق السياسة ويحذف أو يضغط بعد طلب عبارة التأكيد المكتوبة."
   },
   "task_purge": {
     "label": "تنظيف آثار runtime لمهمة",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — معطّل"
+  },
+  "run_apply": {
+    "label": "تشغيل التنظيف"
+  },
+  "cleanup_report": {
+    "label": "تقرير التنظيف"
+  },
+  "cleanup_result": {
+    "label": "نتيجة التنظيف"
+  },
+  "report_preview_tasks": {
+    "label": "مرشحو المعاينة"
+  },
+  "report_eligible_now": {
+    "label": "مؤهل الآن"
+  },
+  "report_would_remove": {
+    "label": "ستتم إزالة"
+  },
+  "report_would_free": {
+    "label": "سيحرر"
+  },
+  "report_removed": {
+    "label": "تمت الإزالة"
+  },
+  "report_freed": {
+    "label": "تم تحريره"
   }
 }

@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Handmatige runtime-cleanup",
-    "description": "Voert `garda cleanup` eenmaal uit met de leeftijds- en nieuwste-behoudenwaarden uit de rijen hierboven. Voorbeeld is een dry-run die alleen kandidaten toont; Toepassen verwijdert of comprimeert volgens beleid en vereist getypte bevestiging."
+    "description": "Voert `garda cleanup` eenmaal uit met de leeftijds- en keep-latest-waarden uit de rijen hierboven. De preview is een dry-run die alleen kandidaten toont; Opschoning uitvoeren past het beleid toe, verwijdert of comprimeert en vereist getypte bevestiging."
   },
   "task_purge": {
     "label": "Runtime-artefacten van taak opschonen",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — uitgeschakeld"
+  },
+  "run_apply": {
+    "label": "Opschoning uitvoeren"
+  },
+  "cleanup_report": {
+    "label": "Opschoonrapport"
+  },
+  "cleanup_result": {
+    "label": "Opschoonresultaat"
+  },
+  "report_preview_tasks": {
+    "label": "Previewkandidaten"
+  },
+  "report_eligible_now": {
+    "label": "Nu geschikt"
+  },
+  "report_would_remove": {
+    "label": "Zou verwijderen"
+  },
+  "report_would_free": {
+    "label": "Zou vrijmaken"
+  },
+  "report_removed": {
+    "label": "Verwijderd"
+  },
+  "report_freed": {
+    "label": "Vrijgemaakt"
   }
 }

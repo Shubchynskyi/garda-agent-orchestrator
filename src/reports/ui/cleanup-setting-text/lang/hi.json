@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "मैनुअल runtime cleanup",
-    "description": "`garda cleanup` को ऊपर की age और keep-latest values के साथ एक बार चलाता है। Preview dry-run है और केवल candidates दिखाता है; Apply policy के अनुसार delete या compress करता है और typed confirmation मांगता है।"
+    "description": "ऊपर की age और keep-latest values के साथ `garda cleanup` को एक बार चलाता है। Preview dry-run है और केवल candidates दिखाता है; सफाई चलाएँ policy लागू करता है, delete या compress करता है, और typed confirmation मांगता है।"
   },
   "task_purge": {
     "label": "टास्क runtime artifact cleanup",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — अक्षम"
+  },
+  "run_apply": {
+    "label": "सफाई चलाएँ"
+  },
+  "cleanup_report": {
+    "label": "सफाई रिपोर्ट"
+  },
+  "cleanup_result": {
+    "label": "सफाई परिणाम"
+  },
+  "report_preview_tasks": {
+    "label": "पूर्वावलोकन उम्मीदवार"
+  },
+  "report_eligible_now": {
+    "label": "अभी पात्र"
+  },
+  "report_would_remove": {
+    "label": "हटाया जाएगा"
+  },
+  "report_would_free": {
+    "label": "खाली करेगा"
+  },
+  "report_removed": {
+    "label": "हटाया गया"
+  },
+  "report_freed": {
+    "label": "खाली किया गया"
   }
 }

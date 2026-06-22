@@ -158,7 +158,7 @@ function gardaSwitchMarkup(payload) {
     return '';
   }
   const state = payload.switch_state || 'unknown';
-  const stateClass = state === 'on' ? 'data-full' : state === 'off' ? 'data-compact' : 'data-blockers';
+  const stateClass = state === 'on' ? 'data-full' : 'data-compact';
   const actions = payload.actions || [];
   const desiredActionIds = state === 'off' ? ['garda-on'] : state === 'on' ? ['garda-off'] : ['garda-on', 'garda-off'];
   const buttons = !payload.enabled
@@ -219,14 +219,26 @@ function isPrimarySystemHealthSignal(signal) {
   const id = signal && signal.id ? String(signal.id) : '';
   return !id.startsWith('config-file-');
 }
-function systemOverallSummary(status, fallback, state) {
+function systemBlockingSignals(signals) {
+  return (signals || []).filter(signal => signal && signal.status === 'error');
+}
+function systemSignalSummaryText(signal) {
+  const label = systemSignalLabel(signal);
+  const summary = signal && signal.summary ? String(signal.summary) : '';
+  return summary ? label + ': ' + summary : label;
+}
+function systemOverallSummary(status, fallback, state, signals) {
   if (status === 'ok') return fallback || 'Core System State signals look healthy.';
   if (status === 'unknown') return fallback || 'System State health is not available.';
   const blockedCount = Number(state && state.task_queue && state.task_queue.counts && state.task_queue.counts.blocked);
   if (Number.isFinite(blockedCount) && blockedCount > 0) {
     return t('blockers') + ': ' + (state.task_queue.summary || (String(blockedCount) + ' blocked task(s).'));
   }
-  if (status === 'error') return fallback || t('blockers');
+  const blockingSignals = systemBlockingSignals(signals);
+  if (status === 'error' || blockingSignals.length > 0) {
+    const summary = blockingSignals.map(systemSignalSummaryText).filter(Boolean).join(', ');
+    return t('blockers') + ': ' + (summary || fallback || '-');
+  }
   return t('overviewWarnings') + ': ' + t('noBlockers');
 }
 function systemSignalLabel(signal) {
@@ -354,10 +366,11 @@ function renderSystemState(report) {
   const signals = mergeSystemSignals(primarySignals, allSignals);
   const renderedOverallStatus = systemWorstHealth(allSignals.filter(isPrimarySystemHealthSignal));
   const renderedOverallLabel = systemHealthLabel(renderedOverallStatus, state.overall.label);
-  const renderedOverallSummary = systemOverallSummary(renderedOverallStatus, state.overall.summary, state);
+  const renderedOverallSummary = systemOverallSummary(renderedOverallStatus, state.overall.summary, state, allSignals.filter(isPrimarySystemHealthSignal));
+  const generatedAt = state.overall.generated_at_utc || report.generated_at_utc || '';
   node.innerHTML = gardaSwitchMarkup(currentActionsPayload)
     + '<section class="system-health-summary">'
-    + '<div><h3>' + safe(t('actionsTab')) + '</h3><p>' + safe(renderedOverallSummary || '-') + '</p><p class="empty">' + safe(state.overall.generated_at_utc || report.generated_at_utc || '-') + '</p></div>'
+    + '<div><h3>' + safe(t('actionsTab')) + '</h3><p>' + safe(renderedOverallSummary || '-') + '</p><p class="empty">' + safe(formatUiTimestamp(generatedAt)) + '</p></div>'
     + '<span class="badge ' + safe(systemHealthClass(renderedOverallStatus)) + '">' + safe(renderedOverallLabel) + '</span>'
     + '</section>'
     + systemDiagnosticActionsHtml(currentActionsPayload)

@@ -619,9 +619,9 @@ test('local UI browser smoke opens checks cycle tab with compact forecast and se
         const settingsText = await waitForCdpText(
             cdp,
             'document.getElementById("settings-editor") ? document.getElementById("settings-editor").innerText : ""',
-            /Full-suite command|Команда полной проверки/u
+            /Timeout forecast|Прогноз таймаута/u
         );
-        assert.match(settingsText, /Timeout forecast|Прогноз таймаута/u);
+        assert.match(settingsText, /Full-suite command|Команда полной проверки/u);
         assert.doesNotMatch(settingsText, /Runtime diagnostics|Диагностика выполнения/u);
         assert.doesNotMatch(settingsText, /No blockers reported|Блокеры не найдены/u);
         assert.doesNotMatch(settingsText, /Timeout attempts|Попытки при таймауте/u);
@@ -1529,6 +1529,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /System state/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Garda switch/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Switch action is hidden/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /2026-05-19T00:00:00\.000Z/u);
         assert.ok(
             fakeDocument.elements['system-state-panel'].innerHTML.indexOf('system-garda-switch')
             < fakeDocument.elements['system-state-panel'].innerHTML.indexOf('system-health-summary')
@@ -1744,6 +1745,14 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         report.system_state.task_queue.status = 'ok';
         report.system_state.task_queue.summary = 'Next executable task is T-100.';
         report.system_state.task_queue.counts.blocked = 0;
+        report.system_state.protected_manifest.status = 'error';
+        report.system_state.protected_manifest.summary = 'Protected manifest status is DRIFT.';
+        await fakeDocument.elements['language-select'].dispatch('change');
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Блокеры: Защищённые режимы: Protected manifest status is DRIFT\./u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Блокеры не найдены/u);
+
+        report.system_state.protected_manifest.status = 'ok';
+        report.system_state.protected_manifest.summary = 'Protected manifest status is MATCH.';
         (report.system_state.signals as unknown[]) = [
             report.system_state.garda,
             report.system_state.ui_actions,

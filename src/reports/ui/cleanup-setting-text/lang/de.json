@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Manuelle Runtime-Bereinigung",
-    "description": "Fuehrt `garda cleanup` einmal mit den Werten fuer Alter und Neueste-behalten aus den Zeilen oben aus. Vorschau ist ein Dry-run und zeigt nur Kandidaten; Anwenden loescht oder komprimiert gemaess Richtlinie und verlangt eine eingegebene Bestaetigung."
+    "description": "Führt `garda cleanup` einmal mit den Alters- und keep-latest-Werten aus den Zeilen oben aus. Die Vorschau ist ein Dry-run und zeigt nur Kandidaten; Bereinigung starten wendet die Policy an, löscht oder komprimiert und verlangt die eingegebene Bestätigung."
   },
   "task_purge": {
     "label": "Runtime-Artefakte einer Aufgabe bereinigen",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — deaktiviert"
+  },
+  "run_apply": {
+    "label": "Bereinigung starten"
+  },
+  "cleanup_report": {
+    "label": "Bereinigungsbericht"
+  },
+  "cleanup_result": {
+    "label": "Bereinigungsergebnis"
+  },
+  "report_preview_tasks": {
+    "label": "Vorschau-Kandidaten"
+  },
+  "report_eligible_now": {
+    "label": "Jetzt geeignet"
+  },
+  "report_would_remove": {
+    "label": "Würde entfernen"
+  },
+  "report_would_free": {
+    "label": "Würde freigeben"
+  },
+  "report_removed": {
+    "label": "Entfernt"
+  },
+  "report_freed": {
+    "label": "Freigegeben"
   }
 }

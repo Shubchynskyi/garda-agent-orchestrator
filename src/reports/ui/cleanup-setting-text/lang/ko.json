@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "수동 runtime cleanup",
-    "description": "위 행의 age와 keep-latest 값으로 `garda cleanup`을 한 번 실행합니다. Preview는 후보만 보여주는 dry-run입니다. Apply는 정책에 따라 삭제 또는 압축하며 입력 확인을 요구합니다."
+    "description": "위 행의 age와 keep-latest 값으로 `garda cleanup`을 한 번 실행합니다. 미리보기는 후보만 보여주는 dry-run입니다. 정리 실행은 policy를 적용해 삭제 또는 압축하며 입력 확인을 요구합니다."
   },
   "task_purge": {
     "label": "작업 runtime artifact cleanup",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — 비활성화"
+  },
+  "run_apply": {
+    "label": "정리 실행"
+  },
+  "cleanup_report": {
+    "label": "정리 보고서"
+  },
+  "cleanup_result": {
+    "label": "정리 결과"
+  },
+  "report_preview_tasks": {
+    "label": "미리보기 후보"
+  },
+  "report_eligible_now": {
+    "label": "지금 대상"
+  },
+  "report_would_remove": {
+    "label": "제거 예정"
+  },
+  "report_would_free": {
+    "label": "확보 예정"
+  },
+  "report_removed": {
+    "label": "제거됨"
+  },
+  "report_freed": {
+    "label": "확보됨"
   }
 }

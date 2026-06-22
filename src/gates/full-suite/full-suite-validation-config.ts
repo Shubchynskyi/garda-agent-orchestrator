@@ -191,7 +191,9 @@ export function classifyFullSuiteForecastSample(
     if (entry.cancelled === true) {
         return { eligible: false, reason: 'interrupted_or_cancelled' };
     }
-    if (entry.retry_contaminated === true) {
+    const isSuccessfulPass = entry.status === 'PASSED' && entry.exit_code === 0;
+    // A retry-contaminated pass is still a conservative wall-clock sample for sizing future timeouts.
+    if (entry.retry_contaminated === true && !isSuccessfulPass) {
         return { eligible: false, reason: 'retry_contaminated' };
     }
     if (entry.status !== 'PASSED') {

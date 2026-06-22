@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Reczny cleanup runtime",
-    "description": "Uruchamia `garda cleanup` raz z wartosciami wieku i liczby najnowszych z wierszy powyzej. Podglad jest dry-run i pokazuje tylko kandydatow; Zastosuj usuwa lub kompresuje wedlug polityki i wymaga wpisanego potwierdzenia."
+    "description": "Uruchamia `garda cleanup` raz z wartościami wieku i keep-latest z wierszy powyżej. Podgląd to dry-run pokazujący tylko kandydatów; Uruchom czyszczenie stosuje politykę, usuwa lub kompresuje i wymaga wpisanego potwierdzenia."
   },
   "task_purge": {
     "label": "Cleanup artefaktow runtime zadania",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — wyłączone"
+  },
+  "run_apply": {
+    "label": "Uruchom czyszczenie"
+  },
+  "cleanup_report": {
+    "label": "Raport czyszczenia"
+  },
+  "cleanup_result": {
+    "label": "Wynik czyszczenia"
+  },
+  "report_preview_tasks": {
+    "label": "Kandydaci podglądu"
+  },
+  "report_eligible_now": {
+    "label": "Kwalifikuje się teraz"
+  },
+  "report_would_remove": {
+    "label": "Zostałoby usunięte"
+  },
+  "report_would_free": {
+    "label": "Zwolniłoby"
+  },
+  "report_removed": {
+    "label": "Usunięto"
+  },
+  "report_freed": {
+    "label": "Zwolniono"
   }
 }

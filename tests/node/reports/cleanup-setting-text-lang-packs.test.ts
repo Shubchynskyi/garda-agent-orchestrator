@@ -9,7 +9,7 @@ const CLEANUP_SETTING_TEXT_CATALOG = buildCleanupSettingTextCatalog();
 const EXPECTED_SETTING_IDS = listCleanupSettingTextCatalogIds(CLEANUP_SETTING_TEXT_CATALOG);
 
 test('cleanup setting text catalog covers every cleanup setting definition', () => {
-    assert.equal(EXPECTED_SETTING_IDS.length, 16);
+    assert.equal(EXPECTED_SETTING_IDS.length, 25);
     assert.ok(EXPECTED_SETTING_IDS.includes('daily_maintenance_enabled'));
     assert.ok(EXPECTED_SETTING_IDS.includes('manual_runtime_cleanup'));
 });
@@ -43,7 +43,7 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     );
     assert.match(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.manual_runtime_cleanup.description || '',
-        /Preview is a dry-run/u
+        /Preview is a dry-run.*Run cleanup deletes/u
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.task_purge.label,
@@ -55,7 +55,23 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.run_preview.label,
-        'Preview dry-run'
+        'Preview: do not delete'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.en.run_apply.label,
+        'Run cleanup'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.en.cleanup_report.label,
+        'Cleanup report'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.en.report_would_remove.label,
+        'Would remove'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.en.report_removed.label,
+        'Removed'
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.ru.daily_maintenance_enabled.label,
@@ -68,6 +84,30 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.ru.task_purge.label,
         'Очистка runtime-артефактов задачи'
+    );
+    assert.match(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.manual_runtime_cleanup.description || '',
+        /Запустить очистку удаляет/u
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.run_preview.label,
+        'Предпросмотр: ничего не удалять'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.run_apply.label,
+        'Запустить очистку'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.cleanup_report.label,
+        'Отчёт очистки'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.report_would_remove.label,
+        'Будет удалено'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.report_removed.label,
+        'Удалено'
     );
     assert.doesNotMatch(
         [
@@ -83,6 +123,21 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
         LOCAL_UI_CLEANUP_SETTING_TEXT.de.eligible_older_than_days.description || '',
         /A task must be at least this many days old/u
     );
+});
+
+test('manual cleanup descriptions name the localized run cleanup action', () => {
+    for (const language of LOCAL_UI_LANGUAGES) {
+        const pack = LOCAL_UI_CLEANUP_SETTING_TEXT[language.id];
+        assert.ok(pack, `missing cleanup setting text for ${language.id}`);
+        const runLabel = pack.run_apply.label || '';
+        const description = pack.manual_runtime_cleanup.description || '';
+        assert.ok(runLabel.trim(), `missing run cleanup label for ${language.id}`);
+        assert.match(
+            description,
+            new RegExp(runLabel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'),
+            `manual cleanup description should mention localized run action for ${language.id}`
+        );
+    }
 });
 
 test('cleanup setting text packs do not contain unexpected setting ids', () => {

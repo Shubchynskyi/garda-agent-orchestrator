@@ -36,7 +36,7 @@
   },
   "manual_runtime_cleanup": {
     "label": "Nettoyage runtime manuel",
-    "description": "Execute `garda cleanup` une fois avec les valeurs age et conserver-les-plus-recentes des lignes ci-dessus. Apercu est un dry-run qui montre seulement les candidats; Appliquer supprime ou compresse selon la politique et exige une confirmation saisie."
+    "description": "Exécute `garda cleanup` une fois avec les valeurs age et keep-latest des lignes ci-dessus. La prévisualisation est un dry-run qui montre seulement les candidats ; Lancer le nettoyage applique la politique, supprime ou compresse et exige la confirmation saisie."
   },
   "task_purge": {
     "label": "Nettoyage des artefacts runtime d une tache",
@@ -56,5 +56,32 @@
   },
   "value_false": {
     "label": "false — désactivé"
+  },
+  "run_apply": {
+    "label": "Lancer le nettoyage"
+  },
+  "cleanup_report": {
+    "label": "Rapport de nettoyage"
+  },
+  "cleanup_result": {
+    "label": "Résultat du nettoyage"
+  },
+  "report_preview_tasks": {
+    "label": "Candidats de prévisualisation"
+  },
+  "report_eligible_now": {
+    "label": "Éligible maintenant"
+  },
+  "report_would_remove": {
+    "label": "Supprimerait"
+  },
+  "report_would_free": {
+    "label": "Libérerait"
+  },
+  "report_removed": {
+    "label": "Supprimé"
+  },
+  "report_freed": {
+    "label": "Libéré"
   }
 }
