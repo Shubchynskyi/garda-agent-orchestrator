@@ -18,6 +18,9 @@
     "label": "至少保留的最新任务数",
     "description": "即使任务早于年龄阈值，也始终至少保留这么多最新任务。设置为 0 可仅依赖年龄和活动任务保护。"
   },
+  "include_problematic_tasks": {
+    "label": "也删除有问题的任务"
+  },
   "daily_maintenance_dry_run": {
     "label": "每日维护 dry-run",
     "description": "当值为 true 时，计划中的每日维护只会列出候选项并写入审计输出；不会删除或压缩任何制品。调试阈值时请使用 true，准备真正执行时再切换为 false。"

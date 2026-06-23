@@ -323,6 +323,7 @@ export interface TaskRuntimeBatchPurgeOptions {
     activeTaskIds?: string[];
     eligibleOlderThanDays?: number;
     keepLatestTasks?: number;
+    includeProblematicTasks?: boolean;
     now?: Date;
 }
 
@@ -347,7 +348,8 @@ export function runTaskRuntimeBatchPurge(options: TaskRuntimeBatchPurgeOptions):
     const runtimeDir = path.join(bundleRoot, 'runtime');
     const dryRun = !confirm;
     const activeTaskIds = resolveActiveTaskIds(targetRoot, bundleRoot, options.activeTaskIds, {
-        includeAmbiguousRuntimeTasks: false
+        includeAmbiguousRuntimeTasks: false,
+        includeStaleRuntimeActiveTasks: options.includeProblematicTasks !== true
     });
     const allInventory = collectTaskRuntimePurgeInventory(runtimeDir, new Set<string>());
     const taskSelection = selectTaskRuntimeBatchPurgeTaskIds(allInventory, {
@@ -382,7 +384,8 @@ export function runTaskRuntimeBatchPurge(options: TaskRuntimeBatchPurgeOptions):
         dryRun,
         filters: {
             eligibleOlderThanDays: options.eligibleOlderThanDays ?? null,
-            keepLatestTasks: options.keepLatestTasks ?? null
+            keepLatestTasks: options.keepLatestTasks ?? null,
+            includeProblematicTasks: options.includeProblematicTasks === true
         },
         candidateTaskIds: taskSelection.candidateTaskIds,
         matchedTaskIds: taskSelection.selectedTaskIds,

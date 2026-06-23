@@ -44,6 +44,7 @@ interface CleanupRunRequest {
     mode?: unknown;
     eligible_older_than_days?: unknown;
     keep_latest_tasks?: unknown;
+    include_problematic_tasks?: unknown;
     confirmation?: unknown;
 }
 
@@ -184,6 +185,10 @@ function buildCleanupCommand(repoRoot: string, request: CleanupRunRequest, execu
     if (keepLatestTasks !== undefined && String(keepLatestTasks).trim() !== '') {
         args.push('--runtime-retention-keep-latest-tasks', String(parseNonNegativeInteger(keepLatestTasks, 'keep_latest_tasks')));
     }
+    if (request.include_problematic_tasks !== undefined
+        && parseBoolean(request.include_problematic_tasks, 'include_problematic_tasks')) {
+        args.push('--include-problematic-tasks');
+    }
     return buildUiActionCommand(repoRoot, args);
 }
 
@@ -225,6 +230,7 @@ export function buildUiCleanupSettingsPayload(repoRoot: string, actionsEnabled: 
             daily_maintenance_max_tasks_per_run: Number(document.daily_maintenance.max_tasks_per_run),
             eligible_older_than_days: Number(document.daily_maintenance.eligible_older_than_days),
             keep_latest_tasks: Number(document.daily_maintenance.keep_latest_tasks),
+            include_problematic_tasks: false,
             daily_maintenance_dry_run: Boolean(document.daily_maintenance.dry_run),
             purge_require_confirm: Boolean(document.purge.require_confirm),
             healthy_done_compact_after_days: Number(document.healthy_done.compact_after_days),

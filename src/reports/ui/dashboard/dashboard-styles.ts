@@ -138,12 +138,14 @@ tr.selected { background: #eef8f6; }
 .cleanup-settings-table th:nth-child(3) { width: 16%; }
 .cleanup-settings-table th:nth-child(4) { width: 34%; }
 .cleanup-settings-table td:last-child .setting-buttons { margin-top: 6px; }
-.cleanup-run-options { display: grid; grid-template-columns: repeat(2, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
+.cleanup-run-options { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }
 .cleanup-progress-panel { max-width: 720px; }
 .cleanup-progress { display: block; width: 100%; height: 12px; accent-color: var(--accent); }
 .cleanup-settings-table .setting-control select,
 .cleanup-settings-table .setting-control input[type="number"],
 .cleanup-settings-table .setting-control input[type="text"] { width: 100%; max-width: 220px; min-height: 34px; }
+.cleanup-settings-table .cleanup-checkbox-control { align-content: end; grid-template-columns: 18px minmax(0, 1fr); align-items: center; color: var(--ink); }
+.cleanup-settings-table .cleanup-checkbox-control input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; }
 .workflow-table tbody tr:nth-child(even), .instruction-table tbody tr:nth-child(even), .action-table tbody tr:nth-child(even) { background: #fbfcfe; }
 .workflow-table td:first-child, .instruction-table td:first-child, .action-table td:first-child { border-left: 4px solid #c7d7f2; background: #f7f9fc; }
 .setting-title { display: grid; gap: 4px; }

@@ -18,6 +18,9 @@
     "label": "Conserver au moins les tâches les plus récentes (nombre)",
     "description": "Préserve toujours au moins ce nombre de tâches les plus récentes, même si elles dépassent le seuil d’âge. Utilisez 0 pour ne dépendre que de l’âge et de la protection des tâches actives."
   },
+  "include_problematic_tasks": {
+    "label": "Supprimer aussi les tâches problématiques"
+  },
   "daily_maintenance_dry_run": {
     "label": "Maintenance quotidienne en dry-run",
     "description": "Quand la valeur est true, la maintenance quotidienne planifiée se contente de lister les candidats et d’écrire une sortie d’audit ; elle ne supprime ni ne compresse aucun artefact. Utilisez true pendant le réglage des seuils, puis passez à false pour appliquer."

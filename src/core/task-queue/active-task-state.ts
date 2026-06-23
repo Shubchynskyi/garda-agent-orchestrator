@@ -81,10 +81,12 @@ export interface RuntimeTaskState {
     activeTaskIds: Set<string>;
     ambiguousTaskIds: Set<string>;
     terminalTaskIds: Set<string>;
+    staleRuntimeActiveTaskIds: Set<string>;
 }
 
 export interface ResolveActiveTaskIdsOptions {
     includeAmbiguousRuntimeTasks?: boolean;
+    includeStaleRuntimeActiveTasks?: boolean;
 }
 
 const RUNTIME_RECOVERY_EVENTS = new Set([
@@ -98,6 +100,7 @@ export function collectRuntimeTaskState(bundleRoot: string): RuntimeTaskState {
     const activeTaskIds = new Set<string>();
     const ambiguousTaskIds = new Set<string>();
     const terminalTaskIds = new Set<string>();
+    const staleRuntimeActiveTaskIds = new Set<string>();
     const taskEventsDir = path.join(bundleRoot, 'runtime', 'task-events');
 
     try {
@@ -174,8 +177,13 @@ export function collectRuntimeTaskState(bundleRoot: string): RuntimeTaskState {
             const withinRuntimeGrace = timelineMtimeMs > 0
                 && (Date.now() - timelineMtimeMs) <= ACTIVE_TASK_RUNTIME_GRACE_MS;
             const hasFreshLifecycleRestart = withinRuntimeGrace && latestRestartSequence > latestTerminalSequence;
-            if (parseFailed || isTaskQueueActiveStatus(latestStatus || '')) {
+            if (parseFailed) {
                 activeTaskIds.add(taskId);
+            } else if (isTaskQueueActiveStatus(latestStatus || '')) {
+                activeTaskIds.add(taskId);
+                if (!withinRuntimeGrace) {
+                    staleRuntimeActiveTaskIds.add(taskId);
+                }
             } else if (hasFreshLifecycleRestart) {
                 activeTaskIds.add(taskId);
             } else if (isTaskQueueTerminalStatus(latestStatus || '') || hasCompletionGatePass) {
@@ -191,7 +199,8 @@ export function collectRuntimeTaskState(bundleRoot: string): RuntimeTaskState {
     return {
         activeTaskIds,
         ambiguousTaskIds,
-        terminalTaskIds
+        terminalTaskIds,
+        staleRuntimeActiveTaskIds
     };
 }
 
@@ -203,6 +212,7 @@ export function resolveActiveTaskIds(
 ): Set<string> {
     const activeTaskIds = new Set<string>();
     const includeAmbiguousRuntimeTasks = options.includeAmbiguousRuntimeTasks ?? true;
+    const includeStaleRuntimeActiveTasks = options.includeStaleRuntimeActiveTasks ?? true;
     for (const explicitTaskId of explicitTaskIds || []) {
         try {
             activeTaskIds.add(assertValidTaskId(explicitTaskId));
@@ -214,6 +224,9 @@ export function resolveActiveTaskIds(
     const runtimeTaskState = collectRuntimeTaskState(bundleRoot);
     const mergeRuntimeTaskIds = (includeAmbiguous: boolean): void => {
         for (const taskId of runtimeTaskState.activeTaskIds) {
+            if (!includeStaleRuntimeActiveTasks && runtimeTaskState.staleRuntimeActiveTaskIds.has(taskId)) {
+                continue;
+            }
             activeTaskIds.add(taskId);
         }
         if (includeAmbiguous) {

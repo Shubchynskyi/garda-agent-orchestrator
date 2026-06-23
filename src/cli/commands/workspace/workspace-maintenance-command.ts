@@ -314,7 +314,8 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
             '--dry-run': { key: 'dryRun', type: 'boolean' },
             '--json': { key: 'json', type: 'boolean' },
             '--runtime-retention-older-than-days': { key: 'runtimeRetentionOlderThanDays', type: 'string' },
-            '--runtime-retention-keep-latest-tasks': { key: 'runtimeRetentionKeepLatestTasks', type: 'string' }
+            '--runtime-retention-keep-latest-tasks': { key: 'runtimeRetentionKeepLatestTasks', type: 'string' },
+            '--include-problematic-tasks': { key: 'includeProblematicTasks', type: 'boolean' }
         };
         const { options: rawBatchPurgeOptions } = parseOptions(commandArgv.slice(1), batchPurgeDefinitions);
         const batchPurgeOptions = rawBatchPurgeOptions as ParsedOptionsRecord;
@@ -334,7 +335,8 @@ export function handleCleanup(commandArgv: string[], packageJson: PackageJsonLik
             keepLatestTasks: parseNonNegativeIntegerOption(
                 batchPurgeOptions.runtimeRetentionKeepLatestTasks,
                 '--runtime-retention-keep-latest-tasks'
-            )
+            ),
+            includeProblematicTasks: batchPurgeOptions.includeProblematicTasks === true
         });
 
         if (batchPurgeOptions.json === true) {

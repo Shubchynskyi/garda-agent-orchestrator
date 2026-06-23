@@ -70,6 +70,50 @@ function seedAmbiguousRuntimeTaskArtifacts(input: {
     return { timelinePath, planPath, manualValidationDir };
 }
 
+function seedStaleRuntimeActiveTaskArtifacts(input: {
+    bundleRoot: string;
+    taskId: string;
+    ageDays?: number;
+}): {
+    timelinePath: string;
+    planPath: string;
+    manualValidationDir: string;
+} {
+    const { bundleRoot, taskId, ageDays = 45 } = input;
+    const runtimeDir = path.join(bundleRoot, 'runtime');
+    const eventsDir = path.join(runtimeDir, 'task-events');
+    const plansDir = path.join(runtimeDir, 'plans');
+    const manualValidationDir = path.join(runtimeDir, 'manual-validation', taskId);
+    fs.mkdirSync(eventsDir, { recursive: true });
+    fs.mkdirSync(plansDir, { recursive: true });
+    fs.mkdirSync(manualValidationDir, { recursive: true });
+
+    const timelinePath = writeTaskTimeline(eventsDir, taskId, [
+        { event_type: 'TASK_MODE_ENTERED' },
+        { event_type: 'STATUS_CHANGED', details: { previous_status: 'TODO', new_status: 'IN_PROGRESS' } }
+    ]);
+    writeTimelineSummary(eventsDir, taskId, {
+        completenessStatus: 'INCOMPLETE',
+        eventsFound: ['TASK_MODE_ENTERED', 'STATUS_CHANGED'],
+        eventsMissing: ['COMPLETION_GATE_PASSED']
+    });
+    const planPath = path.join(plansDir, `${taskId}.md`);
+    fs.writeFileSync(planPath, `# ${taskId}\n`, 'utf8');
+    fs.writeFileSync(path.join(manualValidationDir, 'review-evidence.json'), '{}', 'utf8');
+
+    const past = daysAgo(ageDays);
+    for (const artifactPath of [
+        timelinePath,
+        planPath,
+        manualValidationDir,
+        path.join(manualValidationDir, 'review-evidence.json')
+    ]) {
+        fs.utimesSync(artifactPath, past, past);
+    }
+
+    return { timelinePath, planPath, manualValidationDir };
+}
+
 describe('runCleanup', () => {
     let tmpDir: string;
     let bundleRoot: string;
@@ -1492,6 +1536,77 @@ describe('runTaskRuntimeBatchPurge', () => {
         assert.equal(fs.existsSync(freshActiveTask.timelinePath), true);
         assert.equal(fs.existsSync(freshActiveTask.planPath), true);
         assert.equal(fs.existsSync(freshActiveTask.manualValidationDir), true);
+    });
+
+    it('includes stale problematic runtime-active tasks only when batch purge opts in', () => {
+        const staleProblemTask = seedStaleRuntimeActiveTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-934',
+            ageDays: 70
+        });
+        writeTaskQueue(tmpDir, [
+            { id: 'T-934', status: '🟩 DONE', title: 'Problematic historical task' }
+        ]);
+        const allTasksPath = path.join(runtimeDir, 'task-events', 'all-tasks.jsonl');
+        fs.writeFileSync(allTasksPath, '{"task_id":"T-934"}\n', 'utf8');
+
+        const defaultResult = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            confirm: true
+        });
+
+        assert.equal(defaultResult.result, 'PARTIAL');
+        assert.deepEqual(defaultResult.matchedTaskIds, ['T-934']);
+        assert.deepEqual(defaultResult.selectedTaskIds, []);
+        assert.deepEqual(defaultResult.activeTaskSkips, ['T-934']);
+        assert.equal(fs.existsSync(staleProblemTask.timelinePath), true);
+
+        const includeResult = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            includeProblematicTasks: true,
+            confirm: true
+        });
+
+        assert.equal(includeResult.result, 'SUCCESS');
+        assert.deepEqual(includeResult.filters.includeProblematicTasks, true);
+        assert.deepEqual(includeResult.matchedTaskIds, ['T-934']);
+        assert.deepEqual(includeResult.selectedTaskIds, ['T-934']);
+        assert.deepEqual(includeResult.activeTaskSkips, []);
+        assert.equal(fs.existsSync(staleProblemTask.timelinePath), false);
+        assert.equal(fs.existsSync(staleProblemTask.planPath), false);
+        assert.equal(fs.existsSync(staleProblemTask.manualValidationDir), false);
+        assert.equal(fs.readFileSync(allTasksPath, 'utf8').trim(), '');
+    });
+
+    it('still protects TASK.md-active problematic runtime tasks when batch purge opts in', () => {
+        const activeProblemTask = seedStaleRuntimeActiveTaskArtifacts({
+            bundleRoot,
+            taskId: 'T-935',
+            ageDays: 70
+        });
+        writeTaskQueue(tmpDir, [
+            { id: 'T-935', status: '🟨 IN_PROGRESS', title: 'Active problematic task' }
+        ]);
+
+        const result = runTaskRuntimeBatchPurge({
+            targetRoot: tmpDir,
+            bundleRoot,
+            eligibleOlderThanDays: 30,
+            includeProblematicTasks: true,
+            confirm: true
+        });
+
+        assert.equal(result.result, 'PARTIAL');
+        assert.deepEqual(result.matchedTaskIds, ['T-935']);
+        assert.deepEqual(result.selectedTaskIds, []);
+        assert.deepEqual(result.activeTaskSkips, ['T-935']);
+        assert.equal(fs.existsSync(activeProblemTask.timelinePath), true);
+        assert.equal(fs.existsSync(activeProblemTask.planPath), true);
+        assert.equal(fs.existsSync(activeProblemTask.manualValidationDir), true);
     });
 
     it('is a successful no-op when the same batch purge is applied twice', () => {

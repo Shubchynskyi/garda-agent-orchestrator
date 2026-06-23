@@ -18,6 +18,9 @@
     "label": "Conservar al menos las tareas más recientes (cantidad)",
     "description": "Siempre conserva al menos esta cantidad de tareas más recientes aunque superen el umbral de edad. Use 0 para depender solo de la edad y la protección de tareas activas."
   },
+  "include_problematic_tasks": {
+    "label": "Eliminar también tareas problemáticas"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run de mantenimiento diario",
     "description": "Cuando es true, el mantenimiento diario programado solo enumera candidatos y escribe salida de auditoría; no elimina ni comprime artefactos. Usa true mientras ajustas los umbrales y luego cambia a false para aplicar."

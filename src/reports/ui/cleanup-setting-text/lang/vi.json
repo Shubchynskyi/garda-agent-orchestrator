@@ -18,6 +18,9 @@
     "label": "Giữ lại ít nhất các task mới nhất (số lượng)",
     "description": "Luôn giữ lại ít nhất số task mới nhất này ngay cả khi chúng cũ hơn ngưỡng tuổi. Đặt 0 để chỉ dựa vào tuổi và bảo vệ task đang hoạt động."
   },
+  "include_problematic_tasks": {
+    "label": "Cũng xóa tác vụ có vấn đề"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run bảo trì hằng ngày",
     "description": "Khi giá trị là true, bảo trì hằng ngày theo lịch chỉ liệt kê các ứng viên và ghi đầu ra kiểm toán; không xóa hoặc nén artefact nào. Dùng true khi tinh chỉnh ngưỡng, rồi chuyển sang false để áp dụng."

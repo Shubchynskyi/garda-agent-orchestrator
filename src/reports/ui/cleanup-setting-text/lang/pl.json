@@ -18,6 +18,9 @@
     "label": "Zachowaj co najmniej najnowsze zadania (liczba)",
     "description": "Zawsze zachowuje co najmniej tyle najnowszych zadań, nawet jeśli są starsze niż próg wieku. Ustaw 0, aby polegać tylko na wieku i ochronie aktywnych zadań."
   },
+  "include_problematic_tasks": {
+    "label": "Usuń też problematyczne zadania"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run codziennej konserwacji",
     "description": "Gdy wartość to true, zaplanowana codzienna konserwacja tylko wypisuje kandydatów i zapisuje dane audytowe; nie usuwa ani nie kompresuje artefaktów. Użyj true podczas strojenia progów, a potem przełącz na false, aby zastosować."

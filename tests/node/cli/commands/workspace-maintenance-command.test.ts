@@ -177,6 +177,29 @@ test('handleCleanup routes batch task purge selection to task-owned dry-run repo
     }
 });
 
+test('handleCleanup passes include-problematic flag to batch task purge', async () => {
+    const { projectRoot } = setupRetentionPreviewWorkspace();
+
+    try {
+        const { lines } = await captureConsoleAsync(() => handleCleanup([
+            'batch-task-purge',
+            '--target-root',
+            projectRoot,
+            '--dry-run',
+            '--json',
+            '--runtime-retention-older-than-days',
+            '30',
+            '--include-problematic-tasks'
+        ], PACKAGE_JSON));
+        const result = JSON.parse(lines.join('\n')) as {
+            filters: { includeProblematicTasks?: boolean };
+        };
+        assert.equal(result.filters.includeProblematicTasks, true);
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+});
+
 test('workspace maintenance rejects malformed runtime-retention integer flags', async () => {
     const cases: Array<{
         name: string;

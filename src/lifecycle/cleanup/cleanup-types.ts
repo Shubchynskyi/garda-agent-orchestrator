@@ -94,6 +94,7 @@ export interface TaskRuntimeBatchPurgeResult {
     filters: {
         eligibleOlderThanDays: number | null;
         keepLatestTasks: number | null;
+        includeProblematicTasks: boolean;
     };
     candidateTaskIds: string[];
     matchedTaskIds: string[];

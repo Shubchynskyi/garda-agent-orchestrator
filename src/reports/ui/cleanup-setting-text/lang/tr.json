@@ -18,6 +18,9 @@
     "label": "En az en yeni task kayıtlarını koru (adet)",
     "description": "Yaş eşiğinden eski olsalar bile en yeni task kayıtlarından en az bu kadarını her zaman korur. Yalnızca yaş ve etkin task korumasına güvenmek için 0 ayarlayın."
   },
+  "include_problematic_tasks": {
+    "label": "Sorunlu görevleri de sil"
+  },
   "daily_maintenance_dry_run": {
     "label": "Günlük bakım dry-run",
     "description": "Değer true olduğunda zamanlanmış günlük bakım yalnızca adayları listeler ve denetim çıktısı yazar; artefaktları silmez veya sıkıştırmaz. Eşikleri ayarlarken true kullanın, uygulamak için sonra false yapın."

@@ -18,6 +18,9 @@
     "label": "Minstens nieuwste taken behouden (aantal)",
     "description": "Bewaart altijd minstens zoveel meest recente taken, zelfs als ze ouder zijn dan de leeftijdsdrempel. Zet op 0 om alleen leeftijd en actieve-taakbescherming te gebruiken."
   },
+  "include_problematic_tasks": {
+    "label": "Ook problematische taken verwijderen"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run voor dagelijks onderhoud",
     "description": "Wanneer de waarde true is, somt het geplande dagelijkse onderhoud alleen kandidaten op en schrijft het audituitvoer; artefacten worden niet verwijderd of gecomprimeerd. Gebruik true tijdens het afstellen van drempels en zet daarna false om toe te passen."

@@ -18,6 +18,9 @@
     "label": "Pertahankan minimal task terbaru (jumlah)",
     "description": "Selalu mempertahankan setidaknya sejumlah task paling baru ini meskipun lebih lama dari ambang umur. Set 0 untuk hanya memakai umur dan perlindungan task aktif."
   },
+  "include_problematic_tasks": {
+    "label": "Hapus juga tugas bermasalah"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run pemeliharaan harian",
     "description": "Saat bernilai true, pemeliharaan harian terjadwal hanya menampilkan kandidat dan menulis keluaran audit; tidak menghapus atau mengompresi artefak. Gunakan true saat menyetel ambang, lalu ubah ke false untuk menerapkan."

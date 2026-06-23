@@ -905,6 +905,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
                 daily_maintenance_enabled: boolean;
                 eligible_older_than_days: number;
                 keep_latest_tasks: number;
+                include_problematic_tasks: boolean;
             };
         };
         assert.equal(policy.enabled, true);
@@ -912,6 +913,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         assert.equal(policy.settings.daily_maintenance_enabled, false);
         assert.equal(policy.settings.eligible_older_than_days, 30);
         assert.equal(policy.settings.keep_latest_tasks, 0);
+        assert.equal(policy.settings.include_problematic_tasks, false);
 
         const settingsPayload = {
             daily_maintenance_enabled: true,
@@ -965,7 +967,12 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         const runPreviewResponse = await fetch(`${server.url}api/cleanup-run`, {
             method: 'POST',
             headers: actionHeaders,
-            body: JSON.stringify({ mode: 'preview', eligible_older_than_days: '11', keep_latest_tasks: '2' })
+            body: JSON.stringify({
+                mode: 'preview',
+                eligible_older_than_days: '11',
+                keep_latest_tasks: '2',
+                include_problematic_tasks: true
+            })
         });
         assert.equal(runPreviewResponse.status, 200);
         const runPreview = await runPreviewResponse.json() as { status: string; command: string; stdout: string };
@@ -973,6 +980,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         assert.match(runPreview.command, /cleanup batch-task-purge --target-root \. --dry-run/u);
         assert.match(runPreview.command, /--runtime-retention-older-than-days 11/u);
         assert.match(runPreview.command, /--runtime-retention-keep-latest-tasks 2/u);
+        assert.match(runPreview.command, /--include-problematic-tasks/u);
         assert.match(runPreview.stdout, /BatchPurgeCandidateTasks: 12/u);
         assert.match(runPreview.stdout, /BatchPurgeSelectedTasks: 4/u);
         assert.match(runPreview.stdout, /Would remove \(reviews\): 3/u);
@@ -985,6 +993,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
                 mode: 'execute',
                 eligible_older_than_days: '11',
                 keep_latest_tasks: '2',
+                include_problematic_tasks: true,
                 confirmation: 'wrong'
             })
         });
@@ -1006,6 +1015,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
                 mode: 'execute',
                 eligible_older_than_days: '11',
                 keep_latest_tasks: '2',
+                include_problematic_tasks: true,
                 confirmation: 'RUN GARDA CLEANUP'
             })
         });
@@ -1015,6 +1025,7 @@ test('local UI cleanup settings expose policy edits dynamic cleanup and task pur
         assert.match(runApply.command, /cleanup batch-task-purge --target-root \. --confirm/u);
         assert.match(runApply.command, /--runtime-retention-older-than-days 11/u);
         assert.match(runApply.command, /--runtime-retention-keep-latest-tasks 2/u);
+        assert.match(runApply.command, /--include-problematic-tasks/u);
         assert.equal(runApply.stdout, 'cleanup ok');
         assert.equal(executedCommands.length, 2);
 

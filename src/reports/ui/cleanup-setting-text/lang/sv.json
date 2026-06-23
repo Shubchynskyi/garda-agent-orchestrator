@@ -18,6 +18,9 @@
     "label": "Behåll minst de senaste uppgifterna (antal)",
     "description": "Bevarar alltid minst så här många senaste uppgifter även om de är äldre än åldersgränsen. Sätt 0 för att bara använda ålder och skydd för aktiva uppgifter."
   },
+  "include_problematic_tasks": {
+    "label": "Ta även bort problematiska uppgifter"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run för dagligt underhåll",
     "description": "När värdet är true listar det schemalagda dagliga underhållet bara kandidater och skriver granskningsutdata; det tar inte bort eller komprimerar artefakter. Använd true medan du justerar trösklarna och byt sedan till false för att tillämpa."

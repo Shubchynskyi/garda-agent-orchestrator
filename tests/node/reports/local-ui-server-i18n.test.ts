@@ -617,6 +617,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
                 daily_maintenance_dry_run: true,
                 eligible_older_than_days: 14,
                 keep_latest_tasks: 10,
+                include_problematic_tasks: false,
                 purge_require_confirm: true,
                 healthy_done_compact_after_days: 7,
                 problem_tasks_compress_after_days: 30
@@ -663,6 +664,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         const cleanupSettingsHtml = fakeDocument.elements['cleanup-settings'].innerHTML;
         assert.match(cleanupSettingsHtml, /Delete tasks older than \(days\)/u);
         assert.match(cleanupSettingsHtml, /Keep at least newest tasks \(count\)/u);
+        assert.match(cleanupSettingsHtml, /Also delete problematic tasks/u);
         assert.match(cleanupSettingsHtml, /Preview calculation/u);
         assert.match(cleanupSettingsHtml, /Run cleanup/u);
         assert.ok(
@@ -673,19 +675,31 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
             cleanupSettingsHtml.indexOf('id="cleanup-older-than-days"') < cleanupSettingsHtml.indexOf('id="cleanup-keep-latest"'),
             'manual cleanup keep-latest input should render after the age input'
         );
+        assert.ok(
+            cleanupSettingsHtml.indexOf('id="cleanup-keep-latest"') < cleanupSettingsHtml.indexOf('id="cleanup-include-problematic"'),
+            'manual cleanup problematic-task checkbox should render after the retention inputs'
+        );
         assert.doesNotMatch(cleanupSettingsHtml, /data-cleanup-field="eligible_older_than_days"/u);
         assert.doesNotMatch(cleanupSettingsHtml, /data-cleanup-field="keep_latest_tasks"/u);
         fakeDocument.getElementById('cleanup-older-than-days').value = '11';
         fakeDocument.getElementById('cleanup-keep-latest').value = '2';
+        const includeProblematicInput = fakeDocument.getElementById('cleanup-include-problematic') as unknown as {
+            checked: boolean;
+            type: string;
+        };
+        includeProblematicInput.type = 'checkbox';
+        includeProblematicInput.checked = true;
         const cleanupRunSelectionFromInputs = context.cleanupRunSelectionFromInputs as (() => unknown) | undefined;
         assert.equal(typeof cleanupRunSelectionFromInputs, 'function');
         assert.ok(cleanupRunSelectionFromInputs);
         const cleanupRunSelection = cleanupRunSelectionFromInputs() as {
             eligible_older_than_days?: unknown;
             keep_latest_tasks?: unknown;
+            include_problematic_tasks?: unknown;
         };
         assert.equal(cleanupRunSelection.eligible_older_than_days, '11');
         assert.equal(cleanupRunSelection.keep_latest_tasks, '2');
+        assert.equal(cleanupRunSelection.include_problematic_tasks, true);
 
         const renderCleanupProgress = context.renderCleanupProgress as ((actionId: string) => void) | undefined;
         assert.equal(typeof renderCleanupProgress, 'function');
@@ -781,6 +795,7 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         await fakeDocument.elements['language-select'].dispatch('change');
 
         assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Aufgaben älter als löschen|Tägliche Wartung|Speichern/u);
+        assert.match(fakeDocument.elements['cleanup-settings'].innerHTML, /Auch problematische Aufgaben löschen/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Vorberechnung/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Manuelle Runtime-Bereinigung/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Nur Dry-run/u);

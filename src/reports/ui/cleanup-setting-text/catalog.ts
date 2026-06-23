@@ -6,6 +6,7 @@ export const CLEANUP_SETTING_TEXT_IDS = Object.freeze([
     'daily_maintenance_max_tasks_per_run',
     'eligible_older_than_days',
     'keep_latest_tasks',
+    'include_problematic_tasks',
     'daily_maintenance_dry_run',
     'purge_require_confirm',
     'healthy_done_compact_after_days',
@@ -50,6 +51,9 @@ export function buildCleanupSettingTextCatalog(): Readonly<Record<CleanupSetting
         keep_latest_tasks: {
             label: 'Keep at least newest tasks (count)',
             description: 'Always preserve at least this many most-recent tasks even if they are older than the age threshold. Set 0 to rely only on age and active-task protection.'
+        },
+        include_problematic_tasks: {
+            label: 'Also delete problematic tasks'
         },
         daily_maintenance_dry_run: {
             label: 'Daily maintenance dry-run',

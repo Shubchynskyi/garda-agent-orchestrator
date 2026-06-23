@@ -18,6 +18,9 @@
     "label": "Mindestens neueste Aufgaben behalten (Anzahl)",
     "description": "Bewahrt immer mindestens so viele neueste Aufgaben auf, auch wenn sie älter als der Altersgrenzwert sind. Setzen Sie 0, um nur Alter und Schutz aktiver Aufgaben zu verwenden."
   },
+  "include_problematic_tasks": {
+    "label": "Auch problematische Aufgaben löschen"
+  },
   "daily_maintenance_dry_run": {
     "label": "Tägliche Wartung als Dry-Run",
     "description": "Wenn true gesetzt ist, listet die geplante tägliche Wartung nur Kandidaten auf und schreibt Audit-Ausgaben; Artefakte werden weder gelöscht noch komprimiert. Verwenden Sie true beim Feinabstimmen der Grenzwerte und wechseln Sie danach zu false für die Anwendung."

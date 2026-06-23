@@ -18,6 +18,9 @@
     "label": "Manter pelo menos as tarefas mais recentes (quantidade)",
     "description": "Sempre preserva pelo menos esta quantidade de tarefas mais recentes, mesmo que sejam mais antigas que o limite de idade. Use 0 para depender apenas da idade e da proteção de tarefas ativas."
   },
+  "include_problematic_tasks": {
+    "label": "Excluir também tarefas problemáticas"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run da manutenção diária",
     "description": "Quando está em true, a manutenção diária agendada apenas lista candidatos e grava saída de auditoria; não exclui nem comprime artefatos. Use true enquanto ajusta os limites e depois mude para false para aplicar."

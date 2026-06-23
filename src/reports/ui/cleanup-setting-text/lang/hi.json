@@ -18,6 +18,9 @@
     "label": "कम से कम नवीनतम tasks रखें (संख्या)",
     "description": "Age threshold से पुराने होने पर भी कम से कम इतने newest tasks हमेशा सुरक्षित रखता है। केवल age और active-task protection पर निर्भर रहने के लिए 0 सेट करें।"
   },
+  "include_problematic_tasks": {
+    "label": "समस्याग्रस्त कार्य भी हटाएं"
+  },
   "daily_maintenance_dry_run": {
     "label": "दैनिक रखरखाव dry-run",
     "description": "जब मान true हो, निर्धारित दैनिक रखरखाव केवल उम्मीदवारों की सूची बनाता है और audit output लिखता है; कोई artifact हटाता या compress नहीं करता। थ्रेशहोल्ड ठीक करते समय true रखें, फिर लागू करने के लिए false करें।"

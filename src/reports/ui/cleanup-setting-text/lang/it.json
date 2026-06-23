@@ -18,6 +18,9 @@
     "label": "Mantieni almeno i task più recenti (numero)",
     "description": "Conserva sempre almeno questo numero di task più recenti anche se superano la soglia di età. Imposta 0 per affidarti solo all’età e alla protezione dei task attivi."
   },
+  "include_problematic_tasks": {
+    "label": "Elimina anche le attività problematiche"
+  },
   "daily_maintenance_dry_run": {
     "label": "Dry-run della manutenzione giornaliera",
     "description": "Quando è true, la manutenzione giornaliera pianificata elenca solo i candidati e scrive l’output di audit; non elimina né comprime artefatti. Usa true mentre regoli le soglie, poi passa a false per applicare."

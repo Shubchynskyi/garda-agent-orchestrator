@@ -9,9 +9,10 @@ const CLEANUP_SETTING_TEXT_CATALOG = buildCleanupSettingTextCatalog();
 const EXPECTED_SETTING_IDS = listCleanupSettingTextCatalogIds(CLEANUP_SETTING_TEXT_CATALOG);
 
 test('cleanup setting text catalog covers every cleanup setting definition', () => {
-    assert.equal(EXPECTED_SETTING_IDS.length, 25);
+    assert.equal(EXPECTED_SETTING_IDS.length, 26);
     assert.ok(EXPECTED_SETTING_IDS.includes('daily_maintenance_enabled'));
     assert.ok(EXPECTED_SETTING_IDS.includes('manual_runtime_cleanup'));
+    assert.ok(EXPECTED_SETTING_IDS.includes('include_problematic_tasks'));
 });
 
 test('every non-English UI language has a complete cleanup setting text pack', () => {
@@ -36,6 +37,10 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.keep_latest_tasks.label,
         'Keep at least newest tasks (count)'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.en.include_problematic_tasks.label,
+        'Also delete problematic tasks'
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.en.purge_require_confirm.label,
@@ -88,6 +93,10 @@ test('LOCAL_UI_CLEANUP_SETTING_TEXT exposes English catalog and imported transla
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.ru.keep_latest_tasks.label,
         'Оставить минимум последних задач'
+    );
+    assert.equal(
+        LOCAL_UI_CLEANUP_SETTING_TEXT.ru.include_problematic_tasks.label,
+        'Удалять проблемные'
     );
     assert.equal(
         LOCAL_UI_CLEANUP_SETTING_TEXT.ru.daily_maintenance_enabled.label,
