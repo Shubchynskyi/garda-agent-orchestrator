@@ -262,7 +262,9 @@ describe('gates/next-step', () => {
 
         assert.ok(text.includes(`CopyPasteFinalUserReportSha256: ${sha256Text(finalUserReportBody)}`));
 
-        assert.ok(text.includes(`CopyPasteFinalUserReport:\n${finalUserReportBody}EndCopyPasteFinalUserReport`));
+        assert.ok(text.includes(`CopyPasteFinalUserReport:\n${finalUserReportBody}`));
+
+        assert.equal(text.includes('EndCopyPasteFinalUserReport'), false);
 
         assert.equal(text.includes('```'), false);
 
