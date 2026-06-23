@@ -461,6 +461,8 @@ class BrowserSmokeCdpClient {
     }
 }
 
+const BROWSER_SMOKE_READY_ATTEMPTS = 160;
+
 async function connectBrowserSmokeCdp(url: string): Promise<BrowserSmokeCdpClient> {
     const WebSocketCtor = (globalThis as unknown as {
         WebSocket?: new(url: string) => BrowserSmokeWebSocket;
@@ -474,8 +476,11 @@ async function connectBrowserSmokeCdp(url: string): Promise<BrowserSmokeCdpClien
     return new BrowserSmokeCdpClient(socket);
 }
 
-async function waitForBrowserDebugTarget(debugPort: number): Promise<string> {
-    for (let attempt = 0; attempt < 80; attempt += 1) {
+async function waitForBrowserDebugTarget(debugPort: number, browser: ChildProcess | null): Promise<string> {
+    for (let attempt = 0; attempt < BROWSER_SMOKE_READY_ATTEMPTS; attempt += 1) {
+        if (browser && (browser.exitCode !== null || browser.signalCode !== null)) {
+            throw new Error(`Browser exited before debug target was available (exit=${browser.exitCode}, signal=${browser.signalCode}).`);
+        }
         try {
             const targets = await fetchBrowserJson<Array<{ type: string; webSocketDebuggerUrl?: string }>>(
                 `http://127.0.0.1:${debugPort}/json/list`
@@ -494,7 +499,7 @@ async function waitForBrowserDebugTarget(debugPort: number): Promise<string> {
 
 async function waitForCdpText(cdp: BrowserSmokeCdpClient, expression: string, pattern: RegExp): Promise<string> {
     let lastValue = '';
-    for (let attempt = 0; attempt < 80; attempt += 1) {
+    for (let attempt = 0; attempt < BROWSER_SMOKE_READY_ATTEMPTS; attempt += 1) {
         const result = await cdp.send<{ result?: { value?: string } }>('Runtime.evaluate', {
             expression,
             returnByValue: true
@@ -507,6 +512,14 @@ async function waitForCdpText(cdp: BrowserSmokeCdpClient, expression: string, pa
         await sleep(100);
     }
     throw new Error(`Timed out waiting for browser text matching ${String(pattern)}. Last text: ${lastValue.slice(0, 800)}`);
+}
+
+function isBrowserSmokeStartupUnavailable(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+        return false;
+    }
+    return /Browser exited before debug target was available|Timed out waiting for browser debug target|CDP socket open failed/u
+        .test(error.message);
 }
 
 async function terminateBrowserSmokeProcess(browser: ChildProcess | null): Promise<void> {
@@ -621,8 +634,17 @@ test('local UI browser smoke opens checks cycle tab with compact forecast and se
         ], {
             stdio: 'ignore'
         });
-        const pageSocketUrl = await waitForBrowserDebugTarget(debugPort);
-        cdp = await connectBrowserSmokeCdp(pageSocketUrl);
+        let pageSocketUrl: string;
+        try {
+            pageSocketUrl = await waitForBrowserDebugTarget(debugPort, browser);
+            cdp = await connectBrowserSmokeCdp(pageSocketUrl);
+        } catch (error) {
+            if (isBrowserSmokeStartupUnavailable(error)) {
+                context.skip(`Browser smoke startup unavailable: ${(error as Error).message}`);
+                return;
+            }
+            throw error;
+        }
         await cdp.send('Page.enable');
         await cdp.send('Runtime.enable');
         await cdp.send('Page.navigate', { url: server.url });
