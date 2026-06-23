@@ -20,11 +20,15 @@ function daysAgo(days: number): Date {
     return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
+}
+
 async function captureConsoleAsync<T>(run: () => Promise<T> | T): Promise<{ lines: string[]; result: T }> {
     const lines: string[] = [];
     const originalLog = console.log;
     console.log = (...args: unknown[]) => {
-        lines.push(args.join(' '));
+        lines.push(stripAnsi(args.join(' ')));
     };
     try {
         const result = await Promise.resolve(run());
