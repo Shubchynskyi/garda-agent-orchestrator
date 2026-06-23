@@ -355,7 +355,7 @@
       "description": "Przebudowuje pochodne indeksy osi czasu zadań i review z kanonicznych dowodów runtime."
     },
     "repair-protected-manifest": {
-      "label": "Odśwież chroniony manifest",
+      "label": "Aktualizuj manifest",
       "description": "Odświeża zaufany protected control-plane manifest z bieżącej migawki workspace."
     },
     "repair-locks-cleanup-stale": {

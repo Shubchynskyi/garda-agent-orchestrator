@@ -342,7 +342,7 @@
       "description": "Перебудовує похідні індекси timeline задач і review з канонічних runtime-доказів."
     },
     "repair-protected-manifest": {
-      "label": "Оновити protected manifest",
+      "label": "Оновити маніфест",
       "description": "Оновлює довірений protected control-plane manifest з поточного snapshot workspace."
     },
     "repair-locks-cleanup-stale": {

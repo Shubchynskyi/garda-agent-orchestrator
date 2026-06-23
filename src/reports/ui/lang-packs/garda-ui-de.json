@@ -322,7 +322,7 @@
       "description": "Baut abgeleitete Task-Timeline- und Review-Indizes aus kanonischen Runtime-Nachweisen neu auf."
     },
     "repair-protected-manifest": {
-      "label": "Geschütztes Manifest aktualisieren",
+      "label": "Manifest aktualisieren",
       "description": "Aktualisiert das vertrauenswürdige Protected-Control-Plane-Manifest aus dem aktuellen Workspace-Snapshot."
     },
     "repair-locks-cleanup-stale": {

@@ -9,6 +9,7 @@ import {
 import {
     LOCAL_UI_LANGUAGES,
     LOCAL_UI_BACKUPS_TAB_TEXT,
+    LOCAL_UI_ACTION_TEXT,
     LOCAL_UI_INIT_SETTING_TEXT,
     LOCAL_UI_PROJECT_MEMORY_TEXT,
     LOCAL_UI_SETTING_TEXT,
@@ -89,6 +90,16 @@ test('every registered UI language pack matches the English key set', () => {
     const englishKeys = Object.keys(LOCAL_UI_TEXT.en).sort();
     for (const language of LOCAL_UI_LANGUAGES) {
         assert.deepEqual(Object.keys(LOCAL_UI_TEXT[language.id]).sort(), englishKeys);
+    }
+});
+
+test('protected manifest repair action uses short labels in every UI language', () => {
+    assert.equal(LOCAL_UI_ACTION_TEXT.en['repair-protected-manifest'].label, 'Update manifest');
+    assert.equal(LOCAL_UI_ACTION_TEXT.ru['repair-protected-manifest'].label, 'Обновить манифест');
+    for (const language of LOCAL_UI_LANGUAGES) {
+        const label = LOCAL_UI_ACTION_TEXT[language.id]?.['repair-protected-manifest']?.label || '';
+        assert.notEqual(label.trim(), '', `${language.id} protected manifest repair label`);
+        assert.ok(label.length <= 24, `${language.id} protected manifest repair label should stay compact`);
     }
 });
 

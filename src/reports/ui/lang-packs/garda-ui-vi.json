@@ -355,7 +355,7 @@
       "description": "Xây dựng lại các chỉ mục task timeline và review phát sinh từ bằng chứng runtime chuẩn."
     },
     "repair-protected-manifest": {
-      "label": "Làm mới protected manifest",
+      "label": "Cập nhật manifest",
       "description": "Làm mới protected control-plane manifest tin cậy từ snapshot workspace hiện tại."
     },
     "repair-locks-cleanup-stale": {

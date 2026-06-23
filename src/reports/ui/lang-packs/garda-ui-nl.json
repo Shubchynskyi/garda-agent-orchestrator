@@ -355,7 +355,7 @@
       "description": "Bouwt afgeleide task-timeline- en review-indexen opnieuw op uit canoniek runtime-bewijs."
     },
     "repair-protected-manifest": {
-      "label": "Protected manifest vernieuwen",
+      "label": "Manifest bijwerken",
       "description": "Vernieuwt het vertrouwde protected control-plane manifest uit de huidige workspace-snapshot."
     },
     "repair-locks-cleanup-stale": {

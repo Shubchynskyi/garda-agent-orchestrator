@@ -24,6 +24,8 @@ import type {
 } from './types';
 
 const MAX_RUNTIME_SIGNAL_SCAN_ENTRIES = 512;
+const MAX_TIMELINE_WARNING_DETAILS = 10;
+const MAX_TIMELINE_WARNING_SUMMARY_TASKS = 5;
 const LATEST_FULL_SUITE_VALIDATION_POINTER_PATH = path.join(
     'runtime',
     'metrics',
@@ -411,6 +413,20 @@ function countRuntimeArtifactFiles(repoRoot: string, fileNamePattern: RegExp): {
     return { count, truncated };
 }
 
+function summarizeTimelineWarningSubjects(warningDetails: Array<{ task_id: string | null; file_name: string }>): string {
+    const subjects = Array.from(new Set(
+        warningDetails.map((detail) => detail.task_id || detail.file_name).filter((value) => value.trim() !== '')
+    ));
+    if (subjects.length === 0) {
+        return 'affected tasks are listed in details';
+    }
+    const sample = subjects.slice(0, MAX_TIMELINE_WARNING_SUMMARY_TASKS).join(', ');
+    const suffix = subjects.length > MAX_TIMELINE_WARNING_SUMMARY_TASKS
+        ? `, +${subjects.length - MAX_TIMELINE_WARNING_SUMMARY_TASKS} more`
+        : '';
+    return `affected: ${sample}${suffix}`;
+}
+
 function buildRuntimeSignals(repoRoot: string, rows: ReportTaskRow[]): ReportSystemState['runtime'] {
     const bundleRoot = joinOrchestratorPath(path.resolve(repoRoot), '.');
     const lockHealth = scanTaskEventLocks(bundleRoot);
@@ -422,6 +438,8 @@ function buildRuntimeSignals(repoRoot: string, rows: ReportTaskRow[]): ReportSys
         : timelineSummary.warnings.some((warning) => /INVALID|INTEGRITY_FAILED|LEGACY/u.test(warning))
             ? 'error'
             : 'attention';
+    const timelineWarningDetails = timelineSummary.warningDetails.slice(0, MAX_TIMELINE_WARNING_DETAILS);
+    const timelineWarningsTruncated = timelineSummary.warnings.length > MAX_TIMELINE_WARNING_DETAILS;
     const staleLocks = signal(
         'runtime-locks',
         'Task-event lock health',
@@ -459,16 +477,18 @@ function buildRuntimeSignals(repoRoot: string, rows: ReportTaskRow[]): ReportSys
         'Task timeline health',
         timelineStatus,
         timelineSummary.warnings.length > 0
-            ? `${timelineSummary.warnings.length} task timeline warning(s) detected.`
+            ? `${timelineSummary.warnings.length} task timeline warning(s) detected; ${summarizeTimelineWarningSubjects(timelineSummary.warningDetails)}.`
             : `${timelineSummary.healthy}/${timelineSummary.taskCount} task timeline(s) are complete.`,
         timelineSummary.warnings.length > 0
-            ? `${timelineSummary.warnings[0]} After reviewing the warning, use \`garda repair rebuild-indexes --target-root "." --confirm\` or the guarded UI repair action.`
+            ? 'Review the listed canonical task timeline warnings. Rebuilding derived indexes can refresh summaries, but it does not repair missing or invalid task events.'
             : null,
         {
             task_count: timelineSummary.taskCount,
             healthy: timelineSummary.healthy,
-            warnings: timelineSummary.warnings.slice(0, 10),
-            warnings_truncated: timelineSummary.warnings.length > 10
+            warnings: timelineSummary.warnings.slice(0, MAX_TIMELINE_WARNING_DETAILS),
+            warning_tasks: timelineWarningDetails,
+            warnings_truncated: timelineWarningsTruncated,
+            warning_count: timelineSummary.warnings.length
         },
         joinOrchestratorPath(path.resolve(repoRoot), 'runtime/task-events')
     );

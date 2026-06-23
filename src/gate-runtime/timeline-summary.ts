@@ -19,6 +19,7 @@ const SUMMARY_LOCK_FILE_NAME = '.timeline-summary.lock';
 const DEFAULT_SUMMARY_LOCK_TIMEOUT_MS = 500;
 const DEFAULT_SUMMARY_LOCK_RETRY_MS = 25;
 const DEFAULT_SUMMARY_LOCK_STALE_MS = 30 * 1000;
+const MAX_TIMELINE_WARNING_DETAIL_ITEMS = 5;
 
 export interface TimelineSummaryEntry {
     task_id: string;
@@ -61,6 +62,7 @@ export interface StatusTimelineSummary {
     taskCount: number;
     healthy: number;
     warnings: string[];
+    warningDetails: TimelineWarningDetail[];
 }
 
 export interface TimelineSummaryCollectionOptions {
@@ -84,7 +86,19 @@ export interface DoctorTimelineSummary {
     warnings: string[];
 }
 
-type TimelineIssueKind = 'INVALID' | 'LEGACY' | 'INCOMPLETE' | 'INTEGRITY_FAILED';
+export type TimelineIssueKind = 'INVALID' | 'LEGACY' | 'INCOMPLETE' | 'INTEGRITY_FAILED';
+
+export interface TimelineWarningDetail {
+    task_id: string | null;
+    file_name: string;
+    kind: TimelineIssueKind | 'INVALID_FILE';
+    details: string[];
+    details_omitted_count: number;
+    message: string;
+    repair_guidance: string;
+    timeline_path: string;
+    task_status: string | null;
+}
 
 interface TimelineIssueInput {
     taskId: string;
@@ -533,13 +547,33 @@ function detectCodeChangedFromPreflight(bundlePath: string, taskId: string): boo
 }
 
 function shortenIssueDetails(details: string[]): string {
-    const normalized = details
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
+    const normalized = normalizeIssueDetails(details);
     if (normalized.length === 0) {
         return 'none recorded';
     }
     return normalized.slice(0, 3).join('; ');
+}
+
+function normalizeIssueDetails(details: string[]): string[] {
+    return details
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+}
+
+function buildBoundedIssueDetails(details: string[]): { details: string[]; omittedCount: number } {
+    const normalized = normalizeIssueDetails(details);
+    const selected = normalized.slice(0, MAX_TIMELINE_WARNING_DETAIL_ITEMS);
+    if (normalized.length > selected.length) {
+        const priorityDetail = normalized.find((detail) => !selected.includes(detail) && /COMPLETION_GATE_PASSED/u.test(detail))
+            || normalized.find((detail) => !selected.includes(detail) && /FULL_SUITE_VALIDATION/u.test(detail));
+        if (priorityDetail && selected.length > 0) {
+            selected[selected.length - 1] = priorityDetail;
+        }
+    }
+    return {
+        details: selected,
+        omittedCount: Math.max(0, normalized.length - selected.length)
+    };
 }
 
 function buildTimelineRepairGuidance(
@@ -569,7 +603,7 @@ function buildTimelineRepairGuidance(
     }
 }
 
-function classifyTimelineIssue(input: TimelineIssueInput): string | null {
+function buildTimelineWarningDetail(input: TimelineIssueInput): TimelineWarningDetail | null {
     let kind: TimelineIssueKind | null = null;
     let details: string[] = [];
 
@@ -601,12 +635,43 @@ function classifyTimelineIssue(input: TimelineIssueInput): string | null {
         return null;
     }
 
-    return `${kind} timeline: ${input.fileName} (${shortenIssueDetails(details)}). Repair: ${buildTimelineRepairGuidance(kind, input.taskId, input.timelinePath, input.taskStatus)}`;
+    const repairGuidance = buildTimelineRepairGuidance(kind, input.taskId, input.timelinePath, input.taskStatus);
+    const boundedDetails = buildBoundedIssueDetails(details);
+    return {
+        task_id: input.taskId,
+        file_name: input.fileName,
+        kind,
+        details: boundedDetails.details,
+        details_omitted_count: boundedDetails.omittedCount,
+        message: `${kind} timeline: ${input.fileName} (${shortenIssueDetails(details)}). Repair: ${repairGuidance}`,
+        repair_guidance: repairGuidance,
+        timeline_path: input.timelinePath.replace(/\\/g, '/'),
+        task_status: input.taskStatus || null
+    };
+}
+
+function classifyTimelineIssue(input: TimelineIssueInput): string | null {
+    return buildTimelineWarningDetail(input)?.message ?? null;
+}
+
+function buildInvalidTimelineFileWarningDetail(fileName: string, timelinePath: string): TimelineWarningDetail {
+    const stem = fileName.endsWith('.jsonl') ? fileName.slice(0, -'.jsonl'.length).trim() : fileName;
+    const repairGuidance = `remove or rename ${timelinePath.replace(/\\/g, '/')} to a canonical T-<segment>(-<segment>)*.jsonl timeline filename before rebuilding derived indexes`;
+    return {
+        task_id: null,
+        file_name: fileName,
+        kind: 'INVALID_FILE',
+        details: [`invalid task id '${stem}'`],
+        details_omitted_count: 0,
+        message: `INVALID timeline file: ${fileName} (invalid task id '${stem}'). Repair: ${repairGuidance}`,
+        repair_guidance: repairGuidance,
+        timeline_path: timelinePath.replace(/\\/g, '/'),
+        task_status: null
+    };
 }
 
 function buildInvalidTimelineFileWarning(fileName: string, timelinePath: string): string {
-    const stem = fileName.endsWith('.jsonl') ? fileName.slice(0, -'.jsonl'.length).trim() : fileName;
-    return `INVALID timeline file: ${fileName} (invalid task id '${stem}'). Repair: remove or rename ${timelinePath.replace(/\\/g, '/')} to a canonical T-<segment>(-<segment>)*.jsonl timeline filename before rebuilding derived indexes`;
+    return buildInvalidTimelineFileWarningDetail(fileName, timelinePath).message;
 }
 
 // Read-only — never writes to disk.
@@ -617,30 +682,33 @@ export function collectTimelineSummaryForStatus(
     const eventsRoot = path.join(bundlePath, 'runtime', 'task-events');
     const fullSuiteValidationEnabled = loadFullSuiteValidationConfig(bundlePath).enabled;
     if (!fs.existsSync(eventsRoot)) {
-        return { taskCount: 0, healthy: 0, warnings: [] };
+        return { taskCount: 0, healthy: 0, warnings: [], warningDetails: [] };
     }
 
     const files = listTimelineJsonlFiles(eventsRoot);
     if (files.length === 0) {
-        return { taskCount: 0, healthy: 0, warnings: [] };
+        return { taskCount: 0, healthy: 0, warnings: [], warningDetails: [] };
     }
 
     const summary = readTimelineSummaryIndex(eventsRoot);
     let healthy = 0;
     const warnings: string[] = [];
+    const warningDetails: TimelineWarningDetail[] = [];
 
     for (const fileName of files) {
         const taskId = parseTaskIdJsonlFileName(fileName);
         const timelinePath = path.join(eventsRoot, fileName);
         if (!taskId) {
-            warnings.push(buildInvalidTimelineFileWarning(fileName, timelinePath));
+            const detail = buildInvalidTimelineFileWarningDetail(fileName, timelinePath);
+            warnings.push(detail.message);
+            warningDetails.push(detail);
             continue;
         }
         const cached = summary?.entries[taskId] ?? null;
         const taskStatus = options.taskStatuses?.get(taskId) ?? null;
 
         if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath, fullSuiteValidationEnabled)) {
-            const issue = classifyTimelineIssue({
+            const issue = buildTimelineWarningDetail({
                 taskId,
                 fileName,
                 timelinePath,
@@ -653,7 +721,8 @@ export function collectTimelineSummaryForStatus(
             if (!issue) {
                 healthy++;
             } else {
-                warnings.push(issue);
+                warnings.push(issue.message);
+                warningDetails.push(issue);
             }
             continue;
         }
@@ -668,7 +737,7 @@ export function collectTimelineSummaryForStatus(
                     fullSuiteValidationEnabled
                 });
                 const inspectResult = inspectTaskEventFile(timelinePath, taskId);
-                const issue = classifyTimelineIssue({
+                const issue = buildTimelineWarningDetail({
                     taskId,
                     fileName,
                     timelinePath,
@@ -681,10 +750,11 @@ export function collectTimelineSummaryForStatus(
                 if (!issue) {
                     healthy++;
                 } else {
-                    warnings.push(issue);
+                    warnings.push(issue.message);
+                    warningDetails.push(issue);
                 }
             } else {
-                warnings.push(classifyTimelineIssue({
+                const issue = buildTimelineWarningDetail({
                     taskId,
                     fileName,
                     timelinePath,
@@ -693,11 +763,13 @@ export function collectTimelineSummaryForStatus(
                     completenessStatus: 'INCOMPLETE',
                     eventsMissing: [],
                     integrityViolations: []
-                }) || `INVALID timeline: ${fileName}`);
+                });
+                warnings.push(issue?.message || `INVALID timeline: ${fileName}`);
+                if (issue) warningDetails.push(issue);
             }
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            warnings.push(classifyTimelineIssue({
+            const issue = buildTimelineWarningDetail({
                 taskId,
                 fileName,
                 timelinePath,
@@ -706,14 +778,17 @@ export function collectTimelineSummaryForStatus(
                 completenessStatus: 'INCOMPLETE',
                 eventsMissing: [],
                 integrityViolations: [`scan error: ${msg}`]
-            }) || `INVALID timeline: ${fileName}`);
+            });
+            warnings.push(issue?.message || `INVALID timeline: ${fileName}`);
+            if (issue) warningDetails.push(issue);
         }
     }
 
     return {
         taskCount: files.filter((fileName) => parseTaskIdJsonlFileName(fileName) !== null).length,
         healthy,
-        warnings
+        warnings,
+        warningDetails
     };
 }
 

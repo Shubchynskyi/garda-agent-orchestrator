@@ -355,7 +355,7 @@
       "description": "Canonical runtime evidence থেকে derived task timeline এবং review indexes পুনর্নির্মাণ করে।"
     },
     "repair-protected-manifest": {
-      "label": "Protected manifest রিফ্রেশ",
+      "label": "Manifest আপডেট",
       "description": "বর্তমান workspace snapshot থেকে trusted protected control-plane manifest রিফ্রেশ করে।"
     },
     "repair-locks-cleanup-stale": {

@@ -355,7 +355,7 @@
       "description": "Ricostruisce gli indici derivati di timeline task e review dalle prove runtime canoniche."
     },
     "repair-protected-manifest": {
-      "label": "Aggiorna manifest protetto",
+      "label": "Aggiorna manifest",
       "description": "Aggiorna il manifest protetto affidabile del control plane dallo snapshot corrente del workspace."
     },
     "repair-locks-cleanup-stale": {

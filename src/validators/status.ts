@@ -472,7 +472,8 @@ function readTimelineSummary(
         return {
             taskCount: 0,
             healthy: 0,
-            warnings: []
+            warnings: [],
+            warningDetails: []
         };
     }
     return collectTimelineSummaryForStatus(bundlePath, { taskStatuses });

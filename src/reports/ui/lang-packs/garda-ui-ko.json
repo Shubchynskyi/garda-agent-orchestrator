@@ -355,7 +355,7 @@
       "description": "정규 runtime 증거에서 파생 task timeline 및 review index를 재구축합니다."
     },
     "repair-protected-manifest": {
-      "label": "protected manifest 새로 고침",
+      "label": "manifest 업데이트",
       "description": "현재 workspace snapshot에서 신뢰된 protected control-plane manifest를 새로 고칩니다."
     },
     "repair-locks-cleanup-stale": {

@@ -366,7 +366,7 @@
       "description": "Пересобирает производные индексы timeline задач и ревью из канонических runtime-доказательств."
     },
     "repair-protected-manifest": {
-      "label": "Обновить защищенный manifest",
+      "label": "Обновить манифест",
       "description": "Обновляет доверенный manifest защищенного control plane из текущего снимка workspace."
     },
     "repair-locks-cleanup-stale": {

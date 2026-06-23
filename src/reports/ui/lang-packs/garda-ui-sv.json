@@ -355,7 +355,7 @@
       "description": "Bygger om härledda task timeline- och review-index från kanoniska runtime-bevis."
     },
     "repair-protected-manifest": {
-      "label": "Uppdatera skyddat manifest",
+      "label": "Uppdatera manifest",
       "description": "Uppdaterar det betrodda protected control-plane-manifestet från aktuell workspace-snapshot."
     },
     "repair-locks-cleanup-stale": {

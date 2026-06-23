@@ -355,7 +355,7 @@
       "description": "Membangun ulang indeks task timeline dan review turunan dari bukti runtime kanonis."
     },
     "repair-protected-manifest": {
-      "label": "Segarkan protected manifest",
+      "label": "Perbarui manifest",
       "description": "Menyegarkan protected control-plane manifest tepercaya dari snapshot workspace saat ini."
     },
     "repair-locks-cleanup-stale": {

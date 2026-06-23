@@ -355,7 +355,7 @@
       "description": "يعيد بناء فهارس timeline وreview المشتقة من أدلة runtime الكانونية."
     },
     "repair-protected-manifest": {
-      "label": "تحديث manifest المحمي",
+      "label": "تحديث manifest",
       "description": "يحدّث protected control-plane manifest الموثوق من لقطة workspace الحالية."
     },
     "repair-locks-cleanup-stale": {

@@ -60,8 +60,6 @@ const SYSTEM_STATE_DIAGNOSTIC_ACTION_IDS = ['status', 'doctor', 'status-why-bloc
 const SYSTEM_STATE_REPAIR_ACTION_BY_SIGNAL = {
   'protected-manifest': 'repair-protected-manifest',
   'runtime-locks': 'repair-locks-cleanup-stale',
-  'active-task-timelines': 'repair-rebuild-indexes',
-  'incomplete-task-timelines': 'repair-rebuild-indexes',
   'runtime-artifact-scan': 'repair-rebuild-indexes'
 };
 function focusVisibleActionResult(node) {
@@ -299,9 +297,42 @@ function renderSystemSignal(signal) {
     + '<div><strong>' + safe(systemSignalLabel(signal)) + '</strong><span class="badge ' + safe(systemHealthClass(signal.status)) + '">' + safe(systemHealthLabel(signal.status, signal.status)) + '</span></div>'
     + '<p>' + safe(signal.summary || '-') + '</p>'
     + (signal.remediation ? '<p class="empty">' + inlineText(signal.remediation) + '</p>' : '')
+    + systemSignalDetailsHtml(signal)
     + systemRepairActionHtml(signal)
     + (signal.source_path ? '<code>' + safe(signal.source_path) + '</code>' : '')
     + '</div>';
+}
+function systemSignalDetailsHtml(signal) {
+  const id = signal && signal.id;
+  if (id !== 'active-task-timelines' && id !== 'incomplete-task-timelines') {
+    return '';
+  }
+  const value = signal && signal.value && typeof signal.value === 'object' ? signal.value : {};
+  const warningTasks = Array.isArray(value.warning_tasks) ? value.warning_tasks : [];
+  const warnings = Array.isArray(value.warnings) ? value.warnings : [];
+  if (warningTasks.length > 0) {
+    const rows = warningTasks.map(item => {
+      const taskLabel = item && (item.task_id || item.file_name) ? String(item.task_id || item.file_name) : '-';
+      const kind = item && item.kind ? String(item.kind) : 'warning';
+      const details = item && Array.isArray(item.details) && item.details.length > 0
+        ? item.details.join(', ')
+        : item && item.message
+          ? String(item.message)
+          : '-';
+      const omittedCount = item && Number.isFinite(Number(item.details_omitted_count)) ? Number(item.details_omitted_count) : 0;
+      const suffix = omittedCount > 0 ? ' +' + String(omittedCount) + ' more' : '';
+      return '<li><code>' + safe(taskLabel) + '</code>: <strong>' + safe(kind) + '</strong> - ' + safe(details + suffix) + '</li>';
+    }).join('');
+    return '<ul class="list timeline-warning-list">' + rows + '</ul>'
+      + (value.warnings_truncated ? '<p class="empty">Additional timeline warnings are not shown in this bounded view.</p>' : '');
+  }
+  if (warnings.length > 0) {
+    return '<ul class="list timeline-warning-list">'
+      + warnings.map(item => '<li>' + safe(String(item)) + '</li>').join('')
+      + '</ul>'
+      + (value.warnings_truncated ? '<p class="empty">Additional timeline warnings are not shown in this bounded view.</p>' : '');
+  }
+  return '';
 }
 function systemRepairActionHtml(signal) {
   const actionId = SYSTEM_STATE_REPAIR_ACTION_BY_SIGNAL[signal && signal.id];

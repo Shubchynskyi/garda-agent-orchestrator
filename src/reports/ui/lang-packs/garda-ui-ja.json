@@ -322,7 +322,7 @@
       "description": "正規のruntime証跡から派生task timelineとreview indexを再構築します。"
     },
     "repair-protected-manifest": {
-      "label": "protected manifestを更新",
+      "label": "manifestを更新",
       "description": "現在のworkspace snapshotから信頼済みprotected control-plane manifestを更新します。"
     },
     "repair-locks-cleanup-stale": {

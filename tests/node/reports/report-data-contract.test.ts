@@ -92,6 +92,16 @@ function writePartialTaskTimeline(repoRoot: string, taskId: string): void {
     fs.writeFileSync(timelinePath, `${JSON.stringify(taskModeEvent)}\n`, 'utf8');
 }
 
+function writeMalformedTaskTimeline(repoRoot: string, taskId: string, malformedLineCount: number): void {
+    const timelinePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    fs.mkdirSync(path.dirname(timelinePath), { recursive: true });
+    fs.writeFileSync(
+        timelinePath,
+        Array.from({ length: malformedLineCount }, (_, index) => `{malformed-${index}}\n`).join(''),
+        'utf8'
+    );
+}
+
 function writeStaleTaskEventLock(repoRoot: string, taskId: string): void {
     const lockPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `.${taskId}.lock`);
     fs.mkdirSync(lockPath, { recursive: true });
@@ -765,6 +775,9 @@ test('buildReportDataContract classifies stale locks and incomplete timelines in
     };
     const timelineValue = report.system_state.runtime.incomplete_timeline.value as {
         warnings?: string[];
+        warning_tasks?: Array<{ task_id?: string | null; kind?: string; details?: string[] }>;
+        warnings_truncated?: boolean;
+        warning_count?: number;
     };
 
     assert.equal(report.system_state.runtime.stale_locks.status, 'attention');
@@ -776,12 +789,77 @@ test('buildReportDataContract classifies stale locks and incomplete timelines in
     assert.equal(lockValue.stale_count, 1);
     assert.ok(lockValue.stale_locks?.some((lock) => lock.task_id === 'T-100' && lock.stale_reason === 'owner_dead'));
     assert.equal(report.system_state.runtime.incomplete_timeline.status, 'attention');
+    assert.match(report.system_state.runtime.incomplete_timeline.summary, /T-100/u);
     assert.match(
+        report.system_state.runtime.incomplete_timeline.remediation || '',
+        /does not repair missing or invalid task events/u
+    );
+    assert.doesNotMatch(
         report.system_state.runtime.incomplete_timeline.remediation || '',
         /garda repair rebuild-indexes --target-root "\." --confirm/u
     );
     assert.ok(timelineValue.warnings?.some((warning) => warning.includes('INCOMPLETE timeline: T-100.jsonl')));
+    assert.ok(timelineValue.warning_tasks?.some((warning) =>
+        warning.task_id === 'T-100'
+        && warning.kind === 'INCOMPLETE'
+        && (warning.details || []).includes('COMPLETION_GATE_PASSED')
+    ));
     assert.ok(['attention', 'error'].includes(report.system_state.overall.status));
+});
+
+test('buildReportDataContract bounds timeline warning details while preserving totals', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    for (let index = 0; index < 12; index += 1) {
+        writePartialTaskTimeline(repoRoot, `T-${200 + index}`);
+    }
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+    const timelineValue = report.system_state.runtime.incomplete_timeline.value as {
+        warnings?: string[];
+        warning_tasks?: Array<{ task_id?: string | null; kind?: string; details?: string[]; details_omitted_count?: number }>;
+        warnings_truncated?: boolean;
+        warning_count?: number;
+    };
+
+    assert.equal(report.system_state.runtime.incomplete_timeline.status, 'attention');
+    assert.match(
+        report.system_state.runtime.incomplete_timeline.summary,
+        /12 task timeline warning\(s\) detected; affected: T-200, T-201, T-202, T-203, T-204, \+7 more\./u
+    );
+    assert.equal(timelineValue.warning_count, 12);
+    assert.equal(timelineValue.warnings_truncated, true);
+    assert.equal(timelineValue.warnings?.length, 10);
+    assert.equal(timelineValue.warning_tasks?.length, 10);
+    assert.ok(timelineValue.warning_tasks?.some((warning) => warning.task_id === 'T-200'));
+    assert.equal(timelineValue.warning_tasks?.some((warning) => warning.task_id === 'T-210'), false);
+});
+
+test('buildReportDataContract bounds per-timeline warning details', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    writeInitAndProjectMemory(repoRoot);
+    writeMalformedTaskTimeline(repoRoot, 'T-300', 8);
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+    const timelineValue = report.system_state.runtime.incomplete_timeline.value as {
+        warning_tasks?: Array<{ task_id?: string | null; kind?: string; details?: string[]; details_omitted_count?: number }>;
+    };
+    const warning = timelineValue.warning_tasks?.find((item) => item.task_id === 'T-300');
+
+    assert.equal(warning?.kind, 'INVALID');
+    assert.equal(warning?.details?.length, 5);
+    assert.equal(warning?.details_omitted_count, 3);
+    assert.ok(warning?.details?.every((detail) => detail.includes('invalid JSON')));
 });
 
 test('buildReportTaskDetail surfaces timed-out full-suite failures without inventing duration', () => {

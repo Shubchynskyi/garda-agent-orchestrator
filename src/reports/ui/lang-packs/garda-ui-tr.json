@@ -322,7 +322,7 @@
       "description": "Kanonik runtime kanıtlarından türetilmiş task timeline ve review dizinlerini yeniden oluşturur."
     },
     "repair-protected-manifest": {
-      "label": "Protected manifest yenile",
+      "label": "Manifesti güncelle",
       "description": "Güvenilir protected control-plane manifestini geçerli workspace snapshotından yeniler."
     },
     "repair-locks-cleanup-stale": {

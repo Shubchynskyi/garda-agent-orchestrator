@@ -772,9 +772,31 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                         id: 'incomplete-task-timelines',
                         label: 'Incomplete task timelines',
                         status: 'attention',
-                        summary: '1 task timeline warning was detected.',
-                        remediation: 'After reviewing the warning, use `garda repair rebuild-indexes --target-root "." --confirm` or the guarded UI repair action.',
-                        value: { active_or_blocked_tasks: 1 },
+                        summary: '12 task timeline warnings were detected; affected: T-100, T-101, T-102, T-103, T-104, +7 more.',
+                        remediation: 'Review the listed canonical task timeline warnings. Rebuilding derived indexes can refresh summaries, but it does not repair missing or invalid task events.',
+                        value: {
+                            active_or_blocked_tasks: 1,
+                            warnings: Array.from({ length: 10 }, (_, index) => {
+                                const taskId = `T-${100 + index}`;
+                                return `INCOMPLETE timeline: ${taskId}.jsonl (COMPLETION_GATE_PASSED). Repair: resume ${taskId}.`;
+                            }),
+                            warning_tasks: Array.from({ length: 10 }, (_, index) => {
+                                const taskId = `T-${100 + index}`;
+                                return {
+                                    task_id: taskId,
+                                    file_name: `${taskId}.jsonl`,
+                                    kind: 'INCOMPLETE',
+                                    details: ['COMPLETION_GATE_PASSED'],
+                                    details_omitted_count: index === 0 ? 2 : 0,
+                                    message: `INCOMPLETE timeline: ${taskId}.jsonl (COMPLETION_GATE_PASSED). Repair: resume ${taskId}.`,
+                                    repair_guidance: `resume ${taskId}`,
+                                    timeline_path: `garda-agent-orchestrator/runtime/task-events/${taskId}.jsonl`,
+                                    task_status: 'TODO'
+                                };
+                            }),
+                            warnings_truncated: true,
+                            warning_count: 12
+                        },
                         source_path: 'TASK.md'
                     },
                     artifact_signals: []
@@ -1029,7 +1051,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 {
                     id: 'repair-protected-manifest',
                     category: 'Repair',
-                    label: 'Refresh protected manifest',
+                    label: 'Update manifest',
                     description: 'Refresh trusted protected manifest',
                     command: 'node bin/garda.js repair protected-manifest --target-root "." --confirm',
                     mutates: true,
@@ -1575,10 +1597,14 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-inspect"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-protected-manifest"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-locks-cleanup-stale"/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-rebuild-indexes"/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /data-action-id="repair-rebuild-indexes"/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda repair protected-manifest --target-root/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda repair locks --target-root/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /garda repair rebuild-indexes --target-root/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /garda repair rebuild-indexes --target-root/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /T-100/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /COMPLETION_GATE_PASSED/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /\+2 more/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Additional timeline warnings are not shown in this bounded view/u);
         const statusDiagnosticButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
             .find((button) => button.dataset.actionId === 'status' && button.dataset.actionMode === 'execute');
         assert.ok(statusDiagnosticButton);
@@ -1613,7 +1639,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.ok(protectedManifestRepairButton);
         await protectedManifestRepairButton.dispatch('click');
         await flushPromises();
-        assert.match(fakeDocument.elements['action-status'].innerHTML, /Refresh protected manifest/u);
+        assert.match(fakeDocument.elements['action-status'].innerHTML, /Update manifest/u);
         assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_PROTECTED_MANIFEST ok/u);
         const locksRepairButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
             .find((button) => button.dataset.actionId === 'repair-locks-cleanup-stale' && button.dataset.actionMode === 'execute');
@@ -1624,13 +1650,10 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_LOCKS ok/u);
         const rebuildIndexesRepairButton = fakeDocument.elements['system-state-panel'].querySelectorAll('button[data-action-id]')
             .find((button) => button.dataset.actionId === 'repair-rebuild-indexes' && button.dataset.actionMode === 'execute');
-        assert.ok(rebuildIndexesRepairButton);
-        await rebuildIndexesRepairButton.dispatch('click');
-        await flushPromises();
-        assert.match(fakeDocument.elements['action-status'].innerHTML, /Rebuild indexes/u);
-        assert.match(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_REBUILD_INDEXES ok/u);
-        assert.equal(fakeDocument.elements['action-status'].scrollCount, 6);
-        assert.equal(fakeDocument.elements['action-status'].focusCount, 6);
+        assert.equal(rebuildIndexesRepairButton, undefined);
+        assert.doesNotMatch(fakeDocument.elements['action-status'].innerHTML, /GARDA_REPAIR_REBUILD_INDEXES ok/u);
+        assert.equal(fakeDocument.elements['action-status'].scrollCount, 5);
+        assert.equal(fakeDocument.elements['action-status'].focusCount, 5);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Shutdown in/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /15m/u);
         assert.doesNotMatch(fakeDocument.elements['session-summary'].innerHTML, /16m/u);
@@ -1731,9 +1754,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Почему заблокировано/u);
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Проверить восстановление/u);
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Проверить состояние runtime/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Обновить защищенный manifest/u);
+        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Обновить манифест/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Очистить устаревшие блокировки/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Пересобрать индексы/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Пересобрать индексы/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /Продолжение после таймаута только как предупреждение/u);
         assert.doesNotMatch(fakeDocument.elements['settings-editor'].innerHTML, /Warning-only timeout continuation/u);
         assert.match(fakeDocument.elements['session-summary'].innerHTML, /Выключение через/u);

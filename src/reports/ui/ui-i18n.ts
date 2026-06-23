@@ -512,7 +512,7 @@ const CORE_LOCAL_UI_ACTION_TEXT: Readonly<Record<string, Readonly<Record<string,
             description: 'Rebuild derived task timeline and review indexes from canonical runtime evidence.'
         },
         'repair-protected-manifest': {
-            label: 'Refresh protected manifest',
+            label: 'Update manifest',
             description: 'Refresh the trusted protected control-plane manifest from the current workspace snapshot.'
         },
         'repair-locks-cleanup-stale': {

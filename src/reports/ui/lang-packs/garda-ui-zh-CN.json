@@ -322,7 +322,7 @@
       "description": "从规范 runtime 证据重建派生的任务 timeline 和 review 索引。"
     },
     "repair-protected-manifest": {
-      "label": "刷新受保护 manifest",
+      "label": "更新 manifest",
       "description": "从当前 workspace 快照刷新可信的 protected control-plane manifest。"
     },
     "repair-locks-cleanup-stale": {

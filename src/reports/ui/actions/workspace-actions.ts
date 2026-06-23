@@ -59,7 +59,7 @@ export function buildUiWorkspaceActionDefinitions(repoRoot: string): UiActionDef
             repoRoot,
             'repair-protected-manifest',
             'Repair',
-            'Refresh protected manifest',
+            'Update manifest',
             'Refresh the trusted protected control-plane manifest from the current workspace snapshot.',
             ['repair', 'protected-manifest', '--target-root', repoRoot, '--confirm'],
             { mutates: true, confirmationPhrase: 'REFRESH PROTECTED MANIFEST', timeoutMs: UI_ACTION_CLEANUP_TIMEOUT_MS }
