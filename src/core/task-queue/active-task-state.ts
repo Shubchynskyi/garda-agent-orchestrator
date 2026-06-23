@@ -83,6 +83,10 @@ export interface RuntimeTaskState {
     terminalTaskIds: Set<string>;
 }
 
+export interface ResolveActiveTaskIdsOptions {
+    includeAmbiguousRuntimeTasks?: boolean;
+}
+
 const RUNTIME_RECOVERY_EVENTS = new Set([
     'TASK_MODE_ENTERED',
     'PREFLIGHT_CLASSIFIED',
@@ -191,8 +195,14 @@ export function collectRuntimeTaskState(bundleRoot: string): RuntimeTaskState {
     };
 }
 
-export function resolveActiveTaskIds(targetRoot: string, bundleRoot: string, explicitTaskIds?: readonly string[]): Set<string> {
+export function resolveActiveTaskIds(
+    targetRoot: string,
+    bundleRoot: string,
+    explicitTaskIds?: readonly string[],
+    options: ResolveActiveTaskIdsOptions = {}
+): Set<string> {
     const activeTaskIds = new Set<string>();
+    const includeAmbiguousRuntimeTasks = options.includeAmbiguousRuntimeTasks ?? true;
     for (const explicitTaskId of explicitTaskIds || []) {
         try {
             activeTaskIds.add(assertValidTaskId(explicitTaskId));
@@ -217,7 +227,7 @@ export function resolveActiveTaskIds(targetRoot: string, bundleRoot: string, exp
 
     const taskPath = path.join(targetRoot, 'TASK.md');
     if (!fs.existsSync(taskPath)) {
-        mergeRuntimeTaskIds(true);
+        mergeRuntimeTaskIds(includeAmbiguousRuntimeTasks);
         return activeTaskIds;
     }
 
@@ -225,7 +235,7 @@ export function resolveActiveTaskIds(targetRoot: string, bundleRoot: string, exp
     try {
         content = fs.readFileSync(taskPath, 'utf8');
     } catch {
-        mergeRuntimeTaskIds(true);
+        mergeRuntimeTaskIds(includeAmbiguousRuntimeTasks);
         return activeTaskIds;
     }
 
@@ -250,6 +260,6 @@ export function resolveActiveTaskIds(targetRoot: string, bundleRoot: string, exp
         activeTaskIds.add(taskId);
     }
 
-    mergeRuntimeTaskIds(true);
+    mergeRuntimeTaskIds(includeAmbiguousRuntimeTasks);
     return activeTaskIds;
 }
