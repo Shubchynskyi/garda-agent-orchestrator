@@ -10,6 +10,7 @@ import {
     inferBundleNameFromPackageRoot,
     loadCliMainModule,
     main,
+    resolveDelegatedLauncherTrustEvidence,
     resolveDelegatedLauncherTarget
 } from '../../../src/bin/garda';
 
@@ -131,6 +132,72 @@ test('global launcher delegates to deployed bundle when workspace contains manag
     }
 });
 
+test('global launcher ignores default-named deployed bundles outside the workspace boundary', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-boundary-'));
+    try {
+        const projectsRoot = path.join(tempRoot, 'Projects');
+        const workspaceRoot = path.join(projectsRoot, 'Startpage for site');
+        const externalGardaRoot = path.join(projectsRoot, 'garda-agent-orchestrator');
+        const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
+        fs.mkdirSync(workspaceRoot, { recursive: true });
+        createGardaPackageRoot(externalGardaRoot, '9.9.9', { deployedBundle: true });
+        createGardaPackageRoot(globalPackageRoot, '1.0.0');
+
+        const delegatedCli = resolveDelegatedLauncherTarget(
+            ['status'],
+            workspaceRoot,
+            path.join(globalPackageRoot, 'bin', 'garda.js'),
+            globalPackageRoot
+        );
+
+        assert.equal(delegatedCli, null);
+
+        const evidence = resolveDelegatedLauncherTrustEvidence(
+            ['status'],
+            workspaceRoot,
+            path.join(globalPackageRoot, 'bin', 'garda.js'),
+            globalPackageRoot
+        );
+        assert.equal(evidence.current_runtime.package_version, '1.0.0');
+        assert.equal(evidence.delegated_runtime, null);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('global launcher ignores default-named source checkouts outside the workspace boundary', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-boundary-source-'));
+    try {
+        const projectsRoot = path.join(tempRoot, 'Projects');
+        const workspaceRoot = path.join(projectsRoot, 'Startpage for site');
+        const externalSourceRoot = path.join(projectsRoot, 'garda-agent-orchestrator');
+        const globalPackageRoot = path.join(tempRoot, 'global', 'node_modules', 'garda-agent-orchestrator');
+        fs.mkdirSync(workspaceRoot, { recursive: true });
+        createGardaPackageRoot(externalSourceRoot, '9.9.9', { sourceCheckout: true });
+        createGardaPackageRoot(globalPackageRoot, '1.0.0');
+
+        const delegatedCli = resolveDelegatedLauncherTarget(
+            ['status'],
+            workspaceRoot,
+            path.join(globalPackageRoot, 'bin', 'garda.js'),
+            globalPackageRoot
+        );
+
+        assert.equal(delegatedCli, null);
+
+        const evidence = resolveDelegatedLauncherTrustEvidence(
+            ['status'],
+            workspaceRoot,
+            path.join(globalPackageRoot, 'bin', 'garda.js'),
+            globalPackageRoot
+        );
+        assert.equal(evidence.current_runtime.package_version, '1.0.0');
+        assert.equal(evidence.delegated_runtime, null);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
 test('global launcher delegates to preferred deployed bundle when fallback candidates also exist', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-bundle-preferred-'));
     try {
@@ -156,7 +223,7 @@ test('global launcher delegates to preferred deployed bundle when fallback candi
     }
 });
 
-test('global launcher delegates to custom-named deployed bundle without explicit bundle-name override', () => {
+test('global launcher does not infer custom-named deployed bundles without explicit bundle-name override', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-custom-bundle-'));
     try {
         const workspaceRoot = path.join(tempRoot, 'workspace');
@@ -180,19 +247,17 @@ test('global launcher delegates to custom-named deployed bundle without explicit
                 globalPackageRoot
             ));
 
-            assert.equal(delegatedCli, path.join(bundleRoot, 'bin', 'garda.js'));
+            assert.equal(delegatedCli, null);
         } finally {
             console.error = originalConsoleError;
         }
-        assert.equal(diagnostics.length, 1);
-        assert.match(diagnostics[0], /single detected fallback candidate 'custom-bundle'/);
-        assert.match(diagnostics[0], /--bundle-name/);
+        assert.deepEqual(diagnostics, []);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
 
-test('global launcher fails closed when multiple fallback deployed bundle candidates exist', () => {
+test('global launcher ignores ambiguous custom deployed bundle candidates without explicit bundle-name override', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-bundle-ambiguous-'));
     try {
         const workspaceRoot = path.join(tempRoot, 'workspace');
@@ -205,28 +270,20 @@ test('global launcher fails closed when multiple fallback deployed bundle candid
         createGardaPackageRoot(betaBundleRoot, '2.4.0', { deployedBundle: true });
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
 
-        assert.throws(
-            () => withBundleName(undefined, () => resolveDelegatedLauncherTarget(
-                ['status'],
-                workspaceRoot,
-                path.join(globalPackageRoot, 'bin', 'garda.js'),
-                globalPackageRoot
-            )),
-            (error: unknown) => {
-                assert.ok(error instanceof Error);
-                assert.match(error.message, /Multiple Garda Agent Orchestrator deployed bundle candidates found/);
-                assert.match(error.message, /alpha-bundle/);
-                assert.match(error.message, /beta-bundle/);
-                assert.match(error.message, /--bundle-name/);
-                return true;
-            }
-        );
+        const delegatedCli = withBundleName(undefined, () => resolveDelegatedLauncherTarget(
+            ['status'],
+            workspaceRoot,
+            path.join(globalPackageRoot, 'bin', 'garda.js'),
+            globalPackageRoot
+        ));
+
+        assert.equal(delegatedCli, null);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
 
-test('global launcher uses explicit bundle name to resolve fallback ambiguity', () => {
+test('global launcher uses explicit bundle name to select a custom deployed bundle', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-bundle-explicit-'));
     const previousBundleName = process.env.GARDA_BUNDLE_NAME;
     try {
@@ -259,7 +316,7 @@ test('global launcher uses explicit bundle name to resolve fallback ambiguity', 
     }
 });
 
-test('global launcher rejects explicit missing bundle name instead of using single fallback', () => {
+test('global launcher does not use fallback candidates for explicit missing bundle name', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-router-bundle-explicit-missing-'));
     const previousBundleName = process.env.GARDA_BUNDLE_NAME;
     try {
@@ -272,20 +329,14 @@ test('global launcher rejects explicit missing bundle name instead of using sing
         createGardaPackageRoot(globalPackageRoot, '2.3.0');
         process.env.GARDA_BUNDLE_NAME = 'missing-bundle';
 
-        assert.throws(
-            () => resolveDelegatedLauncherTarget(
-                ['status'],
-                workspaceRoot,
-                path.join(globalPackageRoot, 'bin', 'garda.js'),
-                globalPackageRoot
-            ),
-            (error: unknown) => {
-                assert.ok(error instanceof Error);
-                assert.match(error.message, /deployed bundle 'missing-bundle' was not found/);
-                assert.match(error.message, /custom-bundle/);
-                return true;
-            }
+        const delegatedCli = resolveDelegatedLauncherTarget(
+            ['status'],
+            workspaceRoot,
+            path.join(globalPackageRoot, 'bin', 'garda.js'),
+            globalPackageRoot
         );
+
+        assert.equal(delegatedCli, null);
     } finally {
         if (previousBundleName === undefined) {
             delete process.env.GARDA_BUNDLE_NAME;

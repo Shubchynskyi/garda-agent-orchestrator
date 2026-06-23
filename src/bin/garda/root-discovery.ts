@@ -180,89 +180,16 @@ export function findSourceCheckoutRoot(startDir: string): string | null {
 
 export function findDeployedBundleRoot(startDir: string): string | null {
     const effectiveName = resolveBundleName();
-    const allowFallback = process.env.GARDA_BUNDLE_NAME === undefined;
-    let current = path.resolve(startDir);
+    const current = path.resolve(startDir);
 
-    while (true) {
-        if (isGardaPackageRoot(current) && looksLikeDeployedBundleRoot(current)) {
-            return current;
-        }
-
-        const bundleRoot = path.join(current, effectiveName);
-        if (isGardaPackageRoot(bundleRoot) && looksLikeDeployedBundleRoot(bundleRoot)) {
-            return bundleRoot;
-        }
-        const inferredBundleRoot = findDeployedBundleRootInWorkspace(current, effectiveName, allowFallback);
-        if (inferredBundleRoot) {
-            return inferredBundleRoot;
-        }
-
-        const parent = path.dirname(current);
-        if (parent === current) {
-            return null;
-        }
-        current = parent;
-    }
-}
-
-function findDeployedBundleRootInWorkspace(
-    workspaceRoot: string,
-    preferredName: string,
-    allowFallback: boolean
-): string | null {
-    let entries: fs.Dirent[];
-    try {
-        entries = fs.readdirSync(workspaceRoot, { withFileTypes: true });
-    } catch {
-        return null;
+    if (isGardaPackageRoot(current) && looksLikeDeployedBundleRoot(current)) {
+        return current;
     }
 
-    const fallbackMatches: string[] = [];
-    for (const entry of entries) {
-        if (!entry.isDirectory()) {
-            continue;
-        }
-        if (entry.name === 'node_modules' || entry.name.startsWith('.')) {
-            continue;
-        }
-        const candidateRoot = path.join(workspaceRoot, entry.name);
-        if (!isGardaPackageRoot(candidateRoot) || !looksLikeDeployedBundleRoot(candidateRoot)) {
-            continue;
-        }
-        if (entry.name === preferredName) {
-            return candidateRoot;
-        }
-        fallbackMatches.push(candidateRoot);
-    }
-
-    if (fallbackMatches.length === 0) {
-        return null;
-    }
-    const candidateNames = fallbackMatches
-        .map((candidateRoot) => path.basename(candidateRoot))
-        .sort((left, right) => left.localeCompare(right));
-    if (!allowFallback) {
-        throw new Error(
-            `${PRODUCT_NAME} deployed bundle '${preferredName}' was not found in ${workspaceRoot}. ` +
-            `Detected candidates: ${candidateNames.join(', ')}. ` +
-            'Use an existing direct child deployed bundle name.'
-        );
-    }
-    if (fallbackMatches.length === 1) {
-        const fallbackRoot = fallbackMatches[0];
-        const fallbackName = path.basename(fallbackRoot);
-        console.error(
-            `${PRODUCT_NAME} deployed bundle '${preferredName}' was not found in ${workspaceRoot}; ` +
-            `using the single detected fallback candidate '${fallbackName}'. ` +
-            'Pass --bundle-name explicitly to select a deployed bundle by name.'
-        );
-        return fallbackRoot;
-    }
-
-    throw new Error(
-        `Multiple ${PRODUCT_NAME} deployed bundle candidates found in ${workspaceRoot}: ` +
-        `${candidateNames.join(', ')}. Pass --bundle-name explicitly to select one.`
-    );
+    const bundleRoot = path.join(current, effectiveName);
+    return isGardaPackageRoot(bundleRoot) && looksLikeDeployedBundleRoot(bundleRoot)
+        ? bundleRoot
+        : null;
 }
 
 function extractTargetRootArg(argv: string[], cwd: string): string | null {
@@ -310,4 +237,3 @@ export function inferBundleNameFromPackageRoot(packageRoot: string): string | nu
     const inferredName = path.basename(packageRoot).trim();
     return inferredName ? inferredName : null;
 }
-
