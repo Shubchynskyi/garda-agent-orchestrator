@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
     evaluateOfflinePolicy,
     assertOfflinePolicy,
@@ -232,6 +235,21 @@ describe('offline-mode', () => {
     });
 
     describe('CLI integration (runCliMain)', () => {
+        function createRuntimeOnlySourceCheckout(): string {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-offline-help-'));
+            fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+            fs.mkdirSync(path.join(root, 'garda-agent-orchestrator', 'runtime'), { recursive: true });
+            fs.writeFileSync(path.join(root, 'src', 'index.ts'), 'export {};\n');
+            fs.writeFileSync(path.join(root, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
+            fs.writeFileSync(path.join(root, 'VERSION'), '1.1.0\n');
+            fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+                name: 'garda-agent-orchestrator',
+                version: '1.1.0'
+            }));
+            return root;
+        }
+
         it('blocks network-sensitive command with --offline via runCliMain', async () => {
             const { runCliMain } = await import('../../../src/cli/main');
             await assert.rejects(
@@ -245,8 +263,15 @@ describe('offline-mode', () => {
 
         it('allows --help introspection on network-sensitive command even with --offline', async () => {
             const { runCliMain } = await import('../../../src/cli/main');
-            // update --help should not throw offline error; it will print help and return
-            await runCliMain(['--offline', 'update', '--help']);
+            const sourceRoot = createRuntimeOnlySourceCheckout();
+            const previousCwd = process.cwd();
+            try {
+                process.chdir(sourceRoot);
+                await runCliMain(['--offline', 'update', '--help'], sourceRoot);
+            } finally {
+                process.chdir(previousCwd);
+                fs.rmSync(sourceRoot, { recursive: true, force: true });
+            }
         });
 
         it('blocks via GARDA_OFFLINE env var through runCliMain', async () => {

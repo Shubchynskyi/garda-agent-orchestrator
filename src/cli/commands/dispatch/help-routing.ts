@@ -22,10 +22,21 @@ export function isHelpOnlyRequest(commandArgv: string[]): boolean {
     return isHelpSubcommand(commandArgv) || hasHelpFlag(commandArgv);
 }
 
+function isMissingBundleDirectoryViolation(violation: string): boolean {
+    return /^Bundle invariant violation: Bundle directory '[^']+' is missing\.$/.test(violation);
+}
+
+function isMissingBundleContentViolation(violation: string): boolean {
+    return /^Bundle invariant violation: Required bundle (?:file|inventory) '[^']+' is missing\.$/.test(violation);
+}
+
 export function isMissingDeployedBundleOnlyParityBlock(violations: readonly string[]): boolean {
     return violations.length > 0
         && violations.every((violation) => violation.startsWith('Bundle invariant violation: '))
-        && violations.some((violation) => /^Bundle invariant violation: Bundle directory '[^']+' is missing\.$/.test(violation));
+        && (
+            violations.some(isMissingBundleDirectoryViolation)
+            || violations.every(isMissingBundleContentViolation)
+        );
 }
 
 export function printHelpCommand(commandArgv: string[], packageJson: PackageJsonLike): boolean {
