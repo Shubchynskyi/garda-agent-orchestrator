@@ -83,7 +83,12 @@ test('package quality scripts expose lint, coverage, audit, and composed release
 
     assert.equal(scripts['audit:prod'], 'npm audit --omit=dev');
     assert.equal(scripts['audit:all'], 'npm audit');
-    assert.equal(scripts.quality, 'npm run typecheck && npm run lint && npm run coverage && npm run audit:prod');
+    assert.equal(
+        scripts['typecheck:unused'],
+        'tsc -p tsconfig.node-foundation.json --noEmit --pretty false --noUnusedLocals --noUnusedParameters'
+    );
+    assert.equal(scripts.quality, 'npm run typecheck && npm run typecheck:unused && npm run lint && npm run coverage && npm run audit:prod');
+    assert.equal(scripts['quality:fast'], 'npm run typecheck && npm run typecheck:unused && npm run lint && npm run coverage:fast && npm run audit:prod');
     assert.equal(scripts['validate:clean-worktree'], 'node scripts/node-foundation/build-scripts.cjs validate-release.js clean-worktree');
     assert.equal(scripts['validate:embedded-bundle-parity'], 'node scripts/node-foundation/build-scripts.cjs validate-release.js embedded-bundle-parity');
     assert.equal(scripts['validate:release-readiness'], 'node scripts/node-foundation/build-scripts.cjs validate-release.js release-readiness');

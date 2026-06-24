@@ -69,8 +69,9 @@ function buildPackageJson(): string {
             coverage: 'c8 npm test',
             'coverage:fast': 'c8 npm run test:fast',
             'audit:prod': 'npm audit --omit=dev',
-            quality: 'npm run typecheck && npm run lint && npm run coverage && npm run audit:prod',
-            'quality:fast': 'npm run typecheck && npm run lint && npm run coverage:fast && npm run audit:prod',
+            'typecheck:unused': 'tsc -p tsconfig.node-foundation.json --noEmit --pretty false --noUnusedLocals --noUnusedParameters',
+            quality: 'npm run typecheck && npm run typecheck:unused && npm run lint && npm run coverage && npm run audit:prod',
+            'quality:fast': 'npm run typecheck && npm run typecheck:unused && npm run lint && npm run coverage:fast && npm run audit:prod',
             'validate:release': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality && npm run test:packaging && npm run validate:clean-worktree',
             'validate:release:fast': 'npm run validate:clean-worktree && npm run validate:version-parity && npm run build && npm run validate:embedded-bundle-parity && npm run quality:fast && npm run test:packaging && npm run validate:clean-worktree',
             'release:preflight': 'npm run validate:release-readiness && npm run test:release-smoke && npm run validate:release',
@@ -125,6 +126,15 @@ function buildPackageJson(): string {
             'VERSION'
         ]
     }, null, 2);
+}
+
+function updatePackageScripts(repoRoot: string, update: (scripts: Record<string, string>) => void): void {
+    const packagePath = path.join(repoRoot, 'package.json');
+    const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as {
+        scripts: Record<string, string>;
+    };
+    update(packageJson.scripts);
+    writeFile(packagePath, JSON.stringify(packageJson, null, 2));
 }
 
 function buildReleaseChecklist(openItem?: string): string {
@@ -312,7 +322,30 @@ test('release readiness passes when package, CI, docs, security, and checklist c
         assert.match(output, /Short smoke: test:release-smoke exercises task id parsing/);
         assert.match(output, /Package smoke: npm run test:packaging remains an explicit validate:release step/);
         assert.match(output, /Readiness alignment:/);
+        assert.match(output, /Unused-symbol enforcement: quality includes typecheck:unused/);
         assert.doesNotMatch(output, /Security\/audit proof:/);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('release readiness fails when unused-symbol enforcement is removed from quality gates', () => {
+    const repoRoot = createReadinessFixture();
+    try {
+        updatePackageScripts(repoRoot, (scripts) => {
+            scripts['typecheck:unused'] = 'tsc -p tsconfig.node-foundation.json --noEmit --pretty false';
+            scripts.quality = 'npm run typecheck && npm run lint && npm run coverage && npm run audit:prod';
+            scripts['quality:fast'] = 'npm run typecheck && npm run lint && npm run coverage:fast && npm run audit:prod';
+        });
+
+        const result = validateReleaseReadiness(repoRoot);
+        const output = formatReleaseReadinessResult(result);
+
+        assert.equal(result.passed, false);
+        assert.match(output, /RELEASE_READINESS_FAILED/);
+        assert.ok(
+            result.violations.includes('security: quality keeps unused-symbol enforcement, production audit, and security document surface aligned')
+        );
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -614,7 +647,7 @@ test('release readiness fails when shipped security docs are missing from MANIFE
         assert.equal(result.passed, false);
         assert.match(output, /RELEASE_READINESS_FAILED/);
         assert.ok(
-            result.violations.includes('security: quality keeps production audit in the release chain and security document surface is package/manifest aligned')
+            result.violations.includes('security: quality keeps unused-symbol enforcement, production audit, and security document surface aligned')
         );
     } finally {
         fs.rmSync(repoRoot, { recursive: true, force: true });

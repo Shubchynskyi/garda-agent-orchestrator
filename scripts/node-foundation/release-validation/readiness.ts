@@ -280,6 +280,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
     const archiveSource = scripts['archive:source'] || '';
     const archiveEvidence = scripts['archive:evidence'] || '';
     const quality = scripts.quality || '';
+    const qualityFast = scripts['quality:fast'] || '';
     const prepack = scripts.prepack || '';
     const manifestText = readTextFileIfExists(path.join(normalizedRoot, 'MANIFEST.md')) || '';
     const validateReleaseFast = scripts['validate:release:fast'] || '';
@@ -354,14 +355,19 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         checks,
         violations,
         'security',
-        'quality keeps production audit in the release chain and security document surface is package/manifest aligned',
-        quality.includes('npm run audit:prod') &&
+        'quality keeps unused-symbol enforcement, production audit, and security document surface aligned',
+        quality.includes('npm run typecheck:unused') &&
+            qualityFast.includes('npm run typecheck:unused') &&
+            scripts['typecheck:unused'] === 'tsc -p tsconfig.node-foundation.json --noEmit --pretty false --noUnusedLocals --noUnusedParameters' &&
+            quality.includes('npm run audit:prod') &&
             scripts['audit:prod'] === 'npm audit --omit=dev' &&
             SECURITY_RELEASE_DOC_ITEMS.every((entry) => fileExists(normalizedRoot, entry)) &&
             SECURITY_RELEASE_DOC_ITEMS.every((entry) => packageFiles.includes(entry)) &&
             manifestListsEvery(manifestText, SECURITY_RELEASE_DOC_ITEMS),
         [
             quality || 'missing quality',
+            `quality:fast=${qualityFast || 'missing'}`,
+            `typecheck:unused=${scripts['typecheck:unused'] || 'missing'}`,
             `audit:prod=${scripts['audit:prod'] || 'missing'}`,
             `security_docs=${SECURITY_RELEASE_DOC_ITEMS.join(', ')}`
         ]
@@ -455,6 +461,7 @@ function validateReleaseReadinessContracts(repoRoot: string): ReleaseReadinessRe
         'Short smoke: test:release-smoke exercises task id parsing, task-event append integrity, next-step startup routing, and status and doctor formatting before the full proof path.',
         'Package smoke: npm run test:packaging remains an explicit validate:release step for pack, install, and CLI invoke proof.',
         'Update/runtime alignment: CI workflow is configured for setup, update git, doctor, and uninstall smoke across Linux, Windows, and macOS.',
+        'Unused-symbol enforcement: quality includes typecheck:unused with --noUnusedLocals and --noUnusedParameters before lint, coverage, and production npm audit.',
         'Security/audit alignment: quality includes production npm audit and security/SBOM/threat-model docs are present in source, package files, and MANIFEST.'
     ];
 
