@@ -1,48 +1,11 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatFinalUserReport } from '../../../../src/gates/task-audit/task-audit-summary';
 
 import {
     fs,
     path,
-    spawn,
-    createHash,
-    execFileSync,
-    buildTaskAuditSummary,
     formatTaskAuditSummaryText,
-    formatFinalCloseoutMarkdown,
-    synchronizeFinalCloseoutArtifacts,
-    readReviewTrustSummary,
-    readReviewTrustSummaryFromReviewGate,
-    ensureSkillsHeadlinesCurrent,
-    getWorkspaceSnapshot,
-    PROJECT_MEMORY_IMPACT_ASSESSED_EVENT,
-    NODE_BACKEND_SKILL_SOURCE,
-    computeFileSha256,
-    computeTaskTextSha256,
-    writeEvent,
-    writePreflight,
-    writeArtifact,
-    writeIntegrityEventSequence,
-    appendIntegrityEvent,
-    buildReviewRecordedTelemetryDetails,
-    writePassedLifecycleWithReviewRecorded,
     writeWorkflowConfig,
-    writeProjectMemoryWorkflowConfig,
-    seedProjectMemory,
-    writeProjectMemoryImpactArtifact,
-    writePathsConfig,
-    writePassedLifecycle,
-    makeIndependentReviewGateCheck,
-    makeReviewerInvocationProvenance,
-    makeDelegatedRouting,
-    writeRequiredCodeScenario,
-    buildCurrentTaskAuditSummary,
-    assertReviewIntegrity,
-    assertReviewIntegrityBlocksFinalCloseout,
-    writeCurrentIndependentReviewFixture,
-    initGitRepo,
-    writeActiveCompletionLock,
     makeTempDir,
     type TaskAuditSummaryResult
 } from './task-audit-summary-fixtures';
@@ -52,8 +15,6 @@ describe('gates/task-audit-summary', () => {
     let tmpDir: string;
     let eventsDir: string;
     let reviewsDir: string;
-    const TASK_ID = 'T-AUDIT-1';
-
     beforeEach(() => {
         tmpDir = makeTempDir();
         eventsDir = path.join(tmpDir, 'garda-agent-orchestrator', 'runtime', 'task-events');
