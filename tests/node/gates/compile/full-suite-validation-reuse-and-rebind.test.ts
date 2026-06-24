@@ -6,35 +6,13 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
-import { UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND } from '../../../../src/core/constants';
 import {
-    buildDocsOnlyNotRequiredResult,
-    buildFullSuiteTimeoutForecast,
-    buildFullSuiteValidationOutputTelemetry,
-    buildSkippedResult,
-    buildValidationResult,
-    compactGreenSummary,
-    compactRedFailureChunks,
-    detectOutOfScopeFailures,
-    formatFullSuiteTimeoutForecast,
-    formatFullSuiteValidationResult,
-    isFullSuiteNotRequiredForDocsOnlyScope,
-    loadFullSuiteValidationConfig,
     persistFullSuiteFailureEvidence,
-    recordFullSuiteValidationDuration,
-    resolveFullSuiteDurationHistoryPath,
-    type FullSuiteValidationResult,
-    type FullSuiteValidationConfig
+    type FullSuiteValidationResult
 } from '../../../../src/gates/full-suite/full-suite-validation';
-import { shouldOmitSuccessfulFullSuiteOutput } from '../../../../src/cli/commands/gate-flows/full-suite/full-suite-validation-flow';
 import { getCurrentWorkflowConfigFileHashes } from '../../../../src/gates/workflow-config/workflow-config-work';
 import { buildTaskModeArtifact } from '../../../../src/gates/task-mode';
-import { countTextChars } from '../../../../src/gate-runtime/text-utils';
 import { runCliWithCapturedOutput } from '../../cli/commands/gate-test-helpers';
-import {
-    classifyChange,
-    getClassificationConfig
-} from '../../../../src/gates/preflight/classify-change';
 
 function writeFullSuitePreflight(
     repoRoot: string,
@@ -69,19 +47,6 @@ function writeFullSuiteTaskModeBaseline(repoRoot: string, taskId: string): void 
         'utf8'
     );
 }
-
-function buildFullSuiteDurationTestConfig(command = 'npm test'): FullSuiteValidationConfig {
-    return {
-        enabled: true,
-        command,
-        timeout_ms: 300_000,
-        green_summary_max_lines: 5,
-        red_failure_chunk_lines: 50,
-        out_of_scope_failure_policy: 'AUDIT_AND_BLOCK',
-        placement: 'before_test_review'
-    };
-}
-
 
 describe('gates/full-suite-validation', () => {
     describe('CLI integration reuse and rebind', () => {
