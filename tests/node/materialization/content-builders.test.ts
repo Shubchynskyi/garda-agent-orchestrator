@@ -276,6 +276,146 @@ describe('buildTaskContentWithExistingQueue', () => {
         assert.ok(!result!.includes('T-NEW'));
     });
 
+    it('keeps a fully user-owned TASK.md when no queue table can be parsed', () => {
+        const template = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'New header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-NEW | TODO | P1 | area | new | me | 2026-01-01 | default | new |',
+            MANAGED_END,
+            ''
+        ].join('\n');
+        const existing = [
+            '# User Tasks',
+            '',
+            '- Keep this original task list.',
+            '- Keep operator notes too.'
+        ].join('\n');
+
+        const result = buildTaskContentWithExistingQueue(template, existing);
+
+        assert.ok(result!.includes('New header.'));
+        assert.ok(result!.includes('T-NEW'));
+        assert.ok(result!.includes('# User Tasks'));
+        assert.ok(result!.includes('- Keep this original task list.'));
+        assert.ok(result!.includes('- Keep operator notes too.'));
+    });
+
+    it('preserves user prefix before an orphaned TASK.md managed block', () => {
+        const template = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'New header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-NEW | TODO | P1 | area | new | me | 2026-01-01 | default | new |',
+            MANAGED_END,
+            ''
+        ].join('\n');
+        const existing = [
+            'operator preface',
+            '',
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'Old generated header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-OLD | TODO | P1 | area | old | me | 2026-01-01 | default | old |',
+            '',
+            '## User Notes',
+            'keep suffix'
+        ].join('\n');
+
+        const result = buildTaskContentWithExistingQueue(template, existing);
+
+        assert.ok(result!.startsWith('operator preface\n\n'));
+        assert.ok(result!.includes('New header.'));
+        assert.match(result!, /\| T-OLD \| TODO\s+\| P1\s+\| area \| old\s+\| me\s+\| 2026-01-01 \| default \| old\s+\|/);
+        assert.ok(result!.includes('## User Notes'));
+        assert.ok(result!.includes('keep suffix'));
+        assert.ok(!result!.includes('Old generated header.'));
+        assert.ok(!result!.includes('T-NEW'));
+    });
+
+    it('separates the managed-end marker from preserved suffix when no blank line exists', () => {
+        const template = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'New header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-NEW | TODO | P1 | area | new | me | 2026-01-01 | default | new |',
+            MANAGED_END,
+            ''
+        ].join('\n');
+        const existing = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'Old generated header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-OLD | TODO | P1 | area | old | me | 2026-01-01 | default | old |',
+            '## User Notes',
+            'keep suffix'
+        ].join('\n');
+
+        const result = buildTaskContentWithExistingQueue(template, existing);
+
+        assert.ok(result!.includes(`${MANAGED_END}\n## User Notes`));
+        assert.ok(!result!.includes(`${MANAGED_END}## User Notes`));
+    });
+
+    it('preserves lower notes for a missing managed-end TASK.md with an empty queue', () => {
+        const template = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'New header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-NEW | TODO | P1 | area | new | me | 2026-01-01 | default | new |',
+            MANAGED_END,
+            ''
+        ].join('\n');
+        const existing = [
+            MANAGED_START,
+            '# TASK.md',
+            '',
+            'Old generated header.',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '## Operator Notes',
+            'keep suffix'
+        ].join('\n');
+
+        const result = buildTaskContentWithExistingQueue(template, existing);
+
+        assert.ok(result!.includes(`${MANAGED_END}\n## Operator Notes`));
+        assert.ok(result!.includes('keep suffix'));
+        assert.ok(!result!.includes('Old generated header.'));
+    });
+
     it('reflows preserved Active Queue rows into one IDEA-compatible table', () => {
         const template = [
             MANAGED_START,

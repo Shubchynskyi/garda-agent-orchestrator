@@ -42,7 +42,7 @@ export function getTaskQueueTableRange(managedBlock: string | null | undefined):
         rowsEndIndex++;
     }
 
-    return { lines, rowsStartIndex, rowsEndIndex };
+    return { lines, activeQueueIndex, headerIndex, rowsStartIndex, rowsEndIndex };
 }
 
 export function getTaskQueueRowsFromManagedBlock(managedBlock: string | null | undefined): string[] {
@@ -143,7 +143,42 @@ function joinTaskManagedBlockAndSuffix(
 ): string {
     const normalizedBlock = normalizeLineEndings(managedBlock, newline);
     const normalizedSuffix = normalizeLineEndings(suffix || '', newline);
-    const content = `${normalizedBlock}${normalizedSuffix}`;
+    const separator = normalizedSuffix && !normalizedBlock.endsWith(newline) && !normalizedSuffix.startsWith(newline)
+        ? newline
+        : '';
+    const content = `${normalizedBlock}${separator}${normalizedSuffix}`;
+    return content.endsWith(newline) ? content : `${content}${newline}`;
+}
+
+function joinTaskPrefixManagedBlockAndSuffix(
+    prefix: string,
+    managedBlock: string,
+    suffix: string,
+    newline: string
+): string {
+    const normalizedPrefix = normalizeLineEndings(prefix || '', newline);
+    const normalizedBlock = normalizeLineEndings(managedBlock, newline);
+    const normalizedSuffix = normalizeLineEndings(suffix || '', newline);
+    const prefixSeparator = normalizedPrefix && !normalizedPrefix.endsWith(newline) ? newline : '';
+    const suffixSeparator = normalizedSuffix && !normalizedBlock.endsWith(newline) && !normalizedSuffix.startsWith(newline)
+        ? newline
+        : '';
+    const content = `${normalizedPrefix}${prefixSeparator}${normalizedBlock}${suffixSeparator}${normalizedSuffix}`;
+    return content.endsWith(newline) ? content : `${content}${newline}`;
+}
+
+function appendExistingTaskContent(templateContent: string, existingContent: string, newline: string): string {
+    const normalizedTemplate = normalizeLineEndings(templateContent, newline);
+    const normalizedExisting = normalizeLineEndings(existingContent || '', newline);
+    if (!normalizedExisting.trim()) {
+        return normalizedTemplate.endsWith(newline) ? normalizedTemplate : `${normalizedTemplate}${newline}`;
+    }
+    const separator = normalizedTemplate.endsWith(`${newline}${newline}`)
+        ? ''
+        : normalizedTemplate.endsWith(newline)
+            ? newline
+            : `${newline}${newline}`;
+    const content = `${normalizedTemplate}${separator}${normalizedExisting}`;
     return content.endsWith(newline) ? content : `${content}${newline}`;
 }
 
@@ -188,27 +223,28 @@ export function buildTaskContentWithExistingQueue(templateContent: string, exist
 
     const existingQueueRange = getTaskQueueTableRange(existingContent);
     if (!existingQueueRange) {
-        return normalizeLineEndings(
-            templateContent.endsWith(newline) ? templateContent : `${templateContent}${newline}`,
-            newline
-        );
+        return appendExistingTaskContent(templateContent, existingContent, newline);
     }
+
+    const orphanManagedStartIndex = existingContent.indexOf(MANAGED_START);
+    const prefix = orphanManagedStartIndex > 0
+        ? existingContent.slice(0, orphanManagedStartIndex)
+        : orphanManagedStartIndex === 0
+            ? ''
+            : existingQueueRange.lines.slice(0, existingQueueRange.activeQueueIndex).join('\n');
+    const suffix = existingQueueRange.lines
+        .slice(existingQueueRange.rowsEndIndex)
+        .join('\n');
 
     let existingRows = getTaskQueueRowsFromRange(existingQueueRange);
-    if (existingRows.length === 0) {
-        return normalizeLineEndings(
-            templateContent.endsWith(newline) ? templateContent : `${templateContent}${newline}`,
-            newline
-        );
-    }
-
     if (hasLegacyDepthColumn(existingContent)) {
         existingRows = existingRows.map(migrateDepthToProfileRow);
     }
 
-    const suffix = existingQueueRange.lines
-        .slice(existingQueueRange.rowsEndIndex)
-        .join('\n');
-    const nextBlock = setTaskQueueRowsInManagedBlock(templateBlock, existingRows);
-    return joinTaskManagedBlockAndSuffix(nextBlock, suffix, newline);
+    const nextBlock = existingRows.length > 0
+        ? setTaskQueueRowsInManagedBlock(templateBlock, existingRows)
+        : templateBlock;
+    return prefix
+        ? joinTaskPrefixManagedBlockAndSuffix(prefix, nextBlock, suffix, newline)
+        : joinTaskManagedBlockAndSuffix(nextBlock, suffix, newline);
 }

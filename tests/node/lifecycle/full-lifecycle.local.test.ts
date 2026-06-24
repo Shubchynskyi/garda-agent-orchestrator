@@ -302,7 +302,7 @@ describe('full local lifecycle', () => {
             assert.ok(installedAgents.includes(MANAGED_START));
             assert.ok(!installedAgents.includes('Legacy user instructions.'));
             assert.ok(installedTask.includes(MANAGED_START));
-            assert.ok(!installedTask.includes('Keep this original task list.'));
+            assert.ok(installedTask.includes('Keep this original task list.'));
             assert.ok(installedGitignore.includes('.custom-cache/'));
             assert.ok(installedGitignore.includes('# garda-agent-orchestrator managed ignores'));
             assert.ok(installedQwen.context.fileName.includes('README.md'));

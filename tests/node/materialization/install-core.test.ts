@@ -346,6 +346,26 @@ describe('runInstall — core deploy and invariants', () => {
                 initAnswersPath: answersPath
             });
 
+            fs.writeFileSync(
+                path.join(projectRoot, 'TASK.md'),
+                [
+                    '<!-- garda-agent-orchestrator:managed-start -->',
+                    '# TASK.md',
+                    '',
+                    'Old generated header.',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-839 | 🟦 TODO | P1 | answer-dependent | Keep answer-dependent row | gpt-5.4 | 2026-06-24 | strict | keep row |',
+                    '<!-- garda-agent-orchestrator:managed-end -->',
+                    '',
+                    '## Operator Notes',
+                    'keep answer-dependent notes'
+                ].join('\n'),
+                'utf8'
+            );
+
             const result = runInstall({
                 targetRoot: projectRoot,
                 bundleRoot,
@@ -358,7 +378,15 @@ describe('runInstall — core deploy and invariants', () => {
                 initAnswersPath: answersPath
             });
 
+            const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
             assert.ok(result.answerDependentOnly);
+            assert.ok(result.filesAligned > 0, 'answer-dependent TASK.md sync should merge in place');
+            assert.ok(taskContent.includes('Canonical instructions entrypoint for orchestration: `CLAUDE.md`.'));
+            assert.match(taskContent, /\| T-839 \| 🟦 TODO \| P1\s+\| answer-dependent \| Keep answer-dependent row \| gpt-5\.4 \| 2026-06-24 \| strict\s+\| keep row \|/);
+            assert.ok(taskContent.includes('## Operator Notes'));
+            assert.ok(taskContent.includes('keep answer-dependent notes'));
+            assert.ok(!taskContent.includes('| T-001 |'));
+            assert.ok(!taskContent.includes('Old generated header.'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }
@@ -473,6 +501,64 @@ describe('runInstall — core deploy and invariants', () => {
             assert.ok(taskContent.includes('garda-agent-orchestrator:managed-end'));
             assert.ok(!taskContent.includes('Old generated header.'));
             assert.ok(!taskContent.includes('| T-001 |'));
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('merges existing TASK.md content instead of replacing it during overwrite install', () => {
+        const { projectRoot, bundleRoot } = setupTestWorkspace(repoRoot);
+        try {
+            const answersPath = writeInitAnswers(bundleRoot, {
+                AssistantLanguage: 'English',
+                AssistantBrevity: 'concise',
+                SourceOfTruth: 'Claude',
+                EnforceNoAutoCommit: 'false',
+                ClaudeOrchestratorFullAccess: 'false',
+                TokenEconomyEnabled: 'true',
+                CollectedVia: 'CLI_NONINTERACTIVE'
+            });
+
+            fs.writeFileSync(
+                path.join(projectRoot, 'TASK.md'),
+                [
+                    '<!-- garda-agent-orchestrator:managed-start -->',
+                    '# TASK.md',
+                    '',
+                    'Old generated header.',
+                    '',
+                    '## Active Queue',
+                    '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+                    '|---|---|---|---|---|---|---|---|---|',
+                    '| T-838 | 🟦 TODO | P1 | install/task-md-queue-merge | Preserve operator queue | gpt-5.4 | 2026-06-24 | strict | keep row |',
+                    '<!-- garda-agent-orchestrator:managed-end -->',
+                    '',
+                    '## Operator Notes',
+                    'keep this local planning section'
+                ].join('\n'),
+                'utf8'
+            );
+
+            const result = runInstall({
+                targetRoot: projectRoot,
+                bundleRoot,
+                preserveExisting: false,
+                runInit: false,
+                assistantLanguage: 'English',
+                assistantBrevity: 'concise',
+                sourceOfTruth: 'Claude',
+                initAnswersPath: answersPath
+            });
+
+            const taskContent = fs.readFileSync(path.join(projectRoot, 'TASK.md'), 'utf8');
+            assert.ok(result.filesAligned > 0, 'TASK.md should be merged in place');
+            assert.ok(result.filesDeployed > 0, 'overwrite install should still report deployment');
+            assert.ok(taskContent.includes('Canonical instructions entrypoint for orchestration: `CLAUDE.md`.'));
+            assert.match(taskContent, /\| T-838 \| 🟦 TODO \| P1\s+\| install\/task-md-queue-merge \| Preserve operator queue \| gpt-5\.4 \| 2026-06-24 \| strict\s+\| keep row \|/);
+            assert.ok(taskContent.includes('## Operator Notes'));
+            assert.ok(taskContent.includes('keep this local planning section'));
+            assert.ok(!taskContent.includes('| T-001 |'));
+            assert.ok(!taskContent.includes('Old generated header.'));
         } finally {
             fs.rmSync(projectRoot, { recursive: true, force: true });
         }

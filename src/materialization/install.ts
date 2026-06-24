@@ -349,16 +349,25 @@ export function runInstall(options: RunInstallOptions) {
             }
 
             if (pathExists(destPath)) {
+                if (relPath === 'TASK.md') {
+                    const templateContent = getTemplateContent(sourcePath, relPath);
+                    if (templateContent !== null) {
+                        const existingContent = readTextFile(destPath);
+                        const nextContent = buildTaskContentWithExistingQueue(templateContent, existingContent);
+                        if (preserveExisting) skippedExisting++;
+                        if (nextContent && nextContent !== existingContent) {
+                            backupFile(destPath, relPath);
+                            if (!dryRun) {
+                                writeTextFileStage(destPath, nextContent);
+                            }
+                            aligned++;
+                        }
+                        if (!preserveExisting) deployed++;
+                    }
+                    continue;
+                }
                 if (preserveExisting) {
                     skippedExisting++;
-                    if (relPath === 'TASK.md') {
-                        const templateContent = getTemplateContent(sourcePath, relPath);
-                        if (templateContent !== null) {
-                            if (syncTaskFileOnDisk(destPath, relPath, templateContent)) {
-                                aligned++;
-                            }
-                        }
-                    }
                     continue;
                 }
                 backupFile(destPath, relPath);

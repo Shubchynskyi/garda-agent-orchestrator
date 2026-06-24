@@ -5,6 +5,9 @@
 ### Local UI
 - Restored the guarded Compile-gate command editor in `garda ui --actions`, placed next to Full-suite command and routed through the audited `garda workflow set --compile-gate-command` confirmation path.
 
+### Install, Update, And Package Safety
+- Preserved existing `TASK.md` task rows and user-owned notes when install/update refreshes the managed template, including overwrite-style setup paths.
+
 ## 1.1.0
 
 ### Operator Highlights

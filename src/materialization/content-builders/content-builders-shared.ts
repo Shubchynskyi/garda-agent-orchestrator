@@ -194,6 +194,8 @@ function getEntrypointRuleLinks(): readonly (readonly [string, string])[] {
 
 export interface TaskQueueTableRange {
     lines: string[];
+    activeQueueIndex: number;
+    headerIndex: number;
     rowsStartIndex: number;
     rowsEndIndex: number;
 }
