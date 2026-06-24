@@ -2,14 +2,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { writeFileAtomically } from '../core/filesystem';
 import {
-    validateTimelineCompleteness,
     isTaskBoundFullSuiteValidationRequirement,
+    validateTimelineCompleteness,
     type TimelineCompletenessResult
 } from './lifecycle-events';
 import { inspectTaskEventFile } from './task-events';
 import { withFilesystemLock } from './task-events-locking';
+// Keep this direct helper import; the preflight barrel loads classification modules into status/report paths.
+// noinspection ES6PreferShortImport
 import { detectCodeChanged } from '../gates/preflight/preflight-code-change';
-import { loadFullSuiteValidationConfig } from '../gates/full-suite/full-suite-validation';
+import { loadFullSuiteValidationConfig } from '../gates/full-suite';
 import { parseTaskIdJsonlFileName, RESERVED_TASK_EVENT_TIMELINE_NAMES } from '../core/task-ids';
 
 // Root module retained for source-contract tests; timeline exports re-route grouped imports.
@@ -105,6 +107,9 @@ interface TimelineIssueInput {
     fileName: string;
     timelinePath: string;
     taskStatus?: string | null;
+    taskStatusScopeProvided?: boolean;
+    taskStatusKnown?: boolean;
+    statusSurface?: boolean;
     integrityStatus: string;
     completenessStatus: string;
     eventsMissing: string[];
@@ -234,13 +239,8 @@ export function isTimelineSummaryEntryCurrent(
         if (!stat.isFile()) return false;
         if (stat.size !== entry.file_size_bytes) return false;
         if (Math.floor(stat.mtimeMs) !== entry.file_mtime_ms) return false;
-        if (
-            !isTaskBoundFullSuiteValidationRequirement(entry.events_found, entry.completeness_status)
-            && (entry.full_suite_validation_required === true) !== fullSuiteValidationEnabled
-        ) {
-            return false;
-        }
-        return true;
+        return isTaskBoundFullSuiteValidationRequirement(entry.events_found, entry.completeness_status)
+            || (entry.full_suite_validation_required === true) === fullSuiteValidationEnabled;
     } catch {
         return false;
     }
@@ -360,7 +360,7 @@ export function reconcileTimelineSummaryForTask(
                 return false;
             }
         })();
-        let timelineExists = false;
+        let timelineExists: boolean;
         try {
             timelineExists = fs.existsSync(timelinePath) && fs.statSync(timelinePath).isFile();
         } catch {
@@ -603,6 +603,26 @@ function buildTimelineRepairGuidance(
     }
 }
 
+function normalizeTimelineTaskStatus(taskStatus?: string | null): string {
+    return String(taskStatus || '')
+        .trim()
+        .replace(/^[^A-Za-z0-9_]+/u, '')
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/gu, '_');
+}
+
+function shouldSuppressStatusTimelineIncomplete(input: TimelineIssueInput): boolean {
+    if (input.statusSurface !== true) {
+        return false;
+    }
+
+    const normalizedStatus = normalizeTimelineTaskStatus(input.taskStatus);
+    return normalizedStatus === 'DONE'
+        || normalizedStatus === 'DECOMPOSED'
+        || (input.taskStatusScopeProvided === true && input.taskStatusKnown !== true);
+}
+
 function buildTimelineWarningDetail(input: TimelineIssueInput): TimelineWarningDetail | null {
     let kind: TimelineIssueKind | null = null;
     let details: string[] = [];
@@ -627,6 +647,9 @@ function buildTimelineWarningDetail(input: TimelineIssueInput): TimelineWarningD
         kind = 'LEGACY';
         details = [`integrity status ${input.integrityStatus}`];
     } else if (input.completenessStatus !== 'COMPLETE') {
+        if (shouldSuppressStatusTimelineIncomplete(input)) {
+            return null;
+        }
         kind = 'INCOMPLETE';
         details = input.eventsMissing;
     }
@@ -694,6 +717,7 @@ export function collectTimelineSummaryForStatus(
     let healthy = 0;
     const warnings: string[] = [];
     const warningDetails: TimelineWarningDetail[] = [];
+    const taskStatusScopeProvided = options.taskStatuses !== undefined;
 
     for (const fileName of files) {
         const taskId = parseTaskIdJsonlFileName(fileName);
@@ -706,6 +730,7 @@ export function collectTimelineSummaryForStatus(
         }
         const cached = summary?.entries[taskId] ?? null;
         const taskStatus = options.taskStatuses?.get(taskId) ?? null;
+        const taskStatusKnown = options.taskStatuses?.has(taskId) ?? false;
 
         if (cached && isTimelineSummaryEntryCurrent(cached, timelinePath, fullSuiteValidationEnabled)) {
             const issue = buildTimelineWarningDetail({
@@ -713,6 +738,9 @@ export function collectTimelineSummaryForStatus(
                 fileName,
                 timelinePath,
                 taskStatus,
+                taskStatusScopeProvided,
+                taskStatusKnown,
+                statusSurface: true,
                 integrityStatus: cached.integrity_status,
                 completenessStatus: cached.completeness_status,
                 eventsMissing: cached.events_missing,
@@ -742,6 +770,9 @@ export function collectTimelineSummaryForStatus(
                     fileName,
                     timelinePath,
                     taskStatus,
+                    taskStatusScopeProvided,
+                    taskStatusKnown,
+                    statusSurface: true,
                     integrityStatus: inspectResult.status,
                     completenessStatus: completeness.status,
                     eventsMissing: completeness.events_missing,
@@ -759,6 +790,9 @@ export function collectTimelineSummaryForStatus(
                     fileName,
                     timelinePath,
                     taskStatus,
+                    taskStatusScopeProvided,
+                    taskStatusKnown,
+                    statusSurface: true,
                     integrityStatus: 'EMPTY',
                     completenessStatus: 'INCOMPLETE',
                     eventsMissing: [],
@@ -774,6 +808,9 @@ export function collectTimelineSummaryForStatus(
                 fileName,
                 timelinePath,
                 taskStatus,
+                taskStatusScopeProvided,
+                taskStatusKnown,
+                statusSurface: true,
                 integrityStatus: 'MISSING',
                 completenessStatus: 'INCOMPLETE',
                 eventsMissing: [],

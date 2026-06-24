@@ -1166,6 +1166,9 @@ test('getStatusSnapshot warns about incomplete task timelines', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-'));
     try {
         seedInitializedWorkspace(tmpDir, 'AGENT_INIT_PROMPT.md', {
+            taskMdContent: makeActiveQueueTaskMd([
+                '| T-001 | 🟨 IN_PROGRESS | P1 | runtime | Active incomplete timeline | codex | 2026-03-28 | balanced | partial lifecycle |'
+            ]),
             agentInitState: {
                 Version: 1,
                 AssistantLanguage: 'English',

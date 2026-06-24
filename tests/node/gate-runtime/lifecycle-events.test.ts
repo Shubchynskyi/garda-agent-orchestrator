@@ -17,7 +17,6 @@ import {
     emitMandatoryPreflightStartedEvent,
     emitMandatoryReviewPhaseStartedEvent,
     emitPlanCreatedEvent,
-    emitPlanCreatedEventAsync,
     emitPreflightStartedEvent,
     emitPreflightFailedEvent,
     emitImplementationStartedEvent,
@@ -33,6 +32,24 @@ function createTempDir(): string {
 
 function removeTempDir(dirPath: string): void {
     fs.rmSync(dirPath, { recursive: true, force: true });
+}
+
+function writeLifecycleTimeline(tempDir: string, taskId: string, eventTypes: string[]): string {
+    const eventsDir = path.join(tempDir, 'runtime', 'task-events');
+    fs.mkdirSync(eventsDir, { recursive: true });
+    const timelinePath = path.join(eventsDir, `${taskId}.jsonl`);
+    const lines = eventTypes.map((eventType, index) => JSON.stringify({
+        timestamp_utc: new Date().toISOString(),
+        task_id: taskId,
+        event_type: eventType,
+        outcome: 'PASS',
+        actor: 'gate',
+        message: 'test',
+        details: {},
+        integrity: { schema_version: 1, task_sequence: index + 1, prev_event_sha256: null }
+    }));
+    fs.writeFileSync(timelinePath, lines.join('\n') + '\n', 'utf8');
+    return timelinePath;
 }
 
 function resolveLifecycleEventsModulePath(): string {
@@ -223,7 +240,7 @@ describe('gate-runtime/lifecycle-events', () => {
                 'REVIEW_PHASE_STARTED',
                 'REVIEW_GATE_PASSED'
             ];
-            const lines = events.map((et, idx) => JSON.stringify({
+            const lines = events.map((et) => JSON.stringify({
                 timestamp_utc: new Date().toISOString(),
                 task_id: 'T-TEST',
                 event_type: et,
@@ -239,6 +256,36 @@ describe('gate-runtime/lifecycle-events', () => {
             assert.ok(result.events_missing.includes('COMPLETION_GATE_PASSED'));
         });
 
+        it('treats decomposed parent completion as terminal lifecycle completeness', () => {
+            const timelinePath = writeLifecycleTimeline(tempDir, 'T-TEST', [
+                'STATUS_CHANGED',
+                'DECOMPOSED_PARENT_COMPLETED'
+            ]);
+
+            const result = validateTimelineCompleteness(timelinePath, 'T-TEST', {
+                codeChanged: true,
+                fullSuiteValidationEnabled: true
+            });
+            assert.equal(result.status, 'COMPLETE');
+            assert.deepStrictEqual(result.events_found, ['DECOMPOSED_PARENT_COMPLETED']);
+            assert.deepStrictEqual(result.events_missing, []);
+            assert.equal(result.full_suite_validation_required, false);
+        });
+
+        it('treats strict split-routed parent timelines as terminal for status health', () => {
+            const timelinePath = writeLifecycleTimeline(tempDir, 'T-TEST', [
+                'TASK_MODE_ENTERED',
+                'STRICT_DECOMPOSITION_DECISION_RECORDED',
+                'STATUS_CHANGED',
+                'STRICT_DECOMPOSITION_SPLIT_ROUTED'
+            ]);
+
+            const result = validateTimelineCompleteness(timelinePath, 'T-TEST', true);
+            assert.equal(result.status, 'COMPLETE');
+            assert.deepStrictEqual(result.events_found, ['STRICT_DECOMPOSITION_SPLIT_ROUTED']);
+            assert.deepStrictEqual(result.events_missing, []);
+        });
+
         it('requires code-change lifecycle events for code-changing tasks', () => {
             const eventsDir = path.join(tempDir, 'runtime', 'task-events');
             fs.mkdirSync(eventsDir, { recursive: true });
@@ -252,7 +299,7 @@ describe('gate-runtime/lifecycle-events', () => {
                 'REVIEW_GATE_PASSED',
                 'COMPLETION_GATE_PASSED'
             ];
-            const lines = events.map((et, idx) => JSON.stringify({
+            const lines = events.map((et) => JSON.stringify({
                 timestamp_utc: new Date().toISOString(),
                 task_id: 'T-TEST',
                 event_type: et,
@@ -286,7 +333,7 @@ describe('gate-runtime/lifecycle-events', () => {
                 'REVIEW_GATE_PASSED_WITH_OVERRIDE',
                 'COMPLETION_GATE_PASSED'
             ];
-            const lines = events.map((et, idx) => JSON.stringify({
+            const lines = events.map((et) => JSON.stringify({
                 timestamp_utc: new Date().toISOString(),
                 task_id: 'T-TEST',
                 event_type: et,

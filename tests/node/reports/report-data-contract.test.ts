@@ -34,6 +34,18 @@ function writeTaskMd(repoRoot: string, extraContent = ''): void {
     ].join('\n'));
 }
 
+function writeTaskMdWithActiveRows(repoRoot: string, rows: readonly string[]): void {
+    fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+        '# TASK.md',
+        '',
+        '## Active Queue',
+        '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+        '|---|---|---|---|---|---|---|---|---|',
+        ...rows,
+        ''
+    ].join('\n'));
+}
+
 function writeWorkflowConfig(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -809,7 +821,10 @@ test('buildReportDataContract classifies stale locks and incomplete timelines in
 
 test('buildReportDataContract bounds timeline warning details while preserving totals', () => {
     const repoRoot = makeTempRepo();
-    writeTaskMd(repoRoot);
+    writeTaskMdWithActiveRows(repoRoot, Array.from({ length: 12 }, (_, index) => {
+        const taskId = `T-${200 + index}`;
+        return `| ${taskId} | 🟨 IN_PROGRESS | P2 | ui/report | Timeline warning ${index} | gpt-5.4 | 2026-05-16 | balanced | Active incomplete timeline |`;
+    }));
     writeWorkflowConfig(repoRoot);
     writeInitAndProjectMemory(repoRoot);
     for (let index = 0; index < 12; index += 1) {

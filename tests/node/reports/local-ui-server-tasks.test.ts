@@ -1720,9 +1720,23 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-reopen"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-discard"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-enable-audited"/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /data-task-reset-setting-link="workflow-safety"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /TASK_RESET_DISABLED/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-stats"/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Show plan/u);
+        const taskResetSetting = report.workflow_config_tab.settings.find((setting) => setting.key === 'task_reset.enabled');
+        assert.ok(taskResetSetting?.readiness);
+        Object.assign(taskResetSetting.readiness, {
+            ready: true,
+            configured_enabled: true,
+            audited_enablement: true,
+            disabled_reason: null
+        });
+        await taskButton.dispatch('click');
+        await flushPromises();
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /data-task-action-id="task-reset-enable-audited"/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /data-task-reset-setting-link="workflow-safety"/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /already ready|уже готов/u);
         const taskActionButton = fakeDocument.elements.detail.querySelectorAll('button[data-task-action-id]')
             .find((button) => button.dataset.taskActionId === 'task-stats' && button.dataset.taskActionMode === 'execute');
         assert.ok(taskActionButton);

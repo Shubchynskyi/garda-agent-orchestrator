@@ -174,7 +174,7 @@ function renderSettingRow(setting, disabled, controlScope) {
     ? '<div class="setting-note">' + safe(t('reviewCycleAutoSplitDependency')) + '</div>'
     : '';
   const readinessNote = settingReadinessNote(setting);
-  return '<tr>'
+  return '<tr id="setting-row-' + safe(setting.id) + '" data-setting-row-id="' + safe(setting.id) + '">'
     + '<td><div class="setting-title"><strong>' + safe(label) + '</strong><code>(' + safe(setting.key) + ')</code><span class="setting-parameter"><code>' + safe(setting.flag) + '</code></span></div></td>'
     + '<td class="description-cell">' + inlineText(description) + dependencyNote + readinessNote + '</td>'
     + '<td><code class="current-value">' + safe(settingCurrentDisplay(setting)) + '</code></td>'

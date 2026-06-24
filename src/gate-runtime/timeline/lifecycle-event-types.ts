@@ -36,7 +36,10 @@ export const LIFECYCLE_EVENT_TYPES = Object.freeze({
     PROVIDER_ROUTING_DECISION: 'PROVIDER_ROUTING_DECISION',
     HANDSHAKE_DIAGNOSTICS_RECORDED: 'HANDSHAKE_DIAGNOSTICS_RECORDED',
     SHELL_SMOKE_PREFLIGHT_RECORDED: 'SHELL_SMOKE_PREFLIGHT_RECORDED',
-    COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED: 'COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED'
+    COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED: 'COMMAND_TIMEOUT_DIAGNOSTICS_RECORDED',
+    STRICT_DECOMPOSITION_DECISION_RECORDED: 'STRICT_DECOMPOSITION_DECISION_RECORDED',
+    STRICT_DECOMPOSITION_SPLIT_ROUTED: 'STRICT_DECOMPOSITION_SPLIT_ROUTED',
+    DECOMPOSED_PARENT_COMPLETED: 'DECOMPOSED_PARENT_COMPLETED'
 });
 
 export const MANDATORY_CODE_CHANGE_EVENTS: readonly string[] = Object.freeze([
@@ -72,10 +75,12 @@ export const FULL_SUITE_VALIDATION_EVENTS: readonly string[] = Object.freeze([
     'FULL_SUITE_VALIDATION_SKIPPED'
 ] as const);
 
+export const TERMINAL_PARENT_LIFECYCLE_EVENTS: readonly string[] = Object.freeze([
+    'STRICT_DECOMPOSITION_SPLIT_ROUTED',
+    'DECOMPOSED_PARENT_COMPLETED'
+] as const);
+
 function normalizeEventSet(events: Iterable<string>): Set<string> {
-    if (events instanceof Set) {
-        return events;
-    }
     const normalized = new Set<string>();
     for (const eventType of events) {
         const token = String(eventType || '').trim().toUpperCase();
@@ -101,6 +106,11 @@ export function hasSatisfiedLifecycleEvent(events: Iterable<string>, expectedEve
     return eventTypes.has(normalizedExpectedEvent);
 }
 
+export function getSatisfiedTerminalParentLifecycleEvents(events: Iterable<string>): string[] {
+    const eventTypes = normalizeEventSet(events);
+    return TERMINAL_PARENT_LIFECYCLE_EVENTS.filter((eventType) => eventTypes.has(eventType));
+}
+
 export interface FullSuiteValidationRequirementResolution {
     required: boolean;
     task_bound: boolean;
@@ -114,16 +124,6 @@ export function resolveFullSuiteValidationRequirementForTaskEvents(
     if (eventTypes.has('FULL_SUITE_VALIDATION_SKIPPED')) {
         return {
             required: false,
-            task_bound: true
-        };
-    }
-    if (
-        eventTypes.has('FULL_SUITE_VALIDATION_PASSED')
-        || eventTypes.has('FULL_SUITE_VALIDATION_WARNED')
-        || eventTypes.has('FULL_SUITE_VALIDATION_FAILED')
-    ) {
-        return {
-            required: true,
             task_bound: true
         };
     }
@@ -266,6 +266,16 @@ export function validateTimelineCompleteness(
         options.fullSuiteValidationEnabled === true
     );
     result.full_suite_validation_required = fullSuiteValidationRequirement.required;
+
+    const terminalParentEvents = getSatisfiedTerminalParentLifecycleEvents(eventTypes);
+    if (terminalParentEvents.length > 0) {
+        result.events_found = terminalParentEvents;
+        result.events_missing = [];
+        result.violations = [];
+        result.status = 'COMPLETE';
+        result.full_suite_validation_required = false;
+        return result;
+    }
 
     const mandatory = getMandatoryEvents({
         codeChanged: options.codeChanged,

@@ -34,6 +34,12 @@ function taskResetUnavailableText() {
   }
   return t('taskResetUnavailable') + ' ' + (readiness.disabled_reason || '');
 }
+function taskResetEnableShortcut(action) {
+  if (!action.disabled || action.id !== 'task-reset-reopen') {
+    return '';
+  }
+  return '<div class="task-command-buttons task-reset-remediation-buttons"><button type="button" data-task-reset-setting-link="workflow-safety">' + safe(t('taskCommandEnableReset')) + '</button></div>';
+}
 function taskCommandList(taskId) {
   const resetReadiness = taskResetReadiness();
   const resetReady = isTaskResetEnabled();
@@ -44,13 +50,15 @@ function taskCommandList(taskId) {
     { id: 'task-next-step', label: t('taskCommandNextStep'), description: t('taskCommandNextStepDescription'), command: 'garda next-step "' + taskId + '" --repo-root "."', mutates: true, disabled: false, unavailable: '' },
     { id: 'task-reset-reopen', label: t('taskCommandReset'), description: t('taskCommandResetDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --reopen --confirm --repo-root "."', mutates: true, disabled: !resetReady, unavailable: taskResetUnavailableText() },
     { id: 'task-reset-discard', label: t('taskCommandDiscard'), description: t('taskCommandDiscardDescription'), command: 'garda gate task-reset --task-id "' + taskId + '" --discard --confirm --repo-root "."', mutates: true, disabled: !resetReady, unavailable: taskResetUnavailableText() },
-    { id: 'task-reset-enable-audited', label: t('taskCommandEnableReset'), description: resetReadiness && resetReadiness.configured_enabled === true ? t('taskCommandEnableResetAuditDescription') : t('taskCommandEnableResetDescription'), command: resetRemediationCommand, mutates: true, disabled: resetReady, unavailable: t('taskResetAlreadyReady') },
     { id: 'task-stats', label: t('taskCommandStats'), description: t('taskCommandStatsDescription'), command: 'garda task "' + taskId + '" stats --target-root "."', mutates: false, disabled: false, unavailable: '' },
     { id: 'task-events', label: t('taskCommandEvents'), description: t('taskCommandEventsDescription'), command: 'garda task "' + taskId + '" events --target-root "."', mutates: false, disabled: false, unavailable: '' }
   ];
+  if (!resetReady) {
+    commands.splice(3, 0, { id: 'task-reset-enable-audited', label: t('taskCommandEnableReset'), description: resetReadiness && resetReadiness.configured_enabled === true ? t('taskCommandEnableResetAuditDescription') : t('taskCommandEnableResetDescription'), command: resetRemediationCommand, mutates: true, disabled: false, unavailable: '' });
+  }
   return '<div class="task-command-list">' + commands.map(action => '<section class="task-command-card"><strong>' + safe(action.label) + '</strong><p>' + safe(action.description) + '</p><code>' + safe(action.command) + '</code>'
     + (actionsEnabled
-      ? '<div class="task-command-buttons"><button type="button" data-task-action-id="' + safe(action.id) + '" data-task-action-mode="execute"' + (action.disabled ? ' disabled' : '') + '>' + safe(action.disabled ? t('actionUnavailable') : t('run')) + '</button>' + (action.mutates ? '<span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span>' : '<span class="action-kind">' + safe(t('safeAction')) + '</span>') + '</div>' + (action.disabled ? '<p class="task-action-unavailable">' + safe(action.unavailable) + '</p>' : '')
+      ? '<div class="task-command-buttons"><button type="button" data-task-action-id="' + safe(action.id) + '" data-task-action-mode="execute"' + (action.disabled ? ' disabled' : '') + '>' + safe(action.disabled ? t('actionUnavailable') : t('run')) + '</button>' + (action.mutates ? '<span class="action-kind mutates">' + safe(t('mutatingAction')) + '</span>' : '<span class="action-kind">' + safe(t('safeAction')) + '</span>') + '</div>' + (action.disabled ? '<p class="task-action-unavailable">' + safe(action.unavailable) + '</p>' + taskResetEnableShortcut(action) : '')
       : '<p class="empty">' + inlineText(t('taskCommandUnavailable')) + '</p>')
     + '</section>').join('') + '</div>';
 }
@@ -84,6 +92,27 @@ function wireTaskActionButtons(taskId) {
         return;
       }
       await runTaskAction(taskId, actionId, mode, confirmation);
+    });
+  }
+  for (const button of detailNode.querySelectorAll('button[data-task-reset-setting-link]')) {
+    button.addEventListener('click', () => {
+      const tabButton = Array.from(document.querySelectorAll('nav button[data-tab]'))
+        .find(candidate => candidate.dataset.tab === 'workflow-tab' && candidate.dataset.settingGroup === 'safety');
+      if (tabButton) {
+        tabButton.click();
+      }
+      const row = document.getElementById('setting-row-task-reset-enabled');
+      if (row) {
+        if (typeof row.setAttribute === 'function' && (!row.getAttribute || row.getAttribute('tabindex') === null)) {
+          row.setAttribute('tabindex', '-1');
+        }
+        if (typeof row.scrollIntoView === 'function') {
+          row.scrollIntoView({ block: 'center' });
+        }
+        if (typeof row.focus === 'function') {
+          row.focus({ preventScroll: true });
+        }
+      }
     });
   }
 }

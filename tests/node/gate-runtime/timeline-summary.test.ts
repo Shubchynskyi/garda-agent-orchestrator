@@ -20,10 +20,7 @@ import {
     type TimelineSummaryIndex,
     type TimelineSummaryEntry
 } from '../../../src/gate-runtime/timeline-summary';
-import {
-    acquireFilesystemLock,
-    releaseFilesystemLock
-} from '../../../src/gate-runtime/task-events-locking';
+import { acquireFilesystemLock, releaseFilesystemLock } from '../../../src/gate-runtime/task-events-locking';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 
 function createTempDir(): string {
@@ -55,19 +52,6 @@ function waitForChildExit(child: childProcess.ChildProcess): Promise<{ code: num
 const SUMMARY_VERSION = 2;
 
 const ALL_MANDATORY_NON_CODE = [
-    'TASK_MODE_ENTERED',
-    'RULE_PACK_LOADED',
-    'HANDSHAKE_DIAGNOSTICS_RECORDED',
-    'SHELL_SMOKE_PREFLIGHT_RECORDED',
-    'PREFLIGHT_CLASSIFIED',
-    'IMPLEMENTATION_STARTED',
-    'COMPILE_GATE_PASSED',
-    'REVIEW_PHASE_STARTED',
-    'REVIEW_GATE_PASSED',
-    'COMPLETION_GATE_PASSED'
-];
-
-const ALL_MANDATORY_CODE_CHANGE = [
     'TASK_MODE_ENTERED',
     'RULE_PACK_LOADED',
     'HANDSHAKE_DIAGNOSTICS_RECORDED',
@@ -173,9 +157,10 @@ function writeWorkflowConfig(dirPath: string, enabled: boolean): void {
 
 describe('gate-runtime/timeline-summary', () => {
 
-    it('uses the lightweight preflight code-change helper instead of importing completion.ts', () => {
+    it('uses the direct lightweight preflight code-change helper instead of broader gate barrels', () => {
         const source = fs.readFileSync(path.resolve(process.cwd(), 'src/gate-runtime/timeline-summary.ts'), 'utf8');
         assert.match(source, /from\s+['"]\.\.\/gates\/preflight\/preflight-code-change['"]/);
+        assert.doesNotMatch(source, /from\s+['"]\.\.\/gates\/preflight['"]/);
         assert.doesNotMatch(source, /from\s+['"]\.\.\/gates\/completion['"]/);
     });
 
@@ -648,6 +633,87 @@ describe('gate-runtime/timeline-summary', () => {
             assert.equal(result.taskCount, 1);
             assert.equal(result.healthy, 0);
             assert.ok(result.warnings.some(w => w.includes('INCOMPLETE timeline')));
+        });
+
+        it('keeps active incomplete task timelines actionable when task status scope is provided', () => {
+            const bundlePath = tempDir;
+            writeTimeline(tempDir, 'T-001', ['TASK_MODE_ENTERED']);
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+
+            updateTimelineSummaryForTask(eventsRoot, 'T-001', false);
+
+            const result = collectTimelineSummaryForStatus(bundlePath, {
+                taskStatuses: new Map([['T-001', 'IN_PROGRESS']])
+            });
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 0);
+            assert.equal(result.warnings.length, 1);
+            assert.ok(result.warnings[0].includes('INCOMPLETE timeline: T-001.jsonl'));
+        });
+
+        it('suppresses terminal DONE incomplete history on the status surface', () => {
+            const bundlePath = tempDir;
+            writeTimeline(tempDir, 'T-001', ['TASK_MODE_ENTERED']);
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+
+            updateTimelineSummaryForTask(eventsRoot, 'T-001', false);
+
+            const result = collectTimelineSummaryForStatus(bundlePath, {
+                taskStatuses: new Map([['T-001', 'DONE']])
+            });
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 1);
+            assert.equal(result.warnings.length, 0);
+        });
+
+        it('suppresses inactive archived incomplete history on the status surface', () => {
+            const bundlePath = tempDir;
+            writeTimeline(tempDir, 'T-ARCHIVED', ['TASK_MODE_ENTERED']);
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+
+            updateTimelineSummaryForTask(eventsRoot, 'T-ARCHIVED', false);
+
+            const result = collectTimelineSummaryForStatus(bundlePath, {
+                taskStatuses: new Map([['T-ACTIVE', 'IN_PROGRESS']])
+            });
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 1);
+            assert.equal(result.warnings.length, 0);
+        });
+
+        it('counts decomposed parent completion timelines as healthy', () => {
+            const bundlePath = tempDir;
+            writeTimeline(tempDir, 'T-PARENT', [
+                'STATUS_CHANGED',
+                'DECOMPOSED_PARENT_COMPLETED'
+            ]);
+            const eventsRoot = path.join(tempDir, 'runtime', 'task-events');
+
+            updateTimelineSummaryForTask(eventsRoot, 'T-PARENT', true);
+
+            const result = collectTimelineSummaryForStatus(bundlePath, {
+                taskStatuses: new Map([['T-PARENT', 'DONE']])
+            });
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 1);
+            assert.equal(result.warnings.length, 0);
+        });
+
+        it('counts strict split-routed parent timelines as healthy', () => {
+            const bundlePath = tempDir;
+            writeTimeline(tempDir, 'T-SPLIT', [
+                'TASK_MODE_ENTERED',
+                'STRICT_DECOMPOSITION_DECISION_RECORDED',
+                'STATUS_CHANGED',
+                'STRICT_DECOMPOSITION_SPLIT_ROUTED'
+            ]);
+
+            const result = collectTimelineSummaryForStatus(bundlePath, {
+                taskStatuses: new Map([['T-SPLIT', 'DECOMPOSED']])
+            });
+            assert.equal(result.taskCount, 1);
+            assert.equal(result.healthy, 1);
+            assert.equal(result.warnings.length, 0);
         });
 
         it('falls back to full read when summary cache is missing', () => {
