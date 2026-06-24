@@ -1,12 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as http from 'node:http';
 import * as path from 'node:path';
-import * as net from 'node:net';
 import * as vm from 'node:vm';
 import {
-    DEFAULT_UI_HOST,
     startLocalUiServer
 } from '../../../src/reports/ui';
 import {
@@ -248,12 +244,6 @@ function extractDashboardScript(html: string): string {
     return match[1];
 }
 
-function extractActionToken(html: string): string {
-    const match = html.match(/const actionToken = "([^"]+)";/u);
-    assert.ok(match, 'expected inline action token');
-    return match[1];
-}
-
 async function flushPromises(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
@@ -262,57 +252,6 @@ async function flushPromises(): Promise<void> {
 
 const makeTempRepo = makeLocalUiTempRepo;
 const writeRepo = writeLocalUiRepoFixture;
-
-function reservePort(): Promise<net.Server> {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        server.once('error', reject);
-        server.listen(0, DEFAULT_UI_HOST, () => resolve(server));
-    });
-}
-
-function reserveSpecificPort(port: number): Promise<net.Server | null> {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        const onError = (error: Error & { code?: string }) => {
-            server.removeListener('listening', onListening);
-            if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
-                resolve(null);
-                return;
-            }
-            reject(error);
-        };
-        const onListening = () => {
-            server.removeListener('error', onError);
-            resolve(server);
-        };
-        server.once('error', onError);
-        server.once('listening', onListening);
-        server.listen(port, DEFAULT_UI_HOST);
-    });
-}
-
-async function reserveConsecutivePortPair(): Promise<{ reserved: net.Server; busyPort: number; nextPort: number }> {
-    for (let port = 41000; port < 41100; port += 1) {
-        const reserved = await reserveSpecificPort(port);
-        if (!reserved) {
-            continue;
-        }
-        const next = await reserveSpecificPort(port + 1);
-        if (next) {
-            await closeNetServer(next);
-            return { reserved, busyPort: port, nextPort: port + 1 };
-        }
-        await closeNetServer(reserved);
-    }
-    throw new Error('Unable to reserve consecutive local UI test ports.');
-}
-
-function closeNetServer(server: net.Server): Promise<void> {
-    return new Promise((resolve, reject) => {
-        server.close((error) => error ? reject(error) : resolve());
-    });
-}
 
 test('local UI server applies initial language option to rendered dashboard', async () => {
     const repoRoot = makeTempRepo();
@@ -700,6 +639,10 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         assert.equal(cleanupRunSelection.eligible_older_than_days, '11');
         assert.equal(cleanupRunSelection.keep_latest_tasks, '2');
         assert.equal(cleanupRunSelection.include_problematic_tasks, true);
+        const normalizePromptConfirmation = context.normalizePromptConfirmation as ((value: unknown) => unknown) | undefined;
+        assert.equal(typeof normalizePromptConfirmation, 'function');
+        assert.ok(normalizePromptConfirmation);
+        assert.equal(normalizePromptConfirmation(' RUN GARDA CLEANUP '), 'RUN GARDA CLEANUP');
 
         const renderCleanupProgress = context.renderCleanupProgress as ((actionId: string) => void) | undefined;
         assert.equal(typeof renderCleanupProgress, 'function');
@@ -765,6 +708,14 @@ test('local UI cleanup settings rerender when the dashboard language changes', a
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Exit code 1/u);
         assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /cleanup failed/u);
         assert.doesNotMatch(fakeDocument.elements['cleanup-status'].innerHTML, /<code>Applied/u);
+
+        renderCleanupResult({
+            status: 'confirmation_required',
+            action_id: 'cleanup-apply-custom',
+            confirmation_phrase: 'RUN GARDA CLEANUP'
+        });
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Run cleanup/u);
+        assert.match(fakeDocument.elements['cleanup-status'].innerHTML, /Confirmation required: RUN GARDA CLEANUP/u);
 
         fakeDocument.elements['cleanup-status'].focused = false;
         fakeDocument.elements['cleanup-status'].scrolled = false;

@@ -237,6 +237,7 @@ function hasIncompleteManagedMarkers(content: string): boolean {
 }
 
 function readActiveEntrypoints(targetRoot: string, bundleRoot: string): string[] {
+    void targetRoot;
     const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
     if (!pathExists(initAnswersPath)) {
         throw new Error(`Init answers file not found: ${initAnswersPath}`);

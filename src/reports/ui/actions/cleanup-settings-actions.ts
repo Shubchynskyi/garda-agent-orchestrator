@@ -34,6 +34,10 @@ const CLEANUP_SETTINGS_CONFIRMATION = 'SAVE CLEANUP SETTINGS';
 const CLEANUP_APPLY_CONFIRMATION = 'RUN GARDA CLEANUP';
 const TASK_PURGE_CONFIRMATION = 'PURGE TASK RUNTIME';
 
+function matchesConfirmation(value: unknown, expected: string): boolean {
+    return typeof value === 'string' && value.trim() === expected;
+}
+
 interface CleanupSettingsRequest {
     mode?: unknown;
     settings?: unknown;
@@ -292,7 +296,7 @@ export async function handleUiCleanupSettingsRequest(
         return;
     }
 
-    if (payload.confirmation !== CLEANUP_SETTINGS_CONFIRMATION) {
+    if (!matchesConfirmation(payload.confirmation, CLEANUP_SETTINGS_CONFIRMATION)) {
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: new Date().toISOString(),
             action_id: 'cleanup-settings',
@@ -383,7 +387,7 @@ export async function handleUiCleanupRunRequest(
         return;
     }
 
-    if (payload.confirmation !== CLEANUP_APPLY_CONFIRMATION) {
+    if (!matchesConfirmation(payload.confirmation, CLEANUP_APPLY_CONFIRMATION)) {
         const auditPath = appendUiActionAudit(repoRoot, {
             timestamp_utc: new Date().toISOString(),
             action_id: 'cleanup-apply-custom',

@@ -84,7 +84,7 @@ function assertPackTextKeys(languageId: string, packKeys: string[], englishKeys:
     }
 }
 
-function normalizePack(filePath: string, pack: UiLanguagePackFile): ImportedUiLanguagePack {
+function normalizePack(pack: UiLanguagePackFile): ImportedUiLanguagePack {
     const languageId = pack.language.id;
 
     return Object.freeze({
@@ -125,7 +125,7 @@ export function loadImportedUiLanguagePacks(englishTextKeys: readonly string[]):
         }
 
         assertPackTextKeys(languageId, Object.keys(pack.LOCAL_UI_TEXT).sort(), [...englishTextKeys].sort(), filePath);
-        packs.push(normalizePack(filePath, pack));
+        packs.push(normalizePack(pack));
     }
 
     return Object.freeze(packs);

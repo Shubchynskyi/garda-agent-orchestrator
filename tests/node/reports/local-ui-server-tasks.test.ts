@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
-import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as net from 'node:net';
@@ -274,12 +273,6 @@ function extractDashboardScript(html: string): string {
     return match[1];
 }
 
-function extractActionToken(html: string): string {
-    const match = html.match(/const actionToken = "([^"]+)";/u);
-    assert.ok(match, 'expected inline action token');
-    return match[1];
-}
-
 async function flushPromises(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
@@ -307,43 +300,6 @@ function serverPort(server: net.Server): number {
     const address = server.address();
     assert.ok(address && typeof address === 'object');
     return address.port;
-}
-
-function reserveSpecificPort(port: number): Promise<net.Server | null> {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        const onError = (error: Error & { code?: string }) => {
-            server.removeListener('listening', onListening);
-            if (error.code === 'EADDRINUSE' || error.code === 'EACCES') {
-                resolve(null);
-                return;
-            }
-            reject(error);
-        };
-        const onListening = () => {
-            server.removeListener('error', onError);
-            resolve(server);
-        };
-        server.once('error', onError);
-        server.once('listening', onListening);
-        server.listen(port, DEFAULT_UI_HOST);
-    });
-}
-
-async function reserveConsecutivePortPair(): Promise<{ reserved: net.Server; busyPort: number; nextPort: number }> {
-    for (let port = 41000; port < 41100; port += 1) {
-        const reserved = await reserveSpecificPort(port);
-        if (!reserved) {
-            continue;
-        }
-        const next = await reserveSpecificPort(port + 1);
-        if (next) {
-            await closeNetServer(next);
-            return { reserved, busyPort: port, nextPort: port + 1 };
-        }
-        await closeNetServer(reserved);
-    }
-    throw new Error('Unable to reserve consecutive local UI test ports.');
 }
 
 function closeNetServer(server: net.Server): Promise<void> {

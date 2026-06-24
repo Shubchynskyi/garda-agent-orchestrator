@@ -35,6 +35,7 @@ export function buildProviderOrchestratorAgentContent(
     canonicalFile: string,
     bridgePath: string
 ): string {
+    void providerLabel;
     const providerEntry = getRequiredProviderEntryByBridgePath(bridgePath);
     const runtimeProviderLabel = providerEntry.displayLabel;
     const runtimeIdentityInstruction = `pin runtime identity with ` +

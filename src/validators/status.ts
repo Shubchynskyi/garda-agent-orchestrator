@@ -169,6 +169,7 @@ export function readInitAnswersSafe(
     targetRoot: string,
     initAnswersResolvedPath: string
 ): { answers: InitAnswers | null; error: string | null } {
+    void targetRoot;
     if (!pathExists(initAnswersResolvedPath)) {
         return { answers: null, error: null };
     }
