@@ -6,13 +6,6 @@ import * as childProcess from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
-import { COMMAND_SUMMARY } from '../../../../src/cli/commands/cli-helpers';
-import {
-    PROJECT_MEMORY_MAP_READ_GUIDANCE,
-    PROJECT_MEMORY_MAP_WRITE_CONTRACT,
-    PROJECT_MEMORY_REQUIRED_FILE_NAMES
-} from '../../../../src/core/project-memory';
-import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { computeOptionalSkillTaskTextSha256 } from '../../../../src/runtime/optional-skill-selection';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
 import {
@@ -109,70 +102,7 @@ function seedNodeBackendOptionalSkillFixture(
     }
 }
 
-function seedProjectMemoryFixture(repoRoot: string): void {
-    const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
-    const memoryRoot = path.join(bundleRoot, 'live', 'docs', 'project-memory');
-    const rulesRoot = path.join(bundleRoot, 'live', 'docs', 'agent-rules');
-    fs.mkdirSync(memoryRoot, { recursive: true });
-    fs.mkdirSync(rulesRoot, { recursive: true });
-    for (const fileName of PROJECT_MEMORY_REQUIRED_FILE_NAMES) {
-        fs.writeFileSync(
-            path.join(memoryRoot, fileName),
-            [
-                `# ${fileName}`,
-                '',
-                `Durable fixture content for ${fileName}.`
-            ].join('\n'),
-            'utf8'
-        );
-    }
-    fs.writeFileSync(
-        path.join(rulesRoot, '15-project-memory.md'),
-        '# Project Memory Summary\n\nGenerated fixture summary.\n',
-        'utf8'
-    );
-}
 
-function seedProjectMemoryAgentInitState(
-    repoRoot: string,
-    overrides: Record<string, unknown> = {}
-): void {
-    const statePath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'agent-init-state.json');
-    fs.mkdirSync(path.dirname(statePath), { recursive: true });
-    fs.writeFileSync(
-        statePath,
-        JSON.stringify({
-            Version: 1,
-            UpdatedAt: '2026-01-01T00:00:00.000Z',
-            OrchestratorVersion: null,
-            AssistantLanguage: 'English',
-            SourceOfTruth: 'Codex',
-            AssistantLanguageConfirmed: true,
-            ActiveAgentFilesConfirmed: true,
-            ProjectRulesUpdated: true,
-            SkillsPromptCompleted: true,
-            OrdinaryDocPathsConfirmed: true,
-            OrdinaryDocPaths: ['CHANGELOG.md'],
-            VerificationPassed: true,
-            ManifestValidationPassed: true,
-            ActiveAgentFiles: ['AGENTS.md'],
-            LastSeededFullSuiteCommand: 'npm test',
-            ProjectMemoryInitialized: true,
-            ProjectMemoryValidated: true,
-            ProjectMemoryMode: 'strict',
-            ProjectMemoryDir: 'live/docs/project-memory',
-            ProjectMemoryReadFirst: [
-                'live/docs/project-memory/README.md',
-                'live/docs/project-memory/compact.md'
-            ],
-            ProjectMemorySummaryRule: 'live/docs/agent-rules/15-project-memory.md',
-            ProjectMemoryBootstrapReport: 'runtime/project-memory/bootstrap-report.json',
-            ProjectMemoryWarnings: [],
-            ...overrides
-        }, null, 2),
-        'utf8'
-    );
-}
 
 function sha256File(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
@@ -772,7 +702,7 @@ test('preprompt task --json recomputes advisory optional-skill preview instead o
             'utf8'
         );
         seedInitAnswers(repoRoot, 'Codex');
-        writePreflight(repoRoot, taskId, {
+        const preflightPath = writePreflight(repoRoot, taskId, {
             required_reviews: {
                 code: true,
                 db: false,
@@ -792,6 +722,7 @@ test('preprompt task --json recomputes advisory optional-skill preview instead o
             policyMode: 'advisory',
             includePersistedHeadlines: true
         });
+        fs.mkdirSync(path.join(bundleRoot, 'runtime', 'reviews'), { recursive: true });
         fs.writeFileSync(
             path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-optional-skill-selection.json`),
             JSON.stringify({
@@ -819,7 +750,7 @@ test('preprompt task --json recomputes advisory optional-skill preview instead o
                 task_text_present: true,
                 task_text_sha256: computeOptionalSkillTaskTextSha256('Implement request validation for a Node.js API endpoint'),
                 changed_paths: ['src/api/orders.ts'],
-                preflight_path: 'garda-agent-orchestrator/runtime/reviews/T-149-preflight.json',
+                preflight_path: path.relative(repoRoot, preflightPath).replace(/\\/g, '/'),
                 preflight_sha256: 'stale-preflight-hash',
                 headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
                 headlines_sha256: 'stale-headlines-hash',
@@ -1098,6 +1029,7 @@ test('preprompt task --json reports a blocker when an existing optional-skill ar
             policyMode: 'required',
             includePersistedHeadlines: true
         });
+        fs.mkdirSync(path.join(bundleRoot, 'runtime', 'reviews'), { recursive: true });
         fs.writeFileSync(
             path.join(bundleRoot, 'runtime', 'reviews', `${taskId}-optional-skill-selection.json`),
             JSON.stringify({
@@ -1125,7 +1057,7 @@ test('preprompt task --json reports a blocker when an existing optional-skill ar
                 task_text_present: true,
                 task_text_sha256: computeOptionalSkillTaskTextSha256('Implement request validation for a Node.js API endpoint'),
                 changed_paths: ['src/api/orders.ts'],
-                preflight_path: 'garda-agent-orchestrator/runtime/reviews/T-149-preflight.json',
+                preflight_path: path.relative(repoRoot, preflightPath).replace(/\\/g, '/'),
                 preflight_sha256: 'stale-preflight-hash',
                 headlines_path: 'garda-agent-orchestrator/live/config/skills-headlines.json',
                 headlines_sha256: 'stale-headlines-hash',

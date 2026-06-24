@@ -3,12 +3,9 @@ import {
     it,
     assert,
     fs,
-    os,
     path,
-    createHash,
     runCompileGateCommand,
     runDocImpactGateCommand,
-    runLogTaskEventCommand,
     runRequiredReviewsCheckCommand,
     runCliMainWithHandling,
     runCompletionGate,
@@ -43,11 +40,7 @@ import {
     reviewContextScopedDiffFixture,
     recordReviewRoutingViaCli,
     attestReviewerInvocationForTest,
-    seedPromptBoundReviewFixture,
-    seedRoutedReviewerLaunchFixture,
-    prepareReviewerLaunchForTest,
-    completeReviewerLaunchArtifactForTest
-} from './gates-command-review-result-fixtures';
+    seedPromptBoundReviewFixture} from './gates-command-review-result-fixtures';
 
 describe('gates command review receipt - routing', () => {
 

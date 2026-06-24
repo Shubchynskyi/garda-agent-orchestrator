@@ -2,11 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-    formatStatusSnapshotCompact,
     formatStatusSnapshotJson
 } from '../../../../src/validators/status';
 import {
-    formatDoctorResultCompact,
     formatDoctorResultJson
 } from '../../../../src/validators/doctor';
 

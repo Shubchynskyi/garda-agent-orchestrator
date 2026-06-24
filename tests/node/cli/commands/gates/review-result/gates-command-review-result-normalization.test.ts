@@ -632,7 +632,6 @@ describe('gates command review result - normalization', () => {
         fs.mkdirSync(reviewsRoot, { recursive: true });
         const artifactPath = path.join(reviewsRoot, `${taskId}-code.md`);
         const receiptPath = artifactPath.replace(/\.md$/, '-receipt.json');
-        const rawReviewOutputPath = path.join(reviewsRoot, `${taskId}-code-review-output.md`);
         const reviewContextPath = path.join(reviewsRoot, `${taskId}-code-review-context.json`);
         fs.writeFileSync(reviewContextPath, JSON.stringify({
             ...manualReviewContextBindingFixture(repoRoot, taskId, 'code'),

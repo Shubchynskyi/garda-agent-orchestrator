@@ -2,111 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as childProcess from 'node:child_process';
 
-import { EXIT_GATE_FAILURE } from '../../../../src/cli/exit-codes';
-import { COMMAND_SUMMARY } from '../../../../src/cli/commands/cli-helpers';
 import {
     PROJECT_MEMORY_MAP_READ_GUIDANCE,
     PROJECT_MEMORY_MAP_WRITE_CONTRACT,
     PROJECT_MEMORY_REQUIRED_FILE_NAMES
 } from '../../../../src/core/project-memory';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
-import { computeOptionalSkillTaskTextSha256 } from '../../../../src/runtime/optional-skill-selection';
 import { runCliWithCapturedOutput } from './gate-test-helpers';
 import {
     createTempRepo,
-    runEnterTaskMode,
     seedInitAnswers,
-    seedTaskQueue,
-    writePreflight
-} from './gate-test-helpers';
+    seedTaskQueue} from './gate-test-helpers';
 
-function seedNodeBackendOptionalSkillFixture(
-    bundleRoot: string,
-    options: {
-        policyMode?: 'advisory' | 'required' | 'strict' | 'off' | null;
-        includePersistedHeadlines?: boolean;
-    } = {}
-): void {
-    const configDir = path.join(bundleRoot, 'live', 'config');
-    const skillRoot = path.join(bundleRoot, 'live', 'skills', 'node-backend');
-    fs.mkdirSync(configDir, { recursive: true });
-    fs.mkdirSync(skillRoot, { recursive: true });
-    fs.writeFileSync(
-        path.join(configDir, 'garda.config.json'),
-        JSON.stringify({
-            version: 1,
-            configs: {
-                'optional-skill-selection-policy': 'optional-skill-selection-policy.json',
-                'skill-packs': 'skill-packs.json'
-            }
-        }, null, 2),
-        'utf8'
-    );
-    fs.writeFileSync(
-        path.join(configDir, 'skill-packs.json'),
-        JSON.stringify({ version: 1, installed_packs: ['node-backend'] }, null, 2),
-        'utf8'
-    );
-    if (options.policyMode !== null) {
-        fs.writeFileSync(
-            path.join(configDir, 'optional-skill-selection-policy.json'),
-            JSON.stringify({ version: 1, mode: options.policyMode || 'advisory' }, null, 2),
-            'utf8'
-        );
-    }
-    fs.writeFileSync(
-        path.join(skillRoot, 'skill.json'),
-        JSON.stringify({
-            id: 'node-backend',
-            pack: 'node-backend',
-            name: 'Node Backend',
-            summary: 'Node backend specialist for request validation and API work.',
-            tags: ['node', 'backend', 'api'],
-            aliases: ['node-backend', 'node'],
-            task_signals: ['request validation', 'api endpoint', 'node-backend'],
-            changed_path_signals: ['src/api/', 'orders.ts'],
-            references: [],
-            cost_hint: 'low',
-            priority: 50,
-            autoload: 'suggest'
-        }, null, 2),
-        'utf8'
-    );
-    fs.writeFileSync(path.join(skillRoot, 'SKILL.md'), '# Node Backend\n\nUse for Node backend API work.\n', 'utf8');
-    if (options.includePersistedHeadlines === true) {
-        fs.writeFileSync(
-            path.join(configDir, 'skills-headlines.json'),
-            JSON.stringify({
-                version: 2,
-                source_state_sha256: 'fixture-source-state',
-                installed_pack_ids: ['node-backend'],
-                baseline_skill_ids: [],
-                installed_optional_skill_ids: ['node-backend'],
-                custom_skill_ids: [],
-                skills: [
-                    {
-                        id: 'node-backend',
-                        directory: 'node-backend',
-                        name: 'Node Backend',
-                        summary: 'Node backend specialist for request validation and API work.',
-                        pack: 'node-backend',
-                        source: 'installed_optional',
-                        implemented: true,
-                        review_binding: 'general_purpose',
-                        aliases: ['node', 'node-backend'],
-                        task_signals: ['api endpoint', 'node-backend', 'request validation'],
-                        changed_path_signals: ['orders.ts', 'src/api/'],
-                        tags: ['api', 'backend', 'node']
-                    }
-                ],
-                optional_packs: []
-            }, null, 2),
-            'utf8'
-        );
-    }
-}
 
 function seedProjectMemoryFixture(repoRoot: string): void {
     const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');

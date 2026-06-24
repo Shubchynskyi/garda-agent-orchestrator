@@ -286,7 +286,6 @@ export function seedTaskQueue(repoRoot: string, taskId: string, status = 'TODO')
 
 export function seedInitAnswers(repoRoot: string, sourceOfTruth = 'Codex'): void {
     const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
-    const routedTo = PROVIDER_ENTRYPOINT_BY_SOURCE[sourceOfTruth];
     fs.mkdirSync(path.dirname(initAnswersPath), {recursive: true});
     fs.writeFileSync(initAnswersPath, JSON.stringify({
         AssistantLanguage: 'English',

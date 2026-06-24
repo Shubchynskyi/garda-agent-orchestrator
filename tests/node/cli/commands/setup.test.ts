@@ -22,7 +22,7 @@ import {
 } from '../../../../src/core/constants';
 import { quoteCommandValue } from '../../../../src/core/command-quoting';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
-import { parseOptions, getBundlePath } from '../../../../src/cli/commands/cli-helpers';
+import { parseOptions } from '../../../../src/cli/commands/cli-helpers';
 
 const INIT_ANSWERS_RELATIVE_PATH = resolveInitAnswersRelativePath();
 const TEST_COMPILE_GATE_COMMAND = 'npm run build';

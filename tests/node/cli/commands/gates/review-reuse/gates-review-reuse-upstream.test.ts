@@ -107,7 +107,6 @@ describe('cli/commands/gates - review reuse upstream reuse', () => {
             review_type: 'code',
             reused_existing_review: false
         });
-        const legacyReceiptPath = path.join(reviewsRoot, `${taskId}-code-receipt.json`);
         const preflightPath = runExplicitPreflight(
             repoRoot,
             taskId,

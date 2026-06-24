@@ -6,13 +6,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
-    runCompileGateCommand,
     runDocImpactGateCommand,
-    runEnterTaskModeCommand,
     runLoadRulePackCommand,
     runRequiredReviewsCheckCommand
 } from '../../../../../../src/cli/commands/gates';
-import { runCliMainWithHandling } from '../../../../../../src/cli/main';
 import { runCompletionGate } from '../../../../../../src/gates/completion';
 import { buildReviewContext } from '../../../../../../src/gates/review-context/build-review-context';
 import { getWorkspaceSnapshot } from '../../../../../../src/gates/compile/compile-gate';
@@ -209,69 +206,8 @@ function seedCompletedReviewerLaunchFixture(options: {
     };
 }
 
-function resolveAttestedTaskModeRoute(provider: string): string | null {
-    const normalizedProvider = String(provider || '').trim();
-    if (!normalizedProvider) {
-        return null;
-    }
-    return PROVIDER_BRIDGE_BY_SOURCE[normalizedProvider] || PROVIDER_ENTRYPOINT_BY_SOURCE[normalizedProvider] || null;
-}
 
-function withDefaultTaskModeRouting<T extends { repoRoot?: string; provider?: unknown; routedTo?: unknown }>(options: T): T {
-    if (String(options.routedTo || '').trim()) {
-        return options;
-    }
-    const repoRoot = path.resolve(String(options.repoRoot || '.'));
-    const initAnswersPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'init-answers.json');
-    const explicitProvider = String(options.provider || '').trim();
-    if (explicitProvider) {
-        const routedTo = resolveAttestedTaskModeRoute(explicitProvider);
-        return routedTo
-            ? {
-                ...options,
-                provider: explicitProvider,
-                routedTo
-            }
-            : options;
-    }
-    if (!fs.existsSync(initAnswersPath) || !fs.statSync(initAnswersPath).isFile()) {
-        return options;
-    }
 
-    try {
-        const payload = JSON.parse(fs.readFileSync(initAnswersPath, 'utf8')) as Record<string, unknown>;
-        const sourceOfTruth = typeof payload.SourceOfTruth === 'string' ? payload.SourceOfTruth.trim() : '';
-        const routedTo = resolveAttestedTaskModeRoute(sourceOfTruth);
-        if (!sourceOfTruth || !routedTo) {
-            return options;
-        }
-        return {
-            ...options,
-            provider: sourceOfTruth,
-            routedTo
-        };
-    } catch {
-        return options;
-    }
-}
-
-function runEnterTaskMode(options: Parameters<typeof runEnterTaskModeCommand>[0]) {
-    const resolvedOptions = withDefaultTaskModeRouting({
-        startBanner: 'Garda captures my mind',
-        ...options
-    });
-    const repoRoot = path.resolve(String(resolvedOptions.repoRoot || '.'));
-    const routedTo = String(resolvedOptions.routedTo || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
-    if (routedTo) {
-        const routedFilePath = path.join(repoRoot, routedTo);
-        fs.mkdirSync(path.dirname(routedFilePath), { recursive: true });
-        if (!fs.existsSync(routedFilePath)) {
-            fs.writeFileSync(routedFilePath, '# routed workflow fixture\n', 'utf8');
-        }
-        writeProtectedControlPlaneManifest(repoRoot);
-    }
-    return runEnterTaskModeCommand(resolvedOptions);
-}
 
 function seedRuleFiles(repoRoot: string): void {
     const rulesRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'agent-rules');

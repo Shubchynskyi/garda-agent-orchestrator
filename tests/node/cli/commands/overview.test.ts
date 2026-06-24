@@ -5,9 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import {
-    buildOverviewOutput,
-    printOverview
-} from '../../../../src/cli/commands/overview';
+    buildOverviewOutput} from '../../../../src/cli/commands/overview';
 
 import { DEFAULT_BUNDLE_NAME } from '../../../../src/core/constants';
 

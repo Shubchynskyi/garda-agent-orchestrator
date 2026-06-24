@@ -12,10 +12,7 @@ import {
     formatAggregateStatsText,
     formatTaskStatsText,
     formatTaskStatsJson,
-    type TaskStatsResult,
-    type AggregateStatsResult
-} from '../../../../src/cli/commands/stats';
-import { handleStats } from '../../../../src/cli/commands/debug-command';
+    type TaskStatsResult} from '../../../../src/cli/commands/stats';
 
 import { DEFAULT_BUNDLE_NAME } from '../../../../src/core/constants';
 
@@ -85,19 +82,6 @@ function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');
 }
 
-function captureConsoleLog(action: () => void): string {
-    const captured: string[] = [];
-    const originalLog = console.log;
-    try {
-        console.log = (...args: unknown[]): void => {
-            captured.push(args.map((arg) => String(arg)).join(' '));
-        };
-        action();
-    } finally {
-        console.log = originalLog;
-    }
-    return stripAnsi(captured.join('\n'));
-}
 
 function withColorEnv<T>(env: { NO_COLOR?: string | undefined; FORCE_COLOR?: string | undefined }, action: () => T): T {
     const previousNoColor = process.env.NO_COLOR;

@@ -1,20 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
-    runClassifyChangeCommand,
-    runEnterTaskModeCommand,
-    runLoadRulePackCommand
-} from '../../../../../../src/cli/commands/gates';
+    runClassifyChangeCommand} from '../../../../../../src/cli/commands/gates';
 import {
     runCliMainWithHandling
 } from '../../../../../../src/cli/main';
-import { appendTaskEvent } from '../../../../../../src/gate-runtime/task-events';
 import { computeProtectedSnapshotDigest } from '../../../../../../src/gates/shared/helpers';
-import * as childProcess from 'node:child_process';
 import {
     getReviewsRoot,
     getOrchestratorRoot,
@@ -28,9 +22,7 @@ import {
     loadTaskEntryRulePack,
     runHandshakeForTask,
     runShellSmokeForTask,
-    readTaskTimelineEvents,
-    PROVIDER_ENTRYPOINT_BY_SOURCE
-} from '../../gate-test-helpers';
+    readTaskTimelineEvents} from '../../gate-test-helpers';
 
 function writeDriftedProtectedManifest(
     repoRoot: string,

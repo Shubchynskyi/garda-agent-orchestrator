@@ -5,16 +5,8 @@ import {
     fs,
     os,
     path,
-    createHash,
-    runCompileGateCommand,
-    runDocImpactGateCommand,
     runLogTaskEventCommand,
-    runRequiredReviewsCheckCommand,
     runCliMainWithHandling,
-    runCompletionGate,
-    buildReviewContext,
-    getWorkspaceSnapshot,
-    buildReviewTreeState,
     appendTaskEvent,
     createTempRepo,
     writeReviewCapabilitiesConfig,
@@ -31,23 +23,13 @@ import {
     runHandshakeForTask,
     runShellSmokeForTask,
     prepareCurrentReviewPhase,
-    runGit,
-    initializeGitRepo,
     readTaskTimelineEvents,
-    findLastTimelineEventIndex,
-    runCliWithCapturedOutput,
     applyReviewerRoutingMetadata,
-    fileSha256,
     manualReviewContextTaskScopeFixture,
     manualReviewContextBindingFixture,
     reviewContextScopedDiffFixture,
     recordReviewRoutingViaCli,
-    attestReviewerInvocationForTest,
-    seedPromptBoundReviewFixture,
-    seedRoutedReviewerLaunchFixture,
-    prepareReviewerLaunchForTest,
-    completeReviewerLaunchArtifactForTest
-} from './gates-command-review-result-fixtures';
+    attestReviewerInvocationForTest} from './gates-command-review-result-fixtures';
 
 describe('gates command review receipt - safety', () => {
 

@@ -1113,7 +1113,6 @@ describe('cli/commands/gates - review reuse remediation', () => {
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
         process.exitCode = 0;
-        let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
             await runCliMainWithHandling([
@@ -1125,7 +1124,6 @@ describe('cli/commands/gates - review reuse remediation', () => {
                 '--output-path', reviewContextPath,
                 '--repo-root', repoRoot
             ]);
-            observedExitCode = process.exitCode ?? 0;
         } finally {
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;

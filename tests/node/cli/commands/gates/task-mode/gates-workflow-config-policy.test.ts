@@ -165,14 +165,6 @@ function weakenFullSuiteTimeoutRetryCount(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 }
 
-function enableFullSuitePolicy(repoRoot: string): void {
-    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
-        full_suite_validation: { enabled?: boolean };
-    };
-    config.full_suite_validation.enabled = true;
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
-}
 
 function enableProjectMemoryMaintenancePolicy(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');

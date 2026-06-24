@@ -30,7 +30,6 @@ import {
     writeCompilePassEvidence,
     writePreflight,
     writeReceiptBackedReviewArtifact,
-    getReviewTreeStateSha256FromFixtureContext,
     stripLatestHistoricalReceiptSnapshotTelemetry,
     updateLatestHistoricalReviewRecordedDetails
 } from './gates-review-reuse-fixtures';
@@ -1469,7 +1468,6 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
         process.exitCode = 0;
-        let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
             await runCliMainWithHandling([
@@ -1481,7 +1479,6 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
                 '--output-path', reviewContextPath,
                 '--repo-root', repoRoot
             ]);
-            observedExitCode = process.exitCode ?? 0;
         } finally {
             process.chdir(previousCwd);
             process.exitCode = previousExitCode;
@@ -1557,7 +1554,6 @@ describe('cli/commands/gates - historical review reuse rejections', () => {
         const previousExitCode = process.exitCode;
         const previousCwd = process.cwd();
         process.exitCode = 0;
-        let observedExitCode = 0;
         try {
             process.chdir(repoRoot);
             await runCliMainWithHandling([

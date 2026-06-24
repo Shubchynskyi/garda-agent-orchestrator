@@ -1,13 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
 import {
     buildTaskStats,
-    buildAggregateStats,
     formatAggregateStatsJson,
     formatAggregateStatsText,
     formatTaskStatsText,
@@ -37,49 +35,7 @@ function writeEvent(eventsRoot: string, taskId: string, event: Record<string, un
     fs.appendFileSync(filePath, JSON.stringify(event) + '\n', 'utf8');
 }
 
-function sha256(text: string): string {
-    return createHash('sha256').update(text, 'utf8').digest('hex');
-}
 
-function writeReviewAttemptSnapshot(
-    reviewsRoot: string,
-    taskId: string,
-    reviewType: string,
-    verdictToken: string,
-    reusedExistingReview = false
-): Record<string, unknown> {
-    const reviewContent = `# ${reviewType} Review\n\n## Verdict\n${verdictToken}\n`;
-    const reviewArtifactSha256 = sha256(reviewContent);
-    const liveReviewPath = path.join(reviewsRoot, `${taskId}-${reviewType}.md`);
-    fs.writeFileSync(liveReviewPath, reviewContent, 'utf8');
-    const receiptContent = JSON.stringify({
-        task_id: taskId,
-        review_type: reviewType,
-        reviewer_execution_mode: 'delegated_subagent',
-        reviewer_identity: `agent:${reviewType}`,
-        review_artifact_sha256: reviewArtifactSha256,
-        reused_existing_review: reusedExistingReview
-    }, null, 2);
-    const receiptSha256 = sha256(receiptContent);
-    const liveReceiptPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt.json`);
-    fs.writeFileSync(liveReceiptPath, receiptContent, 'utf8');
-    const reviewArtifactSnapshotPath = path.join(reviewsRoot, `${taskId}-${reviewType}-artifact-${reviewArtifactSha256}.md`);
-    const receiptSnapshotPath = path.join(reviewsRoot, `${taskId}-${reviewType}-receipt-${receiptSha256}.json`);
-    fs.copyFileSync(liveReviewPath, reviewArtifactSnapshotPath);
-    fs.copyFileSync(liveReceiptPath, receiptSnapshotPath);
-    return {
-        task_id: taskId,
-        review_type: reviewType,
-        reused_existing_review: reusedExistingReview,
-        receipt_path: liveReceiptPath,
-        receipt_sha256: receiptSha256,
-        review_artifact_sha256: reviewArtifactSha256,
-        receipt_snapshot_path: receiptSnapshotPath,
-        receipt_snapshot_sha256: receiptSha256,
-        review_artifact_snapshot_path: reviewArtifactSnapshotPath,
-        review_artifact_snapshot_sha256: reviewArtifactSha256
-    };
-}
 
 function stripAnsi(value: string): string {
     return value.replace(/\x1B\[[0-9;?]*[ -/]*[@-~]/g, '');

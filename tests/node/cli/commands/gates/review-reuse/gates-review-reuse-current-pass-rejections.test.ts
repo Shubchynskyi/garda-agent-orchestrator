@@ -3,37 +3,19 @@ import {
     it,
     assert,
     fs,
-    os,
     path,
-    EXIT_GATE_FAILURE,
     runBuildReviewContextCommand,
-    runRequiredReviewsCheckCommand,
-    runCliMainWithHandling,
-    buildReviewContext,
-    computeCodeReviewScopeFingerprint,
-    computeReviewContextReuseHash,
-    computeReviewRelevantScopeFingerprint,
     appendTaskEvent,
     createTempRepo,
-    findLastTimelineEventIndex,
     getOrchestratorRoot,
     getReviewsRoot,
-    loadPostPreflightRulePack,
-    loadTaskEntryRulePack,
-    readTaskTimelineEvents,
     runEnterTaskMode,
-    runHandshakeForTask,
-    runShellSmokeForTask,
     seedInitAnswers,
     seedReusableReviewEvidence,
     seedTaskQueue,
     writeCompilePassEvidence,
     writePreflight,
-    writeReceiptBackedReviewArtifact,
-    getReviewTreeStateSha256FromFixtureContext,
-    stripLatestHistoricalReceiptSnapshotTelemetry,
-    updateLatestHistoricalReviewRecordedDetails
-} from './gates-review-reuse-fixtures';
+    getReviewTreeStateSha256FromFixtureContext} from './gates-review-reuse-fixtures';
 
 describe('cli/commands/gates - current-cycle review reuse rejections', () => {
     it('rebuilds current-cycle fresh PASS context when review-recorded telemetry lacks integrity', async () => {
