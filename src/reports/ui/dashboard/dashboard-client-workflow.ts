@@ -121,6 +121,7 @@ function renderSettingControl(setting, disabled, controlScope) {
 }
 function settingGroupId(setting) {
   const key = String(setting.key || '');
+  if (key.startsWith('compile_gate.')) return 'validation';
   if (key.startsWith('full_suite_validation.')) return 'validation';
   if (key.startsWith('review_execution_policy.') || key.startsWith('review_cycle_guard.')) return 'review';
   if (key.startsWith('scope_budget_guard.')) return 'scope';

@@ -1,7 +1,7 @@
 {
   "compile-gate-command": {
-    "label": "Команда compile-gate",
-    "description": "Команда для compile/build/type-check проверки. В локальном UI эта shell-команда доступна только для чтения; чтобы изменить её, используйте аудитируемый `garda workflow set` в терминале. Если в workflow-config она не задана, compile-gate блокируется и не берёт fallback из 40-commands.md."
+    "label": "Команда гейта компиляции",
+    "description": "Команда для compile/build/type-check проверки. Изменения в локальном UI идут через тот же аудитируемый путь `garda workflow set`, что и настройки полной проверки, и требуют явного подтверждения. Если в workflow-config она не задана, compile-gate блокируется и не берёт fallback из 40-commands.md."
   },
   "compile-gate-command-fallback": {
     "description": "Не задано в workflow-config; compile-gate блокируется, пока `workflow set` не запишет проектную команду compile/build/type-check."

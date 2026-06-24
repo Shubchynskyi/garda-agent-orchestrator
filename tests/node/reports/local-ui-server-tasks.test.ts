@@ -640,6 +640,7 @@ test('local UI browser smoke opens checks cycle tab with compact forecast and se
             'document.getElementById("settings-editor") ? document.getElementById("settings-editor").innerText : ""',
             /Timeout forecast|Прогноз таймаута/u
         );
+        assert.match(settingsText, /Compile-gate command|Команда гейта компиляции/u);
         assert.match(settingsText, /Full-suite command|Команда полной проверки/u);
         assert.doesNotMatch(settingsText, /Runtime diagnostics|Диагностика выполнения/u);
         assert.doesNotMatch(settingsText, /No blockers reported|Блокеры не найдены/u);
@@ -1097,6 +1098,18 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
             enabled: true,
             settings: [
                 {
+                    id: 'compile-gate-command',
+                    key: 'compile_gate.command',
+                    label: 'Compile-gate command',
+                    description: 'Run compile-gate',
+                    current_value: 'npm run build',
+                    value_type: 'string',
+                    options: [],
+                    flag: '--compile-gate-command',
+                    placeholder: 'compile/build/type-check command',
+                    confirmation_phrase: 'APPLY GARDA SETTING'
+                },
+                {
                     id: 'full-suite-command',
                     key: 'full_suite_validation.command',
                     label: 'Full-suite command',
@@ -1461,6 +1474,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.equal(fakeDocument.elements['tasks-tab'].hidden, true);
         assert.equal(fakeDocument.elements['workflow-tab'].hidden, false);
         assert.equal(fakeDocument.elements['task-detail-panel'].hidden, false);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /compile-gate-command/u);
+        assert.match(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-compile-gate-command"/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-command/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /id="setting-input-workflow-full-suite-command"/u);
         assert.match(fakeDocument.elements['settings-editor'].innerHTML, /full-suite-timeout-blocker/u);

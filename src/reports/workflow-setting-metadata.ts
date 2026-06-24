@@ -178,17 +178,6 @@ const projectMemoryReadStrategyOptions: WorkflowSettingOption[] = PROJECT_MEMORY
 
 export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] = Object.freeze([
     {
-        id: 'compile-gate-command',
-        key: 'compile_gate.command',
-        label: 'Compile-gate command',
-        description: 'Executable compile/build/type-check command used by compile-gate. This shell-command setting is CLI-only in the local UI; use audited `garda workflow set` from a terminal to change it. When the value is __COMPILE_GATE_COMMAND_UNCONFIGURED__, compile-gate fails closed and never falls back to 40-commands.md.',
-        flag: '--compile-gate-command',
-        value_type: 'string',
-        options: [],
-        placeholder: 'compile/build/type-check command',
-        editable: false
-    },
-    {
         id: 'full-suite-enabled',
         key: 'full_suite_validation.enabled',
         label: 'Mandatory full-suite validation',
@@ -199,6 +188,16 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
             'The configured full-suite command is required in the task lifecycle.',
             'The full-suite gate is skipped unless another workflow path requires it.'
         )
+    },
+    {
+        id: 'compile-gate-command',
+        key: 'compile_gate.command',
+        label: 'Compile-gate command',
+        description: 'Executable compile/build/type-check command used by compile-gate. Local UI edits use the same audited `garda workflow set` path as full-suite settings and require explicit confirmation. When the value is __COMPILE_GATE_COMMAND_UNCONFIGURED__, compile-gate fails closed and never falls back to 40-commands.md.',
+        flag: '--compile-gate-command',
+        value_type: 'string',
+        options: [],
+        placeholder: 'compile/build/type-check command'
     },
     {
         id: 'full-suite-command',

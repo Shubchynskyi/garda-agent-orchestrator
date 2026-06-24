@@ -51,7 +51,7 @@ test('Russian UI language is loaded from the language pack without source-embedd
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-enabled'].label, 'Обязательная полная проверка');
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-timeout-blocker'].label, 'Блокер таймаута полной проверки');
     assert.equal(LOCAL_UI_SETTING_TEXT.ru['full-suite-timeout-retry-count'].label, 'Повторы таймаута полной проверки');
-    assert.equal(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].label, 'Команда compile-gate');
+    assert.equal(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].label, 'Команда гейта компиляции');
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].description || '', /compile-gate блокируется/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command'].description || '', /не берёт fallback из 40-commands\.md/u);
     assert.match(LOCAL_UI_SETTING_TEXT.ru['compile-gate-command-fallback'].description || '', /workflow-config/u);

@@ -1,4 +1,5 @@
 import { buildWorkflowConfigTab } from '../../report-data-contract';
+import { validateCompileGateCommand } from '../../../gates/compile/compile-gate';
 import {
     WORKFLOW_SETTING_DEFINITIONS,
     type WorkflowSettingOption,
@@ -41,6 +42,7 @@ function buildWarningOnlyTimeoutContinuationSetting(settings: ReturnType<typeof 
 
 export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition[] {
     const settings = buildWorkflowConfigTab(repoRoot).settings;
+    const fullSuiteCommand = settings.find((setting) => setting.id === 'full-suite-command')?.value;
     const definitions = WORKFLOW_SETTING_DEFINITIONS
         .filter((definition) => definition.editable !== false)
         .map((definition) => {
@@ -50,7 +52,10 @@ export function buildUiSettingDefinitions(repoRoot: string): UiSettingDefinition
                 options: reportSetting?.options ?? definition.options,
                 current_value: reportSetting?.value,
                 confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE,
-                readiness: reportSetting?.readiness
+                readiness: reportSetting?.readiness,
+                compile_gate_full_suite_command: definition.id === 'compile-gate-command' && typeof fullSuiteCommand === 'string'
+                    ? fullSuiteCommand
+                    : null
             };
         });
     const warningOnlyTimeoutContinuation = buildWarningOnlyTimeoutContinuationSetting(settings);
@@ -142,6 +147,11 @@ export function parseUiSettingValue(setting: UiSettingDefinition, value: unknown
     }
     if (!raw) {
         throw new Error(`${setting.label} must not be empty.`);
+    }
+    if (setting.id === 'compile-gate-command') {
+        validateCompileGateCommand(raw, '--compile-gate-command', {
+            fullSuiteCommand: setting.compile_gate_full_suite_command
+        });
     }
     return {
         command_value: raw,

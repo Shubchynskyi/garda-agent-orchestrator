@@ -80,7 +80,7 @@ test('workflow settings editor renders unconfigured compile-gate through localiz
   }]
 });`, context);
 
-    assert.match(settingsEditorNode.innerHTML, /Команда compile-gate/u);
+    assert.match(settingsEditorNode.innerHTML, /Команда гейта компиляции/u);
     assert.match(settingsEditorNode.innerHTML, /Не задано в workflow-config/u);
     assert.match(settingsEditorNode.innerHTML, /compile-gate блокируется/u);
     const currentValue = settingsEditorNode.innerHTML.match(/<code class="current-value">([^<]+)<\/code>/u)?.[1] || '';

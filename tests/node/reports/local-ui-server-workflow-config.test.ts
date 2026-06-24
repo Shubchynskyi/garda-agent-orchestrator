@@ -67,8 +67,11 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             }>;
         };
         assert.equal(list.enabled, true);
-        assert.ok(!list.settings.some((setting) => setting.id === 'compile-gate-command'));
-        assert.ok(list.settings.some((setting) => setting.id === 'full-suite-command'));
+        const compileGateCommandIndex = list.settings.findIndex((setting) => setting.id === 'compile-gate-command');
+        const fullSuiteCommandIndex = list.settings.findIndex((setting) => setting.id === 'full-suite-command');
+        assert.notEqual(compileGateCommandIndex, -1);
+        assert.notEqual(fullSuiteCommandIndex, -1);
+        assert.equal(compileGateCommandIndex + 1, fullSuiteCommandIndex);
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-timeout-warning-continuation'));
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
         assert.ok(list.settings.some((setting) => setting.id === 'project-memory-max-compact-summary-chars'));
@@ -92,8 +95,26 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             headers: actionHeaders,
             body: JSON.stringify({ setting_id: 'compile-gate-command', mode: 'preview', value: 'npm run typecheck' })
         });
-        assert.equal(compilePreviewResponse.status, 400);
-        assert.equal((await compilePreviewResponse.json() as { code: string }).code, 'unknown_setting');
+        assert.equal(compilePreviewResponse.status, 200);
+        const compilePreview = await compilePreviewResponse.json() as {
+            key: string;
+            proposed_value: string;
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(compilePreview.key, 'compile_gate.command');
+        assert.equal(compilePreview.proposed_value, 'npm run typecheck');
+        assert.deepEqual(compilePreview.changed_keys, ['compile_gate.command']);
+        assert.match(compilePreview.command, /workflow set --compile-gate-command "npm run typecheck"/u);
+        assert.match(compilePreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
+
+        const invalidCompilePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({ setting_id: 'compile-gate-command', mode: 'preview', value: 'npm test' })
+        });
+        assert.equal(invalidCompilePreviewResponse.status, 400);
+        assert.equal((await invalidCompilePreviewResponse.json() as { code: string }).code, 'invalid_setting_value');
 
         const fullSuiteCommandPreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
