@@ -11,7 +11,6 @@ import {
     getTimestamp,
     readRollbackRecords,
     readSyncBackupMetadata,
-    readdirRecursiveFiles,
     removePathRecursive,
     restoreRollbackSnapshot,
     restoreSyncedItemsFromBackup,

@@ -55,7 +55,6 @@ function findRepoRoot(): string {
 }
 
 const REPO_ROOT = findRepoRoot();
-const CLI_ENTRY = path.join(REPO_ROOT, 'bin', 'garda.js');
 const VALIDATE_CONFIG_SCRIPT = path.join(REPO_ROOT, 'scripts', 'validate-config.cjs');
 const NEUTRAL_CWD = path.join(REPO_ROOT, 'tests');
 

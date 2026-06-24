@@ -475,7 +475,7 @@ describe('gates/workspace-snapshot-cache', () => {
             fs.writeFileSync(path.join(repoRoot, 'file.ts'), 'export const a = 2;\n', 'utf8');
 
             const fresh = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, [], { noCache: true });
-            const cached = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
+            getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
             // Second call should hit cache (after first wrote it)
             const fromCache = getWorkspaceSnapshotCached(repoRoot, 'git_auto', true, []);
 

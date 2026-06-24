@@ -10,7 +10,7 @@ import {
     isApprovedPlan,
     detectPlanDrift
 } from '../../../src/schemas/task-plan';
-import type { TaskPlan, PlanDriftResult } from '../../../src/schemas/task-plan';
+import type { TaskPlan } from '../../../src/schemas/task-plan';
 
 import { validateAgainstSchema } from '../../../src/schemas/config-schemas';
 

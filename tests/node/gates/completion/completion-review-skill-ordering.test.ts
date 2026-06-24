@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { validateReviewSkillEvidence } from '../../../../src/gates/completion';
-import type { TimelineEventEntry } from '../../../../src/gates/completion';
 
 import { makeTimelineEvent } from './completion-stage-evidence-fixtures';
 

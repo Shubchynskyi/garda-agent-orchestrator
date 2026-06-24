@@ -353,7 +353,7 @@ test('redactHostname token matches what redactDiagnosticText produces', () => {
     const hostname = 'integration-test-host';
     const token = redactHostname(hostname)!;
     const text = `Connected to ${hostname}`;
-    const result = redactDiagnosticText(text);
+    assert.equal(redactDiagnosticText(text), text);
     // redactDiagnosticText only replaces the *current* os.hostname,
     // so this test checks the token format consistency.
     assert.match(token, /^<host-[0-9a-f]{8}>$/);

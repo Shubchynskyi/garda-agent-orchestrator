@@ -6,7 +6,6 @@ import {
     path,
     buildTaskAuditSummary,
     synchronizeFinalCloseoutArtifacts,
-    writeEvent,
     writeIntegrityEventSequence,
     writePreflight,
     writeArtifact,
@@ -22,6 +21,7 @@ import {
 import { writeTimelineSummaryIndex } from '../../../src/gate-runtime/timeline-summary';
 
 function makeWorkspace(taskId: string, options: { fullSuiteEnabled?: boolean } = {}) {
+    void taskId;
     const repoRoot = makeTempDir();
     const bundleRoot = path.join(repoRoot, 'garda-agent-orchestrator');
     const eventsDir = path.join(bundleRoot, 'runtime', 'task-events');
@@ -41,6 +41,7 @@ function makeWorkspace(taskId: string, options: { fullSuiteEnabled?: boolean } =
 }
 
 function writePassingArtifacts(reviewsDir: string, taskId: string, changedFile = 'src/runtime/task-ledger.ts'): void {
+    void taskId;
     writeArtifact(reviewsDir, taskId, '-task-mode.json', {
         requested_depth: 2,
         effective_depth: 2,

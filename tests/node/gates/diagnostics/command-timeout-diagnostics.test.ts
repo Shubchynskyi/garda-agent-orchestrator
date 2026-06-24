@@ -13,8 +13,7 @@ import {
     getCommandTimeoutEvidence,
     getCommandTimeoutEvidenceViolations,
     resolveCommandTimeoutArtifactPath,
-    type CommandPhaseRecord,
-    type CommandTimeoutDiagnosticsArtifact
+    type CommandPhaseRecord
 } from '../../../../src/gates/diagnostics/command-timeout-diagnostics';
 
 function createTempDir(): string {

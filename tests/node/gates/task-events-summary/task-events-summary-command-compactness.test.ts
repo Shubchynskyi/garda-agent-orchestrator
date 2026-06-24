@@ -1,23 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
 
 import {
-    parseTimestamp,
-    formatTimestamp,
     auditCommandCompactness,
     auditGateCommand,
-    getCommandAuditFromDetails,
-    buildCompactLatestCycleTaskEventsSummary,
-    buildTaskEventsSummary,
-    formatTaskEventsSummaryText,
-    getOutputTelemetryFromPayload,
-    taskCycleScopeBindingsMatch,
-    TaskEventsSummaryResult
+    getCommandAuditFromDetails
 } from '../../../../src/gates/task-events-summary';
-import { runTaskEventsSummaryCommand } from '../../../../src/cli/commands/gate-flows/task/task-summary-flow';
 
 describe('gates/task-events-summary', () => {
     describe('auditCommandCompactness', () => {

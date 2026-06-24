@@ -3,13 +3,10 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { spawnSync } from 'node:child_process';
 
-import { runCheckUpdate } from '../../../src/lifecycle/check-update';
-import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
-import { runUpdateFromGit } from '../../../src/lifecycle/update-git';
+import { runUpdate } from '../../../src/lifecycle/update';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
-import { getLifecycleOperationLockPath, removePathRecursive, writeUpdateSentinel } from '../../../src/lifecycle/common';
+import { removePathRecursive } from '../../../src/lifecycle/common';
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
 
 type CapturedMaterializationOptions = {
@@ -69,44 +66,6 @@ function seedExecutableBundleSurface(repoRoot: string, bundleRoot: string) {
     fs.writeFileSync(path.join(bundleRoot, 'dist', 'src', 'index.js'), 'module.exports = {};', 'utf8');
 }
 
-function seedStaleTaskEventLock(bundleRoot: string, lockName: string) {
-    const lockPath = path.join(bundleRoot, 'runtime', 'task-events', lockName);
-    const oldDate = new Date('2020-01-01T00:00:00.000Z');
-    fs.mkdirSync(lockPath, { recursive: true });
-    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
-        pid: 999999,
-        hostname: os.hostname(),
-        created_at_utc: '2020-01-01T00:00:00.000Z'
-    }), 'utf8');
-    fs.utimesSync(path.join(lockPath, 'owner.json'), oldDate, oldDate);
-    fs.utimesSync(lockPath, oldDate, oldDate);
-}
-
-function seedActiveTaskEventLock(bundleRoot: string, lockName: string) {
-    const lockPath = path.join(bundleRoot, 'runtime', 'task-events', lockName);
-    const now = new Date().toISOString();
-    fs.mkdirSync(lockPath, { recursive: true });
-    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
-        pid: process.pid,
-        hostname: os.hostname(),
-        created_at_utc: now,
-        heartbeat_at_utc: now
-    }), 'utf8');
-}
-
-function seedLifecycleOperationLock(projectRoot: string, pid: number, hostname: string = os.hostname()) {
-    const lockPath = getLifecycleOperationLockPath(projectRoot);
-    fs.mkdirSync(lockPath, { recursive: true });
-    fs.writeFileSync(path.join(lockPath, 'owner.json'), JSON.stringify({
-        pid,
-        hostname,
-        operation: 'update',
-        acquired_at_utc: '2026-04-05T00:00:00.000Z',
-        target_root: path.resolve(projectRoot)
-    }, null, 2), 'utf8');
-    return lockPath;
-}
-
 function seedWorkflowConfigCompileGateCommand(bundleRoot: string, command: string = TEST_COMPILE_GATE_COMMAND) {
     const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -115,38 +74,6 @@ function seedWorkflowConfigCompileGateCommand(bundleRoot: string, command: strin
             command
         }
     }, null, 2), 'utf8');
-}
-
-function seedOffModeState(bundleRoot: string) {
-    const switchRoot = path.join(bundleRoot, 'runtime', 'switch');
-    fs.mkdirSync(switchRoot, { recursive: true });
-    fs.writeFileSync(path.join(switchRoot, 'state.json'), JSON.stringify({
-        schema_version: 1,
-        mode: 'off',
-        updated_at_utc: '2026-05-24T00:00:00.000Z',
-        candidates: [],
-        root_files: [],
-        off_storage_files: [],
-        on_storage_files: []
-    }, null, 2), 'utf8');
-}
-
-function seedGitRepository(repoPath: string) {
-    const commands = [
-        ['init'],
-        ['config', 'user.email', 'test@example.com'],
-        ['config', 'user.name', 'Garda Test'],
-        ['add', '.'],
-        ['commit', '-m', 'seed update source']
-    ];
-    for (const args of commands) {
-        const result = spawnSync('git', args, { cwd: repoPath, encoding: 'utf8' });
-        assert.equal(
-            result.status,
-            0,
-            `git ${args.join(' ')} failed: ${result.stderr || result.stdout}`
-        );
-    }
 }
 
 function setupUpdateWorkspace(repoRoot: string) {

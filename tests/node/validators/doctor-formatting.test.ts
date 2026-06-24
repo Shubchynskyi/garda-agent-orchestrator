@@ -11,7 +11,7 @@ import {
 } from '../../../src/validators/doctor';
 import { quoteCommandValue } from '../../../src/core/command-quoting';
 import { NODE_ENGINE_RANGE } from '../../../src/core/constants';
-import { buildFakeDoctorResult, createDoctorWorkspace, DEFAULT_NEW_EVIDENCE } from './doctor-workspace-builder';
+import { buildFakeDoctorResult, createDoctorWorkspace } from './doctor-workspace-builder';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 
 // formatDoctorResult: verify + manifest output

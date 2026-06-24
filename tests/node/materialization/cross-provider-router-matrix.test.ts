@@ -201,7 +201,7 @@ describe('cross-provider-router-matrix: redirect entrypoint blocks', () => {
 
 describe('cross-provider-router-matrix: provider orchestrator bridges', () => {
     for (const profile of PROVIDER_BRIDGE_PROFILES) {
-        const { providerLabel, orchestratorRelativePath, entrypointFile } = profile;
+        const { providerLabel, orchestratorRelativePath } = profile;
 
         for (const sot of ALL_PROVIDERS) {
             const canonicalFile = getCanonicalEntrypointFile(sot);

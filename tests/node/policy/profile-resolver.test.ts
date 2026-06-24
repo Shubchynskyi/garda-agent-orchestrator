@@ -21,12 +21,9 @@ import {
     formatEffectivePolicyJson,
     applyProfileGuardrails,
     formatProfileGuardrailDiagnostics,
-    type ProfileEntry,
-    type ProfilesData,
     type ReviewCapabilities,
     type TokenEconomyConfig,
     type SkillPacksConfig,
-    type PathsConfig,
     type ProfileReviewPolicy,
     type ProfileTokenEconomy,
     type ProfileSkills

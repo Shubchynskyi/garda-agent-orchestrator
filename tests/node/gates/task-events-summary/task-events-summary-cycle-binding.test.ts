@@ -5,19 +5,13 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import {
-    parseTimestamp,
-    formatTimestamp,
     auditCommandCompactness,
-    auditGateCommand,
-    getCommandAuditFromDetails,
     buildCompactLatestCycleTaskEventsSummary,
     buildTaskEventsSummary,
     formatTaskEventsSummaryText,
-    getOutputTelemetryFromPayload,
     taskCycleScopeBindingsMatch,
-    TaskEventsSummaryResult
+    type TaskEventsSummaryResult
 } from '../../../../src/gates/task-events-summary';
-import { runTaskEventsSummaryCommand } from '../../../../src/cli/commands/gate-flows/task/task-summary-flow';
 
 describe('gates/task-events-summary', () => {
     describe('taskCycleScopeBindingsMatch', () => {

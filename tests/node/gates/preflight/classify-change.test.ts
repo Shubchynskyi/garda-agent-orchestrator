@@ -8,8 +8,7 @@ import {
     classifyChange,
     classifyScopeCategory,
     getDefaultClassificationConfig,
-    getClassificationConfig,
-    getReviewCapabilities
+    getClassificationConfig
 } from '../../../../src/gates/preflight/classify-change';
 import {
     matchOrdinaryDocPathPattern,

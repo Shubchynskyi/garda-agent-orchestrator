@@ -9,7 +9,6 @@ import {
     computeEffectiveDepth,
     resolveCompressionProfile,
     resolveRiskAwareDepth,
-    type BudgetForecastInput,
     type BudgetForecast,
     type RiskTriggers
 } from '../../../src/gate-runtime/budget-preflight';

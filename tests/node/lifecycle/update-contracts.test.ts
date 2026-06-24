@@ -8,18 +8,10 @@ import { spawnSync } from 'node:child_process';
 import { runCheckUpdate } from '../../../src/lifecycle/check-update';
 import { runUpdate, getUpdateRollbackItems } from '../../../src/lifecycle/update';
 import { runUpdateFromGit } from '../../../src/lifecycle/update-git';
-import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
 import { getLifecycleOperationLockPath, getUpdateSentinelPath, removePathRecursive, writeUpdateSentinel } from '../../../src/lifecycle/common';
-import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../src/core/constants';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
 import { createAgentInitState, writeAgentInitState } from '../../../src/runtime/agent-init-state';
-
-type CapturedMaterializationOptions = {
-    claudeOrchestratorFullAccess?: boolean;
-    providerMinimalism?: boolean;
-    activeAgentFilesSeed?: string | null;
-};
 
 function findRepoRoot() {
     let dir = __dirname;
@@ -43,24 +35,6 @@ function copyDirRecursive(src: string, dst: string) {
             fs.copyFileSync(srcPath, dstPath);
         }
     }
-}
-
-function extractMarkdownSection(content: string, heading: string): string {
-    const headingMatch = heading.match(/^(#+)\s+/);
-    assert.ok(headingMatch, `Heading must be markdown-formatted: ${heading}`);
-    const headingLevel = headingMatch[1].length;
-    const startPattern = new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm');
-    const startMatch = startPattern.exec(content);
-    assert.ok(startMatch, `Missing heading: ${heading}`);
-    const sectionStart = startMatch.index;
-    const searchStart = sectionStart + startMatch[0].length;
-    const remainder = content.slice(searchStart);
-    const nextHeadingPattern = new RegExp(`^#{1,${headingLevel}}\\s+`, 'm');
-    const nextHeadingMatch = nextHeadingPattern.exec(remainder);
-    const sectionEnd = nextHeadingMatch
-        ? searchStart + nextHeadingMatch.index
-        : content.length;
-    return content.slice(sectionStart, sectionEnd).trim();
 }
 
 function seedExecutableBundleSurface(repoRoot: string, bundleRoot: string) {

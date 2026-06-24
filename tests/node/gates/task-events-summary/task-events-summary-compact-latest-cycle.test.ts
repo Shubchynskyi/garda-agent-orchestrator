@@ -5,31 +5,16 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 import {
-    parseTimestamp,
-    formatTimestamp,
-    auditCommandCompactness,
-    auditGateCommand,
-    getCommandAuditFromDetails,
     buildCompactLatestCycleTaskEventsSummary,
     buildTaskEventsSummary,
     formatTaskEventsSummaryText,
     getOutputTelemetryFromPayload,
-    taskCycleScopeBindingsMatch,
-    TaskEventsSummaryResult
+    type TaskEventsSummaryResult
 } from '../../../../src/gates/task-events-summary';
 import { runTaskEventsSummaryCommand } from '../../../../src/cli/commands/gate-flows/task/task-summary-flow';
 
 describe('gates/task-events-summary', () => {
     describe('buildTaskEventsSummary', () => {
-        function createTaskEvents(tmpDir: string, taskId: string, events: Array<Record<string, unknown>>) {
-            const eventsDir = path.join(tmpDir, 'runtime', 'task-events');
-            fs.mkdirSync(eventsDir, { recursive: true });
-            const filePath = path.join(eventsDir, `${taskId}.jsonl`);
-            const lines = events.map(e => JSON.stringify(e));
-            fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf8');
-            return eventsDir;
-        }
-
         it('builds a bounded compact latest-cycle contract without full timeline details', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'task-summary-'));
             const eventsDir = path.join(tmpDir, 'runtime', 'task-events');

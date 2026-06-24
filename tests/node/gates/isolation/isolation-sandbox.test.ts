@@ -12,13 +12,9 @@ import {
     isControlPlanePath,
     validateSandbox,
     compareSandboxToLive,
-    ISOLATION_SANDBOX_DIR,
-    type PrepareSandboxResult,
-    type SandboxValidationResult,
-    type SandboxResolutionResult
+    ISOLATION_SANDBOX_DIR
 } from '../../../../src/gates/isolation/isolation-sandbox';
 import {
-    loadIsolationModeConfig,
     type IsolationModeConfig
 } from '../../../../src/gates/isolation/isolation-mode';
 import {

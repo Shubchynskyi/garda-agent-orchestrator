@@ -20,8 +20,7 @@ import {
     entriesByArtifactSuffix,
     taskIds,
     groupByTask,
-    type ReviewsIndex,
-    type ReviewsIndexEntry
+    type ReviewsIndex
 } from '../../../src/gate-runtime/reviews-index';
 
 function makeTmpDir(prefix: string): string {
@@ -264,14 +263,14 @@ describe('reviews-index', () => {
 
         it('returns false for fresh index with matching directory mtime', () => {
             writeArtifact(reviewsDir, 'T-001-task-mode.json');
-            const { index } = loadIndex(reviewsDir);
+            loadIndex(reviewsDir);
 
             const indexPath = resolveIndexPath(reviewsDir);
             assert.equal(isIndexStale(indexPath, reviewsDir), false);
         });
 
         it('returns true when directory mtime changed', () => {
-            const { index } = loadIndex(reviewsDir);
+            loadIndex(reviewsDir);
             const indexPath = resolveIndexPath(reviewsDir);
 
             // Add a new file to change directory mtime

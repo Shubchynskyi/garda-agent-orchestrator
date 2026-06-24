@@ -12,12 +12,6 @@ import {
     releaseFilesystemLock
 } from '../../../src/gate-runtime/task-events';
 
-import type {
-    LockContentionLevel,
-    AcquireLockTelemetry,
-    LockWaitDiagnostics
-} from '../../../src/gate-runtime/task-events';
-
 function mkTmpDir(): string {
     return fs.mkdtempSync(path.join(os.tmpdir(), 'gao-locktel-'));
 }

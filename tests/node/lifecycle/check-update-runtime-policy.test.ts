@@ -8,9 +8,7 @@ import * as os from 'node:os';
 import { buildUpdateLifecycleRunner } from '../../../src/cli/commands/shared-command-utils';
 import { writeProtectedControlPlaneManifest } from '../../../src/gates/shared/helpers';
 import {
-    cleanupOldUpdateTempRoots,
     getUpdateTempRoot,
-    resolveNpmUpdateSourceSpec,
     runCheckUpdate
 } from '../../../src/lifecycle/check-update';
 import { runUpdate } from '../../../src/lifecycle/update';
@@ -336,6 +334,7 @@ function setupCheckUpdateWorkspace(
     deployedVersion: string,
     options: { syncSurfaceFrom?: string | null } = {}
 ) {
+    void repoRoot;
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-checkupdate-'));
     const bundle = path.join(tmpDir, 'garda-agent-orchestrator');
     fs.mkdirSync(bundle, { recursive: true });

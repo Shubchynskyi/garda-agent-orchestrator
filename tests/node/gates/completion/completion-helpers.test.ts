@@ -8,9 +8,7 @@ import {
     extractMarkdownSectionLines,
     getCanonicalReviewSectionHeading,
     isMeaningfulReviewEntry,
-    formatCompletionGateResult,
-    getFindingsBySeverity,
-    isTrivialReview
+    formatCompletionGateResult
 } from '../../../../src/gates/completion';
 import { validateStrictDeferredReviewFollowups } from '../../../../src/gates/completion/completion-deferred-followups';
 import { buildReviewTrustSummary } from '../../../../src/gates/review/review-trust-summary';
