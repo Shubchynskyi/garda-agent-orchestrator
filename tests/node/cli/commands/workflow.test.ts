@@ -6,7 +6,7 @@ import * as path from 'node:path';
 
 import { handleWorkflow } from '../../../../src/cli/commands/workflow-command';
 import { buildGuardedCommandHelpText } from '../../../../src/cli/commands/cli-format-output';
-import { buildDefaultWorkflowConfig, isGardaSelfGuardDenyAgentEntryForBundle } from '../../../../src/core/workflow-config';
+import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES, buildDefaultWorkflowConfig, isGardaSelfGuardDenyAgentEntryForBundle } from '../../../../src/core/workflow-config';
 import { OPERATOR_CONFIRMATION_MAX_AGE_MS } from '../../../../src/core/operator-confirmation';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../../src/core/constants';
 import { resolveTaskResetAvailability } from '../../../../src/core/task-reset-availability';
@@ -105,8 +105,12 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));
         assert.ok(output.includes('Task reset: disabled'));
         assert.ok(output.includes('Auto backup: disabled interval_days=1 keep_latest=10'));
+        assert.ok(output.includes('Optional quality checks: enabled rules=7 enabled_rules=7'));
         assert.ok(output.includes('TaskResetEnabled: false'));
         assert.ok(output.includes('AutoBackupEnabled: false'));
+        assert.ok(output.includes('OptionalQualityChecksEnabled: true'));
+        assert.ok(output.includes('OptionalQualityChecksRuleIds: code_simplification, project_style_fit, unnecessary_abstraction, size_growth, hardcoded_values_contracts, duplicated_logic_contracts, test_verification_scope'));
+        assert.ok(output.includes('OptionalQualityCheckRule: code_simplification enabled=true title=Code simplification'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -190,6 +194,51 @@ test('workflow set updates scope budget guard settings deterministically', () =>
         assert.equal(parsedConfig.scope_budget_guard.max_changed_lines, 300);
         assert.equal(parsedConfig.scope_budget_guard.max_required_reviews, 3);
         assert.equal(parsedConfig.scope_budget_guard.max_review_tokens, 5000);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set toggles optional quality checks without replacing rules', () => {
+    const bundleRoot = createBundleRoot({}, {
+        optional_quality_checks: {
+            enabled: true,
+            rules: [
+                {
+                    id: 'custom_review_focus',
+                    title: 'Custom review focus',
+                    prompt: 'Check the custom local review focus.',
+                    enabled: true
+                }
+            ]
+        }
+    });
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result, output } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-checks', 'off',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.equal(result.optional_quality_checks.enabled, false);
+        assert.deepEqual(result.optional_quality_checks.rules.map((rule) => rule.id), ['custom_review_focus']);
+        assert.ok(result.changed_fields.includes('optional_quality_checks.enabled'));
+        assert.ok(output.includes('Optional quality checks: disabled rules=1 enabled_rules=1'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.optional_quality_checks.enabled, false);
+        assert.deepEqual(parsedConfig.optional_quality_checks.rules, [
+            {
+                id: 'custom_review_focus',
+                title: 'Custom review focus',
+                prompt: 'Check the custom local review focus.',
+                enabled: true
+            }
+        ]);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -749,10 +798,13 @@ test('workflow help describes project-memory update as the default policy', () =
     assert.ok(helpText.includes('workflow set --task-reset on --operator-confirmed yes --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('--task-reset on|off|--task-reset-enabled true|false'));
     assert.ok(helpText.includes('--auto-backup on|off|--auto-backup-enabled true|false'));
+    assert.ok(helpText.includes('--optional-checks on|off|--optional-checks-enabled true|false'));
     assert.ok(helpText.includes('Short aliases map exactly to existing boolean settings'));
+    assert.ok(helpText.includes('workflow set --optional-checks on --operator-confirmed yes --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('workflow set --garda-self-guard on'));
     assert.ok(helpText.includes('workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc'));
     assert.ok(helpText.includes('Task reset mutations are disabled by default'));
+    assert.ok(helpText.includes('Optional quality checks are advisory, default-enabled'));
     assert.ok(helpText.includes('Full-suite timeout blocker controls whether repeated timeout evidence blocks task progress'));
     assert.ok(!helpText.includes('Project memory maintenance is disabled by default'));
 });
@@ -769,6 +821,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(validateOutput.includes('Status: PASS'));
         assert.ok(validateOutput.includes('Project memory maintenance: update'));
         assert.ok(validateOutput.includes('Task reset: disabled'));
+        assert.ok(validateOutput.includes('Optional quality checks: enabled rules=7 enabled_rules=7'));
 
         const explainOutput = captureConsole(() => handleWorkflow([
             'explain',
@@ -783,6 +836,7 @@ test('workflow validate and explain include workflow guard diagnostics', () => {
         assert.ok(explainOutput.includes('auto_split_enabled is true'));
         assert.ok(explainOutput.includes('WARN_ONLY'));
         assert.ok(explainOutput.includes('Task reset: confirmed reset mutations are disabled by default'));
+        assert.ok(explainOutput.includes('Optional quality checks: advisory self-check rules are default-enabled'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -821,11 +875,15 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.project_memory_maintenance.enabled, true);
         assert.equal(parsed.project_memory_maintenance.mode, 'update');
         assert.equal(parsed.task_reset.enabled, false);
+        assert.equal(parsed.optional_quality_checks.enabled, true);
+        assert.equal(parsed.optional_quality_checks.rules.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
+        assert.equal(parsed.optional_quality_checks.rules[0].id, 'code_simplification');
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=false');
         assert.equal(parsed.project_memory_maintenance_summary_line, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
         assert.equal(parsed.task_reset_summary_line, 'Task reset: disabled');
+        assert.equal(parsed.optional_quality_checks_summary_line, 'Optional quality checks: enabled rules=7 enabled_rules=7');
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -861,6 +919,8 @@ test('workflow set --json returns valid JSON for machine-readable automation', (
         assert.equal(parsedConfig.full_suite_validation.enabled, true);
         assert.equal(parsedConfig.review_execution_policy.mode, 'strict_sequential');
         assert.equal(parsedConfig.task_reset.enabled, false);
+        assert.equal(parsedConfig.optional_quality_checks.enabled, true);
+        assert.equal(parsedConfig.optional_quality_checks.rules.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

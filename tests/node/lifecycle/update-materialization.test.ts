@@ -8,6 +8,7 @@ import { runUpdate } from '../../../src/lifecycle/update';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
 import { removePathRecursive } from '../../../src/lifecycle/common';
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
+import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
 
 type CapturedMaterializationOptions = {
     claudeOrchestratorFullAccess?: boolean;
@@ -321,6 +322,65 @@ describe('runUpdate', () => {
                 read_strategy: 'index_first',
                 impact_artifact_retention_days: 30
             });
+            assert.equal(workflowConfig.optional_quality_checks.enabled, true);
+            assert.deepEqual(
+                workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id),
+                DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('preserves custom optional quality check rules during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    optional_quality_checks: {
+                        enabled: false,
+                        rules: [
+                            {
+                                id: 'custom_quality_rule',
+                                title: 'Custom quality rule',
+                                prompt: 'Check the local custom quality rule.',
+                                enabled: true
+                            }
+                        ]
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.optional_quality_checks.enabled, false);
+            assert.deepEqual(workflowConfig.optional_quality_checks.rules, [
+                {
+                    id: 'custom_quality_rule',
+                    title: 'Custom quality rule',
+                    prompt: 'Check the local custom quality rule.',
+                    enabled: true
+                }
+            ]);
         } finally {
             removePathRecursive(projectRoot);
         }

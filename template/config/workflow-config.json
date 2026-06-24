@@ -56,5 +56,52 @@
     "enabled": false,
     "interval_days": 1,
     "keep_latest": 10
+  },
+  "optional_quality_checks": {
+    "enabled": true,
+    "rules": [
+      {
+        "id": "code_simplification",
+        "title": "Code simplification",
+        "prompt": "Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.",
+        "enabled": true
+      },
+      {
+        "id": "project_style_fit",
+        "title": "Project style fit",
+        "prompt": "Check whether the change follows the local project style, naming, module boundaries, and existing helper patterns.",
+        "enabled": true
+      },
+      {
+        "id": "unnecessary_abstraction",
+        "title": "Unnecessary abstraction",
+        "prompt": "Check whether the change introduced abstractions that do not remove real duplication, risk, or complexity.",
+        "enabled": true
+      },
+      {
+        "id": "size_growth",
+        "title": "Class/function/file growth",
+        "prompt": "Check whether touched classes, functions, or files grew enough to need local extraction or clearer ownership.",
+        "enabled": true
+      },
+      {
+        "id": "hardcoded_values_contracts",
+        "title": "Hardcoded values and contracts",
+        "prompt": "Check whether new literals, paths, statuses, or messages should be named constants, schema fields, or shared contracts.",
+        "enabled": true
+      },
+      {
+        "id": "duplicated_logic_contracts",
+        "title": "Duplicated logic and contracts",
+        "prompt": "Check whether the change duplicates logic, validation, or contract strings that should stay defined in one place.",
+        "enabled": true
+      },
+      {
+        "id": "test_verification_scope",
+        "title": "Test and verification scope",
+        "prompt": "Check whether the focused tests and mandatory gates cover the behavioral risk without adding unrelated slow coverage.",
+        "enabled": true
+      }
+    ]
   }
 }

@@ -22,6 +22,7 @@ import {
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     buildDefaultWorkflowConfig,
     normalizeFullSuiteValidationPlacement,
+    normalizeOptionalQualityChecksConfig,
     type OrchestratorWorkPolicyMode
 } from '../core/workflow-config';
 import {
@@ -35,7 +36,7 @@ const VALID_WORKFLOW_FULL_SUITE_FAILURE_POLICIES = new Set(['AUDIT_AND_BLOCK', '
 
 export function validateWorkflowConfig(input: unknown): Record<string, unknown> {
     const raw = ensurePlainObject(input, 'workflow-config');
-    const knownKeyList = ['compile_gate', 'full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'auto_backup', 'orchestrator_work_policy'] as const;
+    const knownKeyList = ['compile_gate', 'full_suite_validation', 'review_execution_policy', 'scope_budget_guard', 'review_cycle_guard', 'project_memory_maintenance', 'task_reset', 'auto_backup', 'optional_quality_checks', 'orchestrator_work_policy'] as const;
     const knownKeys = new Set(knownKeyList);
     assertNoCaseMismatchedKnownKeys(
         raw,
@@ -142,6 +143,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
         if (raw.auto_backup !== undefined) {
             normalized.auto_backup = validateAutoBackupSection(raw.auto_backup);
         }
+        if (raw.optional_quality_checks !== undefined) {
+            normalized.optional_quality_checks = validateOptionalQualityChecksSection(raw.optional_quality_checks);
+        }
         if (raw.orchestrator_work_policy !== undefined) {
             normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
         }
@@ -182,6 +186,9 @@ export function validateWorkflowConfig(input: unknown): Record<string, unknown> 
     }
     if (raw.auto_backup !== undefined) {
         normalized.auto_backup = validateAutoBackupSection(raw.auto_backup);
+    }
+    if (raw.optional_quality_checks !== undefined) {
+        normalized.optional_quality_checks = validateOptionalQualityChecksSection(raw.optional_quality_checks);
     }
     if (raw.orchestrator_work_policy !== undefined) {
         normalized.orchestrator_work_policy = validateOrchestratorWorkPolicySection(raw.orchestrator_work_policy);
@@ -297,6 +304,59 @@ function validateAutoBackupSection(input: unknown): Record<string, unknown> {
         { minimum: 1 }
     );
     return normalizedInput;
+}
+
+function validateOptionalQualityChecksSection(input: unknown): Record<string, unknown> {
+    const section = ensurePlainObject(input, 'workflow-config.optional_quality_checks');
+    const sectionKnownKeys = ['enabled', 'rules'];
+    assertNoCaseMismatchedKnownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.optional_quality_checks'
+    );
+    assertNoUnknownKeys(
+        section,
+        sectionKnownKeys,
+        'workflow-config.optional_quality_checks'
+    );
+
+    const defaults = buildDefaultWorkflowConfig().optional_quality_checks as unknown as Record<string, unknown>;
+    const normalizedInput = {
+        ...defaults,
+        ...section
+    };
+    normalizedInput.enabled = normalizeBooleanLike(
+        normalizedInput.enabled,
+        'workflow-config.optional_quality_checks.enabled'
+    );
+    if (!Array.isArray(normalizedInput.rules)) {
+        throw new Error('workflow-config.optional_quality_checks.rules must be an array.');
+    }
+    if (normalizedInput.rules.length === 0) {
+        throw new Error('workflow-config.optional_quality_checks.rules must contain at least one rule.');
+    }
+    const seenRuleIds = new Set<string>();
+    normalizedInput.rules = normalizedInput.rules.map((rawRule, index) => {
+        const rulePath = `workflow-config.optional_quality_checks.rules[${index}]`;
+        const rule = ensurePlainObject(rawRule, rulePath);
+        const ruleKnownKeys = ['id', 'title', 'prompt', 'enabled'];
+        assertNoCaseMismatchedKnownKeys(rule, ruleKnownKeys, rulePath);
+        assertNoUnknownKeys(rule, ruleKnownKeys, rulePath);
+        const id = normalizeNonEmptyString(rule.id, `${rulePath}.id`).trim().toLowerCase();
+        if (seenRuleIds.has(id)) {
+            throw new Error(`workflow-config.optional_quality_checks.rules has duplicate id '${id}'.`);
+        }
+        seenRuleIds.add(id);
+        return {
+            id,
+            title: normalizeNonEmptyString(rule.title, `${rulePath}.title`),
+            prompt: normalizeNonEmptyString(rule.prompt, `${rulePath}.prompt`),
+            enabled: rule.enabled === undefined
+                ? true
+                : normalizeBooleanLike(rule.enabled, `${rulePath}.enabled`)
+        };
+    });
+    return normalizeOptionalQualityChecksConfig(normalizedInput) as unknown as Record<string, unknown>;
 }
 
 function validateProjectMemoryMaintenanceSection(input: unknown): Record<string, unknown> {

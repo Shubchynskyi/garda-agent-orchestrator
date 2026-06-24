@@ -361,6 +361,14 @@ test('workflow-config schema accepts legacy configs without compile_gate', () =>
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('workflow-config schema accepts optional quality checks without explicit rules', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    delete (clone.optional_quality_checks as Record<string, unknown>).rules;
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
 test('workflow-config schema rejects unknown compile_gate keys', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;

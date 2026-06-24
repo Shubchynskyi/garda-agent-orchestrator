@@ -6,6 +6,7 @@ import type {
     CompileGateConfig,
     ProjectMemoryMaintenanceConfig,
     OrchestratorWorkPolicyConfig,
+    OptionalQualityChecksConfig,
     TaskResetConfig,
     AutoBackupConfig,
     WorkflowConfigData
@@ -24,6 +25,7 @@ export type WorkflowFileConfigData = {
     project_memory_maintenance?: WorkflowConfigData['project_memory_maintenance'];
     task_reset?: WorkflowConfigData['task_reset'];
     auto_backup?: WorkflowConfigData['auto_backup'];
+    optional_quality_checks?: WorkflowConfigData['optional_quality_checks'];
     orchestrator_work_policy?: WorkflowConfigData['orchestrator_work_policy'];
     [key: string]: unknown;
 };
@@ -68,6 +70,7 @@ export interface WorkflowCommandResultBase {
     project_memory_maintenance: ProjectMemoryMaintenanceConfig;
     task_reset: TaskResetConfig;
     auto_backup: AutoBackupConfig;
+    optional_quality_checks: OptionalQualityChecksConfig;
     orchestrator_work_policy: OrchestratorWorkPolicyConfig;
     visible_summary_line: string;
     compile_gate_summary_line: string;
@@ -77,6 +80,7 @@ export interface WorkflowCommandResultBase {
     project_memory_maintenance_summary_line: string;
     task_reset_summary_line: string;
     auto_backup_summary_line: string;
+    optional_quality_checks_summary_line: string;
     orchestrator_work_policy_summary_line: string;
 }
 
@@ -156,6 +160,8 @@ export const WORKFLOW_SET_DEFINITIONS = {
     '--auto-backup-enabled': { key: 'autoBackupEnabled', type: 'string' },
     '--auto-backup-interval-days': { key: 'autoBackupIntervalDays', type: 'string' },
     '--auto-backup-keep-latest': { key: 'autoBackupKeepLatest', type: 'string' },
+    '--optional-checks': { key: 'optionalChecksAlias', type: 'string' },
+    '--optional-checks-enabled': { key: 'optionalChecksEnabled', type: 'string' },
     '--garda-self-guard': { key: 'gardaSelfGuard', type: 'string' },
     '--operator-confirmed': { key: 'operatorConfirmed', type: 'string' },
     '--operator-confirmed-at-utc': { key: 'operatorConfirmedAtUtc', type: 'string' }

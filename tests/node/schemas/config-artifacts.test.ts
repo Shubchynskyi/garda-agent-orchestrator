@@ -19,6 +19,7 @@ import {
     validateRuntimeRetentionConfig,
     validateWorkflowConfig
 } from '../../../src/schemas/config-artifacts';
+import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
 
 function readTemplateConfig(configName: string): Record<string, unknown> {
     return JSON.parse(
@@ -191,6 +192,93 @@ test('validateWorkflowConfig canonicalizes scope budget guard values before guar
     assert.equal(fullSuiteValidation.placement, 'before_completion');
     assert.equal(fullSuiteValidation.timeout_blocker, true);
     assert.equal(fullSuiteValidation.timeout_retry_count, 1);
+});
+
+test('validateWorkflowConfig validates custom optional quality checks and duplicate ids', () => {
+    const baseConfig = {
+        full_suite_validation: {
+            enabled: false,
+            command: 'npm test',
+            timeout_ms: 600000,
+            green_summary_max_lines: 5,
+            red_failure_chunk_lines: 50,
+            out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+        },
+        review_execution_policy: {
+            mode: 'code_first_optional'
+        }
+    };
+
+    const normalized = validateWorkflowConfig({
+        ...baseConfig,
+        optional_quality_checks: {
+            enabled: 'false',
+            rules: [
+                {
+                    id: 'Custom_Rule',
+                    title: 'Custom rule',
+                    prompt: 'Check custom local quality criteria.'
+                }
+            ]
+        }
+    });
+    const optionalQualityChecks = normalized.optional_quality_checks as Record<string, unknown>;
+    assert.equal(optionalQualityChecks.enabled, false);
+    assert.deepEqual(optionalQualityChecks.rules, [
+        {
+            id: 'custom_rule',
+            title: 'Custom rule',
+            prompt: 'Check custom local quality criteria.',
+            enabled: true
+        }
+    ]);
+
+    const defaulted = validateWorkflowConfig({
+        ...baseConfig,
+        optional_quality_checks: {
+            enabled: true
+        }
+    });
+    const defaultedOptionalQualityChecks = defaulted.optional_quality_checks as Record<string, unknown>;
+    const defaultedRules = defaultedOptionalQualityChecks.rules as Array<Record<string, unknown>>;
+    assert.equal(defaultedOptionalQualityChecks.enabled, true);
+    assert.deepEqual(
+        defaultedRules.map((rule) => rule.id),
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+    );
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            optional_quality_checks: {
+                enabled: true,
+                rules: []
+            }
+        }),
+        /optional_quality_checks\.rules must contain at least one rule/
+    );
+
+    assert.throws(
+        () => validateWorkflowConfig({
+            ...baseConfig,
+            optional_quality_checks: {
+                enabled: true,
+                rules: [
+                    {
+                        id: 'duplicate',
+                        title: 'First',
+                        prompt: 'First prompt.'
+                    },
+                    {
+                        id: 'Duplicate',
+                        title: 'Second',
+                        prompt: 'Second prompt.'
+                    }
+                ]
+            }
+        }),
+        /optional_quality_checks\.rules has duplicate id 'duplicate'/
+    );
 });
 
 test('validateWorkflowConfig defaults missing full-suite placement but rejects invalid values', () => {

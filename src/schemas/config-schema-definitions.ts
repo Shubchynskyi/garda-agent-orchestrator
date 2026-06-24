@@ -489,6 +489,49 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
             required: ['enabled', 'interval_days', 'keep_latest'],
             additionalProperties: false
         },
+        optional_quality_checks: {
+            type: 'object',
+            description: 'Advisory pre-review quality checklist settings. The mode is default-enabled but does not replace compile, review, or full-suite validation.',
+            properties: {
+                enabled: {
+                    type: 'boolean',
+                    description: 'Enable advisory optional quality checks.'
+                },
+                rules: {
+                    type: 'array',
+                    minItems: 1,
+                    description: 'Checklist rules shown to the agent before mandatory review/full-suite validation.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            id: {
+                                type: 'string',
+                                minLength: 1,
+                                description: 'Stable machine id for the checklist rule.'
+                            },
+                            title: {
+                                type: 'string',
+                                minLength: 1,
+                                description: 'Human-readable checklist rule title.'
+                            },
+                            prompt: {
+                                type: 'string',
+                                minLength: 1,
+                                description: 'Instruction the agent should evaluate for this advisory rule.'
+                            },
+                            enabled: {
+                                type: 'boolean',
+                                description: 'Enable this individual advisory rule. Missing values default to true during runtime validation.'
+                            }
+                        },
+                        required: ['id', 'title', 'prompt'],
+                        additionalProperties: false
+                    }
+                }
+            },
+            required: ['enabled'],
+            additionalProperties: false
+        },
         orchestrator_work_policy: {
             type: 'object',
             description: 'Workspace self-guard policy for agent-entered protected orchestrator work.',

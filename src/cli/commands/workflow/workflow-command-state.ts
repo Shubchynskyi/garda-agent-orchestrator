@@ -7,9 +7,11 @@ import {
     hasMaterializedWorkflowConfigBaseline,
     normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
+    normalizeOptionalQualityChecksConfig,
     normalizeOrchestratorWorkPolicyConfig,
     type AutoBackupConfig,
     type OrchestratorWorkPolicyConfig,
+    type OptionalQualityChecksConfig,
     type ProjectMemoryMaintenanceConfig,
     type TaskResetConfig,
     type WorkflowConfigData
@@ -56,6 +58,12 @@ export function cloneAutoBackupConfig(config: AutoBackupConfig): AutoBackupConfi
     return JSON.parse(JSON.stringify(config)) as AutoBackupConfig;
 }
 
+export function cloneOptionalQualityChecksConfig(
+    config: OptionalQualityChecksConfig
+): OptionalQualityChecksConfig {
+    return JSON.parse(JSON.stringify(config)) as OptionalQualityChecksConfig;
+}
+
 export function cloneOrchestratorWorkPolicyConfig(
     config: OrchestratorWorkPolicyConfig
 ): OrchestratorWorkPolicyConfig {
@@ -77,6 +85,9 @@ export function normalizeWorkflowFileConfig(config: WorkflowFileConfigData): Wor
         auto_backup: cloneAutoBackupConfig(
             normalizeAutoBackupConfig(config.auto_backup ?? defaultConfig.auto_backup)
         ),
+        optional_quality_checks: cloneOptionalQualityChecksConfig(
+            normalizeOptionalQualityChecksConfig(config.optional_quality_checks ?? defaultConfig.optional_quality_checks)
+        ),
         orchestrator_work_policy: cloneOrchestratorWorkPolicyConfig(
             normalizeOrchestratorWorkPolicyConfig(config.orchestrator_work_policy ?? defaultConfig.orchestrator_work_policy)
         )
@@ -95,6 +106,7 @@ export function readWorkflowConfigState(configPath: string, bundleRoot: string):
                 project_memory_maintenance: defaultConfig.project_memory_maintenance,
                 task_reset: defaultConfig.task_reset,
                 auto_backup: defaultConfig.auto_backup,
+                optional_quality_checks: defaultConfig.optional_quality_checks,
                 orchestrator_work_policy: defaultConfig.orchestrator_work_policy
             }),
             exists: false,

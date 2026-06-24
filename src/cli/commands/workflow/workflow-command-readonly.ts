@@ -42,7 +42,8 @@ export function handleValidate(options: ParsedOptionsRecord): WorkflowValidateRe
             result.scope_budget_guard_summary_line,
             result.review_cycle_guard_summary_line,
             result.project_memory_maintenance_summary_line,
-            result.task_reset_summary_line
+            result.task_reset_summary_line,
+            result.optional_quality_checks_summary_line
         ].join('\n')));
     }
     return result;
@@ -73,6 +74,7 @@ export function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResu
             'When review_cycle_guard.auto_split_enabled is true, next-step emits a dedicated auto-split prompt artifact for the agent instead of waiting for operator input.',
             'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.',
             'Task reset: confirmed reset mutations are disabled by default and require audited opt-in with workflow set --task-reset on --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>".',
+            'Optional quality checks: advisory self-check rules are default-enabled, configurable through guarded workflow settings, and do not replace compile, review, or full-suite validation.',
             'workflow set requires explicit operator approval with --operator-confirmed yes and --operator-confirmed-at-utc; agents must not approve workflow-config mutations for themselves.',
             'Task reset dry-run remains available while disabled because it only reports reset scope and does not mutate task status or artifacts.'
         ]
@@ -87,6 +89,7 @@ export function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResu
         console.log(result.scope_budget_guard_summary_line);
         console.log(result.review_cycle_guard_summary_line);
         console.log(result.task_reset_summary_line);
+        console.log(result.optional_quality_checks_summary_line);
         for (const line of result.explanation) {
             console.log(`- ${line}`);
         }

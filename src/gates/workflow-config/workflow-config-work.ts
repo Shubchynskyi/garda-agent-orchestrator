@@ -209,6 +209,7 @@ const COMPATIBILITY_TOP_LEVEL_KEYS = [
     'full_suite_validation',
     'orchestrator_work_policy',
     'auto_backup',
+    'optional_quality_checks',
     'project_memory_maintenance',
     'review_cycle_guard',
     'review_execution_policy',
@@ -218,6 +219,7 @@ const COMPATIBILITY_TOP_LEVEL_KEYS = [
 const COMPATIBILITY_OPTIONAL_TOP_LEVEL_KEYS = [
     'compile_gate',
     'auto_backup',
+    'optional_quality_checks',
     'orchestrator_work_policy',
     'review_execution_policy',
     'task_reset'
@@ -276,6 +278,8 @@ const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
 ];
 const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
 const COMPATIBILITY_AUTO_BACKUP_KEYS = ['enabled', 'interval_days', 'keep_latest'];
+const COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS = ['enabled', 'rules'];
+const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_KEYS = ['enabled', 'id', 'prompt', 'title'];
 const COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS = ['mode'];
 
 function hasExactOwnKeys(record: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
@@ -331,6 +335,40 @@ function includesEvery(actual: readonly string[], expected: readonly string[]): 
 function isSubsetOf(actual: readonly string[], allowed: readonly string[]): boolean {
     const allowedSet = new Set(allowed);
     return actual.every((entry) => allowedSet.has(entry));
+}
+
+function isExactDefaultOptionalQualityChecksCompatibilityBaseline(input: unknown): boolean {
+    const optionalQualityChecks = toPlainRecord(input);
+    const defaultOptionalQualityChecks = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.optional_quality_checks as unknown as Record<string, unknown>;
+    const rules = optionalQualityChecks && Array.isArray(optionalQualityChecks.rules)
+        ? optionalQualityChecks.rules
+        : null;
+    const defaultRules = Array.isArray(defaultOptionalQualityChecks.rules)
+        ? defaultOptionalQualityChecks.rules
+        : null;
+    if (
+        !optionalQualityChecks
+        || !hasExactOwnKeys(defaultOptionalQualityChecks, COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS)
+        || !hasExactOwnKeys(optionalQualityChecks, COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS)
+        || optionalQualityChecks.enabled !== true
+        || !rules
+        || !defaultRules
+        || rules.length !== defaultRules.length
+    ) {
+        return false;
+    }
+    return rules.every((rawRule, index) => {
+        const rule = toPlainRecord(rawRule);
+        const defaultRule = toPlainRecord(defaultRules[index]);
+        return !!rule
+            && !!defaultRule
+            && hasExactOwnKeys(defaultRule, COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_KEYS)
+            && hasExactOwnKeys(rule, COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_KEYS)
+            && rule.enabled === defaultRule.enabled
+            && rule.id === defaultRule.id
+            && rule.title === defaultRule.title
+            && rule.prompt === defaultRule.prompt;
+    });
 }
 
 function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string, unknown>): boolean {
@@ -517,6 +555,13 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
         ) {
             return false;
         }
+    }
+
+    if (
+        hasOwnKey(config, 'optional_quality_checks')
+        && !isExactDefaultOptionalQualityChecksCompatibilityBaseline(config.optional_quality_checks)
+    ) {
+        return false;
     }
 
     if (hasOwnKey(config, 'orchestrator_work_policy')) {

@@ -8,6 +8,7 @@ import {
     hasMaterializedWorkflowConfigBaseline,
     normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
+    normalizeOptionalQualityChecksConfig,
     normalizeOrchestratorWorkPolicyConfig,
     type WorkflowConfigData
 } from '../../../core/workflow-config';
@@ -18,6 +19,7 @@ import { validateWorkflowConfig } from '../../../schemas/config-artifacts';
 import {
     cloneOrchestratorWorkPolicyConfig,
     cloneAutoBackupConfig,
+    cloneOptionalQualityChecksConfig,
     cloneProjectMemoryMaintenanceConfig,
     cloneTaskResetConfig,
     normalizeWorkflowFileConfig,
@@ -131,6 +133,13 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
         aliasKey: 'autoBackupAlias',
         canonicalFlag: '--auto-backup-enabled',
         aliasFlag: '--auto-backup'
+    });
+    const optionalChecksEnabledSetting = resolveBooleanSettingOption({
+        parsedOptions: options,
+        canonicalKey: 'optionalChecksEnabled',
+        aliasKey: 'optionalChecksAlias',
+        canonicalFlag: '--optional-checks-enabled',
+        aliasFlag: '--optional-checks'
     });
 
     if (fullSuiteEnabledSetting) {
@@ -388,6 +397,20 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     }
     nextConfig.auto_backup = nextAutoBackup;
 
+    const nextOptionalQualityChecks = cloneOptionalQualityChecksConfig(
+        normalizeOptionalQualityChecksConfig(
+            nextConfig.optional_quality_checks ?? buildDefaultWorkflowConfig().optional_quality_checks
+        )
+    );
+    if (optionalChecksEnabledSetting) {
+        nextOptionalQualityChecks.enabled = parseBooleanText(
+            optionalChecksEnabledSetting.value,
+            optionalChecksEnabledSetting.flagName
+        );
+        changedFields.push('optional_quality_checks.enabled');
+    }
+    nextConfig.optional_quality_checks = nextOptionalQualityChecks;
+
     const nextOrchestratorWorkPolicy = cloneOrchestratorWorkPolicyConfig(
         normalizeOrchestratorWorkPolicyConfig(
             nextConfig.orchestrator_work_policy ?? buildDefaultWorkflowConfig().orchestrator_work_policy
@@ -407,7 +430,8 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--full-suite-green-summary-max-lines, --full-suite-red-failure-chunk-lines, '
             + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
-            + '--task-reset-enabled, --auto-backup-* flags, their short on/off aliases, or --garda-self-guard.'
+            + '--task-reset-enabled, --auto-backup-* flags, --optional-checks-enabled, '
+            + 'their short on/off aliases, or --garda-self-guard.'
         );
     }
 
@@ -419,6 +443,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             project_memory_maintenance: state.config.project_memory_maintenance,
             task_reset: state.config.task_reset,
             auto_backup: state.config.auto_backup,
+            optional_quality_checks: state.config.optional_quality_checks,
             orchestrator_work_policy: state.config.orchestrator_work_policy
         }) as WorkflowFileConfigData);
     const currentSerialized = JSON.stringify(currentValidated, null, 2) + '\n';
