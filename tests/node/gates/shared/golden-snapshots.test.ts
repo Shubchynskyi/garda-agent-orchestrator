@@ -15,8 +15,7 @@ import {
     STAGE_SEQUENCE_ORDER,
     collectOrderedTimelineEvents,
     validateStageSequence,
-    type TimelineEventEntry,
-    type StageSequenceEvidence
+    type TimelineEventEntry
 } from '../../../../src/gates/completion';
 
 import {

@@ -8,16 +8,12 @@ import * as path from 'node:path';
 
 import {
     assertRequiredUpstreamReviewDependencies,
-    assessUpstreamReviewDependencyStatus,
     buildReviewDependencyDiagnostics,
-    getRequiredUpstreamReviewsFromRecord,
     type ReviewDependencyTimelineEvent
 } from '../../../../src/gates/review/review-dependencies';
-import { getReviewExecutionPreparationBatches } from '../../../../src/core/review-execution-policy';
-import { resolveRuntimeReviewerIdentity, type RuntimeReviewerIdentity } from '../../../../src/gates/review/reviewer-routing';
+import { type RuntimeReviewerIdentity } from '../../../../src/gates/review/reviewer-routing';
 import { buildDomainScopeFingerprints } from '../../../../src/gates/scope/domain-scope-fingerprints';
 
-const PRE_START_BANNER_TASK_MODE_TIMESTAMP = '2026-04-17T11:29:00.000Z';
 
 function writeJson(filePath: string, value: unknown): void {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });

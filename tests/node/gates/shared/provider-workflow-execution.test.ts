@@ -1068,8 +1068,6 @@ describe('provider-workflow-execution: multi-provider active workspace', () => {
 // ===========================================================================
 
 describe('provider-workflow-execution: redirect entrypoints reference router', () => {
-    const templatePath = path.join(process.cwd(), 'template', 'entrypoints', 'canonical-rule-index.md');
-    const templateContent = fs.readFileSync(templatePath, 'utf-8');
     const bridgePaths = BRIDGE_PROFILES.map((p) => p.orchestratorRelativePath);
 
     for (const provider of ALL_PROVIDERS) {

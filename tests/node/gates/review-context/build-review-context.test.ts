@@ -1,37 +1,16 @@
 import { describe, it } from 'node:test';
 import {
     assert,
-    crypto,
     fs,
     os,
     path,
-    childProcess,
-    appendTaskEvent,
-    buildReviewContext,
     getRulePack,
     toNonNegativeInt,
     resolveContextOutputPath,
     resolveScopedDiffMetadataPath,
-    getWorkspaceSnapshot,
-    buildChangedFileFingerprintEntries,
-    buildReviewTreeState,
     getCanonicalReviewContextPath,
     getLegacyDefaultReviewContextPath,
-    resolveCanonicalReviewContextPath,
-    computeReviewContextReuseHash,
-    buildTaskModeArtifact,
-    getTaskModeEvidence,
-    resolveTaskModeArtifactPath,
-    resolveReviewerRoutingPolicy,
-    resolveRuntimeReviewerIdentity,
-    REVIEW_CONTRACTS,
-    serializeTaskPlan,
-    validateTaskPlan,
-    runGit,
-    sha256Text,
-    cloneJson,
-    writeTaskModeArtifactFixture
-} from './build-review-context-fixtures';
+    resolveCanonicalReviewContextPath} from './build-review-context-fixtures';
 
 describe('gates/build-review-context core contracts', () => {
     describe('getRulePack', () => {
