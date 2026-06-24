@@ -308,6 +308,27 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(warningOnlyContinuationAuditLines.length >= 3);
         assert.match(warningOnlyContinuationAuditLines[warningOnlyContinuationAuditLines.length - 1], /"action_id":"setting:full-suite-timeout-warning-continuation"/u);
         assert.match(warningOnlyContinuationAuditLines[warningOnlyContinuationAuditLines.length - 1], /"status":"executed"/u);
+
+        const compileCommandExecuteResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                setting_id: 'compile-gate-command',
+                mode: 'execute',
+                value: 'npm run typecheck',
+                confirmation: 'APPLY GARDA SETTING'
+            })
+        });
+        assert.equal(compileCommandExecuteResponse.status, 200);
+        const compileCommandExecute = await compileCommandExecuteResponse.json() as { status: string; proposed_value: string; audit_path: string };
+        assert.equal(compileCommandExecute.status, 'executed');
+        assert.equal(compileCommandExecute.proposed_value, 'npm run typecheck');
+        assert.equal(executedCommands.length, 4);
+        assert.match(executedCommands[3], /workflow set --compile-gate-command "npm run typecheck"/u);
+        const compileCommandAuditLines = fs.readFileSync(compileCommandExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.ok(compileCommandAuditLines.length >= 3);
+        assert.match(compileCommandAuditLines[compileCommandAuditLines.length - 1], /"action_id":"setting:compile-gate-command"/u);
+        assert.match(compileCommandAuditLines[compileCommandAuditLines.length - 1], /"status":"executed"/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }
