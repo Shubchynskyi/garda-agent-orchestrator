@@ -462,6 +462,10 @@ class BrowserSmokeCdpClient {
 }
 
 const BROWSER_SMOKE_READY_ATTEMPTS = 160;
+const BROWSER_SMOKE_USER_DATA_DIR_REMOVE_ATTEMPTS = 20;
+const BROWSER_SMOKE_USER_DATA_DIR_REMOVE_MAX_RETRIES = 5;
+const BROWSER_SMOKE_USER_DATA_DIR_REMOVE_RETRY_DELAY_MS = 100;
+const BROWSER_SMOKE_USER_DATA_DIR_REMOVE_MAX_BACKOFF_MS = 500;
 
 async function connectBrowserSmokeCdp(url: string): Promise<BrowserSmokeCdpClient> {
     const WebSocketCtor = (globalThis as unknown as {
@@ -541,21 +545,34 @@ async function terminateBrowserSmokeProcess(browser: ChildProcess | null): Promi
 
 function isTransientBrowserSmokeRmError(error: unknown): boolean {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
-    return code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EACCES';
+    return code === 'EPERM'
+        || code === 'EBUSY'
+        || code === 'ENOTEMPTY'
+        || code === 'EACCES'
+        || code === 'EMFILE'
+        || code === 'ENFILE';
 }
 
 async function removeBrowserSmokeUserDataDir(userDataDir: string): Promise<void> {
     let lastError: unknown;
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt < BROWSER_SMOKE_USER_DATA_DIR_REMOVE_ATTEMPTS; attempt++) {
         try {
-            fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+            fs.rmSync(userDataDir, {
+                recursive: true,
+                force: true,
+                maxRetries: BROWSER_SMOKE_USER_DATA_DIR_REMOVE_MAX_RETRIES,
+                retryDelay: BROWSER_SMOKE_USER_DATA_DIR_REMOVE_RETRY_DELAY_MS
+            });
             return;
         } catch (error) {
-            if (process.platform !== 'win32' || !isTransientBrowserSmokeRmError(error)) {
+            if (!isTransientBrowserSmokeRmError(error)) {
                 throw error;
             }
             lastError = error;
-            await sleep(Math.min(500, 100 * (attempt + 1)));
+            await sleep(Math.min(
+                BROWSER_SMOKE_USER_DATA_DIR_REMOVE_MAX_BACKOFF_MS,
+                BROWSER_SMOKE_USER_DATA_DIR_REMOVE_RETRY_DELAY_MS * (attempt + 1)
+            ));
         }
     }
     throw lastError instanceof Error
