@@ -227,7 +227,6 @@ describe('gates/next-step review cycle guard split', () => {
         writeReviewEvidence(repoRoot, TASK_ID, 'refactor', { verdict: 'fail' });
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
-        const text = formatNextStepText(result);
 
         assert.equal(result.next_gate, 'implementation');
         assert.equal(result.review_cycle_block?.choices.includes('allow_one_more_cycle') ?? false, false);

@@ -5,17 +5,12 @@ import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { initGitRepo } from '../git-fixtures';
 
-import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import { getProviderRuntimeEnvironmentKeys } from './next-step-test-support';
 import {
-    recordFullSuiteValidationDuration,
     type FullSuiteValidationConfig
 } from './next-step-test-support';
-import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
 import { getWorkspaceSnapshot } from './next-step-test-support';
-import { getWorkspaceSnapshotCached } from './next-step-test-support';
 import { buildRulePackArtifact } from './next-step-test-support';
 import { buildTaskModeArtifact } from './next-step-test-support';
 import { buildTaskAuditSummary, synchronizeFinalCloseoutArtifacts } from './next-step-test-support';

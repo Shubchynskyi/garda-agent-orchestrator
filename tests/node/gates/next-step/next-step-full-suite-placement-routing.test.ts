@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { initGitRepo } from '../git-fixtures';
 import {
     buildDefaultWorkflowConfig,
     formatNextStepText,
@@ -11,62 +10,27 @@ import {
     resolveNextStep,
     type FullSuiteValidationConfig
 } from './next-step-test-support';
-import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
 import {
     TASK_ID,
-    EXPECTED_LOOP_LINE,
-    requireFromTest,
     NEXT_STEP_FULL_SUITE_TEST_CONFIG,
     ALL_REVIEW_FLAGS,
-    tempRoots,
-    PROVIDER_ENV_KEYS,
-    withProviderEnv,
     makeTempRepo,
     reviewsRoot,
     eventsRoot,
     writeJson,
-    writeJsonWithSha,
-    writeProjectMemoryWorkflowConfig,
-    seedProjectMemory,
-    seedProjectMemoryImpact,
-    sha256Text,
     fileSha256,
-    writeNoOpEvidence,
-    writeStrictDecompositionDecision,
     appendEvent,
     seedStartedTask,
-    seedCustomStartedTask,
-    seedTaskModeOnly,
-    seedRulePack,
-    seedHandshake,
-    seedShellSmoke,
     seedPostPreflightRulePack,
     normalizeForTimeline,
-    seedSplitRequiredLatchEvidence,
-    getLoadedRuleFileBasenames,
     writePreflight,
     seedCompilePass,
-    writeGitAutoPreflight,
-    seedGitAutoCompilePass,
-    buildReviewContextScopeFixture,
     writeReviewEvidence,
-    markReviewEvidenceAsStrictReuse,
-    writeStrictIndependentCodeReviewEvidence,
-    writeReviewContextOnly,
-    launchInputEvidenceFixture,
-    seedCompletedReviewerLaunchAndInvocation,
-    readReviewContextTreeStateSha256,
-    writeFreshReviewContextWithoutRouting,
     seedReviewGatePass,
     seedDocImpactPass,
-    seedCompletionPass,
     seedFullSuiteValidation,
     seedTimedOutFullSuiteFailure,
-    seedFullSuiteRetryEvidence,
-    materializeFinalCloseout,
-    seedCompletedTaskWithIndependentCodeReview,
-    seedSourceCheckoutRuntime
-} from './next-step-full-suite-fixtures';
+    seedFullSuiteRetryEvidence} from './next-step-full-suite-fixtures';
 
 describe('gates/next-step', () => {
     it('runs enabled full-suite validation before launching mandatory test review', () => {

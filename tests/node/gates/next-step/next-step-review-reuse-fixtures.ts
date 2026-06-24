@@ -1,11 +1,9 @@
-import { describe, it, afterEach } from 'node:test';
-import assert from 'node:assert/strict';
+import { afterEach } from 'node:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { initGitRepo } from '../git-fixtures';
 
 import {
     buildReviewReuseCandidatesForDiagnostics,

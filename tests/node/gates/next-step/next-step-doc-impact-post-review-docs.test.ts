@@ -5,44 +5,18 @@ import * as path from 'node:path';
 import { initGitRepo } from '../git-fixtures';
 import {
     buildDomainScopeFingerprints,
-    formatNextStepText,
     getWorkspaceSnapshot,
-    recordFullSuiteValidationDuration,
     resolveNextStep
 } from './next-step-test-support';
-import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
 import {
     TASK_ID,
-    EXPECTED_LOOP_LINE,
-    requireFromTest,
-    NEXT_STEP_FULL_SUITE_TEST_CONFIG,
     ALL_REVIEW_FLAGS,
-    tempRoots,
-    PROVIDER_ENV_KEYS,
-    withProviderEnv,
     makeTempRepo,
     reviewsRoot,
-    eventsRoot,
     writeJson,
-    writeJsonWithSha,
-    writeProjectMemoryWorkflowConfig,
-    seedProjectMemory,
-    seedProjectMemoryImpact,
-    sha256Text,
-    fileSha256,
-    writeNoOpEvidence,
-    writeStrictDecompositionDecision,
     appendEvent,
     seedStartedTask,
-    seedCustomStartedTask,
-    seedTaskModeOnly,
-    seedRulePack,
-    seedHandshake,
-    seedShellSmoke,
     seedPostPreflightRulePack,
-    normalizeForTimeline,
-    seedSplitRequiredLatchEvidence,
-    getLoadedRuleFileBasenames,
     writePreflight,
     seedCompilePass,
     writeGitAutoPreflight,
@@ -50,23 +24,8 @@ import {
     stageFiles,
     writeStagedPreflight,
     seedStagedCompilePass,
-    buildReviewContextScopeFixture,
     writeReviewEvidence,
-    markReviewEvidenceAsStrictReuse,
-    writeStrictIndependentCodeReviewEvidence,
-    writeReviewContextOnly,
-    launchInputEvidenceFixture,
-    seedCompletedReviewerLaunchAndInvocation,
-    readReviewContextTreeStateSha256,
-    writeFreshReviewContextWithoutRouting,
-    seedReviewGatePass,
-    seedDocImpactPass,
-    seedCompletionPass,
-    seedFullSuiteValidation,
-    materializeFinalCloseout,
-    seedCompletedTaskWithIndependentCodeReview,
-    seedSourceCheckoutRuntime
-} from './next-step-doc-impact-fixtures';
+    seedReviewGatePass} from './next-step-doc-impact-fixtures';
 
 describe('gates/next-step', () => {
     it('routes to completion when doc-impact accepted declared post-review docs and changelog updates', () => {

@@ -3,40 +3,16 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { initGitRepo } from '../git-fixtures';
-import { formatNextStepText, resolveNextStep, recordFullSuiteValidationDuration } from './next-step-test-support';
-import { assertGateChainDecision } from '../../cli/commands/gate-test-gatechain';
+import { resolveNextStep } from './next-step-test-support';
 import {
     TASK_ID,
-    EXPECTED_LOOP_LINE,
-    requireFromTest,
-    NEXT_STEP_FULL_SUITE_TEST_CONFIG,
     ALL_REVIEW_FLAGS,
-    tempRoots,
-    PROVIDER_ENV_KEYS,
-    withProviderEnv,
     makeTempRepo,
     reviewsRoot,
-    eventsRoot,
     writeJson,
-    writeJsonWithSha,
-    writeProjectMemoryWorkflowConfig,
-    seedProjectMemory,
-    seedProjectMemoryImpact,
-    sha256Text,
     fileSha256,
-    writeNoOpEvidence,
-    writeStrictDecompositionDecision,
     appendEvent,
     seedStartedTask,
-    seedCustomStartedTask,
-    seedTaskModeOnly,
-    seedRulePack,
-    seedHandshake,
-    seedShellSmoke,
-    seedPostPreflightRulePack,
-    normalizeForTimeline,
-    seedSplitRequiredLatchEvidence,
-    getLoadedRuleFileBasenames,
     writePreflight,
     seedCompilePass,
     writeGitAutoPreflight,
@@ -44,23 +20,8 @@ import {
     stageFiles,
     writeStagedPreflight,
     seedStagedCompilePass,
-    buildReviewContextScopeFixture,
     writeReviewEvidence,
-    markReviewEvidenceAsStrictReuse,
-    writeStrictIndependentCodeReviewEvidence,
-    writeReviewContextOnly,
-    launchInputEvidenceFixture,
-    seedCompletedReviewerLaunchAndInvocation,
-    readReviewContextTreeStateSha256,
-    writeFreshReviewContextWithoutRouting,
-    seedReviewGatePass,
-    seedDocImpactPass,
-    seedCompletionPass,
-    seedFullSuiteValidation,
-    materializeFinalCloseout,
-    seedCompletedTaskWithIndependentCodeReview,
-    seedSourceCheckoutRuntime
-} from './next-step-doc-impact-fixtures';
+    seedReviewGatePass} from './next-step-doc-impact-fixtures';
 
 describe('gates/next-step', () => {
     it('keeps changelog-only closeout in doc-impact lane after failed completion', () => {
