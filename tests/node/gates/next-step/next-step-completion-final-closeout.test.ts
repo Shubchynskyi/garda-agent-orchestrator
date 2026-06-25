@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { initGitRepo } from '../git-fixtures';
+import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
 import { formatNextStepText, resolveNextStep } from './next-step-test-support';
 import {
     buildForcedSourceCheckoutRuntimeBuildCommand
@@ -677,6 +677,60 @@ describe('gates/next-step', () => {
         assert.match(result.reason, /src\/post-done-drift\.ts/);
 
         assert.match(result.reason, /Do not reopen stale lifecycle gates automatically/);
+
+        assert.equal(text.includes('gate classify-change'), false);
+
+        assert.equal(text.includes('gate compile-gate'), false);
+
+        assert.equal(text.includes('gate full-suite-validation'), false);
+
+    });
+
+    it('blocks completed tasks on staged-only post-DONE drift without reopening lifecycle gates', () => {
+
+        const repoRoot = makeTempRepo();
+
+        initGitRepo(repoRoot);
+
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const completedValue = 2;\n', 'utf8');
+
+        seedStartedTask(repoRoot, TASK_ID);
+
+        writeGitAutoPreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS });
+
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        seedDocImpactPass(repoRoot, TASK_ID);
+
+        seedCompletionPass(repoRoot, TASK_ID);
+
+        materializeFinalCloseout(repoRoot, TASK_ID);
+
+        fs.writeFileSync(path.join(repoRoot, 'src', 'post-done-staged.ts'), 'export const stagedDrift = true;\n', 'utf8');
+
+        runGitFixtureCommand(repoRoot, ['add', 'src/post-done-staged.ts']);
+
+
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        const text = formatNextStepText(result);
+
+
+
+        assert.equal(result.status, 'BLOCKED');
+
+        assert.equal(result.next_gate, 'post-done-drift');
+
+        assert.equal(result.commands.length, 0);
+
+        assert.match(result.reason, /Tracked post-DONE workspace drift detected/);
+
+        assert.match(result.reason, /src\/post-done-staged\.ts/);
+
+        assert.match(result.reason, /Commit or isolate the already-completed task diff/);
 
         assert.equal(text.includes('gate classify-change'), false);
 

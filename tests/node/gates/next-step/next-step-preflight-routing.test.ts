@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { initGitRepo } from '../git-fixtures';
+import { initGitRepo, runGitFixtureCommand } from '../git-fixtures';
 
 import { resolveNextStep } from './next-step-test-support';
 import { getWorkspaceSnapshot } from './next-step-test-support';
@@ -452,6 +452,35 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(result.reason.includes('rerun next-step'));
     });
 
+    it('keeps unrelated sibling drift out of planned-scope materialization recovery', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Create planned source after classification',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/app.ts']
+        }));
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- unrelated note\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'materialize-planned-scope');
+        assert.equal(result.commands.length, 0);
+        assert.ok(result.reason.includes('planned --changed-file hints [src/app.ts]'));
+        assert.ok(!result.reason.includes('CHANGELOG.md'));
+    });
+
     it('refreshes planned-scope preflight through classify-change after the planned files are materialized', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
@@ -471,6 +500,7 @@ describe('gates/next-step preflight routing', () => {
         }));
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
         fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const plannedMaterialized = true;\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const command = result.commands[0].command;
@@ -478,7 +508,177 @@ describe('gates/next-step preflight routing', () => {
         assert.equal(result.next_gate, 'classify-change');
         assert.ok(result.reason.includes('Refresh classify-change for the current scope first'));
         assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(!command.includes('CHANGELOG.md'));
         assert.ok(!command.includes('<path>'));
+    });
+
+    it('includes related test changes when refreshing planned source scope', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'gates', 'next-step'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts'),
+            'export const nextStep = true;\n',
+            'utf8'
+        );
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'node', 'gates', 'next-step'), { recursive: true });
+        fs.writeFileSync(
+            path.join(repoRoot, 'tests', 'node', 'gates', 'next-step', 'next-step-preflight-routing.test.ts'),
+            'import assert from "node:assert/strict";\n',
+            'utf8'
+        );
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned source and related tests',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: ['src/gates/next-step/next-step.ts']
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/gates/next-step/next-step.ts'] });
+        fs.appendFileSync(path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts'), 'export const plannedNextStep = true;\n', 'utf8');
+        fs.appendFileSync(
+            path.join(repoRoot, 'tests', 'node', 'gates', 'next-step', 'next-step-preflight-routing.test.ts'),
+            'assert.ok(true);\n',
+            'utf8'
+        );
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--changed-file "src/gates/next-step/next-step.ts"'));
+        assert.ok(command.includes('--changed-file "tests/node/gates/next-step/next-step-preflight-routing.test.ts"'));
+    });
+
+    it('accepts refreshed planned source scope with related tests and no-diff planned hints', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'gates', 'next-step'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts'), 'export const nextStep = true;\n', 'utf8');
+        fs.writeFileSync(path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step-helper.ts'), 'export const helper = true;\n', 'utf8');
+        fs.mkdirSync(path.join(repoRoot, 'tests', 'node', 'gates', 'next-step'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'tests', 'node', 'gates', 'next-step', 'next-step-preflight-routing.test.ts'), 'export const testCase = true;\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Accept planned source and related test scope',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            plannedChangedFiles: [
+                'src/gates/next-step/next-step.ts',
+                'src/gates/next-step/next-step-helper.ts'
+            ]
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'gates', 'next-step', 'next-step.ts'), 'export const plannedNextStep = true;\n', 'utf8');
+        fs.appendFileSync(path.join(repoRoot, 'tests', 'node', 'gates', 'next-step', 'next-step-preflight-routing.test.ts'), 'export const relatedTest = true;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, {
+            changedFiles: [
+                'src/gates/next-step/next-step.ts',
+                'src/gates/next-step/next-step-helper.ts',
+                'tests/node/gates/next-step/next-step-preflight-routing.test.ts'
+            ]
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'classify-change', result.reason);
+        assert.ok(!result.reason.includes('no longer current: [src/gates/next-step/next-step-helper.ts]'), result.reason);
+    });
+
+    it('uses staged scope for first classify-change when unstaged sibling drift is present', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'CHANGELOG.md'), '# Changelog\n', 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Classify staged task change',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const stagedTaskChange = true;\n', 'utf8');
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+        fs.appendFileSync(path.join(repoRoot, 'CHANGELOG.md'), '- unrelated unstaged note\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--use-staged'));
+        assert.ok(!command.includes('CHANGELOG.md'));
+    });
+
+    it('uses staged scope for split child classify-change when sibling drift is present', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-PARENT | DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-06-25 | strict | Child tasks: `T-NEXT-1` and `T-NEXT-2`. |',
+            `| ${TASK_ID} | TODO | P1 | workflow/split-child | First split child | gpt-5.5 | 2026-06-25 | strict | Child of T-PARENT; isolate staged child scope from sibling drift. |`,
+            '| T-NEXT-2 | TODO | P1 | workflow/split-child | Sibling split child | gpt-5.5 | 2026-06-25 | strict | Sibling child. |',
+            ''
+        ].join('\n'), 'utf8');
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'First split child staged implementation',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved'
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const splitChildChange = true;\n', 'utf8');
+        runGitFixtureCommand(repoRoot, ['add', 'src/app.ts']);
+        fs.writeFileSync(path.join(repoRoot, 'src', 'sibling-drift.ts'), 'export const siblingDrift = true;\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(command.includes('--use-staged'));
+        assert.ok(!command.includes('src/sibling-drift.ts'));
     });
 
     it('refreshes workflow-config preflight when dirty-baseline source files are outside scope', () => {

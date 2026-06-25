@@ -114,6 +114,10 @@ function readCurrentWorkspaceChangedFiles(repoRoot: string): { changedFiles: str
     };
 }
 
+function readCurrentStagedChangedFiles(repoRoot: string): string[] | null {
+    return readGitPathLines(repoRoot, ['diff', '--cached', '--name-only', '--diff-filter=ACDMRTUXB', '--']);
+}
+
 function isSafeRepoRelativePath(relativePath: string): boolean {
     const normalizedPath = normalizePath(relativePath).replace(/\/+$/, '');
     if (!normalizedPath || normalizedPath === '.' || path.isAbsolute(normalizedPath)) {
@@ -350,8 +354,12 @@ export function buildClassifyChangeCommand(params: {
     const changedFiles = params.changedFiles || (params.includePlannedScope
         ? getTaskModeClassifyChangedFiles(params.taskMode)
         : []);
-    for (const changedFile of expandDirectoryPlaceholdersForCommand(params.repoRoot, changedFiles)) {
+    const expandedChangedFiles = expandDirectoryPlaceholdersForCommand(params.repoRoot, changedFiles);
+    for (const changedFile of expandedChangedFiles) {
         parts.push(`--changed-file ${quoteCommandValue(changedFile)}`);
+    }
+    if (expandedChangedFiles.length === 0 && (readCurrentStagedChangedFiles(params.repoRoot)?.length || 0) > 0) {
+        parts.push('--use-staged');
     }
     parts.push(...buildTaskModePathCommandParts(params.repoRoot, params.taskId, params.taskModePath));
     parts.push(`--output-path ${quoteCommandValue(params.preflightCommandPath)}`);

@@ -1644,7 +1644,8 @@ function getPreflightRefreshCommandChangedFiles(params: {
         );
         const currentTaskScopeChangedFiles = currentChangedFiles.filter((changedFile) => (
             plannedSet.has(changedFile)
-                || !unchangedDirtyBaselineSet.has(changedFile)
+                || (dirtyBaselineSet.has(changedFile) && !unchangedDirtyBaselineSet.has(changedFile))
+                || isRelatedToPlannedScope(changedFile, plannedChangedFiles)
         ));
         const currentChangedSet = new Set(currentChangedFiles);
         const taskScopedRefreshChangedFiles = taskScopedChangedFiles.filter((changedFile) => (
@@ -1659,6 +1660,30 @@ function getPreflightRefreshCommandChangedFiles(params: {
         params.preflight,
         params.fallbackChangedFiles
     );
+}
+
+function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
+    const normalizedChangedFile = normalizePath(changedFile);
+    const [changedTopLevel] = normalizedChangedFile.split('/');
+    if (!changedTopLevel || normalizedChangedFile === changedTopLevel) {
+        return false;
+    }
+    return plannedChangedFiles.some((plannedFile) => {
+        const normalizedPlannedFile = normalizePath(plannedFile);
+        const [plannedTopLevel] = normalizedPlannedFile.split('/');
+        const plannedDirectory = normalizedPlannedFile.split('/').slice(1, -1).join('/');
+        if (
+            changedTopLevel === 'tests'
+            && plannedTopLevel === 'src'
+            && plannedDirectory
+            && normalizedChangedFile.includes(`/${plannedDirectory}/`)
+        ) {
+            return true;
+        }
+        return Boolean(plannedTopLevel)
+            && normalizedPlannedFile !== plannedTopLevel
+            && plannedTopLevel === changedTopLevel;
+    });
 }
 
 function dirtyBaselineFileMatchesCurrent(

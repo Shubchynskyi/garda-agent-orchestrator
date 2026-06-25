@@ -66,6 +66,30 @@ export interface PreflightWorkspaceReadinessOptions {
     dirtyWorkspaceBaselineFileHashes?: Record<string, string>;
 }
 
+function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
+    const normalizedChangedFile = normalizePath(changedFile);
+    const [changedTopLevel] = normalizedChangedFile.split('/');
+    if (!changedTopLevel || normalizedChangedFile === changedTopLevel) {
+        return false;
+    }
+    return plannedChangedFiles.some((plannedFile) => {
+        const normalizedPlannedFile = normalizePath(plannedFile);
+        const [plannedTopLevel] = normalizedPlannedFile.split('/');
+        const plannedDirectory = normalizedPlannedFile.split('/').slice(1, -1).join('/');
+        if (
+            changedTopLevel === 'tests'
+            && plannedTopLevel === 'src'
+            && plannedDirectory
+            && normalizedChangedFile.includes(`/${plannedDirectory}/`)
+        ) {
+            return true;
+        }
+        return Boolean(plannedTopLevel)
+            && normalizedPlannedFile !== plannedTopLevel
+            && plannedTopLevel === changedTopLevel;
+    });
+}
+
 export function readCompileReadiness(
     repoRoot: string,
     reviewsRoot: string,
@@ -333,7 +357,9 @@ export function readPreflightWorkspaceReadiness(
             const plannedSet = new Set(plannedChangedFiles);
             const preflightUsesOnlyPlannedScope = plannedSet.size > 0
                 && changedFiles.length > 0
-                && changedFiles.every((entry) => plannedSet.has(entry));
+                && changedFiles.every((entry) => (
+                    plannedSet.has(entry) || isRelatedToPlannedScope(entry, plannedChangedFiles)
+                ));
             const currentGitChangedFilesWithoutProtectedBaseline = currentGitSnapshotFiles.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
             ));
@@ -347,19 +373,37 @@ export function readPreflightWorkspaceReadiness(
                     dirtyBaselineFileMatchesCurrent(repoRoot, entry, dirtyWorkspaceBaselineFileHashes)
                 ))
             );
-            const compareOnlyPlannedScope = preflightUsesOnlyPlannedScope && currentPlannedScopeGitFiles.length > 0;
+            const currentRelatedPlannedScopeGitFiles = currentGitChangedFilesWithoutProtectedBaseline.filter((entry) => (
+                !plannedSet.has(entry)
+                    && !dirtyBaselineSet.has(entry)
+                    && isRelatedToPlannedScope(entry, plannedChangedFiles)
+            ));
+            const compareOnlyPlannedScope = preflightUsesOnlyPlannedScope
+                && (currentPlannedScopeGitFiles.length > 0 || currentRelatedPlannedScopeGitFiles.length > 0);
             const currentGitChangedFiles = currentGitSnapshotFiles.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
                     && (!compareOnlyPlannedScope
                         || plannedSet.has(entry)
-                        || (!unchangedDirtyBaselineSet.has(entry)
-                            && !(preflightSet.has(entry) && !dirtyBaselineSet.has(entry))))
+                        || (dirtyBaselineSet.has(entry) && !unchangedDirtyBaselineSet.has(entry))
+                        || isRelatedToPlannedScope(entry, plannedChangedFiles))
+            ));
+            const currentGitChangedSet = new Set(currentGitChangedFiles);
+            const comparablePlannedChangedFiles = plannedChangedFiles.filter((entry) => (
+                !dirtyBaselineSet.has(entry) || currentGitChangedSet.has(entry)
             ));
             currentChangedFiles = [...new Set([
                 ...currentGitChangedFiles,
-                ...plannedChangedFiles
+                ...comparablePlannedChangedFiles
             ])].sort();
-            if (preflightUsesOnlyPlannedScope && currentGitChangedFiles.length === 0) {
+            const currentComparableChangedFiles = preflightUsesOnlyPlannedScope
+                ? currentChangedFiles
+                : currentGitChangedFiles;
+            if (
+                preflightUsesOnlyPlannedScope
+                && currentPlannedScopeGitFiles.length === 0
+                && currentRelatedPlannedScopeGitFiles.length === 0
+                && dirtyBaselineSet.size === 0
+            ) {
                 return {
                     ready: false,
                     reason:
@@ -373,7 +417,7 @@ export function readPreflightWorkspaceReadiness(
             if (allowDocsOnlyDelta) {
                 const docsOnlyDeltaReadiness = buildDocsOnlyDeltaReadiness(
                     repoRoot,
-                    currentGitChangedFiles,
+                    currentComparableChangedFiles,
                     changedFiles,
                     expectedChangedLinesTotal,
                     includeUntracked,
@@ -387,16 +431,16 @@ export function readPreflightWorkspaceReadiness(
                     return docsOnlyDeltaReadiness;
                 }
             }
-            const currentFileSetHash = stringSha256(currentGitChangedFiles.join('\n'));
+            const currentFileSetHash = stringSha256(currentComparableChangedFiles.join('\n'));
             if (currentFileSetHash !== expectedChangedFilesSha256) {
-                const currentSet = new Set(currentGitChangedFiles);
-                const missingFromPreflight = currentGitChangedFiles.filter((entry) => !preflightSet.has(entry));
+                const currentSet = new Set(currentComparableChangedFiles);
+                const missingFromPreflight = currentComparableChangedFiles.filter((entry) => !preflightSet.has(entry));
                 const noLongerCurrent = changedFiles.filter((entry) => !currentSet.has(entry));
                 const ignoredProtectedNote = unchangedProtectedFiles.size > 0
                     ? `; ignored unchanged dirty-baseline files: ${describePathList([...unchangedProtectedFiles])}`
                     : '';
                 violations.push(
-                    `stale preflight file set ${describePathList(changedFiles)} differs from current git snapshot ${describePathList(currentGitChangedFiles)}` +
+                    `stale preflight file set ${describePathList(changedFiles)} differs from current git snapshot ${describePathList(currentComparableChangedFiles)}` +
                     `; missing from preflight: ${describePathList(missingFromPreflight)}` +
                     `; no longer current: ${describePathList(noLongerCurrent)}${ignoredProtectedNote}`
                 );
