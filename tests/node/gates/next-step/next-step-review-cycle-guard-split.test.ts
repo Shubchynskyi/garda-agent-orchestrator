@@ -70,6 +70,14 @@ const {
 } = fx;
 void [ALL_REVIEW_FLAGS, appendEvent, buildReviewContextScopeFixture, eventsRoot, buildDefaultWorkflowConfig, resolveNextStep, formatNextStepText, EXPECTED_LOOP_LINE, fileSha256, fs, getLoadedRuleFileBasenames, hasCompletedDecomposedParentAfterSplitRequiredClear, hasSplitRequiredClearedEvidence, launchInputEvidenceFixture, makeTempRepo, markReviewEvidenceAsStrictReuse, materializeFinalCloseout, NEXT_STEP_FULL_SUITE_TEST_CONFIG, normalizeForTimeline, os, path, PROVIDER_ENV_KEYS, readReviewContextTreeStateSha256, readSplitRequiredLatchEvidence, requireFromTest, resolveReviewCycleContinuationArtifactPath, resolveSplitRequiredArtifactPath, reviewsRoot, runRecordReviewCycleSplitDecisionCommand, seedCompilePass, seedCompletedReviewerLaunchAndInvocation, seedCompletedTaskWithIndependentCodeReview, seedCompletionPass, seedCustomStartedTask, seedDocImpactPass, seedFullSuiteValidation, seedGitAutoCompilePass, seedHandshake, seedPostPreflightRulePack, seedProjectMemory, seedProjectMemoryImpact, seedReviewGatePass, seedRulePack, seedShellSmoke, seedSourceCheckoutRuntime, seedSplitRequiredLatchEvidence, seedStartedTask, seedTaskModeOnly, sha256Text, TASK_ID, tempRoots, withProviderEnv, writeFreshReviewContextWithoutRouting, writeGitAutoPreflight, writeJson, writeJsonWithSha, writeNoOpEvidence, writePreflight, writeProjectMemoryWorkflowConfig, writeReviewContextOnly, writeReviewCycleContinuation, writeReviewEvidence, writeStrictDecompositionDecision, writeStrictIndependentCodeReviewEvidence];
 
+function appendRecordedReviewCycleAttempt(repoRoot: string, reviewType: string): void {
+    appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
+        review_type: reviewType,
+        reviewer_identity: `agent:${reviewType}-reviewer`,
+        review_context_sha256: sha256Text(`review-recorded:${TASK_ID}:${reviewType}`)
+    });
+}
+
 describe('gates/next-step review cycle guard split', () => {
     it('offers a task-scoped one-shot continuation instead of recommending permanent workflow-config mutation', () => {
         const repoRoot = makeTempRepo();
@@ -81,7 +89,7 @@ describe('gates/next-step review cycle guard split', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:code-one-shot-offer-${index}`,
                 review_context_sha256: sha256Text(`code-one-shot-offer-${index}`)
@@ -126,8 +134,11 @@ describe('gates/next-step review cycle guard split', () => {
         );
         seedCompilePass(repoRoot, TASK_ID, preflightPath);
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        appendRecordedReviewCycleAttempt(repoRoot, 'code');
         writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        appendRecordedReviewCycleAttempt(repoRoot, 'security');
         writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+        appendRecordedReviewCycleAttempt(repoRoot, 'refactor');
         writeReviewCycleContinuation(repoRoot, TASK_ID, {
             baselineTotalNonTestReviewCount: 3,
             baselineFailedNonTestReviewCount: 0,
@@ -177,8 +188,11 @@ describe('gates/next-step review cycle guard split', () => {
             maxTotalNonTestReviews: 2
         });
         writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        appendRecordedReviewCycleAttempt(repoRoot, 'code');
         writeReviewEvidence(repoRoot, TASK_ID, 'security');
+        appendRecordedReviewCycleAttempt(repoRoot, 'security');
         writeReviewEvidence(repoRoot, TASK_ID, 'refactor');
+        appendRecordedReviewCycleAttempt(repoRoot, 'refactor');
         writeReviewEvidence(repoRoot, TASK_ID, 'test');
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
@@ -243,7 +257,7 @@ describe('gates/next-step review cycle guard split', () => {
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:manual-split-offer-${index}`,
                 review_context_sha256: sha256Text(`manual-split-offer-${index}`)
@@ -274,7 +288,7 @@ describe('gates/next-step review cycle guard split', () => {
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:manual-split-latch-${index}`,
                 review_context_sha256: sha256Text(`manual-split-latch-${index}`)
@@ -335,7 +349,7 @@ describe('gates/next-step review cycle guard split', () => {
         seedStartedTask(repoRoot, TASK_ID);
         const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:manual-split-decomposed-${index}`,
                 review_context_sha256: sha256Text(`manual-split-decomposed-${index}`)

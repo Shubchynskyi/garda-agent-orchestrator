@@ -70,7 +70,7 @@ const {
 void [ALL_REVIEW_FLAGS, appendEvent, buildReviewContextScopeFixture, eventsRoot, resolveNextStep, formatNextStepText, EXPECTED_LOOP_LINE, fileSha256, fs, getLoadedRuleFileBasenames, hasCompletedDecomposedParentAfterSplitRequiredClear, hasSplitRequiredClearedEvidence, launchInputEvidenceFixture, makeTempRepo, markReviewEvidenceAsStrictReuse, materializeFinalCloseout, NEXT_STEP_FULL_SUITE_TEST_CONFIG, normalizeForTimeline, os, path, PROVIDER_ENV_KEYS, readReviewContextTreeStateSha256, readSplitRequiredLatchEvidence, requireFromTest, resolveReviewCycleContinuationArtifactPath, resolveSplitRequiredArtifactPath, reviewsRoot, runRecordReviewCycleSplitDecisionCommand, seedCompilePass, seedCompletedReviewerLaunchAndInvocation, seedCompletedTaskWithIndependentCodeReview, seedCompletionPass, seedCustomStartedTask, seedDocImpactPass, seedFullSuiteValidation, seedGitAutoCompilePass, seedHandshake, seedPostPreflightRulePack, seedProjectMemory, seedProjectMemoryImpact, seedReviewGatePass, seedRulePack, seedShellSmoke, seedSourceCheckoutRuntime, seedSplitRequiredLatchEvidence, seedStartedTask, seedTaskModeOnly, sha256Text, TASK_ID, tempRoots, withProviderEnv, writeFreshReviewContextWithoutRouting, writeGitAutoPreflight, writeJson, writeJsonWithSha, writeNoOpEvidence, writePreflight, writeProjectMemoryWorkflowConfig, writeReviewContextOnly, writeReviewCycleContinuation, writeReviewEvidence, writeStrictDecompositionDecision, writeStrictIndependentCodeReviewEvidence];
 
 describe('gates/next-step review cycle guard attempts', () => {
-    it('blocks next-step when non-test review attempts exceed review cycle guard total limit', () => {
+    it('blocks next-step when completed non-test review attempts exceed review cycle guard total limit', () => {
         const repoRoot = makeTempRepo();
         writeJson(
             path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
@@ -98,7 +98,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:code-${index}`,
                 review_context_sha256: sha256Text(`code-context-${index}`)
@@ -118,9 +118,9 @@ describe('gates/next-step review cycle guard attempts', () => {
         assert.equal(result.review_cycle_block?.latest_failed_review, null);
         assert.deepEqual(result.review_cycle_block?.counts_by_review_type.code, {
             total: 3,
-            passed: 0,
+            passed: 3,
             failed: 0,
-            pending: 3
+            pending: 0
         });
         assert.ok(result.review_cycle_block?.choices.includes('split_task'));
         assert.ok(result.review_cycle_block?.choices.includes('mark_blocked'));
@@ -137,6 +137,47 @@ describe('gates/next-step review cycle guard attempts', () => {
             fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-review-cycle-auto-split-prompt.md`)),
             false
         );
+    });
+
+    it('does not count pending reviewer invocation noise as completed review-cycle attempts', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 15,
+                    max_total_non_test_reviews: 1,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        for (let index = 0; index < 3; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+                review_type: 'code',
+                reviewer_identity: `agent:pending-code-${index}`,
+                review_context_sha256: sha256Text(`pending-code-context-${index}`)
+            });
+        }
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.review_cycle_block, null);
     });
 
     it('blocks next-step when failed non-test review attempts exceed review cycle guard failed limit', () => {
@@ -326,13 +367,13 @@ describe('gates/next-step review cycle guard attempts', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 2; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:early-stop-${index}`,
                 review_context_sha256: sha256Text(`early-stop-context-${index}`)
             });
         }
-        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
             review_type: 'code',
             reviewer_identity: 'agent:latest-failed-after-total-block',
             review_context_sha256: sha256Text('latest-failed-after-total-block')
@@ -432,7 +473,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 2; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: 'agent:repeat-code'
             });
@@ -512,7 +553,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 2; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:warn-code-${index}`,
                 review_context_sha256: sha256Text(`warn-code-context-${index}`)
@@ -558,7 +599,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, test: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'test',
                 reviewer_identity: `agent:test-${index}`,
                 review_context_sha256: sha256Text(`test-context-${index}`)
@@ -574,7 +615,7 @@ describe('gates/next-step review cycle guard attempts', () => {
         const repoRoot = makeTempRepo();
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
-        appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+        appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'INFO', {
             reviewer_identity: 'agent:missing-review-type',
             review_context_sha256: sha256Text('missing-review-type')
         });
@@ -585,5 +626,47 @@ describe('gates/next-step review cycle guard attempts', () => {
         assert.ok(result.reason.includes('timeline_integrity=1>0'));
     });
 
-});
+    it('ignores stale failed review records whose lane scope no longer matches the current preflight', () => {
+        const repoRoot = makeTempRepo();
+        writeJson(
+            path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+            {
+                full_suite_validation: {
+                    enabled: false,
+                    command: 'npm test',
+                    timeout_ms: 600000,
+                    green_summary_max_lines: 5,
+                    red_failure_chunk_lines: 50,
+                    out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+                },
+                review_execution_policy: {
+                    mode: 'code_first_optional'
+                },
+                review_cycle_guard: {
+                    enabled: true,
+                    action: 'BLOCK_FOR_OPERATOR_DECISION',
+                    max_failed_non_test_reviews: 1,
+                    max_total_non_test_reviews: 15,
+                    excluded_review_types: ['test']
+                }
+            }
+        );
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, { includeDomainScopeFingerprints: true });
+        for (let index = 0; index < 2; index += 1) {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'FAIL', {
+                review_type: 'code',
+                reviewer_identity: `agent:stale-code-${index}`,
+                review_context_sha256: sha256Text(`stale-code-context-${index}`),
+                code_scope_sha256: 'a'.repeat(64),
+                summary: `stale finding ${index}`
+            });
+        }
 
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'compile-gate');
+        assert.equal(result.review_cycle_block, null);
+    });
+
+});

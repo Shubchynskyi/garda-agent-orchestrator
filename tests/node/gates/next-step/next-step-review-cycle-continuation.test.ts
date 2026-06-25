@@ -54,7 +54,7 @@ describe('gates/next-step review cycle continuation', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:code-one-shot-active-${index}`,
                 review_context_sha256: sha256Text(`code-one-shot-active-${index}`)
@@ -86,7 +86,7 @@ describe('gates/next-step review cycle continuation', () => {
         seedStartedTask(repoRoot, TASK_ID);
         writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
         for (let index = 0; index < 3; index += 1) {
-            appendEvent(repoRoot, TASK_ID, 'REVIEWER_INVOCATION_ATTESTED', 'INFO', {
+            appendEvent(repoRoot, TASK_ID, 'REVIEW_RECORDED', 'PASS', {
                 review_type: 'code',
                 reviewer_identity: `agent:code-one-shot-reuse-baseline-${index}`,
                 review_context_sha256: sha256Text(`code-one-shot-reuse-baseline-${index}`)

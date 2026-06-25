@@ -46,6 +46,11 @@ import {
 import {
     sanitizeReviewCycleAutoSplitSummary
 } from './next-step-split-required-latch';
+import {
+    readCurrentReviewCyclePreflightFingerprints,
+    reviewCycleAttemptMatchesCurrentScope,
+    type DomainScopeFingerprints
+} from './next-step-review-cycle-scope';
 
 export type {
     ReviewCycleGuardEvaluation
@@ -298,7 +303,8 @@ function buildLatestFailedReviewSummary(
 function readReviewCycleGuardAttempts(
     repoRoot: string,
     timelinePath: string,
-    reviewCycleGuardConfig: ReturnType<typeof normalizeReviewCycleGuardConfig>
+    reviewCycleGuardConfig: ReturnType<typeof normalizeReviewCycleGuardConfig>,
+    currentPreflightFingerprints: DomainScopeFingerprints | null
 ): ReviewCycleGuardReadResult {
     const resolvedPath = path.resolve(String(timelinePath || ''));
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
@@ -338,7 +344,7 @@ function readReviewCycleGuardAttempts(
         } finally {
             sequence += 1;
         }
-        if (!event || !['REVIEWER_INVOCATION_ATTESTED', 'REVIEW_RECORDED'].includes(event.event_type)) {
+        if (!event || event.event_type !== 'REVIEW_RECORDED') {
             return false;
         }
         const reviewType = getTimelineReviewType(event.details);
@@ -347,6 +353,9 @@ function readReviewCycleGuardAttempts(
                 malformedReviewCycleEvent = true;
             }
             return reviewCycleGuardConfig.action === 'BLOCK_FOR_OPERATOR_DECISION' && !guardLimitExceeded;
+        }
+        if (!reviewCycleAttemptMatchesCurrentScope(reviewType, event.details, currentPreflightFingerprints)) {
+            return false;
         }
         const reviewerIdentity = getTimelineReviewerIdentity(event.details);
         const reviewContextSha256 = getTimelineReviewContextSha256(event.details);
@@ -361,11 +370,7 @@ function readReviewCycleGuardAttempts(
         const hasReviewArtifactPath = Boolean(getTimelineDetailText(event.details, ['review_artifact_path', 'reviewArtifactPath']));
         const passed = !failed && (
             timelineFailure === false
-            || (
-                event.event_type === 'REVIEW_RECORDED'
-                && event.outcome === 'PASS'
-                && !hasReviewArtifactPath
-            )
+            || (event.outcome === 'PASS' && !hasReviewArtifactPath)
         );
         const existing = attemptsByKey.get(key);
         const existingFailed = Boolean(existing?.failed);
@@ -464,7 +469,12 @@ export function readReviewCycleGuardEvaluation(
     }
 
     const timelinePath = path.join(eventsRoot, `${taskId}.jsonl`);
-    const reviewCycleAttempts = readReviewCycleGuardAttempts(repoRoot, timelinePath, reviewCycleGuardConfig);
+    const reviewCycleAttempts = readReviewCycleGuardAttempts(
+        repoRoot,
+        timelinePath,
+        reviewCycleGuardConfig,
+        readCurrentReviewCyclePreflightFingerprints(eventsRoot, taskId)
+    );
 
     return {
         evaluation: evaluateReviewCycleGuard(
