@@ -194,6 +194,33 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('gate required-reviews-check'));
     });
 
+    it('routes zero-diff required-review children to audited no-op before review context preparation', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        const preflightPath = writeGitAutoPreflight(repoRoot, TASK_ID, {
+            ...ALL_REVIEW_FLAGS,
+            code: true
+        });
+        const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as Record<string, unknown>;
+        preflight.scope_category = 'empty';
+        preflight.zero_diff_guard = {
+            zero_diff_detected: true,
+            status: 'BASELINE_ONLY',
+            completion_requires_audited_no_op: true
+        };
+        writeJson(preflightPath, preflight);
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        seedGitAutoCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'record-no-op');
+        assert.ok(result.reason.includes('audited no-op evidence'));
+        assert.ok(result.commands[0].command.includes('gate record-no-op'));
+        assert.ok(!result.commands[0].command.includes('build-review-context'));
+    });
+
     it('continues to required reviews check after current zero-diff no-op evidence exists', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);
