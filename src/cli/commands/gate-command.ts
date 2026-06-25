@@ -37,6 +37,7 @@ import {
     handleHandshakeDiagnostics,
     handleShellSmokePreflight,
     handleCommandTimeoutDiagnostics,
+    handleQualityChecklist,
     handleRunIntermediateCommand,
     handleProjectMemoryImpact,
     handleLogTaskEvent,
@@ -110,6 +111,8 @@ export async function handleGate(commandArgv: string[]): Promise<void> {
             return handleShellSmokePreflight(gateArgv);
         case 'command-timeout-diagnostics':
             return handleCommandTimeoutDiagnostics(gateArgv);
+        case 'quality-checklist':
+            return handleQualityChecklist(gateArgv);
         case 'run-intermediate-command':
             return handleRunIntermediateCommand(gateArgv);
         case 'project-memory-impact':

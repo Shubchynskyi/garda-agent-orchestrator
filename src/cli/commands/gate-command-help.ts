@@ -236,6 +236,13 @@ function buildPreflightGateHelpEntries(
                 true
             )
         },
+        'quality-checklist': {
+            ...createSingleUsageEntry(
+                'Record the configured optional quality checklist as machine-readable advisory gate evidence without replacing reviewer receipts; answers-json must include one answer object per enabled rule.',
+                `${cliPrefix} gate quality-checklist --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --answers-json "<JSON array with one answer object per enabled optional_quality_checks rule>" --repo-root "."`,
+                true
+            )
+        },
         'run-intermediate-command': {
             ...createSingleUsageEntry(
                 'Run an opt-in auditable intermediate validation command with full raw output artifact and compact visible output.',

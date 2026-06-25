@@ -22,7 +22,8 @@ import {
     runShellSmokePreflightCommand,
     runCommandTimeoutDiagnosticsCommand,
     runIntermediateCommandCommand,
-    runProjectMemoryImpactCommand
+    runProjectMemoryImpactCommand,
+    runQualityChecklistCommand
 } from './gates';
 import {
     parseOptions,
@@ -324,6 +325,28 @@ export async function handleCommandTimeoutDiagnostics(gateArgv: string[]): Promi
     };
     const { options } = parseOptions(gateArgv, defs);
     const result = runCommandTimeoutDiagnosticsCommand(options);
+    process.stdout.write(`${result.outputLines.join('\n')}\n`);
+    if (result.exitCode !== 0) {
+        process.exitCode = result.exitCode;
+    }
+}
+
+export async function handleQualityChecklist(gateArgv: string[]): Promise<void> {
+    const defs = {
+        '--task-id': { key: 'taskId', type: 'string' },
+        '--preflight-path': { key: 'preflightPath', type: 'string' },
+        '--answers-json': { key: 'answersJson', type: 'string' },
+        '--action-taken': { key: 'actionTaken', type: 'string[]' },
+        '--actions-taken': { key: 'actionsTaken', type: 'string[]' },
+        '--action-required': { key: 'actionRequired', type: 'string[]' },
+        '--actions-required': { key: 'actionsRequired', type: 'string[]' },
+        '--artifact-path': { key: 'artifactPath', type: 'string' },
+        '--metrics-path': { key: 'metricsPath', type: 'string' },
+        '--emit-metrics': { key: 'emitMetrics', type: 'boolean' },
+        '--repo-root': { key: 'repoRoot', type: 'string' }
+    };
+    const { options } = parseOptions(gateArgv, defs);
+    const result = runQualityChecklistCommand(options);
     process.stdout.write(`${result.outputLines.join('\n')}\n`);
     if (result.exitCode !== 0) {
         process.exitCode = result.exitCode;

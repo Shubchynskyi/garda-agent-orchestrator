@@ -26,6 +26,7 @@ const TASK_ID_REMEDIATION_GATE_NAMES = Object.freeze([
     'handshake-diagnostics',
     'shell-smoke-preflight',
     'command-timeout-diagnostics',
+    'quality-checklist',
     'run-intermediate-command',
     'classify-change',
     'restart-coherent-cycle',
@@ -442,5 +443,14 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         assert.ok(combinedOutput.includes('--classification "AUDIT_ONLY"'));
         assert.ok(combinedOutput.includes('NO_CHANGES_REQUIRED|ALREADY_DONE|AUDIT_ONLY'));
         assert.ok(!combinedOutput.includes('--classification "BASELINE_ONLY"'));
+    });
+
+    it('quality-checklist help does not advertise a partial default-rule answer set', async () => {
+        const result = await runCliWithCapturedOutput(['gate', 'quality-checklist', '--help'], { cwd: getSourceCheckoutNestedCwd() });
+        assert.equal(result.exitCode, 0);
+        const combinedOutput = stripAnsi(result.logs.join('\n'));
+        assert.ok(combinedOutput.includes('one answer object per enabled rule'));
+        assert.ok(combinedOutput.includes('<JSON array with one answer object per enabled optional_quality_checks rule>'));
+        assert.equal(combinedOutput.includes('"rule_id":"code_simplification"'), false);
     });
 });

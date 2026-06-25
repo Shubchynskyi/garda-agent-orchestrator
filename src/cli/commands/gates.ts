@@ -58,6 +58,10 @@ export {
 } from './gate-flows/full-suite/full-suite-run-marker-recovery';
 
 export {
+    runQualityChecklistCommand
+} from './gate-flows/quality-checklist/quality-checklist-flow';
+
+export {
     runBuildReviewContextCommand
 } from './gate-flows/review-context/review-context-flow';
 

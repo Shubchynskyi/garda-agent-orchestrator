@@ -93,7 +93,11 @@ export function inferTaskEventLifecyclePhase(eventType: unknown): TaskEventLifec
     if (normalized === 'IMPLEMENTATION_STARTED') {
         return 'implementation';
     }
-    if (normalized.startsWith('COMPILE_GATE_') || normalized.startsWith('FULL_SUITE_VALIDATION_')) {
+    if (
+        normalized.startsWith('COMPILE_GATE_')
+        || normalized.startsWith('FULL_SUITE_VALIDATION_')
+        || normalized === 'QUALITY_CHECKLIST_RECORDED'
+    ) {
         return 'validation';
     }
     if (normalized.startsWith('REVIEW_') || normalized.startsWith('REVIEWER_')) {
