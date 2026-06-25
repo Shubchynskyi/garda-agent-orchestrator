@@ -74,7 +74,7 @@ export function handleExplain(options: ParsedOptionsRecord): WorkflowExplainResu
             'When review_cycle_guard.auto_split_enabled is true, next-step emits a dedicated auto-split prompt artifact for the agent instead of waiting for operator input.',
             'When review_cycle_guard.action is WARN_ONLY, next-step continues to the next gate but prints the review-cycle violation under Warnings.',
             'Task reset: confirmed reset mutations are disabled by default and require audited opt-in with workflow set --task-reset on --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>".',
-            'Optional quality checks: advisory self-check rules are default-enabled, configurable through guarded workflow settings, and do not replace compile, review, or full-suite validation.',
+            'Optional quality checks: advisory self-check rules are default-enabled, run before expensive gates when routed by next-step, are configurable through guarded workflow settings, and do not replace compile, review, or full-suite validation.',
             'workflow set requires explicit operator approval with --operator-confirmed yes and --operator-confirmed-at-utc; agents must not approve workflow-config mutations for themselves.',
             'Task reset dry-run remains available while disabled because it only reports reset scope and does not mutate task status or artifacts.'
         ]

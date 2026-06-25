@@ -179,7 +179,7 @@ export const COMMAND_HELP: Readonly<Record<CommandHelpName, CommandHelpDescripto
             'Review cycle auto split is disabled by default and can be enabled with --review-cycle-auto-split on.',
             'Project memory maintenance defaults to update mode; use off, check, update, or strict mode for explicit repo-local policy.',
             'Task reset mutations are disabled by default and can be enabled with --task-reset on.',
-            'Optional quality checks are advisory, default-enabled, and configurable with --optional-checks on|off plus --optional-check-rule-* without replacing mandatory compile/review/full-suite gates.',
+            'Optional quality checks are advisory, default-enabled, routed before expensive gates when current implementation changes need checklist evidence, and configurable with --optional-checks on|off plus --optional-check-rule-* without replacing mandatory compile/review/full-suite gates.',
             'Garda self-guard defaults to on for application workspaces and blocks agent self-entry into --orchestrator-work.',
             'workflow set writes require --operator-confirmed yes and --operator-confirmed-at-utc after explicit operator approval; agents must not approve workflow-config mutations for themselves.'
         ])

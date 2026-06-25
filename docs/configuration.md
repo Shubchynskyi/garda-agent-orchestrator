@@ -233,6 +233,46 @@ Modes:
 - `required` expects a materialized, internally valid selection artifact for the current task cycle before implementation proceeds. `preprompt task` exits non-zero for that start-time blocker, and `compile-gate` or downstream review gates also refuse the current cycle when the artifact is missing or drifted.
 - `strict` keeps `required` behavior and also requires explicit canonical fallback reasons whenever no optional skill is selected.
 
+## Optional Quality Checks
+
+Controls the advisory self-checklist gate that runs after implementation changes exist and before expensive validation gates.
+
+**File:** `live/config/workflow-config.json`
+
+```json
+{
+  "optional_quality_checks": {
+    "enabled": true,
+    "rules": [
+      {
+        "id": "simplification",
+        "title": "Simplification",
+        "prompt": "Check whether the change can be simpler without losing behavior.",
+        "enabled": true
+      }
+    ]
+  }
+}
+```
+
+Contract:
+- the mode is default-enabled when the setting is absent;
+- default rules cover simplification, project style fit, unnecessary abstraction, class/function/file growth, hardcoded values or contracts, duplicated logic or contracts, and test/verification scope;
+- `next-step` routes the gate after implementation and before compile, delegated review, or full-suite work when a current changed-file preflight needs checklist evidence;
+- `PASS` continues the normal lifecycle, while `ACTION_REQUIRED` sends the agent back to implementation before the expensive gates run;
+- disabled mode skips only the quality-checklist gate and does not replace or weaken compile-gate, full-suite validation, or independent review;
+- custom rules are preserved during init/update/materialization refresh.
+
+Manage the toggle and rules through the audited workflow-setting path:
+
+```bash
+node bin/garda.js workflow set --optional-checks on --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+node bin/garda.js workflow set --optional-check-rule-id custom_focus --optional-check-rule-title "Custom focus" --optional-check-rule-prompt "Check the custom concern." --optional-check-rule-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+node bin/garda.js workflow set --optional-check-rule-delete custom_focus --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>"
+```
+
+`garda ui --actions` exposes the same toggle and add/edit/delete controls in the workflow settings panel. The browser never writes `workflow-config.json` directly; it previews and runs the allow-listed `garda workflow set` commands with the normal typed confirmation and audit log.
+
 ## Skills Index
 
 Compact discovery metadata for optional skills.

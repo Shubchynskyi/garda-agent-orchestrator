@@ -134,6 +134,20 @@ Rules:
 - If the repository truly has no separate compile/build/type-check command, stop for operator approval before using the compile-gate override flags.
 - This command is executed by `node garda-agent-orchestrator/bin/garda.js gate compile-gate` before review phase.
 
+### Optional Quality Checks
+```bash
+node garda-agent-orchestrator/bin/garda.js workflow set --optional-checks-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root "."
+node garda-agent-orchestrator/bin/garda.js workflow set --optional-check-rule-id custom_focus --optional-check-rule-title "Custom focus" --optional-check-rule-prompt "Check the custom concern." --optional-check-rule-enabled true --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root "."
+node garda-agent-orchestrator/bin/garda.js workflow set --optional-check-rule-delete custom_focus --operator-confirmed yes --operator-confirmed-at-utc "<ISO-8601 timestamp>" --target-root "."
+```
+
+Rules:
+- Optional quality checks are advisory self-check rules that `next-step` routes after implementation changes and before compile/review/full-suite work when current checklist evidence is missing.
+- Default rules cover simplification, project style fit, unnecessary abstraction, growth, hardcoded values or contracts, duplication, and verification scope.
+- `ACTION_REQUIRED` means return to implementation/refactor work and address the listed follow-up before continuing to expensive gates.
+- Disabling the mode skips only `quality-checklist`; it does not replace or weaken compile-gate, full-suite validation, or independent review.
+- Rule edits must go through the audited workflow-setting path or the guarded local UI settings controls, not direct JSON edits.
+
 ### Build and Package
 ```bash
 npm run build

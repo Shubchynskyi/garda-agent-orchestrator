@@ -238,7 +238,7 @@ function buildPreflightGateHelpEntries(
         },
         'quality-checklist': {
             ...createSingleUsageEntry(
-                'Record the configured optional quality checklist as machine-readable advisory gate evidence without replacing reviewer receipts; answers-json must include one answer object per enabled rule.',
+                'Record the configured optional quality checklist as machine-readable advisory gate evidence; answers-json must include one answer object per enabled rule. Use ACTION_REQUIRED only for follow-up the implementation agent should address before compile/review/full-suite; this gate never replaces reviewer receipts.',
                 `${cliPrefix} gate quality-checklist --task-id "${TASK_ID_PLACEHOLDER}" --preflight-path "${buildBundleRelativePath(bundleName, `runtime/reviews/${TASK_ID_PLACEHOLDER}-preflight.json`)}" --answers-json "<JSON array with one answer object per enabled optional_quality_checks rule>" --repo-root "."`,
                 true
             )

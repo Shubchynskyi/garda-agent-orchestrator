@@ -193,11 +193,11 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
         id: 'optional-checks-enabled',
         key: 'optional_quality_checks.enabled',
         label: 'Optional quality checks',
-        description: 'Controls whether advisory self-check rules run before compile, review, and full-suite validation. Rule edits below use the same audited workflow-setting path.',
+        description: 'Controls whether advisory self-check rules run before expensive gates when next-step routes current implementation changes through quality-checklist. Rule edits below use the same audited workflow-setting path.',
         flag: '--optional-checks-enabled',
         value_type: 'boolean',
         options: booleanOptions(
-            'Agents run the configured advisory self-check rules before expensive gates.',
+            'Agents run the configured advisory self-check rules before compile, review, or full-suite work when checklist evidence is needed.',
             'The optional quality-checklist gate is skipped without replacing mandatory compile, review, or full-suite gates.'
         )
     },
