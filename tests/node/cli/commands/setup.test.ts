@@ -978,6 +978,53 @@ test('handleSetup prints optional quality checks notice once when workflow confi
     }
 });
 
+test('handleSetup preserves custom optional quality check rules across refreshes', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-optional-checks-refresh-'));
+    const workflowConfigPath = path.join(workspaceRoot, DEFAULT_BUNDLE_NAME, 'live', 'config', 'workflow-config.json');
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        await handleSetup(
+            ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+            packageJson,
+            repoRoot
+        );
+
+        const customRule = {
+            id: 'custom_quality_rule',
+            title: 'Custom quality rule',
+            prompt: 'Check the local custom quality rule.',
+            enabled: true
+        };
+        const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        workflowConfig.optional_quality_checks = {
+            enabled: false,
+            rules: [customRule]
+        };
+        fs.writeFileSync(workflowConfigPath, JSON.stringify(workflowConfig, null, 2), 'utf8');
+
+        const refreshOutput = await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+
+        const refreshedConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+        assert.deepEqual(refreshedConfig.optional_quality_checks, {
+            enabled: false,
+            rules: [customRule]
+        });
+        assert.equal(refreshOutput.includes(OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE), false);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('handleSetup preserves legacy workflow-config omission for review_execution_policy across repeated refreshes', async () => {
     const repoRoot = findRepoRoot(__dirname);
     const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));

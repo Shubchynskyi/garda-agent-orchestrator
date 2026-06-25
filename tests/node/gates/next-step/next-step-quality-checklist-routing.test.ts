@@ -152,6 +152,21 @@ describe('gates/next-step quality checklist routing', () => {
         assert.ok(result.commands[0].command.includes('gate compile-gate'));
     });
 
+    it('continues to review context after compile without rerunning current PASS evidence', () => {
+        const repoRoot = makeTempRepo();
+        writeWorkflowConfig(repoRoot);
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true });
+        seedCompilePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'build-review-context', result.reason);
+        assert.equal(result.review.next_review_type, 'code', result.reason);
+        assert.ok(result.commands[0].command.includes('gate build-review-context'));
+        assert.ok(!result.commands[0].command.includes('gate quality-checklist'));
+    });
+
     it('continues through after-compile full-suite after accepted WARN evidence', () => {
         const repoRoot = makeTempRepo();
         writeWorkflowConfig(repoRoot, {

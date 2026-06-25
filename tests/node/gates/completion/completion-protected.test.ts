@@ -880,6 +880,39 @@ describe('gates/completion — protected control-plane', () => {
             }
         });
 
+        it('does not require optional quality checklist evidence as completion evidence', () => {
+            const workspace = createCompletionWorkspace(false, 'none');
+
+            try {
+                const workflowConfig = JSON.parse(
+                    fs.readFileSync(path.join(workspace.repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), 'utf8')
+                ) as Record<string, any>;
+                assert.equal(workflowConfig.optional_quality_checks?.enabled, true);
+
+                const result = runCompletionGate({
+                    repoRoot: workspace.repoRoot,
+                    preflightPath: workspace.preflightPath,
+                    taskModePath: workspace.taskModePath,
+                    rulePackPath: workspace.rulePackPath,
+                    compileEvidencePath: workspace.compilePath,
+                    reviewEvidencePath: workspace.reviewPath,
+                    docImpactPath: workspace.docImpactPath,
+                    noOpArtifactPath: workspace.noOpPath,
+                    handshakePath: workspace.handshakePath,
+                    shellSmokePath: workspace.shellSmokePath,
+                    timelinePath: workspace.timelinePath
+                });
+
+                assert.equal(result.status, 'PASSED');
+                assert.equal(
+                    result.violations.some((entry) => String(entry).includes('QUALITY_CHECKLIST')),
+                    false
+                );
+            } finally {
+                fs.rmSync(workspace.repoRoot, { recursive: true, force: true });
+            }
+        });
+
         it('fails when the current cycle required reviews but REVIEW_RECORDED is missing', () => {
             const workspace = createCompletionWorkspace(false, 'none');
 
