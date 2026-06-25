@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 
 import { resolveNextStep } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { syncDecomposedParentsToDone } from '../../../../src/gates/next-step/next-step-task-queue-status-sync';
 
 const TASK_ID = 'T-NEXT-1';
 const requireFromTest = createRequire(__filename);
@@ -147,10 +148,11 @@ describe('gates/next-step decomposed parent status sync', () => {
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
             '# TASK.md',
             '',
+            '## Active Queue',
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
             '| T-322 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-409`, `T-410`, `T-411`, and `T-412` through normal gates. |',
-            '| T-409 | 🟪 DECOMPOSED | P1 | workflow | Nested parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-322`. Execute leaf tasks `T-413`, `T-414`, and `T-415` through normal gates. |',
+            '| T-409 | 🟪 DECOMPOSED | P1 | workflow/task-queue-formatting-nested | Nested parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-322`. Execute leaf tasks `T-413`, `T-414`, and `T-415` through normal gates. |',
             '| T-413 | 🟪 DECOMPOSED | P1 | workflow | Nested advisory parent | gpt-5.5 | 2026-05-06 | strict | Child of `T-409`. Execute child tasks `T-416` and `T-417` through normal gates. |',
             '| T-416 | 🟩 DONE | P1 | workflow | Source child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
             '| T-417 | 🟩 DONE | P1 | testing | Test child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
@@ -170,8 +172,62 @@ describe('gates/next-step decomposed parent status sync', () => {
         assert.equal(result.commands.length, 0);
         assert.ok(result.reason.includes('transitioned completed parent task(s) to DONE: T-413, T-409, T-322'));
         assert.ok(taskMd.includes('| T-322 | 🟩 DONE |'));
-        assert.ok(taskMd.includes('| T-409 | 🟩 DONE |'));
-        assert.ok(taskMd.includes('| T-413 | 🟩 DONE |'));
+        assert.match(taskMd, /\| T-409\s+\| 🟩 DONE \| P1\s+\| workflow\/task-queue-formatting-nested \| Nested parent\s+\|/u);
+        assert.match(taskMd, /\| T-413\s+\| 🟩 DONE \| P1\s+\| workflow\s+\| Nested advisory parent\s+\|/u);
+        assert.doesNotMatch(taskMd, /^\|---\|---\|---\|---\|---\|---\|---\|---\|---\|$/mu);
+    });
+
+    it('reflows the canonical Active Queue table when decomposed parents are marked DONE', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-980 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-981` through normal gates; preserve escaped \\| pipe. |',
+            '| T-981 | 🟩 DONE | P1 | workflow/task-queue-formatting | Child with longer area | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '',
+            '## Блок очереди',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| RU-1 | untouched | P1 | ru | lower table | me | 2026-06-04 | balanced | stays compact |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-980', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+        const [upperQueue, lowerSummary] = taskMd.split('## Блок очереди');
+
+        assert.equal(result.status, 'DONE');
+        assert.equal(result.next_gate, null);
+        assert.match(upperQueue, /\| T-980\s+\| 🟩 DONE \| P1\s+\| workflow\s+\| Parent\s+\| gpt-5\.5 \| 2026-05-06 \| strict\s+\| Execute child tasks `T-981` through normal gates; preserve escaped \\| pipe\. \|/u);
+        assert.match(upperQueue, /\| T-981\s+\| 🟩 DONE \| P1\s+\| workflow\/task-queue-formatting \| Child with longer area \| gpt-5\.5 \| 2026-05-06 \| strict\s+\| Complete\.\s+\|/u);
+        assert.doesNotMatch(upperQueue, /^\|---\|---\|---\|---\|---\|---\|---\|---\|---\|$/mu);
+        assert.ok(lowerSummary.includes('|---|---|---|---|---|---|---|---|---|'));
+        assert.ok(lowerSummary.includes('| RU-1 | untouched | P1 | ru | lower table | me | 2026-06-04 | balanced | stays compact |'));
+    });
+
+    it('does not rewrite TASK.md when decomposed parents are already DONE', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const content = [
+            '# TASK.md',
+            '',
+            '## Active Queue',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-990 | 🟩 DONE | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-991` through normal gates. |',
+            '| T-991 | 🟩 DONE | P1 | workflow/task-queue-formatting | Child with longer area | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            ''
+        ].join('\n');
+        fs.writeFileSync(taskPath, content, 'utf8');
+
+        const result = syncDecomposedParentsToDone(repoRoot, 'T-990', ['T-990']);
+        const updated = fs.readFileSync(taskPath, 'utf8');
+
+        assert.equal(result.outcome, 'already_synced');
+        assert.equal(updated, content);
     });
 
     it('revalidates decomposed parent completion at write time before marking DONE', () => {
@@ -300,10 +356,16 @@ describe('gates/next-step decomposed parent status sync', () => {
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
             '# TASK.md',
             '',
+            '## Active Queue',
             '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
             '|---|---|---|---|---|---|---|---|---|',
-            '| T-950 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-951` through normal gates. |',
-            '| T-951 | 🟩 DONE | P1 | workflow | Child | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '| T-950 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.5 | 2026-05-06 | strict | Execute child tasks `T-951` through normal gates; preserve escaped \\| pipe. |',
+            '| T-951 | 🟩 DONE | P1 | workflow/task-queue-formatting | Child with longer area | gpt-5.5 | 2026-05-06 | strict | Complete. |',
+            '',
+            '## Блок очереди',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| RU-1 | untouched | P1 | ru | lower table | me | 2026-06-04 | balanced | stays compact |',
             ''
         ].join('\n'), 'utf8');
         const targetEventPath = path.join(
@@ -325,11 +387,14 @@ describe('gates/next-step decomposed parent status sync', () => {
         try {
             const result = resolveNextStep({ taskId: 'T-950', repoRoot });
             const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+            const [upperQueue, lowerSummary] = taskMd.split('## Блок очереди');
 
             assert.equal(result.status, 'DECOMPOSED');
             assert.equal(result.next_gate, 'task-status-sync');
             assert.ok(result.reason.includes('Rolled back TASK.md status changes'));
-            assert.ok(taskMd.includes('| T-950 | 🟪 DECOMPOSED |'));
+            assert.match(upperQueue, /\| T-950\s+\| 🟪 DECOMPOSED \| P1\s+\| workflow\s+\| Parent\s+\| gpt-5\.5 \| 2026-05-06 \| strict\s+\| Execute child tasks `T-951` through normal gates; preserve escaped \\| pipe\. \|/u);
+            assert.doesNotMatch(upperQueue, /^\|---\|---\|---\|---\|---\|---\|---\|---\|---\|$/mu);
+            assert.ok(lowerSummary.includes('|---|---|---|---|---|---|---|---|---|'));
         } finally {
             mutableFs.appendFileSync = originalAppendFileSync;
         }

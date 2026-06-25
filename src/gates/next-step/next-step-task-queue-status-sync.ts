@@ -7,6 +7,7 @@ import {
     readTaskQueueStatusToken
 } from '../../core/active-task-state';
 import {
+    formatActiveTaskQueueTable,
     parseCanonicalActiveTaskQueue,
     replaceTaskMdTableCell
 } from '../../core/task-md-table';
@@ -243,7 +244,7 @@ export function rollbackDecomposedParentStatusSync(
                 return `Could not find TASK.md row(s): ${[...pendingTaskIds].join(', ')}.`;
             }
             try {
-                fs.writeFileSync(taskPath, lines.join(newline), 'utf8');
+                fs.writeFileSync(taskPath, formatActiveTaskQueueTable(lines.join(newline)), 'utf8');
                 return null;
             } catch (error: unknown) {
                 return error instanceof Error ? error.message : String(error);
@@ -430,7 +431,7 @@ export function syncDecomposedParentsToDone(
                             'TASK.md changed during decomposed parent status sync; rerun next-step so write-time revalidation can use the latest task queue snapshot.'
                     });
                 }
-                fs.writeFileSync(taskPath, lines.join(newline), 'utf8');
+                fs.writeFileSync(taskPath, formatActiveTaskQueueTable(lines.join(newline)), 'utf8');
                 return buildDecomposedParentBatchStatusSyncResult({
                     taskPath,
                     rootTaskId,
