@@ -242,7 +242,11 @@ async function runActivateOptionalSkillCommand(options: ParsedOptionsRecord) {
         taskId,
         selectedSkill.id,
         selectedSkill.pack || null,
-        'optional_skill_selection'
+        'optional_skill_selection',
+        undefined,
+        {
+            optionalSkillSelectionFingerprintSha256: artifact.payload.selection_fingerprint_sha256 || null
+        }
     );
 
     return {

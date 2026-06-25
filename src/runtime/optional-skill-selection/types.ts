@@ -78,6 +78,7 @@ export interface OptionalSkillSelectionArtifact {
     preflight_sha256: string | null;
     headlines_path: string;
     headlines_sha256: string | null;
+    selection_fingerprint_sha256?: string | null;
     visible_summary_line: string;
 }
 
@@ -149,6 +150,7 @@ export interface OptionalSkillSelectionActivationEvidence {
     skillId: string | null;
     triggerReason: string | null;
     timestampUtc: string | null;
+    selectionFingerprintSha256?: string | null;
 }
 
 export interface OptionalSkillSelectionTimelineEvidence {
@@ -201,6 +203,51 @@ export function computeFileSha256(filePath: string | null | undefined): string |
     const hash = createHash('sha256');
     hash.update(fs.readFileSync(filePath));
     return hash.digest('hex');
+}
+
+function normalizeSelectedSkillFingerprintEntries(
+    entries: OptionalSkillSelectionEntry[] | null | undefined
+): Array<Record<string, unknown>> {
+    return (Array.isArray(entries) ? entries : [])
+        .map((entry) => ({
+            id: String(entry.id || '').trim(),
+            pack: entry.pack || null,
+            source: entry.source,
+            allowed_skill_path: String(entry.allowed_skill_path || '').trim()
+        }))
+        .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+}
+
+function normalizeRecommendedPackFingerprintEntries(
+    entries: OptionalSkillSelectionRecommendedPack[] | null | undefined
+): Array<Record<string, unknown>> {
+    return (Array.isArray(entries) ? entries : [])
+        .map((entry) => ({
+            id: String(entry.id || '').trim(),
+            ready_skill_ids: uniqueSorted(
+                (Array.isArray(entry.ready_skill_ids) ? entry.ready_skill_ids : [])
+                    .map((skillId) => String(skillId || '').trim())
+                    .filter(Boolean)
+            )
+        }))
+        .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+}
+
+export function computeOptionalSkillSelectionFingerprint(payload: {
+    policy_mode?: OptionalSkillSelectionPolicyMode | string | null;
+    decision?: OptionalSkillSelectionDecision | string | null;
+    selected_installed_skills?: OptionalSkillSelectionEntry[] | null;
+    recommended_missing_packs?: OptionalSkillSelectionRecommendedPack[] | null;
+    as_is_reason?: OptionalSkillSelectionAsIsReason | string | null;
+}): string {
+    const normalizedPayload = {
+        policy_mode: String(payload.policy_mode || '').trim(),
+        decision: String(payload.decision || '').trim(),
+        selected_installed_skills: normalizeSelectedSkillFingerprintEntries(payload.selected_installed_skills),
+        recommended_missing_packs: normalizeRecommendedPackFingerprintEntries(payload.recommended_missing_packs),
+        as_is_reason: payload.as_is_reason || null
+    };
+    return createHash('sha256').update(formatJson(normalizedPayload), 'utf8').digest('hex');
 }
 
 export function computeSkillsHeadlinesPayloadSha256(payload: SkillsHeadlinesPayload): string {

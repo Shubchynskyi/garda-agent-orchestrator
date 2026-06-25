@@ -10,6 +10,7 @@ import {
     toPortableBundlePath,
     computeFileSha256,
     computeOptionalSkillTaskTextSha256,
+    computeOptionalSkillSelectionFingerprint,
     uniqueSorted
 } from './types';
 import { readOptionalSkillSelectionPolicyConfig } from './config';
@@ -67,25 +68,29 @@ export function writeOptionalSkillSelectionArtifact(
         : null;
     const resolvedHeadlinesPath = currentHeadlines?.headlinesPath || getSkillsHeadlinesConfigPath(bundleRoot);
     const resolvedHeadlinesSha256 = currentHeadlines?.headlinesSha256 || computeFileSha256(resolvedHeadlinesPath);
+    const payload = {
+        ...builtArtifact.payload,
+        task_id: taskId,
+        timestamp_utc: new Date().toISOString(),
+        task_text_present: typeof options.taskText === 'string'
+            ? options.taskText.trim().length > 0
+            : builtArtifact.payload.task_text_present,
+        task_text_sha256: typeof options.taskText === 'string'
+            ? computeOptionalSkillTaskTextSha256(options.taskText)
+            : builtArtifact.payload.task_text_sha256,
+        changed_paths: Array.isArray(options.changedPaths)
+            ? uniqueSorted(options.changedPaths.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean))
+            : builtArtifact.payload.changed_paths,
+        preflight_path: resolvedPreflightPath,
+        preflight_sha256: resolvedPreflightSha256,
+        headlines_path: toPortableBundlePath(bundleRoot, resolvedHeadlinesPath),
+        headlines_sha256: resolvedHeadlinesSha256
+    };
     const artifact: OptionalSkillSelectionArtifactData = {
         artifactPath: getOptionalSkillSelectionArtifactPath(bundleRoot, taskId),
         payload: {
-            ...builtArtifact.payload,
-            task_id: taskId,
-            timestamp_utc: new Date().toISOString(),
-            task_text_present: typeof options.taskText === 'string'
-                ? options.taskText.trim().length > 0
-                : builtArtifact.payload.task_text_present,
-            task_text_sha256: typeof options.taskText === 'string'
-                ? computeOptionalSkillTaskTextSha256(options.taskText)
-                : builtArtifact.payload.task_text_sha256,
-            changed_paths: Array.isArray(options.changedPaths)
-                ? uniqueSorted(options.changedPaths.map((entry) => String(entry || '').replace(/\\/g, '/').trim()).filter(Boolean))
-                : builtArtifact.payload.changed_paths,
-            preflight_path: resolvedPreflightPath,
-            preflight_sha256: resolvedPreflightSha256,
-            headlines_path: toPortableBundlePath(bundleRoot, resolvedHeadlinesPath),
-            headlines_sha256: resolvedHeadlinesSha256
+            ...payload,
+            selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(payload)
         },
         loadedHeadlinesCache: resolvedHeadlinesCache
     };

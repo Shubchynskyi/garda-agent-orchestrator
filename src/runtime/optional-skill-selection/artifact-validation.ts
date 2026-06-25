@@ -12,6 +12,7 @@ import {
     OPTIONAL_SKILL_SELECTION_POLICY_MODES,
     MAX_SELECTED_SKILLS,
     MAX_RECOMMENDED_PACKS,
+    computeOptionalSkillSelectionFingerprint,
     resolvePortableRepoPath,
     toPortableBundlePath,
     toTimestampMs
@@ -277,6 +278,14 @@ export function getOptionalSkillSelectionArtifactViolations(
         } else if (actualTaskTextSha256 !== expectedTaskTextSha256) {
             violations.push('Optional skill selection artifact does not match the current task summary hash.');
         }
+    }
+
+    const actualSelectionFingerprintSha256 = String(payload.selection_fingerprint_sha256 || '').trim();
+    if (
+        actualSelectionFingerprintSha256
+        && actualSelectionFingerprintSha256 !== computeOptionalSkillSelectionFingerprint(payload)
+    ) {
+        violations.push('Optional skill selection artifact selection_fingerprint_sha256 does not match the selection payload.');
     }
 
     if (policyMode === 'off') {

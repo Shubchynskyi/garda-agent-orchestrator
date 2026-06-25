@@ -14,6 +14,7 @@ import {
     resolveNextStep
 } from './next-step-test-support';
 import { buildDefaultWorkflowConfig } from './next-step-test-support';
+import { computeOptionalSkillSelectionFingerprint } from '../../../../src/runtime/optional-skill-selection';
 
 const TASK_ID = 'T-CONTRACT-1';
 const TASK_TITLE = 'Pin next-step contract before refactor';
@@ -232,9 +233,9 @@ function seedOptionalSkillSelectionPreflight(
             {
                 id: skillId,
                 pack: skillId,
-                source: 'installed_optional',
+                source: 'installed_optional' as const,
                 allowed_skill_path: skillPath,
-                reason_codes: ['task_signals'],
+                reason_codes: ['task_signals' as const],
                 matches: { task_signals: ['api endpoint'], changed_path_signals: [] }
             }
         ],
@@ -249,6 +250,9 @@ function seedOptionalSkillSelectionPreflight(
         headlines_sha256: 'fixture-headlines',
         visible_summary_line: `Optional skills: ${skillId} (reason: task_text)`
     };
+    Object.assign(optionalSkillArtifact, {
+        selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(optionalSkillArtifact)
+    });
     writeJson(optionalSkillArtifactPath, optionalSkillArtifact);
     writeJson(preflightPath, {
         task_id: taskId,
@@ -527,6 +531,65 @@ describe('next-step refactor contract baseline', () => {
         assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
         assert.doesNotMatch(text, /^OptionalSkillActivationCommands:/mu);
         assert.doesNotMatch(result.optional_skill_selection?.task_start_instruction || '', /Run the activation command/i);
+        assert.match(result.optional_skill_selection?.task_start_instruction || '', /Current-cycle activation evidence is present/i);
+    });
+
+    it('keeps selected optional-skill activation satisfied across unchanged preflight refresh', () => {
+        const repoRoot = makeContractRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'api'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'api', 'orders.ts'), 'export const route = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        seedOptionalSkillSelectionPreflight(repoRoot, TASK_ID, { policyMode: 'required' });
+        seedStrictDecompositionDecision(repoRoot, TASK_ID);
+
+        const optionalSkillArtifactPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-optional-skill-selection.json`);
+        const optionalSkillArtifact = JSON.parse(fs.readFileSync(optionalSkillArtifactPath, 'utf8')) as Record<string, unknown>;
+        appendEvent(repoRoot, TASK_ID, 'SKILL_SELECTED', {
+            skill_id: 'node-backend',
+            trigger_reason: 'optional_skill_selection',
+            optional_skill_selection_fingerprint_sha256: optionalSkillArtifact.selection_fingerprint_sha256
+        }, '2026-01-01T00:00:06.000Z');
+        const refreshedOptionalSkillArtifact = {
+            ...optionalSkillArtifact,
+            task_text_sha256: 'refreshed-task-text',
+            changed_paths: ['src/api/refreshed-orders.ts'],
+            headlines_sha256: 'refreshed-headlines',
+            selected_installed_skills: [
+                {
+                    id: 'node-backend',
+                    pack: 'node-backend',
+                    source: 'installed_optional' as const,
+                    allowed_skill_path: 'garda-agent-orchestrator/live/skills/node-backend/SKILL.md',
+                    reason_codes: ['changed_path_signals' as const],
+                    matches: {
+                        task_signals: ['different task signal'],
+                        changed_path_signals: ['src/api/refreshed-orders.ts']
+                    }
+                }
+            ]
+        };
+        Object.assign(refreshedOptionalSkillArtifact, {
+            selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(refreshedOptionalSkillArtifact)
+        });
+        writeJson(optionalSkillArtifactPath, refreshedOptionalSkillArtifact);
+
+        const refreshedPreflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        const refreshedPreflight = JSON.parse(fs.readFileSync(refreshedPreflightPath, 'utf8')) as Record<string, unknown>;
+        writeJson(refreshedPreflightPath, {
+            ...refreshedPreflight,
+            refreshed: true
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', {
+            output_path: normalizeForTimeline(refreshedPreflightPath)
+        }, '2026-01-01T00:00:08.000Z');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const text = formatNextStepText(result);
+
+        assert.notEqual(result.next_gate, 'activate-optional-skill');
+        assert.deepEqual(result.optional_skill_selection?.activated_skill_ids, ['node-backend']);
+        assert.deepEqual(result.optional_skill_selection?.pending_activation_skill_ids, []);
+        assert.doesNotMatch(text, /^OptionalSkillPendingActivation:/mu);
         assert.match(result.optional_skill_selection?.task_start_instruction || '', /Current-cycle activation evidence is present/i);
     });
 

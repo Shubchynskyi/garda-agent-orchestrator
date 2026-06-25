@@ -31,6 +31,7 @@ interface SkillTelemetryDetailOptions {
     score?: number;
     packId?: string | null;
     matches?: TelemetryMatches | null;
+    optionalSkillSelectionFingerprintSha256?: string | null;
 }
 
 interface SkillTelemetryDetails {
@@ -41,6 +42,7 @@ interface SkillTelemetryDetails {
     score?: number;
     pack_id?: string;
     matches?: TelemetryMatches;
+    optional_skill_selection_fingerprint_sha256?: string;
 }
 
 interface SkillSuggestionTelemetry {
@@ -70,6 +72,9 @@ export function buildSkillTelemetryDetails(options: SkillTelemetryDetailOptions)
         } else {
             details.matches = Object.assign({}, options.matches);
         }
+    }
+    if (options.optionalSkillSelectionFingerprintSha256) {
+        details.optional_skill_selection_fingerprint_sha256 = options.optionalSkillSelectionFingerprintSha256;
     }
 
     return details;
@@ -201,7 +206,8 @@ export function emitSkillSelectedEvent(
     skillId: string,
     packId?: string | null,
     triggerReason?: string | null,
-    appendOptions?: SkillTelemetryAppendOptions
+    appendOptions?: SkillTelemetryAppendOptions,
+    detailsOptions?: Pick<SkillTelemetryDetailOptions, 'optionalSkillSelectionFingerprintSha256'>
 ): SkillTelemetryResult {
     return emitSkillTelemetryEvent(
         bundleRoot,
@@ -211,7 +217,8 @@ export function emitSkillSelectedEvent(
         {
             skillId: skillId,
             packId: packId || null,
-            triggerReason: triggerReason || 'user_selected'
+            triggerReason: triggerReason || 'user_selected',
+            optionalSkillSelectionFingerprintSha256: detailsOptions?.optionalSkillSelectionFingerprintSha256 || null
         },
         appendOptions
     );
@@ -223,7 +230,8 @@ export async function emitSkillSelectedEventAsync(
     skillId: string,
     packId?: string | null,
     triggerReason?: string | null,
-    appendOptions?: SkillTelemetryAppendOptions
+    appendOptions?: SkillTelemetryAppendOptions,
+    detailsOptions?: Pick<SkillTelemetryDetailOptions, 'optionalSkillSelectionFingerprintSha256'>
 ): Promise<SkillTelemetryResult> {
     return emitSkillTelemetryEventAsync(
         bundleRoot,
@@ -233,7 +241,8 @@ export async function emitSkillSelectedEventAsync(
         {
             skillId: skillId,
             packId: packId || null,
-            triggerReason: triggerReason || 'user_selected'
+            triggerReason: triggerReason || 'user_selected',
+            optionalSkillSelectionFingerprintSha256: detailsOptions?.optionalSkillSelectionFingerprintSha256 || null
         },
         appendOptions
     );

@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 
 import {
     buildOptionalSkillSelectionArtifact,
+    buildCurrentCycleOptionalSkillActivationIndex,
+    computeOptionalSkillSelectionFingerprint,
     computeOptionalSkillTaskTextSha256,
     getOptionalSkillSelectionGateViolations,
     getOptionalSkillSelectionArtifactViolations,
@@ -888,6 +890,139 @@ test('getOptionalSkillSelectionGateViolations ignores prior-cycle optional skill
     }
 });
 
+test('buildCurrentCycleOptionalSkillActivationIndex keeps same-selection activation across preflight restart', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const fingerprint = artifact.payload.selection_fingerprint_sha256
+            || computeOptionalSkillSelectionFingerprint(artifact.payload);
+
+        const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, {
+            timelinePath: path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl'),
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_SELECTED']),
+            latestTaskModeEnteredTimestampUtc: '2026-01-01T00:00:00.000Z',
+            latestCycleBoundaryTimestampUtc: '2026-01-01T00:00:10.000Z',
+            optionalSkillActivations: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:05.000Z',
+                    selectionFingerprintSha256: fingerprint
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+
+        assert.equal(activationIndex.has('node-backend'), true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildCurrentCycleOptionalSkillActivationIndex computes fallback fingerprint for legacy artifacts', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const fingerprint = computeOptionalSkillSelectionFingerprint(artifact.payload);
+        delete artifact.payload.selection_fingerprint_sha256;
+
+        const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, {
+            timelinePath: path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl'),
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_SELECTED']),
+            latestTaskModeEnteredTimestampUtc: '2026-01-01T00:00:00.000Z',
+            latestCycleBoundaryTimestampUtc: '2026-01-01T00:00:10.000Z',
+            optionalSkillActivations: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:05.000Z',
+                    selectionFingerprintSha256: fingerprint
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+
+        assert.equal(activationIndex.has('node-backend'), true);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('computeOptionalSkillSelectionFingerprint ignores volatile selection inputs', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        const refreshedPayload = JSON.parse(JSON.stringify(artifact.payload)) as typeof artifact.payload;
+        refreshedPayload.task_text_sha256 = computeOptionalSkillTaskTextSha256('Implement validation for a different API endpoint.');
+        refreshedPayload.changed_paths = ['src/api/refreshed-orders.ts'];
+        refreshedPayload.headlines_sha256 = 'refreshed-headlines';
+        refreshedPayload.selected_installed_skills = refreshedPayload.selected_installed_skills.map((entry) => ({
+            ...entry,
+            reason_codes: ['changed_path_signals' as const],
+            matches: {
+                task_signals: ['different task signal'],
+                changed_path_signals: ['src/api/refreshed-orders.ts']
+            }
+        }));
+
+        assert.equal(
+            computeOptionalSkillSelectionFingerprint(refreshedPayload),
+            computeOptionalSkillSelectionFingerprint(artifact.payload)
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('buildCurrentCycleOptionalSkillActivationIndex rejects prior selection activation after preflight restart', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+
+        const activationIndex = buildCurrentCycleOptionalSkillActivationIndex(artifact.payload, {
+            timelinePath: path.join(bundleRoot, 'runtime', 'task-events', 'T-149.jsonl'),
+            exists: true,
+            invalidJson: false,
+            eventTypes: new Set(['TASK_MODE_ENTERED', 'PREFLIGHT_CLASSIFIED', 'SKILL_SELECTED']),
+            latestTaskModeEnteredTimestampUtc: '2026-01-01T00:00:00.000Z',
+            latestCycleBoundaryTimestampUtc: '2026-01-01T00:00:10.000Z',
+            optionalSkillActivations: [
+                {
+                    skillId: 'node-backend',
+                    triggerReason: 'optional_skill_selection',
+                    timestampUtc: '2026-01-01T00:00:05.000Z',
+                    selectionFingerprintSha256: 'different-selection'
+                }
+            ],
+            optionalSkillReferenceLoads: []
+        });
+
+        assert.equal(activationIndex.has('node-backend'), false);
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('getOptionalSkillSelectionGateViolations rejects optional skill loads when policy mode is off', () => {
     const bundleRoot = makeBundleRoot();
     try {
@@ -1200,6 +1335,24 @@ test('getOptionalSkillSelectionArtifactViolations rejects forged selected skills
 
         const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact);
         assert.ok(violations.some((entry) => entry.includes('current installed optional skill inventory')));
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('getOptionalSkillSelectionArtifactViolations rejects stale selection fingerprint fields', () => {
+    const bundleRoot = makeBundleRoot();
+    try {
+        seedOptionalSkillWorkspace(bundleRoot);
+        const artifact = writeOptionalSkillSelectionArtifact(bundleRoot, 'T-149', {
+            taskText: 'Implement request validation for a Node.js API endpoint.',
+            changedPaths: ['src/api/orders.ts']
+        });
+        artifact.payload.selection_fingerprint_sha256 = 'stale-selection-fingerprint';
+
+        const violations = getOptionalSkillSelectionArtifactViolations(bundleRoot, artifact);
+
+        assert.ok(violations.some((entry) => entry.includes('selection_fingerprint_sha256')));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }

@@ -8,6 +8,7 @@ import {
     type OptionalSkillSelectionActivationEvidence,
     type OptionalSkillSelectionReferenceLoadEvidence,
     type OptionalSkillSelectionArtifact,
+    computeOptionalSkillSelectionFingerprint,
     normalizeText,
     resolvePortableRepoPath,
     selectLatestTimestamp,
@@ -79,7 +80,8 @@ export function readOptionalSkillSelectionTimelineEvidence(
                 optionalSkillActivations.push({
                     skillId: String(detailRecord.skill_id || '').trim() || null,
                     triggerReason: triggerReason || null,
-                    timestampUtc: eventTimestampUtc
+                    timestampUtc: eventTimestampUtc,
+                    selectionFingerprintSha256: String(detailRecord.optional_skill_selection_fingerprint_sha256 || '').trim() || null
                 });
             }
         }
@@ -150,17 +152,35 @@ export function getCurrentCycleOptionalSkillActivations(
     payload: OptionalSkillSelectionArtifact,
     timelineEvidence: OptionalSkillSelectionTimelineEvidence
 ): OptionalSkillSelectionActivationEvidence[] {
-    const lowerBoundTimestampMs = toTimestampMs(
+    const taskModeLowerBoundTimestampMs = toTimestampMs(
+        timelineEvidence.latestTaskModeEnteredTimestampUtc
+        || payload.timestamp_utc
+    );
+    const cycleLowerBoundTimestampMs = toTimestampMs(
         timelineEvidence.latestCycleBoundaryTimestampUtc
         || timelineEvidence.latestTaskModeEnteredTimestampUtc
         || payload.timestamp_utc
     );
+    const selectionFingerprintSha256 = String(
+        payload.selection_fingerprint_sha256
+        || computeOptionalSkillSelectionFingerprint(payload)
+    ).trim();
     return timelineEvidence.optionalSkillActivations.filter((entry) => {
-        if (lowerBoundTimestampMs === null) {
+        const eventTimestampMs = toTimestampMs(entry.timestampUtc);
+        if (eventTimestampMs === null) {
+            return false;
+        }
+        if (taskModeLowerBoundTimestampMs !== null && eventTimestampMs < taskModeLowerBoundTimestampMs) {
+            return false;
+        }
+        if (cycleLowerBoundTimestampMs === null || eventTimestampMs >= cycleLowerBoundTimestampMs) {
             return true;
         }
-        const eventTimestampMs = toTimestampMs(entry.timestampUtc);
-        return eventTimestampMs !== null && eventTimestampMs >= lowerBoundTimestampMs;
+        return Boolean(
+            selectionFingerprintSha256
+            && entry.selectionFingerprintSha256
+            && entry.selectionFingerprintSha256 === selectionFingerprintSha256
+        );
     });
 }
 

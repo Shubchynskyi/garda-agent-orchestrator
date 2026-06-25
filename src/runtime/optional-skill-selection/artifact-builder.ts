@@ -30,6 +30,7 @@ import {
     uniqueSorted,
     computeFileSha256,
     computeOptionalSkillTaskTextSha256,
+    computeOptionalSkillSelectionFingerprint,
     toPortableBundlePath
 } from './types';
 import { loadSkillsHeadlines } from './headlines-cache';
@@ -567,26 +568,31 @@ export function buildOptionalSkillSelectionArtifact(
         ? options.preflightSha256.trim() || null
         : computeFileSha256(options.preflightPath || null);
 
+    const payload = {
+        schema_version: 1 as const,
+        event_source: 'optional-skill-selection' as const,
+        task_id: taskId,
+        timestamp_utc: new Date().toISOString(),
+        policy_mode: policyConfig.mode,
+        decision,
+        selected_installed_skills: selectedInstalledSkills,
+        recommended_missing_packs: recommendedMissingPacks,
+        as_is_reason: asIsReason,
+        task_text_present: taskText.length > 0,
+        task_text_sha256: computeOptionalSkillTaskTextSha256(taskText),
+        changed_paths: changedPaths,
+        preflight_path: preflightPath,
+        preflight_sha256: preflightSha256,
+        headlines_path: toPortableBundlePath(bundleRoot, headlinesPath),
+        headlines_sha256: loadedHeadlines?.headlinesSha256 || computeFileSha256(headlinesPath),
+        visible_summary_line: visibleSummaryLine
+    };
+
     return {
         artifactPath,
         payload: {
-            schema_version: 1,
-            event_source: 'optional-skill-selection',
-            task_id: taskId,
-            timestamp_utc: new Date().toISOString(),
-            policy_mode: policyConfig.mode,
-            decision,
-            selected_installed_skills: selectedInstalledSkills,
-            recommended_missing_packs: recommendedMissingPacks,
-            as_is_reason: asIsReason,
-            task_text_present: taskText.length > 0,
-            task_text_sha256: computeOptionalSkillTaskTextSha256(taskText),
-            changed_paths: changedPaths,
-            preflight_path: preflightPath,
-            preflight_sha256: preflightSha256,
-            headlines_path: toPortableBundlePath(bundleRoot, headlinesPath),
-            headlines_sha256: loadedHeadlines?.headlinesSha256 || computeFileSha256(headlinesPath),
-            visible_summary_line: visibleSummaryLine
+            ...payload,
+            selection_fingerprint_sha256: computeOptionalSkillSelectionFingerprint(payload)
         },
         loadedHeadlinesCache: loadedHeadlines
             ? {
