@@ -216,6 +216,15 @@ describe('gates/next-step decomposed parent child parsing', () => {
         assert.deepEqual(linkedChildTaskIds, ['T-711']);
     });
 
+    it('parses plain comma-separated suffixed child task IDs in explicit child lists', () => {
+        const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(
+            'Child tasks: T-091-1, T-091-2.',
+            ['T-091-1', 'T-091-2']
+        );
+
+        assert.deepEqual(linkedChildTaskIds, ['T-091-1', 'T-091-2']);
+    });
+
     it('ignores task IDs in unrelated note segments after explicit child links', () => {
         const linkedChildTaskIds = extractExplicitLinkedChildTaskIds(
             'Split into child tasks `T-721`. Security review artifact `T-722` and source note T-723 are unrelated.',
@@ -264,6 +273,50 @@ describe('gates/next-step decomposed parent child parsing', () => {
         assert.equal(result.commands.length, 1);
         assert.ok(result.commands[0].command.includes('next-step "T-500-1"'));
         assert.equal(result.reason.includes('could not be found'), false);
+    });
+
+    it('does not mark a decomposed parent DONE while a plain suffixed comma child remains unfinished', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-091 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: T-091-1, T-091-2. |',
+            '| T-091-1 | 🟩 DONE | P1 | workflow | First child | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            '| T-091-2 | 🟦 TODO | P1 | workflow | Second child | gpt-5.4 | 2026-05-05 | strict | Still open. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-091', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, 'child-task');
+        assert.ok(result.commands[0].command.includes('next-step "T-091-2"'));
+        assert.ok(taskMd.includes('| T-091 | 🟪 DECOMPOSED |'));
+    });
+
+    it('does not mark decomposed parents DONE when a plain suffixed comma child row is missing', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            '| T-091 | 🟪 DECOMPOSED | P1 | workflow | Parent | gpt-5.4 | 2026-05-05 | strict | Child tasks: T-091-1, T-091-2. |',
+            '| T-091-1 | 🟩 DONE | P1 | workflow | First child | gpt-5.4 | 2026-05-05 | strict | Complete. |',
+            ''
+        ].join('\n'), 'utf8');
+
+        const result = resolveNextStep({ taskId: 'T-091', repoRoot });
+        const taskMd = fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8');
+
+        assert.equal(result.status, 'DECOMPOSED');
+        assert.equal(result.next_gate, null);
+        assert.ok(result.reason.includes('Explicit child task link(s) could not be found'));
+        assert.ok(result.reason.includes('T-091-2'));
+        assert.ok(taskMd.includes('| T-091 | 🟪 DECOMPOSED |'));
     });
 
     it('routes decomposed parents to exact-case semantic child task IDs', () => {

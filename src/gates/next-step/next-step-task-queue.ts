@@ -63,6 +63,7 @@ const TASK_QUEUE_LEGACY_SPLIT_NOTE_PATTERN = /\b(?:paused\s+for\s+split|split\s+
 const TASK_QUEUE_CHILD_LINK_MARKER_PATTERN =
     /\b(?:split\s+into|continue\s+via|execute|created?|linked)\b[^.;\n|]*\b(?:child(?:ren)?|leaf)\s+tasks?\b|\b(?:child(?:ren)?|leaf)\s+tasks?\s*:/igu;
 const TASK_QUEUE_TASK_ID_PATTERN = TASK_ID_ALLOWED_PATTERN;
+const TASK_QUEUE_TASK_ID_REFERENCE_PATTERN = /(^|[^A-Za-z0-9-])([Tt]-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)(?=$|[^A-Za-z0-9-])/gu;
 export const SPLIT_REQUIRED_STATUS = 'SPLIT_REQUIRED';
 
 export function parseTaskQueueEntriesFromContent(content: string): Map<string, TaskQueueEntry> {
@@ -122,7 +123,7 @@ function isExplicitChildListMentionPosition(text: string, index: number): boolea
     }
     const listPrefix = text.slice(introEnd, index)
         .replace(/`[A-Za-z0-9._-]+`/gu, ' ')
-        .replace(/(^|[^A-Za-z0-9._-])([Tt]-\d+)(?=$|[^A-Za-z0-9._-])/gu, '$1 ');
+        .replace(TASK_QUEUE_TASK_ID_REFERENCE_PATTERN, '$1 ');
     return /^[\s,:()[\]\-–—]*(?:(?:and|or|through|to)[\s,:()[\]\-–—]*)*$/iu.test(listPrefix);
 }
 
@@ -198,6 +199,23 @@ function extractChildTaskMentions(notes: string | null, knownTaskIds: Iterable<s
     while ((conventionalTaskIdMatch = conventionalTaskIdPattern.exec(text)) !== null) {
         const taskId = conventionalTaskIdMatch[2];
         const mentionIndex = conventionalTaskIdMatch.index + conventionalTaskIdMatch[1].length;
+        appendTaskMentionIfMissing(taskMentions, taskId, mentionIndex);
+    }
+
+    const referencedTaskIdPattern = new RegExp(
+        TASK_QUEUE_TASK_ID_REFERENCE_PATTERN.source,
+        TASK_QUEUE_TASK_ID_REFERENCE_PATTERN.flags
+    );
+    let referencedTaskIdMatch: RegExpExecArray | null;
+    while ((referencedTaskIdMatch = referencedTaskIdPattern.exec(text)) !== null) {
+        const taskId = referencedTaskIdMatch[2];
+        const mentionIndex = referencedTaskIdMatch.index + referencedTaskIdMatch[1].length;
+        if (!isCanonicalTaskId(taskId) || /^[Tt]-\d+$/u.test(taskId)) {
+            continue;
+        }
+        if (!isExplicitChildListMentionPosition(text, mentionIndex)) {
+            continue;
+        }
         appendTaskMentionIfMissing(taskMentions, taskId, mentionIndex);
     }
 
