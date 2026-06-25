@@ -302,7 +302,7 @@ describe('cli/commands/gates doc-impact', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
-    it('rejects user-facing behavior docs without changelog even when internal evidence exists', () => {
+    it('accepts user-facing behavior docs without changelog when internal evidence exists', () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-902-user-docs-internal-evidence';
         seedTaskQueue(repoRoot, taskId);
@@ -325,8 +325,17 @@ describe('cli/commands/gates doc-impact', () => {
             emitMetrics: false
         });
 
-        assert.equal(result.exitCode, EXIT_GATE_FAILURE);
-        assert.ok(result.outputLines.some((line) => line.includes('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence.')));
+        const artifactPath = path.join(getReviewsRoot(repoRoot), `${taskId}-doc-impact.json`);
+        const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+        assert.equal(result.exitCode, 0);
+        assert.equal(artifact.status, 'PASSED');
+        assert.equal(artifact.outcome, 'PASS');
+        assert.equal(artifact.behavior_changed, true);
+        assert.equal(artifact.changelog_updated, false);
+        assert.equal(artifact.internal_changelog_updated, true);
+        assert.equal(artifact.project_memory_updated, true);
+        assert.deepEqual(artifact.docs_updated, ['docs/cli-reference.md']);
+        assert.deepEqual(artifact.violations, []);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });

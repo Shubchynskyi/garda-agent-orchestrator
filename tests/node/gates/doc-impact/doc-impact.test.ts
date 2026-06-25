@@ -286,7 +286,7 @@ describe('gates/doc-impact', () => {
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 
-        it('still fails user-facing behavior docs without changelog even when internal evidence exists', () => {
+        it('passes user-facing behavior docs without changelog when internal evidence exists', () => {
             const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
             const preflightPath = createPreflight(tmpDir);
             writeInternalChangelogEvidence(tmpDir);
@@ -301,11 +301,41 @@ describe('gates/doc-impact', () => {
                 projectMemoryUpdated: true,
                 sensitiveReviewed: false,
                 docsUpdated: ['README.md'],
-                rationale: 'User-facing behavior docs still require user-facing changelog evidence.',
+                rationale: 'User-facing behavior docs are backed by internal closeout evidence.',
                 repoRoot: tmpDir
             });
-            assert.equal(result.status, 'FAILED');
-            assert.ok(result.violations.some(v => v.includes('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence.')));
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.equal(result.behavior_changed, true);
+            assert.equal(result.changelog_updated, false);
+            assert.equal(result.internal_changelog_updated, true);
+            assert.equal(result.project_memory_updated, true);
+            assert.deepEqual(result.docs_updated, ['README.md']);
+            assert.deepEqual(result.violations, []);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('passes docs-updated behavior evidence with project memory no-update-needed claim instead of changelog', () => {
+            const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-impact-'));
+            const preflightPath = createPreflight(tmpDir);
+            const result = assessDocImpact({
+                preflightPath,
+                taskId: 'T-001',
+                decision: 'DOCS_UPDATED',
+                behaviorChanged: true,
+                changelogUpdated: false,
+                projectMemoryUpdateNotNeeded: true,
+                sensitiveReviewed: false,
+                docsUpdated: ['docs/webhook-contract.md'],
+                rationale: 'Webhook response behavior was documented and project memory was checked.',
+                repoRoot: tmpDir
+            });
+            assert.equal(result.status, 'PASSED');
+            assert.equal(result.outcome, 'PASS');
+            assert.equal(result.project_memory_updated, false);
+            assert.equal(result.project_memory_update_not_needed, true);
+            assert.deepEqual(result.docs_updated, ['docs/webhook-contract.md']);
+            assert.deepEqual(result.violations, []);
             fs.rmSync(tmpDir, { recursive: true, force: true });
         });
 

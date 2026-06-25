@@ -264,6 +264,57 @@ describe('gates/next-step', () => {
         assert.ok(result.commands[0].command.includes('--rationale "Implementation files changed with no user-facing documentation paths; recording internal-only behavior evidence. Update task-scoped project memory before running if this command reports missing internal evidence."'));
     });
 
+    it('infers internal-only behavior evidence for runtime webhook response scope', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'webhooks'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'webhooks', 'telegram.ts'), 'export const status = 204;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true },
+            { changedFiles: ['src/webhooks/telegram.ts'] }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed true'));
+        assert.ok(result.commands[0].command.includes('--changelog-updated false'));
+        assert.ok(
+            result.commands[0].command.includes('--project-memory-updated true')
+            || result.commands[0].command.includes('--project-memory-update-not-needed true')
+        );
+    });
+
+    it('infers internal-only behavior evidence for OAuth token runtime scope', () => {
+        const repoRoot = makeTempRepo();
+        fs.mkdirSync(path.join(repoRoot, 'src', 'auth'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'src', 'auth', 'oauth-token.ts'), 'export const refreshToken = true;\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        writePreflight(
+            repoRoot,
+            TASK_ID,
+            { ...ALL_REVIEW_FLAGS, code: true },
+            { changedFiles: ['src/auth/oauth-token.ts'] }
+        );
+        seedCompilePass(repoRoot, TASK_ID);
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.next_gate, 'doc-impact-gate');
+        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        assert.ok(result.commands[0].command.includes('--behavior-changed true'));
+        assert.ok(result.commands[0].command.includes('--changelog-updated false'));
+        assert.ok(!result.commands[0].command.includes('--docs-updated'));
+    });
+
     it('does not default pure test-only maintenance to behavior-changing doc impact', () => {
         const repoRoot = makeTempRepo();
         fs.mkdirSync(path.join(repoRoot, 'tests', 'node'), { recursive: true });

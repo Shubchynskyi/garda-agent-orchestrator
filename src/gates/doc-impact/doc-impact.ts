@@ -221,6 +221,9 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     );
     const internalOnlyBehaviorEvidencePresent = decision === 'NO_DOC_UPDATES' && internalBehaviorEvidencePresent;
     const internalOnlyBehaviorEvidenceMaterialized = internalOnlyBehaviorEvidencePresent && internalBehaviorEvidenceMaterialized;
+    const behaviorEvidenceMaterialized = decision === 'DOCS_UPDATED'
+        ? internalBehaviorEvidenceMaterialized
+        : internalOnlyBehaviorEvidenceMaterialized;
     if (projectMemoryUpdated && projectMemoryUpdateNotNeeded) {
         errors.push('ProjectMemoryUpdated=true is incompatible with ProjectMemoryUpdateNotNeeded=true.');
     }
@@ -242,7 +245,7 @@ export function assessDocImpact(options: AssessDocImpactOptions) {
     if (behaviorChanged && decision !== 'DOCS_UPDATED' && !internalOnlyBehaviorEvidenceMaterialized) {
         errors.push('BehaviorChanged=true requires Decision=DOCS_UPDATED or internal closeout evidence.');
     }
-    if (behaviorChanged && !changelogUpdated && !internalOnlyBehaviorEvidenceMaterialized) {
+    if (behaviorChanged && !changelogUpdated && !behaviorEvidenceMaterialized) {
         errors.push('BehaviorChanged=true requires ChangelogUpdated=true or internal closeout evidence.');
     }
 
