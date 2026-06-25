@@ -244,6 +244,73 @@ test('workflow set toggles optional quality checks without replacing rules', () 
     }
 });
 
+test('workflow set adds edits disables and deletes optional quality-check rules', () => {
+    const bundleRoot = createBundleRoot();
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const add = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', 'custom_focus',
+            '--optional-check-rule-title', 'Custom focus',
+            '--optional-check-rule-prompt', 'Check the custom concern.',
+            '--optional-check-rule-enabled', 'true',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(add && add.action === 'set');
+        assert.equal(add.status, 'CHANGED');
+        assert.ok(add.changed_fields.includes('optional_quality_checks.rules'));
+
+        let parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        let customRule = parsedConfig.optional_quality_checks.rules.find((rule: { id: string }) => rule.id === 'custom_focus');
+        assert.deepEqual(customRule, {
+            id: 'custom_focus',
+            title: 'Custom focus',
+            prompt: 'Check the custom concern.',
+            enabled: true
+        });
+
+        const edit = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', 'custom_focus',
+            '--optional-check-rule-title', 'Custom focus updated',
+            '--optional-check-rule-prompt', 'Check the custom concern more carefully.',
+            '--optional-check-rule-enabled', 'false',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(edit && edit.action === 'set');
+        assert.equal(edit.status, 'CHANGED');
+
+        parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        customRule = parsedConfig.optional_quality_checks.rules.find((rule: { id: string }) => rule.id === 'custom_focus');
+        assert.deepEqual(customRule, {
+            id: 'custom_focus',
+            title: 'Custom focus updated',
+            prompt: 'Check the custom concern more carefully.',
+            enabled: false
+        });
+
+        const remove = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-delete', 'custom_focus',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(remove && remove.action === 'set');
+        assert.equal(remove.status, 'CHANGED');
+
+        parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(
+            parsedConfig.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'custom_focus'),
+            false
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
 test('workflow set updates review cycle guard settings deterministically', () => {
     const bundleRoot = createBundleRoot();
     const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');

@@ -308,6 +308,8 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.equal(tab.status, 'present');
     assert.equal(tab.config_exists, true);
     assert.ok(tab.settings.length > 0);
+    assert.equal(tab.optional_quality_checks.enabled, true);
+    assert.ok(tab.optional_quality_checks.rules.some((rule) => rule.id === 'code_simplification'));
     const compileGate = tab.settings.find((setting) => setting.key === 'compile_gate.command');
     assert.ok(compileGate);
     assert.equal(compileGate.label, 'Compile-gate command');
@@ -330,6 +332,11 @@ test('buildWorkflowConfigTab exposes read-only settings with commands and descri
     assert.ok(fullSuite.options.some((option) => option.value === 'true'));
     assert.match(fullSuite.command, /garda workflow set --full-suite-enabled <true\|false>/);
     assert.match(fullSuite.description, /full-suite/i);
+    const optionalChecksEnabled = tab.settings.find((setting) => setting.key === 'optional_quality_checks.enabled');
+    assert.ok(optionalChecksEnabled);
+    assert.equal(optionalChecksEnabled.value, true);
+    assert.equal(optionalChecksEnabled.label, 'Optional quality checks');
+    assert.match(optionalChecksEnabled.command, /garda workflow set --optional-checks-enabled <true\|false>/);
     const fullSuiteTimeoutBlocker = tab.settings.find((setting) => setting.key === 'full_suite_validation.timeout_blocker');
     assert.ok(fullSuiteTimeoutBlocker);
     assert.equal(fullSuiteTimeoutBlocker.value, true);

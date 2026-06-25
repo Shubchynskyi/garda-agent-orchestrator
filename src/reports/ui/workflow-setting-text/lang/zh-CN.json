@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "full-suite 超时重试",
     "description": "超时后在应用超时策略前重试 full-suite 命令的次数。"
+  },
+  "optional-checks-enabled": {
+    "label": "可选质量检查",
+    "description": "控制建议性的自检规则是否在编译、评审和完整验证之前运行。下面的规则编辑使用同一条经过审计的 workflow set 路径。",
+    "options": {
+      "true": {
+        "label": "开启",
+        "description": "代理会在昂贵的 gate 之前运行已配置的建议性自检规则。"
+      },
+      "false": {
+        "label": "关闭",
+        "description": "跳过可选的 quality-checklist gate，但不会替代必需的编译、评审或 full-suite gate。"
+      }
+    }
   }
 }

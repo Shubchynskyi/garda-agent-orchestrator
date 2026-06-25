@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Full-suite zaman aşımı tekrarları",
     "description": "Zaman aşımından sonra politika uygulanmadan önce full-suite komutunun kaç kez tekrar deneneceği."
+  },
+  "optional-checks-enabled": {
+    "label": "İsteğe bağlı kalite kontrolleri",
+    "description": "Danışma amaçlı öz denetim kurallarının compile, review ve full-suite doğrulamasından önce çalışıp çalışmayacağını denetler. Aşağıdaki kural düzenlemeleri aynı denetimli workflow set yolunu kullanır.",
+    "options": {
+      "true": {
+        "label": "Açık",
+        "description": "Ajanlar pahalı gate aşamalarından önce yapılandırılmış danışma öz denetim kurallarını çalıştırır."
+      },
+      "false": {
+        "label": "Kapalı",
+        "description": "İsteğe bağlı quality-checklist gate atlanır; zorunlu compile, review veya full-suite gate yerine geçmez."
+      }
+    }
   }
 }

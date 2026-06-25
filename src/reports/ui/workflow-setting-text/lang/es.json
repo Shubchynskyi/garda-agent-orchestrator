@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Reintentos por tiempo agotado de full-suite",
     "description": "Cuántas veces se reintenta el comando full-suite después de un tiempo agotado antes de aplicar la política."
+  },
+  "optional-checks-enabled": {
+    "label": "Comprobaciones de calidad opcionales",
+    "description": "Controla si las reglas consultivas de autoevaluación se ejecutan antes de compilación, revisión y validación completa. Las ediciones de reglas usan la misma ruta auditada de workflow set.",
+    "options": {
+      "true": {
+        "label": "Activado",
+        "description": "Los agentes ejecutan las reglas consultivas configuradas antes de las puertas costosas."
+      },
+      "false": {
+        "label": "Desactivado",
+        "description": "Se omite la puerta opcional de quality-checklist sin sustituir las puertas obligatorias de compilación, revisión o suite completa."
+      }
+    }
   }
 }

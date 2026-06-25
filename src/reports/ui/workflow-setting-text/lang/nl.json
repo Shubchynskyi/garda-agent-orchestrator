@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Full-suite time-out retries",
     "description": "Hoe vaak de full-suite opdracht na een time-out opnieuw wordt geprobeerd voordat de time-outpolicy geldt."
+  },
+  "optional-checks-enabled": {
+    "label": "Optionele kwaliteitscontroles",
+    "description": "Bepaalt of adviserende zelfcontrole-regels vóór compile, review en full-suite validatie draaien. Regelwijzigingen hieronder gebruiken hetzelfde geaudite workflow set pad.",
+    "options": {
+      "true": {
+        "label": "Aan",
+        "description": "Agents voeren de geconfigureerde adviserende zelfcontroles uit vóór dure gates."
+      },
+      "false": {
+        "label": "Uit",
+        "description": "De optionele quality-checklist gate wordt overgeslagen zonder verplichte compile-, review- of full-suite-gates te vervangen."
+      }
+    }
   }
 }

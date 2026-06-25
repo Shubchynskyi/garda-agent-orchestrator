@@ -68,3 +68,15 @@ export interface ParsedUiSettingValue {
     command_value: string;
     proposed_value: unknown;
 }
+
+export type UiOptionalCheckRuleAction = 'upsert' | 'delete';
+
+export interface ParsedUiOptionalCheckRuleValue {
+    action: UiOptionalCheckRuleAction;
+    rule_id: string;
+    title: string | null;
+    prompt: string | null;
+    enabled: boolean | null;
+    proposed_value: unknown;
+    command_args: string[];
+}

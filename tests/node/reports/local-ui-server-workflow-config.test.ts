@@ -50,6 +50,15 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal(listResponse.status, 200);
         const list = await listResponse.json() as {
             enabled: boolean;
+            optional_quality_checks: {
+                enabled: boolean;
+                rules: Array<{
+                    id: string;
+                    title: string;
+                    prompt: string;
+                    enabled: boolean;
+                }>;
+            };
             settings: Array<{
                 id: string;
                 key: string;
@@ -76,6 +85,9 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(list.settings.some((setting) => setting.id === 'full-suite-green-summary-max-lines'));
         assert.ok(list.settings.some((setting) => setting.id === 'project-memory-max-compact-summary-chars'));
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
+        assert.ok(list.settings.some((setting) => setting.id === 'optional-checks-enabled'));
+        assert.equal(list.optional_quality_checks.enabled, true);
+        assert.ok(list.optional_quality_checks.rules.some((rule) => rule.id === 'code_simplification'));
         const taskResetSetting = list.settings.find((setting) => setting.key === 'task_reset.enabled');
         assert.ok(taskResetSetting);
         assert.equal(taskResetSetting.current_value, true);
@@ -107,6 +119,80 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.deepEqual(compilePreview.changed_keys, ['compile_gate.command']);
         assert.match(compilePreview.command, /workflow set --compile-gate-command "npm run typecheck"/u);
         assert.match(compilePreview.command, /--operator-confirmed yes --operator-confirmed-at-utc/u);
+
+        const optionalRulePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'upsert',
+                mode: 'preview',
+                rule_id: 'custom_focus',
+                title: 'Custom focus',
+                prompt: 'Check custom concern.',
+                enabled: 'true'
+            })
+        });
+        assert.equal(optionalRulePreviewResponse.status, 200);
+        const optionalRulePreview = await optionalRulePreviewResponse.json() as {
+            setting_id: string;
+            key: string;
+            proposed_value: {
+                action: string;
+                id: string;
+                title: string;
+                prompt: string;
+                enabled: boolean;
+            };
+            command: string;
+            changed_keys: string[];
+        };
+        assert.equal(optionalRulePreview.setting_id, 'optional-check-rule-management');
+        assert.equal(optionalRulePreview.key, 'optional_quality_checks.rules');
+        assert.deepEqual(optionalRulePreview.changed_keys, ['optional_quality_checks.rules']);
+        assert.deepEqual(optionalRulePreview.proposed_value, {
+            action: 'upsert',
+            id: 'custom_focus',
+            title: 'Custom focus',
+            prompt: 'Check custom concern.',
+            enabled: true
+        });
+        assert.match(optionalRulePreview.command, /workflow set --optional-check-rule-id custom_focus/u);
+        assert.match(optionalRulePreview.command, /--optional-check-rule-title "Custom focus"/u);
+        assert.match(optionalRulePreview.command, /--optional-check-rule-prompt "Check custom concern\."/u);
+        assert.match(optionalRulePreview.command, /--optional-check-rule-enabled true/u);
+
+        const optionalRuleDeletePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'delete',
+                mode: 'preview',
+                rule_id: 'custom_focus'
+            })
+        });
+        assert.equal(optionalRuleDeletePreviewResponse.status, 200);
+        const optionalRuleDeletePreview = await optionalRuleDeletePreviewResponse.json() as {
+            proposed_value: { action: string; id: string };
+            command: string;
+        };
+        assert.deepEqual(optionalRuleDeletePreview.proposed_value, {
+            action: 'delete',
+            id: 'custom_focus'
+        });
+        assert.match(optionalRuleDeletePreview.command, /workflow set --optional-check-rule-delete custom_focus/u);
+
+        const invalidOptionalRulePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'upsert',
+                mode: 'preview',
+                rule_id: 'custom_focus',
+                title: 'Custom focus'
+            })
+        });
+        assert.equal(invalidOptionalRulePreviewResponse.status, 400);
+        assert.equal((await invalidOptionalRulePreviewResponse.json() as { code: string }).code, 'invalid_setting_value');
 
         const invalidCompilePreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
@@ -252,6 +338,23 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.equal((await blockedResponse.json() as { status: string }).status, 'confirmation_required');
         assert.deepEqual(executedCommands, []);
 
+        const optionalRuleBlockedResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'upsert',
+                mode: 'execute',
+                rule_id: 'custom_focus',
+                title: 'Custom focus',
+                prompt: 'Check custom concern.',
+                enabled: 'true',
+                confirmation: 'wrong'
+            })
+        });
+        assert.equal(optionalRuleBlockedResponse.status, 409);
+        assert.equal((await optionalRuleBlockedResponse.json() as { status: string }).status, 'confirmation_required');
+        assert.deepEqual(executedCommands, []);
+
         const executeResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
             headers: actionHeaders,
@@ -329,6 +432,50 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(compileCommandAuditLines.length >= 3);
         assert.match(compileCommandAuditLines[compileCommandAuditLines.length - 1], /"action_id":"setting:compile-gate-command"/u);
         assert.match(compileCommandAuditLines[compileCommandAuditLines.length - 1], /"status":"executed"/u);
+
+        const optionalRuleExecuteResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'upsert',
+                mode: 'execute',
+                rule_id: 'custom_focus',
+                title: 'Custom focus',
+                prompt: 'Check custom concern.',
+                enabled: 'false',
+                confirmation: 'APPLY GARDA SETTING'
+            })
+        });
+        assert.equal(optionalRuleExecuteResponse.status, 200);
+        const optionalRuleExecute = await optionalRuleExecuteResponse.json() as { status: string; audit_path: string };
+        assert.equal(optionalRuleExecute.status, 'executed');
+        assert.equal(executedCommands.length, 5);
+        assert.match(executedCommands[4], /workflow set --optional-check-rule-id custom_focus/u);
+        assert.match(executedCommands[4], /--optional-check-rule-enabled false/u);
+        const optionalRuleAuditLines = fs.readFileSync(optionalRuleExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.ok(optionalRuleAuditLines.length >= 3);
+        assert.match(optionalRuleAuditLines[optionalRuleAuditLines.length - 1], /"action_id":"setting:optional-check-rule:upsert:custom_focus"/u);
+        assert.match(optionalRuleAuditLines[optionalRuleAuditLines.length - 1], /"status":"executed"/u);
+
+        const optionalRuleDeleteExecuteResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'delete',
+                mode: 'execute',
+                rule_id: 'custom_focus',
+                confirmation: 'APPLY GARDA SETTING'
+            })
+        });
+        assert.equal(optionalRuleDeleteExecuteResponse.status, 200);
+        const optionalRuleDeleteExecute = await optionalRuleDeleteExecuteResponse.json() as { status: string; audit_path: string };
+        assert.equal(optionalRuleDeleteExecute.status, 'executed');
+        assert.equal(executedCommands.length, 6);
+        assert.match(executedCommands[5], /workflow set --optional-check-rule-delete custom_focus/u);
+        const optionalRuleDeleteAuditLines = fs.readFileSync(optionalRuleDeleteExecute.audit_path, 'utf8').trim().split(/\r?\n/u);
+        assert.ok(optionalRuleDeleteAuditLines.length >= 3);
+        assert.match(optionalRuleDeleteAuditLines[optionalRuleDeleteAuditLines.length - 1], /"action_id":"setting:optional-check-rule:delete:custom_focus"/u);
+        assert.match(optionalRuleDeleteAuditLines[optionalRuleDeleteAuditLines.length - 1], /"status":"executed"/u);
     } finally {
         await cleanupLocalUiTestResources({ repoRoot, server });
     }

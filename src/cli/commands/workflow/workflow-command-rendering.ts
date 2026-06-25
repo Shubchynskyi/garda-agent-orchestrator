@@ -339,6 +339,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push('Tip: run "workflow set --task-reset on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change confirmed task-reset availability after operator approval.');
     lines.push('Tip: run "workflow set --auto-backup on|off --auto-backup-interval-days 1 --auto-backup-keep-latest 10 --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change scheduled backup maintenance after operator approval.');
     lines.push('Tip: run "workflow set --optional-checks on|off --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to change optional quality-check availability after operator approval.');
+    lines.push('Tip: run "workflow set --optional-check-rule-id <id> --optional-check-rule-title <title> --optional-check-rule-prompt <prompt> --optional-check-rule-enabled true|false --operator-confirmed yes --operator-confirmed-at-utc <ISO-8601 timestamp>" to add or update an optional quality-check rule.');
     lines.push('Tip: run "workflow set --garda-self-guard on|off" to control agent self-entry into protected orchestrator work; off requires explicit operator approval.');
     return colorizeWorkflowHumanOutput(lines.join('\n'));
 }

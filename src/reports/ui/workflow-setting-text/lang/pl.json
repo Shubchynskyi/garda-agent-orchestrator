@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Ponowienia po limicie czasu full-suite",
     "description": "Ile razy ponowić komendę full-suite po limicie czasu przed zastosowaniem polityki."
+  },
+  "optional-checks-enabled": {
+    "label": "Opcjonalne kontrole jakości",
+    "description": "Steruje uruchamianiem doradczych reguł autokontroli przed kompilacją, review i pełną walidacją. Edycje reguł poniżej używają tej samej audytowanej ścieżki workflow set.",
+    "options": {
+      "true": {
+        "label": "Włączone",
+        "description": "Agenci uruchamiają skonfigurowane doradcze reguły autokontroli przed kosztownymi bramkami."
+      },
+      "false": {
+        "label": "Wyłączone",
+        "description": "Opcjonalna bramka quality-checklist jest pomijana bez zastępowania obowiązkowych bramek kompilacji, review lub full-suite."
+      }
+    }
   }
 }

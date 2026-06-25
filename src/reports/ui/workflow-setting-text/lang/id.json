@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Percobaan ulang timeout full-suite",
     "description": "Berapa kali perintah full-suite dicoba ulang setelah timeout sebelum kebijakan timeout diterapkan."
+  },
+  "optional-checks-enabled": {
+    "label": "Pemeriksaan kualitas opsional",
+    "description": "Mengatur apakah aturan self-check advisori berjalan sebelum compile, review, dan validasi full-suite. Edit aturan di bawah memakai jalur workflow set yang diaudit sama.",
+    "options": {
+      "true": {
+        "label": "Aktif",
+        "description": "Agen menjalankan aturan self-check advisori yang dikonfigurasi sebelum gate mahal."
+      },
+      "false": {
+        "label": "Nonaktif",
+        "description": "Gate quality-checklist opsional dilewati tanpa mengganti gate compile, review, atau full-suite wajib."
+      }
+    }
   }
 }

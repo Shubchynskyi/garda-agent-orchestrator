@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Tentativas de timeout full-suite",
     "description": "Quantas vezes o comando full-suite é repetido após timeout antes de aplicar a política."
+  },
+  "optional-checks-enabled": {
+    "label": "Verificações de qualidade opcionais",
+    "description": "Controla se regras consultivas de auto-verificação rodam antes da compilação, revisão e validação completa. As edições de regras abaixo usam o mesmo caminho auditado workflow set.",
+    "options": {
+      "true": {
+        "label": "Ligado",
+        "description": "Os agentes executam as regras consultivas configuradas antes dos gates caros."
+      },
+      "false": {
+        "label": "Desligado",
+        "description": "O gate opcional quality-checklist é ignorado sem substituir gates obrigatórios de compilação, revisão ou full-suite."
+      }
+    }
   }
 }

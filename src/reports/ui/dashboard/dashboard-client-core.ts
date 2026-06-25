@@ -293,6 +293,9 @@ function applyLanguage() {
   if (currentSettingsPayload) {
     renderSettingsEditor(currentSettingsPayload);
   }
+  if (currentWorkflowSettingResult) {
+    renderWorkflowSettingResult(currentWorkflowSettingResult);
+  }
   if (currentActionResult) {
     renderActionResult(currentActionResult);
   }

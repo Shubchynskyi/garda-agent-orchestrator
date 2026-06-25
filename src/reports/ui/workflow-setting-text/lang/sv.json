@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Full-suite timeout-omförsök",
     "description": "Hur många gånger full-suite-kommandot körs om efter timeout innan timeoutpolicyn tillämpas."
+  },
+  "optional-checks-enabled": {
+    "label": "Valfria kvalitetskontroller",
+    "description": "Styr om rådgivande självkontrollregler körs före kompilering, review och full-suite-validering. Regeländringar nedan använder samma granskade workflow set väg.",
+    "options": {
+      "true": {
+        "label": "På",
+        "description": "Agenter kör de konfigurerade rådgivande självkontrollerna före dyra gates."
+      },
+      "false": {
+        "label": "Av",
+        "description": "Den valfria quality-checklist-gaten hoppas över utan att ersätta obligatoriska compile-, review- eller full-suite-gates."
+      }
+    }
   }
 }

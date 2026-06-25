@@ -161,6 +161,7 @@ export interface ReportWorkflowConfigTab {
     config_exists: boolean;
     status: 'present' | 'missing' | 'invalid';
     settings: ReportWorkflowSetting[];
+    optional_quality_checks: WorkflowConfigData['optional_quality_checks'];
     unavailable: ReportDataUnavailableEntry[];
 }
 

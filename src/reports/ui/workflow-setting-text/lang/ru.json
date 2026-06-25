@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Повторы таймаута полной проверки",
     "description": "Сколько раз повторять команду полной проверки после таймаута до применения политики таймаута."
+  },
+  "optional-checks-enabled": {
+    "label": "Опциональные проверки качества",
+    "description": "Определяет, запускаются ли advisory self-check правила перед compile, review и full-suite validation. Редактирование правил ниже использует тот же аудитируемый путь workflow set.",
+    "options": {
+      "true": {
+        "label": "Включено",
+        "description": "Агенты запускают настроенные advisory self-check правила перед дорогими gate-этапами."
+      },
+      "false": {
+        "label": "Выключено",
+        "description": "Опциональный gate quality-checklist пропускается, но не заменяет обязательные compile, review или full-suite gates."
+      }
+    }
   }
 }

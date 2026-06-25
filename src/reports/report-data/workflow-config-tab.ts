@@ -231,6 +231,7 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
             config_exists: false,
             status: 'missing',
             settings: buildWorkflowSettings(repoRoot, config),
+            optional_quality_checks: config.optional_quality_checks,
             unavailable: [{ scope: 'workflow-config', reason: 'Workflow config file missing; default values are shown.' }]
         };
     }
@@ -249,6 +250,7 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
             config_exists: true,
             status: 'present',
             settings: buildWorkflowSettings(repoRoot, config, parsed),
+            optional_quality_checks: config.optional_quality_checks,
             unavailable
         };
     } catch (error: unknown) {
@@ -258,6 +260,7 @@ export function buildWorkflowConfigTab(repoRoot: string): ReportWorkflowConfigTa
             config_exists: true,
             status: 'invalid',
             settings: buildWorkflowSettings(repoRoot, config),
+            optional_quality_checks: config.optional_quality_checks,
             unavailable: [{
                 scope: 'workflow-config',
                 reason: error instanceof Error ? error.message : String(error)

@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "full-suite タイムアウト再試行",
     "description": "タイムアウト後、タイムアウトポリシー適用前に full-suite コマンドを再試行する回数。"
+  },
+  "optional-checks-enabled": {
+    "label": "任意の品質チェック",
+    "description": "助言目的のセルフチェック規則をコンパイル、レビュー、フルスイート検証の前に実行するかを制御します。下の規則編集も同じ監査済み workflow set 経路を使います。",
+    "options": {
+      "true": {
+        "label": "オン",
+        "description": "高コストなゲートの前に、設定済みの助言的セルフチェック規則を実行します。"
+      },
+      "false": {
+        "label": "オフ",
+        "description": "任意の quality-checklist ゲートをスキップしますが、必須のコンパイル、レビュー、フルスイートゲートは置き換えません。"
+      }
+    }
   }
 }

@@ -87,3 +87,50 @@ test('workflow settings editor renders unconfigured compile-gate through localiz
     assert.match(currentValue, /Не задано в workflow-config/u);
     assert.doesNotMatch(currentValue, /__COMPILE_GATE_COMMAND_UNCONFIGURED__/u);
 });
+
+test('workflow setting result renderer shows optional-rule validation errors', () => {
+    const workflowNode = {
+        innerHTML: '',
+        hidden: true,
+        setAttribute: () => {},
+        getAttribute: () => null,
+        scrollIntoView: () => {},
+        focus: () => {}
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => []
+        },
+        window: {
+            localStorage: null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage: 'en',
+        settingsEditorNode: {
+            innerHTML: '',
+            querySelectorAll: () => []
+        },
+        workflowNode,
+        workflowPanelTitleNode: { textContent: '' },
+        workflowConfigPathNode: { textContent: '' },
+        outputBlock: (label: string, value: string) => value ? `<pre data-label="${label}">${value}</pre>` : '',
+        currentSettingsPayload: null,
+        currentWorkflowSettingResult: null,
+        currentWorkflowSettingGroup: 'validation'
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\nrenderWorkflowSettingResult({
+  setting_id: 'optional-check-rule-management',
+  key: 'optional_quality_checks.rules',
+  code: 'invalid_setting_value',
+  error: 'Optional quality-check rule prompt is required.'
+});`, context);
+
+    assert.equal(workflowNode.hidden, false);
+    assert.match(workflowNode.innerHTML, /optional_quality_checks\.rules/u);
+    assert.match(workflowNode.innerHTML, /invalid_setting_value/u);
+    assert.match(workflowNode.innerHTML, /Optional quality-check rule prompt is required\./u);
+});

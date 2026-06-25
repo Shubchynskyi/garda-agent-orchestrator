@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Повтори таймауту повної перевірки",
     "description": "Скільки разів повторювати команду повної перевірки після таймауту до застосування політики таймауту."
+  },
+  "optional-checks-enabled": {
+    "label": "Опціональні перевірки якості",
+    "description": "Керує запуском advisory self-check правил перед compile, review і full-suite validation. Редагування правил нижче використовує той самий аудитований шлях workflow set.",
+    "options": {
+      "true": {
+        "label": "Увімкнено",
+        "description": "Агенти запускають налаштовані advisory self-check правила перед дорогими gate-етапами."
+      },
+      "false": {
+        "label": "Вимкнено",
+        "description": "Опціональний gate quality-checklist пропускається, але не замінює обов’язкові compile, review або full-suite gates."
+      }
+    }
   }
 }

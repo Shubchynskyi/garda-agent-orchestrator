@@ -76,6 +76,7 @@ let currentSession = null;
 let currentActionsPayload = null;
 let currentActionResult = null;
 let currentSettingsPayload = null;
+let currentWorkflowSettingResult = null;
 let currentMemorySettingResult = null;
 let currentTaskDetail = null;
 let currentWorkflowSettingGroup = 'validation';

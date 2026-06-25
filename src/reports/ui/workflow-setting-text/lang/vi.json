@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Số lần thử lại timeout full-suite",
     "description": "Số lần thử lại lệnh full-suite sau timeout trước khi áp dụng chính sách timeout."
+  },
+  "optional-checks-enabled": {
+    "label": "Kiểm tra chất lượng tùy chọn",
+    "description": "Điều khiển việc chạy các quy tắc tự kiểm tra mang tính tư vấn trước compile, review và full-suite validation. Chỉnh sửa quy tắc bên dưới dùng cùng đường dẫn workflow set có audit.",
+    "options": {
+      "true": {
+        "label": "Bật",
+        "description": "Agent chạy các quy tắc tự kiểm tra đã cấu hình trước các gate tốn kém."
+      },
+      "false": {
+        "label": "Tắt",
+        "description": "Gate quality-checklist tùy chọn được bỏ qua mà không thay thế các gate compile, review hoặc full-suite bắt buộc."
+      }
+    }
   }
 }

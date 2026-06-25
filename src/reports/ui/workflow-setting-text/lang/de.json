@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Full-suite-Timeout-Wiederholungen",
     "description": "Wie oft der Full-suite-Befehl nach einer Zeitüberschreitung erneut versucht wird, bevor die Timeout-Regel greift."
+  },
+  "optional-checks-enabled": {
+    "label": "Optionale Qualitätsprüfungen",
+    "description": "Steuert, ob beratende Selbstprüfungsregeln vor Compile, Review und Full-Suite-Validierung laufen. Regeländerungen unten verwenden denselben auditierten workflow set Pfad.",
+    "options": {
+      "true": {
+        "label": "Ein",
+        "description": "Agenten führen die konfigurierten beratenden Selbstprüfungen vor teuren Gates aus."
+      },
+      "false": {
+        "label": "Aus",
+        "description": "Das optionale Quality-Checklist-Gate wird übersprungen, ohne verpflichtende Compile-, Review- oder Full-Suite-Gates zu ersetzen."
+      }
+    }
   }
 }

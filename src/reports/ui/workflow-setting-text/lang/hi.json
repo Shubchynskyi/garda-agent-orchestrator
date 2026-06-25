@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "फुल-सूट टाइमआउट पुनः प्रयास",
     "description": "टाइमआउट नीति लागू होने से पहले टाइमआउट के बाद फुल-सूट कमांड कितनी बार दोहराई जाए।"
+  },
+  "optional-checks-enabled": {
+    "label": "वैकल्पिक गुणवत्ता जांच",
+    "description": "नियंत्रित करता है कि सलाहकारी self-check नियम compile, review और full-suite validation से पहले चलें या नहीं। नीचे rule edits उसी audited workflow set path से जाते हैं।",
+    "options": {
+      "true": {
+        "label": "चालू",
+        "description": "Agents महंगे gates से पहले configured advisory self-check rules चलाते हैं।"
+      },
+      "false": {
+        "label": "बंद",
+        "description": "Optional quality-checklist gate skip होता है, लेकिन mandatory compile, review या full-suite gates को replace नहीं करता।"
+      }
+    }
   }
 }

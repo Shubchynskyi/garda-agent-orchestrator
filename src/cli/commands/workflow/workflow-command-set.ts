@@ -10,6 +10,7 @@ import {
     normalizeCompileGateConfig,
     normalizeOptionalQualityChecksConfig,
     normalizeOrchestratorWorkPolicyConfig,
+    type OptionalQualityCheckRule,
     type WorkflowConfigData
 } from '../../../core/workflow-config';
 import { normalizeReviewExecutionPolicyMode } from '../../../core/review-execution-policy';
@@ -65,6 +66,79 @@ function resolveProtectedManifestRefreshRoot(roots: ReturnType<typeof resolveWor
     return isRecognizedBundleName(path.basename(roots.bundleRoot))
         ? roots.targetRoot
         : roots.bundleRoot;
+}
+
+function parseOptionalCheckRuleId(value: string, flagName: string): string {
+    const id = value.trim().toLowerCase();
+    if (!id) {
+        throw new Error(`${flagName} must not be empty.`);
+    }
+    return id;
+}
+
+function parseOptionalCheckRuleText(value: unknown, flagName: string): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const text = value.trim();
+    if (!text) {
+        throw new Error(`${flagName} must not be empty.`);
+    }
+    return text;
+}
+
+function upsertOptionalCheckRule(
+    rules: OptionalQualityCheckRule[],
+    options: ParsedOptionsRecord
+): OptionalQualityCheckRule[] {
+    if (typeof options.optionalCheckRuleId !== 'string') {
+        return rules;
+    }
+    const id = parseOptionalCheckRuleId(options.optionalCheckRuleId, '--optional-check-rule-id');
+    const existingIndex = rules.findIndex((rule) => rule.id.toLowerCase() === id);
+    const existing = existingIndex >= 0 ? rules[existingIndex] : null;
+    const title = parseOptionalCheckRuleText(options.optionalCheckRuleTitle, '--optional-check-rule-title')
+        ?? existing?.title;
+    const prompt = parseOptionalCheckRuleText(options.optionalCheckRulePrompt, '--optional-check-rule-prompt')
+        ?? existing?.prompt;
+    if (!title) {
+        throw new Error('--optional-check-rule-title is required when adding a new optional quality-check rule.');
+    }
+    if (!prompt) {
+        throw new Error('--optional-check-rule-prompt is required when adding a new optional quality-check rule.');
+    }
+    const enabled = typeof options.optionalCheckRuleEnabled === 'string'
+        ? parseBooleanText(options.optionalCheckRuleEnabled, '--optional-check-rule-enabled')
+        : existing?.enabled !== false;
+    const nextRule: OptionalQualityCheckRule = {
+        ...(existing || {}),
+        id,
+        title,
+        prompt,
+        enabled
+    };
+    if (existingIndex >= 0) {
+        return rules.map((rule, index) => index === existingIndex ? nextRule : rule);
+    }
+    return [...rules, nextRule];
+}
+
+function deleteOptionalCheckRule(
+    rules: OptionalQualityCheckRule[],
+    options: ParsedOptionsRecord
+): OptionalQualityCheckRule[] {
+    if (typeof options.optionalCheckRuleDelete !== 'string') {
+        return rules;
+    }
+    const id = parseOptionalCheckRuleId(options.optionalCheckRuleDelete, '--optional-check-rule-delete');
+    const nextRules = rules.filter((rule) => rule.id.toLowerCase() !== id);
+    if (nextRules.length === rules.length) {
+        throw new Error(`Optional quality-check rule '${id}' does not exist.`);
+    }
+    if (nextRules.length === 0) {
+        throw new Error('optional_quality_checks.rules must contain at least one rule.');
+    }
+    return nextRules;
 }
 
 export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
@@ -402,12 +476,23 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             nextConfig.optional_quality_checks ?? buildDefaultWorkflowConfig().optional_quality_checks
         )
     );
+    if (typeof options.optionalCheckRuleId === 'string' && typeof options.optionalCheckRuleDelete === 'string') {
+        throw new Error('--optional-check-rule-id cannot be combined with --optional-check-rule-delete.');
+    }
     if (optionalChecksEnabledSetting) {
         nextOptionalQualityChecks.enabled = parseBooleanText(
             optionalChecksEnabledSetting.value,
             optionalChecksEnabledSetting.flagName
         );
         changedFields.push('optional_quality_checks.enabled');
+    }
+    const optionalRulesBefore = JSON.stringify(nextOptionalQualityChecks.rules);
+    nextOptionalQualityChecks.rules = deleteOptionalCheckRule(
+        upsertOptionalCheckRule(nextOptionalQualityChecks.rules, options),
+        options
+    );
+    if (JSON.stringify(nextOptionalQualityChecks.rules) !== optionalRulesBefore) {
+        changedFields.push('optional_quality_checks.rules');
     }
     nextConfig.optional_quality_checks = nextOptionalQualityChecks;
 
@@ -431,6 +516,7 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
             + '--full-suite-out-of-scope-failure-policy, --full-suite-placement, --review-execution-policy, '
             + '--scope-budget-* flags, --review-cycle-* flags, --project-memory-* flags, '
             + '--task-reset-enabled, --auto-backup-* flags, --optional-checks-enabled, '
+            + '--optional-check-rule-* flags, '
             + 'their short on/off aliases, or --garda-self-guard.'
         );
     }

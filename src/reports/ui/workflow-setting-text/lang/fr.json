@@ -370,5 +370,19 @@
   "full-suite-timeout-retry-count": {
     "label": "Relances après délai full-suite",
     "description": "Nombre de relances de la commande full-suite après un délai avant application de la politique de délai."
+  },
+  "optional-checks-enabled": {
+    "label": "Contrôles qualité optionnels",
+    "description": "Contrôle si les règles consultatives d’auto-vérification s’exécutent avant la compilation, la revue et la validation complète. Les règles ci-dessous utilisent le même chemin audité workflow set.",
+    "options": {
+      "true": {
+        "label": "Activé",
+        "description": "Les agents exécutent les règles d’auto-vérification configurées avant les gates coûteux."
+      },
+      "false": {
+        "label": "Désactivé",
+        "description": "Le gate optionnel quality-checklist est ignoré sans remplacer les gates obligatoires de compilation, revue ou suite complète."
+      }
+    }
   }
 }

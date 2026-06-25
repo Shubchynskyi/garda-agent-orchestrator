@@ -6,7 +6,13 @@ import {
     type WorkflowSettingValueType
 } from '../../workflow-setting-metadata';
 import { UI_ACTION_DEFAULT_TIMEOUT_MS, buildUiActionCommand } from './action-common';
-import type { ParsedUiSettingValue, UiActionDefinition, UiSettingDefinition } from './types';
+import type {
+    ParsedUiOptionalCheckRuleValue,
+    ParsedUiSettingValue,
+    UiActionDefinition,
+    UiOptionalCheckRuleAction,
+    UiSettingDefinition
+} from './types';
 
 const UI_SETTING_CONFIRMATION_PHRASE = 'APPLY GARDA SETTING';
 
@@ -198,6 +204,128 @@ export function buildUiSettingAction(
         confirmation_phrase: setting.confirmation_phrase,
         timeout_ms: UI_ACTION_DEFAULT_TIMEOUT_MS,
         command: buildUiSettingCommand(repoRoot, setting, commandValue, timestampUtc)
+    };
+}
+
+function normalizeRuleId(value: unknown): string {
+    const ruleId = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (!ruleId) {
+        throw new Error('Optional quality-check rule id must not be empty.');
+    }
+    return ruleId;
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+    if (value === undefined || value === null) {
+        return null;
+    }
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (!text) {
+        throw new Error('Optional quality-check rule title and prompt must not be empty.');
+    }
+    return text;
+}
+
+function normalizeOptionalRuleEnabled(value: unknown): boolean | null {
+    if (value === undefined || value === null || value === '') {
+        return null;
+    }
+    const raw = typeof value === 'boolean' ? String(value) : typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (['true', 'on', 'yes', '1'].includes(raw)) {
+        return true;
+    }
+    if (['false', 'off', 'no', '0'].includes(raw)) {
+        return false;
+    }
+    throw new Error('Optional quality-check rule enabled must be on or off.');
+}
+
+export function parseUiOptionalCheckRuleValue(payload: {
+    optional_rule_action?: unknown;
+    rule_id?: unknown;
+    title?: unknown;
+    prompt?: unknown;
+    enabled?: unknown;
+}): ParsedUiOptionalCheckRuleValue {
+    const action: UiOptionalCheckRuleAction = payload.optional_rule_action === 'delete' ? 'delete' : 'upsert';
+    const ruleId = normalizeRuleId(payload.rule_id);
+    if (action === 'delete') {
+        return {
+            action,
+            rule_id: ruleId,
+            title: null,
+            prompt: null,
+            enabled: null,
+            proposed_value: { action, id: ruleId },
+            command_args: ['--optional-check-rule-delete', ruleId]
+        };
+    }
+    const title = normalizeOptionalText(payload.title);
+    const prompt = normalizeOptionalText(payload.prompt);
+    const enabled = normalizeOptionalRuleEnabled(payload.enabled);
+    if (!title) {
+        throw new Error('Optional quality-check rule title is required.');
+    }
+    if (!prompt) {
+        throw new Error('Optional quality-check rule prompt is required.');
+    }
+    return {
+        action,
+        rule_id: ruleId,
+        title,
+        prompt,
+        enabled,
+        proposed_value: {
+            action,
+            id: ruleId,
+            title,
+            prompt,
+            enabled: enabled ?? true
+        },
+        command_args: [
+            '--optional-check-rule-id',
+            ruleId,
+            '--optional-check-rule-title',
+            title,
+            '--optional-check-rule-prompt',
+            prompt,
+            '--optional-check-rule-enabled',
+            String(enabled ?? true)
+        ]
+    };
+}
+
+export function buildUiOptionalCheckRuleAction(
+    repoRoot: string,
+    value: ParsedUiOptionalCheckRuleValue,
+    timestampUtc: string
+): UiActionDefinition {
+    const args = [
+        'workflow',
+        'set',
+        ...value.command_args,
+        '--target-root',
+        repoRoot,
+        '--operator-confirmed',
+        'yes',
+        '--operator-confirmed-at-utc',
+        timestampUtc
+    ];
+    const label = value.action === 'delete'
+        ? `Remove optional check rule ${value.rule_id}`
+        : `Save optional check rule ${value.rule_id}`;
+    return {
+        id: `setting:optional-check-rule:${value.action}:${value.rule_id}`,
+        category: 'Workflow Config',
+        label,
+        description: 'Updates optional quality-check rules through the audited workflow set path.',
+        mutates: true,
+        enabled: true,
+        unavailable_reason: null,
+        requires_confirmation: true,
+        confirmation_phrase: UI_SETTING_CONFIRMATION_PHRASE,
+        timeout_ms: UI_ACTION_DEFAULT_TIMEOUT_MS,
+        command: buildUiActionCommand(repoRoot, args)
     };
 }
 
