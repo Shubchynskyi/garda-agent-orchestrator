@@ -20,6 +20,7 @@ import {
     UNCONFIGURED_COMPILE_GATE_COMMAND,
     resolveInitAnswersRelativePath
 } from '../../../../src/core/constants';
+import { OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE } from '../../../../src/core/workflow-config';
 import { quoteCommandValue } from '../../../../src/core/command-quoting';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { parseOptions } from '../../../../src/cli/commands/cli-helpers';
@@ -942,6 +943,36 @@ test('handleSetup materializes code_first_optional review_execution_policy for a
         assert.equal(workflowConfig.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
         assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('handleSetup prints optional quality checks notice once when workflow config is seeded', async () => {
+    const repoRoot = findRepoRoot(__dirname);
+    const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-setup-optional-checks-notice-'));
+
+    try {
+        fs.mkdirSync(path.join(workspaceRoot, '.git'), { recursive: true });
+
+        const firstOutput = await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--source-of-truth', 'Codex'],
+                packageJson,
+                repoRoot
+            );
+        });
+        assert.equal(firstOutput.includes(OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE), true);
+
+        const refreshOutput = await captureConsoleLogs(async () => {
+            await handleSetup(
+                ['--target-root', workspaceRoot, '--no-prompt', '--skip-verify', '--skip-manifest-validation', '--preserve-agent-state'],
+                packageJson,
+                repoRoot
+            );
+        });
+        assert.equal(refreshOutput.includes(OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE), false);
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

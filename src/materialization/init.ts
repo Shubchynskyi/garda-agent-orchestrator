@@ -9,6 +9,8 @@ import {
     buildDefaultWorkflowConfig,
     buildWorkflowConfigReviewCycleLimitDiagnostic,
     isConfiguredCompileGateCommand,
+    OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE,
+    shouldEmitOptionalQualityChecksEnabledNotice,
     type WorkflowConfigReadStatus,
     type WorkflowConfigData
 } from '../core/workflow-config';
@@ -275,6 +277,7 @@ interface BuildInitReportOptions {
     projectMemoryBootstrapReport: ProjectMemoryBootstrapReport;
     projectMemoryMaintenanceSummaryLine: string;
     projectMemoryRefreshHandoffPrompt: string;
+    optionalQualityChecksNotice: string | null;
     legacyStyleGuidanceActive?: boolean;
 }
 
@@ -521,6 +524,7 @@ export function runInit(options: RunInitOptions) {
         buildDefaultWorkflowConfig().project_memory_maintenance
     );
     let materializedWorkflowConfig: Record<string, unknown> = buildDefaultWorkflowConfig();
+    let optionalQualityChecksNotice: string | null = null;
 
     for (const configName of managedConfigNames) {
         const templateConfigPath = path.join(templateRoot, `config/${configName}.json`);
@@ -581,6 +585,13 @@ export function runInit(options: RunInitOptions) {
                 projectMemoryMaintenanceSummaryLine = buildProjectMemoryMaintenanceSummaryLine(
                     normalizeProjectMemoryMaintenanceForDisplay(materializedConfig.project_memory_maintenance)
                 );
+                optionalQualityChecksNotice = shouldEmitOptionalQualityChecksEnabledNotice({
+                    readStatus: workflowConfigReadStatus,
+                    existingConfig,
+                    materializedConfig
+                })
+                    ? OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE
+                    : null;
             }
 
             if (!dryRun) {
@@ -672,6 +683,7 @@ export function runInit(options: RunInitOptions) {
             projectMemoryBootstrapReport: projectMemoryBootstrapReport.report,
             projectMemoryMaintenanceSummaryLine,
             projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
+            optionalQualityChecksNotice,
             legacyStyleGuidanceActive
         });
         initReportLines.push(...buildMigrationReportLines(migrationResult));
@@ -718,6 +730,7 @@ export function runInit(options: RunInitOptions) {
         projectMemoryBootstrapReport: projectMemoryBootstrapReport.report,
         projectMemoryMaintenanceSummaryLine,
         projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_REFRESH_HANDOFF_PROMPT,
+        optionalQualityChecksNotice,
         projectMemoryValidation,
         reviewCapabilitiesConfigMergeStatus: configMergeStatuses['review-capabilities'] || 'n/a',
         pathsConfigMergeStatus: configMergeStatuses['paths'] || 'n/a',
@@ -852,7 +865,7 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         enforceNoAutoCommit, tokenEconomyEnabled, discovery,
         sourceInventory, reviewCapabilitiesSync, projectMemoryBootstrapReport,
         projectMemoryMaintenanceSummaryLine, projectMemoryRefreshHandoffPrompt,
-        legacyStyleGuidanceActive } = opts;
+        optionalQualityChecksNotice, legacyStyleGuidanceActive } = opts;
     const normalized = targetRoot.replace(/\\/g, '/');
     const tick = '`';
     const stackSummary = discovery.detectedStacks.length > 0
@@ -920,6 +933,14 @@ function buildInitReportLines(opts: BuildInitReportOptions): string[] {
         '| Rule file | Source | Origin | Destination |',
         '|---|---|---|---|'
     ];
+
+    if (optionalQualityChecksNotice) {
+        lines.splice(
+            lines.indexOf('- Contract migration snippets auto-applied: 0'),
+            0,
+            `- Optional quality checks notice: ${optionalQualityChecksNotice}`
+        );
+    }
 
     for (const item of ruleSourceMap) {
         lines.push(`| ${item.ruleFile} | ${tick}${item.source}${tick} | ${item.origin} | ${tick}${item.destination}${tick} |`);

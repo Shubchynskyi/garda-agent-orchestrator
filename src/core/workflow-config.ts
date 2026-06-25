@@ -114,6 +114,8 @@ export interface OptionalQualityChecksConfig {
     [key: string]: unknown;
 }
 
+export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
+
 export const DEFAULT_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
     Object.freeze({
         id: 'code_simplification',
@@ -365,6 +367,21 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
             ? normalizedRules
             : cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.optional_quality_checks.rules)
     };
+}
+
+export function shouldEmitOptionalQualityChecksEnabledNotice(options: {
+    readStatus: WorkflowConfigReadStatus;
+    existingConfig: Record<string, unknown> | null;
+    materializedConfig: Record<string, unknown>;
+}): boolean {
+    const optionalQualityChecks = normalizeOptionalQualityChecksConfig(options.materializedConfig.optional_quality_checks);
+    if (!optionalQualityChecks.enabled) {
+        return false;
+    }
+    if (options.readStatus !== 'present' || !isPlainObject(options.existingConfig)) {
+        return true;
+    }
+    return !hasOwnCaseInsensitiveKey(options.existingConfig, 'optional_quality_checks');
 }
 
 export function readOrchestratorWorkPolicyModeForBundle(bundleRoot: string): OrchestratorWorkPolicyMode {

@@ -6,6 +6,7 @@ import * as path from 'node:path';
 
 import type { PackageJsonLike } from '../../../../src/cli/commands/cli-types';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
+import { OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE } from '../../../../src/core/workflow-config';
 
 type UpdateCommandModule = typeof import('../../../../src/cli/commands/update-command');
 
@@ -71,6 +72,7 @@ function makeTempBundleFixture(): { workspaceRoot: string; bundleUpdateModulePat
             "        previousVersion: '1.0.0',",
             "        updatedVersion: '1.1.0',",
             `        workflowConfigMergeStatus: ${JSON.stringify(WORKFLOW_CONFIG_MERGE_STATUS)},`,
+            `        optionalQualityChecksNotice: ${JSON.stringify(OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE)},`,
             "        projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',",
             `        projectMemoryRefreshHandoffPrompt: ${JSON.stringify(PROJECT_MEMORY_INIT_REFRESH_PROMPT)},`,
             "        rollbackSnapshotPath: 'garda-agent-orchestrator/runtime/update-rollbacks/update-1',",
@@ -223,6 +225,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                     previousVersion: 'stale-version',
                     updatedVersion: '0.0.1',
                     workflowConfigMergeStatus: WORKFLOW_CONFIG_MERGE_STATUS,
+                    optionalQualityChecksNotice: OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE,
                     projectMemoryMaintenanceSummaryLine: 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true',
                     projectMemoryRefreshHandoffPrompt: PROJECT_MEMORY_INIT_REFRESH_PROMPT,
                     rollbackSnapshotPath: 'stale-snapshot',
@@ -289,6 +292,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
             assertPlainLine(plainTextLines, '  Status: UPDATED');
             assertPlainLine(plainTextLines, '  Applied: yes');
             assertPlainLine(plainTextLines, '  Version: 1.0.0 -> 1.1.0');
+            assertPlainLine(plainTextLines, `  Optional checks notice: ${OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE}`);
             assertPlainLine(plainTextLines, 'Source');
             assertPlainLine(plainTextLines, '  Package: garda-agent-orchestrator@1.1.0');
             assertPlainLine(plainTextLines, '  Integrity: sha512-output');
@@ -340,6 +344,7 @@ test('handleUpdate surfaces update messages and release notes in plain text and 
                 parsed.workflowConfigMergeStatus,
                 WORKFLOW_CONFIG_MERGE_STATUS
             );
+            assert.equal(parsed.optionalQualityChecksNotice, OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE);
             assert.equal(parsed.projectMemoryMaintenanceSummaryLine, 'Project memory maintenance: update read_strategy=index_first max_compact_summary_chars=12000 require_user_approval_for_writes=true');
             assert.equal(parsed.projectMemoryRefreshHandoffPrompt, PROJECT_MEMORY_INIT_REFRESH_PROMPT);
             assert.equal(parsed.updateMessages[0].title, 'Major registry note');

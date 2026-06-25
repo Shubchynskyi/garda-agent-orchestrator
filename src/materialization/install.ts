@@ -797,6 +797,9 @@ export function runInstall(options: RunInstallOptions) {
         workflowConfigMergeStatus: typeof initResult?.workflowConfigMergeStatus === 'string'
             ? initResult.workflowConfigMergeStatus
             : null,
+        optionalQualityChecksNotice: typeof initResult?.optionalQualityChecksNotice === 'string'
+            ? initResult.optionalQualityChecksNotice
+            : null,
         projectMemoryMaintenanceSummaryLine: typeof initResult?.projectMemoryMaintenanceSummaryLine === 'string'
             ? initResult.projectMemoryMaintenanceSummaryLine
             : null,

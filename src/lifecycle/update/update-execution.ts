@@ -88,6 +88,7 @@ export interface UpdatePipelineStageResult {
     installStatus: string;
     materializationStatus: string;
     workflowConfigMergeStatus: string | null;
+    optionalQualityChecksNotice?: string | null;
     projectMemoryMaintenanceSummaryLine?: string | null;
     projectMemoryRefreshHandoffPrompt?: string | null;
     projectMemoryDiagnostics?: ProjectMemoryLifecycleDiagnostics | null;
@@ -119,6 +120,16 @@ function getWorkflowConfigMergeStatus(result: unknown): string | null {
     const status = (result as Record<string, unknown>).workflowConfigMergeStatus;
     return typeof status === 'string' && status.trim()
         ? status
+        : null;
+}
+
+function getOptionalQualityChecksNotice(result: unknown): string | null {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return null;
+    }
+    const notice = (result as Record<string, unknown>).optionalQualityChecksNotice;
+    return typeof notice === 'string' && notice.trim()
+        ? notice
         : null;
 }
 
@@ -219,6 +230,7 @@ export function executeUpdatePipelineStages(options: {
     let installStatus = 'NOT_RUN';
     let materializationStatus = 'NOT_RUN';
     let workflowConfigMergeStatus: string | null = null;
+    let optionalQualityChecksNotice: string | null = null;
     let projectMemoryMaintenanceSummaryLine: string | null = null;
     let projectMemoryRefreshHandoffPrompt: string | null = null;
     let projectMemoryDiagnostics: ProjectMemoryLifecycleDiagnostics | null = null;
@@ -296,6 +308,7 @@ export function executeUpdatePipelineStages(options: {
                     lifecycleLockAlreadyHeld
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(materializationResult);
+                optionalQualityChecksNotice = getOptionalQualityChecksNotice(materializationResult);
                 projectMemoryDiagnostics = getProjectMemoryDiagnostics(materializationResult);
                 const materializationRecord = materializationResult && typeof materializationResult === 'object' && !Array.isArray(materializationResult)
                     ? materializationResult as Record<string, unknown>
@@ -324,6 +337,7 @@ export function executeUpdatePipelineStages(options: {
                     lifecycleLockAlreadyHeld
                 });
                 workflowConfigMergeStatus = getWorkflowConfigMergeStatus(initResult);
+                optionalQualityChecksNotice = getOptionalQualityChecksNotice(initResult);
                 projectMemoryDiagnostics = getProjectMemoryDiagnostics(initResult);
                 projectMemoryMaintenanceSummaryLine = typeof initResult.projectMemoryMaintenanceSummaryLine === 'string'
                     ? initResult.projectMemoryMaintenanceSummaryLine
@@ -465,6 +479,7 @@ export function executeUpdatePipelineStages(options: {
         installStatus,
         materializationStatus,
         workflowConfigMergeStatus,
+        optionalQualityChecksNotice,
         projectMemoryMaintenanceSummaryLine,
         projectMemoryRefreshHandoffPrompt,
         projectMemoryDiagnostics,

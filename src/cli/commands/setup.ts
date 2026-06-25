@@ -524,6 +524,9 @@ export async function handleSetup(
         if (typeof installResult.workflowConfigMergeStatus === 'string') {
             console.log(`WorkflowConfigMerge: ${installResult.workflowConfigMergeStatus}`);
         }
+        if (typeof installResult.optionalQualityChecksNotice === 'string' && installResult.optionalQualityChecksNotice.trim()) {
+            console.log(installResult.optionalQualityChecksNotice);
+        }
         console.log('');
         printBanner(
             packageJson,

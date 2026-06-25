@@ -19,6 +19,7 @@ export interface UpdateLifecycleResult extends Record<string, unknown> {
     previousVersion?: unknown;
     updatedVersion?: unknown;
     workflowConfigMergeStatus?: unknown;
+    optionalQualityChecksNotice?: unknown;
     projectMemoryMaintenanceSummaryLine?: unknown;
     projectMemoryRefreshHandoffPrompt?: unknown;
     rollbackSnapshotPath?: unknown;
@@ -413,6 +414,7 @@ export function mergeUpdateLifecycleOutput(
         previousVersion: lifecycleResult.previousVersion,
         updatedVersion: lifecycleResult.updatedVersion,
         workflowConfigMergeStatus: lifecycleResult.workflowConfigMergeStatus,
+        optionalQualityChecksNotice: lifecycleResult.optionalQualityChecksNotice,
         projectMemoryMaintenanceSummaryLine: lifecycleResult.projectMemoryMaintenanceSummaryLine,
         projectMemoryRefreshHandoffPrompt: lifecycleResult.projectMemoryRefreshHandoffPrompt,
         rollbackSnapshotPath: lifecycleResult.rollbackSnapshotPath,

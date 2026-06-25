@@ -197,6 +197,7 @@ function formatHumanUpdateOutput(result: Record<string, unknown>): void {
         ['Applied', result.updateApplied],
         ['Update available', result.updateAvailable],
         ['Version', formatUpdateVersionSummary(result)],
+        ['Optional checks notice', result.optionalQualityChecksNotice],
         ['Content drift', result.contentDriftDetected],
         ['Drifted items', result.driftedSyncItems]
     ]);

@@ -8,7 +8,10 @@ import { runUpdate } from '../../../src/lifecycle/update';
 import { runContractMigrations } from '../../../src/lifecycle/contract-migrations';
 import { removePathRecursive } from '../../../src/lifecycle/common';
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
-import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
+import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE
+} from '../../../src/core/workflow-config';
 
 type CapturedMaterializationOptions = {
     claudeOrchestratorFullAccess?: boolean;
@@ -292,6 +295,7 @@ describe('runUpdate', () => {
             });
 
             assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(result.optionalQualityChecksNotice, OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE);
             assert.equal(
                 result.workflowConfigMergeStatus,
                 'existing_values_preserved_and_missing_keys_filled path=garda-agent-orchestrator/live/config/workflow-config.json full_suite_validation.enabled=true project_memory_maintenance.enabled=true project_memory_maintenance.mode=update review_cycle_guard.max_failed_non_test_reviews=15 review_cycle_guard.max_total_non_test_reviews=30 review_cycle_guard.limit_status=missing_keys_filled_from_template'
@@ -371,8 +375,60 @@ describe('runUpdate', () => {
             });
 
             assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(result.optionalQualityChecksNotice, null);
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
             assert.equal(workflowConfig.optional_quality_checks.enabled, false);
+            assert.deepEqual(workflowConfig.optional_quality_checks.rules, [
+                {
+                    id: 'custom_quality_rule',
+                    title: 'Custom quality rule',
+                    prompt: 'Check the local custom quality rule.',
+                    enabled: true
+                }
+            ]);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('does not repeat the optional quality checks notice for already-configured enabled workspaces', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full'
+                    },
+                    optional_quality_checks: {
+                        enabled: true,
+                        rules: [
+                            {
+                                id: 'custom_quality_rule',
+                                title: 'Custom quality rule',
+                                prompt: 'Check the local custom quality rule.',
+                                enabled: true
+                            }
+                        ]
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(result.optionalQualityChecksNotice, null);
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.optional_quality_checks.enabled, true);
             assert.deepEqual(workflowConfig.optional_quality_checks.rules, [
                 {
                     id: 'custom_quality_rule',
