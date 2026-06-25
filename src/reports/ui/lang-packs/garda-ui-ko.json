@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "통과하지 못한 실행",
     "fullSuiteForecastExclusionNonzeroExit": "0이 아닌 종료 실행",
     "fullSuiteForecastExclusionInvalidDuration": "잘못된 지속 시간",
-    "fullSuiteForecastExclusionOutlierDuration": "이상치 지속 시간"
+    "fullSuiteForecastExclusionOutlierDuration": "이상치 지속 시간",
+    "addOptionalCheckRule": "규칙 추가",
+    "saveOptionalCheckRule": "규칙 저장",
+    "removeOptionalCheckRule": "규칙 제거"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

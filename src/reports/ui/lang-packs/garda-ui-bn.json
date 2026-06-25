@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "অ-পাস রান",
     "fullSuiteForecastExclusionNonzeroExit": "নন-জিরো এক্সিট রান",
     "fullSuiteForecastExclusionInvalidDuration": "অবৈধ সময়কাল",
-    "fullSuiteForecastExclusionOutlierDuration": "আউটলায়ার সময়কাল"
+    "fullSuiteForecastExclusionOutlierDuration": "আউটলায়ার সময়কাল",
+    "addOptionalCheckRule": "নিয়ম যোগ করুন",
+    "saveOptionalCheckRule": "নিয়ম সংরক্ষণ করুন",
+    "removeOptionalCheckRule": "নিয়ম সরান"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

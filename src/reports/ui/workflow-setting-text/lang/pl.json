@@ -384,5 +384,9 @@
         "description": "Opcjonalna bramka quality-checklist jest pomijana bez zastępowania obowiązkowych bramek kompilacji, review lub full-suite."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Opcjonalna reguła kontroli jakości",
+    "description": "Dodaje, aktualizuje lub usuwa jedną doradczą opcjonalną regułę kontroli jakości przez audytowaną ścieżkę ustawień workflow."
   }
 }

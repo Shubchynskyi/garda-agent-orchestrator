@@ -384,5 +384,9 @@
         "description": "任意の quality-checklist ゲートをスキップしますが、必須のコンパイル、レビュー、フルスイートゲートは置き換えません。"
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "任意の品質チェックルール",
+    "description": "監査済みのワークフロー設定経路で、助言用の任意品質チェックルールを1件追加、更新、または削除します。"
   }
 }

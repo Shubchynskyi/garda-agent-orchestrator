@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "nicht bestandene Läufe",
     "fullSuiteForecastExclusionNonzeroExit": "Läufe mit Nicht-Null-Exit",
     "fullSuiteForecastExclusionInvalidDuration": "ungültige Dauern",
-    "fullSuiteForecastExclusionOutlierDuration": "Ausreißer-Dauern"
+    "fullSuiteForecastExclusionOutlierDuration": "Ausreißer-Dauern",
+    "addOptionalCheckRule": "Regel hinzufügen",
+    "saveOptionalCheckRule": "Regel speichern",
+    "removeOptionalCheckRule": "Regel entfernen"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

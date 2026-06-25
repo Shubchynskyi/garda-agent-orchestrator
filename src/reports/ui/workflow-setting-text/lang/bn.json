@@ -384,5 +384,9 @@
         "description": "ঐচ্ছিক quality-checklist গেট বাদ যায়, কিন্তু বাধ্যতামূলক compile, review বা full-suite গেটের বদলি হয় না।"
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "ঐচ্ছিক গুণমান-পরীক্ষা নিয়ম",
+    "description": "নিরীক্ষিত workflow-setting পথ দিয়ে একটি পরামর্শমূলক ঐচ্ছিক গুণমান-পরীক্ষা নিয়ম যোগ, আপডেট বা সরায়।"
   }
 }

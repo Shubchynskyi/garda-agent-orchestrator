@@ -384,5 +384,9 @@
         "description": "Das optionale Quality-Checklist-Gate wird übersprungen, ohne verpflichtende Compile-, Review- oder Full-Suite-Gates zu ersetzen."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Optionale Qualitätsprüfregel",
+    "description": "Fügt eine beratende optionale Qualitätsprüfregel über den auditierten Workflow-Einstellungspfad hinzu, aktualisiert oder entfernt sie."
   }
 }

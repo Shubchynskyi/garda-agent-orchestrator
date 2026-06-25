@@ -384,5 +384,9 @@
         "description": "Gate quality-checklist opsional dilewati tanpa mengganti gate compile, review, atau full-suite wajib."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Aturan pemeriksaan kualitas opsional",
+    "description": "Menambah, memperbarui, atau menghapus satu aturan pemeriksaan kualitas opsional yang bersifat advisori melalui jalur pengaturan workflow yang diaudit."
   }
 }

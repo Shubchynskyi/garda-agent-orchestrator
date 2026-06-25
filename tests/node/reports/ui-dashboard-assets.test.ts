@@ -130,7 +130,162 @@ test('workflow setting result renderer shows optional-rule validation errors', (
 });`, context);
 
     assert.equal(workflowNode.hidden, false);
-    assert.match(workflowNode.innerHTML, /optional_quality_checks\.rules/u);
+    assert.match(workflowNode.innerHTML, /Optional quality-check rule/u);
     assert.match(workflowNode.innerHTML, /invalid_setting_value/u);
     assert.match(workflowNode.innerHTML, /Optional quality-check rule prompt is required\./u);
+});
+
+test('workflow settings editor uses optional-rule labels without ordinary-doc text', () => {
+    const settingsEditorNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => []
+        },
+        window: {
+            localStorage: null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage: 'ru',
+        settingsEditorNode,
+        workflowNode: { innerHTML: '', hidden: false },
+        workflowPanelTitleNode: { textContent: '' },
+        settingStatusNode: { innerHTML: '' },
+        currentSettingsPayload: null,
+        currentSettingResult: null,
+        currentWorkflowSettingGroup: 'validation'
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\nrenderSettingsEditor({
+  enabled: true,
+  optional_quality_checks: {
+    enabled: true,
+    rules: [{
+      id: 'custom_focus',
+      title: 'Custom focus',
+      prompt: 'Check custom concern.',
+      enabled: true
+    }]
+  },
+  settings: [{
+    id: 'optional-checks-enabled',
+    key: 'optional_quality_checks.enabled',
+    label: 'Optional quality checks',
+    description: 'Controls optional checks.',
+    current_value: true,
+    value_type: 'boolean',
+    options: [{ value: 'true', label: 'On' }, { value: 'false', label: 'Off' }],
+    flag: '--optional-checks-enabled',
+    confirmation_phrase: 'APPLY GARDA SETTING'
+  }]
+});`, context);
+
+    assert.match(settingsEditorNode.innerHTML, /Добавить правило/u);
+    assert.match(settingsEditorNode.innerHTML, /Сохранить правило/u);
+    assert.match(settingsEditorNode.innerHTML, /Удалить правило/u);
+    assert.doesNotMatch(settingsEditorNode.innerHTML, /Добавить документ/u);
+});
+
+test('workflow setting result renderer suppresses routine optional-rule stdout after success', () => {
+    const workflowNode = {
+        innerHTML: '',
+        hidden: true,
+        setAttribute: () => {},
+        getAttribute: () => null,
+        scrollIntoView: () => {},
+        focus: () => {}
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => []
+        },
+        window: {
+            localStorage: null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage: 'en',
+        settingsEditorNode: {
+            innerHTML: '',
+            querySelectorAll: () => []
+        },
+        workflowNode,
+        workflowPanelTitleNode: { textContent: '' },
+        workflowConfigPathNode: { textContent: '' },
+        outputBlock: (label: string, value: string) => value ? `<pre data-label="${label}">${value}</pre>` : '',
+        currentSettingsPayload: null,
+        currentWorkflowSettingResult: null,
+        currentWorkflowSettingGroup: 'validation'
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\nrenderWorkflowSettingResult({
+  status: 'executed',
+  setting_id: 'optional-check-rule-management',
+  key: 'optional_quality_checks.rules',
+  stdout: 'routine success output '.repeat(200),
+  stderr: '',
+  audit_path: 'runtime/audit.jsonl'
+});`, context);
+
+    assert.equal(workflowNode.hidden, false);
+    assert.match(workflowNode.innerHTML, /Optional quality-check rule/u);
+    assert.match(workflowNode.innerHTML, /runtime\/audit\.jsonl/u);
+    assert.doesNotMatch(workflowNode.innerHTML, /routine success output/u);
+    assert.doesNotMatch(workflowNode.innerHTML, /data-label="stdout"/u);
+});
+
+test('workflow setting result renderer keeps optional-rule diagnostics on failed execution', () => {
+    const workflowNode = {
+        innerHTML: '',
+        hidden: true,
+        setAttribute: () => {},
+        getAttribute: () => null,
+        scrollIntoView: () => {},
+        focus: () => {}
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => []
+        },
+        window: {
+            localStorage: null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage: 'en',
+        settingsEditorNode: {
+            innerHTML: '',
+            querySelectorAll: () => []
+        },
+        workflowNode,
+        workflowPanelTitleNode: { textContent: '' },
+        workflowConfigPathNode: { textContent: '' },
+        outputBlock: (label: string, value: string) => value ? `<pre data-label="${label}">${value}</pre>` : '',
+        currentSettingsPayload: null,
+        currentWorkflowSettingResult: null,
+        currentWorkflowSettingGroup: 'validation'
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\nrenderWorkflowSettingResult({
+  status: 'executed',
+  setting_id: 'optional-check-rule-management',
+  key: 'optional_quality_checks.rules',
+  exit_code: 1,
+  stdout: 'diagnostic stdout',
+  stderr: 'diagnostic stderr'
+});`, context);
+
+    assert.match(workflowNode.innerHTML, /diagnostic stdout/u);
+    assert.match(workflowNode.innerHTML, /diagnostic stderr/u);
+    assert.match(workflowNode.innerHTML, /data-label="stdout"/u);
+    assert.match(workflowNode.innerHTML, /data-label="stderr"/u);
 });

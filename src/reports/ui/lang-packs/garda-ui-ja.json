@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "不合格の実行",
     "fullSuiteForecastExclusionNonzeroExit": "非ゼロ終了の実行",
     "fullSuiteForecastExclusionInvalidDuration": "無効な所要時間",
-    "fullSuiteForecastExclusionOutlierDuration": "外れ値の所要時間"
+    "fullSuiteForecastExclusionOutlierDuration": "外れ値の所要時間",
+    "addOptionalCheckRule": "ルールを追加",
+    "saveOptionalCheckRule": "ルールを保存",
+    "removeOptionalCheckRule": "ルールを削除"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

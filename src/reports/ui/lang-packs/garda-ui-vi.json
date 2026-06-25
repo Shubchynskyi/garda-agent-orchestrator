@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "lượt chạy không đạt",
     "fullSuiteForecastExclusionNonzeroExit": "lượt chạy có mã thoát khác không",
     "fullSuiteForecastExclusionInvalidDuration": "thời lượng không hợp lệ",
-    "fullSuiteForecastExclusionOutlierDuration": "thời lượng ngoại lệ"
+    "fullSuiteForecastExclusionOutlierDuration": "thời lượng ngoại lệ",
+    "addOptionalCheckRule": "Thêm quy tắc",
+    "saveOptionalCheckRule": "Lưu quy tắc",
+    "removeOptionalCheckRule": "Xóa quy tắc"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

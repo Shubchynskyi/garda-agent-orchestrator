@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "exécutions non réussies",
     "fullSuiteForecastExclusionNonzeroExit": "exécutions avec code non nul",
     "fullSuiteForecastExclusionInvalidDuration": "durées invalides",
-    "fullSuiteForecastExclusionOutlierDuration": "durées aberrantes"
+    "fullSuiteForecastExclusionOutlierDuration": "durées aberrantes",
+    "addOptionalCheckRule": "Ajouter une règle",
+    "saveOptionalCheckRule": "Enregistrer la règle",
+    "removeOptionalCheckRule": "Retirer la règle"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

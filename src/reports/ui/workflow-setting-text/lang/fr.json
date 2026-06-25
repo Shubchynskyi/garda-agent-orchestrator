@@ -384,5 +384,9 @@
         "description": "Le gate optionnel quality-checklist est ignoré sans remplacer les gates obligatoires de compilation, revue ou suite complète."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Règle facultative de contrôle qualité",
+    "description": "Ajoute, met à jour ou retire une règle consultative facultative de contrôle qualité via le parcours audité des paramètres de workflow."
   }
 }

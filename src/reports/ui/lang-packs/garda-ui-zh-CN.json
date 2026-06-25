@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "未通过的运行",
     "fullSuiteForecastExclusionNonzeroExit": "非零退出运行",
     "fullSuiteForecastExclusionInvalidDuration": "无效时长",
-    "fullSuiteForecastExclusionOutlierDuration": "离群时长"
+    "fullSuiteForecastExclusionOutlierDuration": "离群时长",
+    "addOptionalCheckRule": "添加规则",
+    "saveOptionalCheckRule": "保存规则",
+    "removeOptionalCheckRule": "移除规则"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

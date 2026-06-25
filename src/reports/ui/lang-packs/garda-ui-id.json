@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "run yang tidak lulus",
     "fullSuiteForecastExclusionNonzeroExit": "run dengan exit nonzero",
     "fullSuiteForecastExclusionInvalidDuration": "durasi tidak valid",
-    "fullSuiteForecastExclusionOutlierDuration": "durasi pencilan"
+    "fullSuiteForecastExclusionOutlierDuration": "durasi pencilan",
+    "addOptionalCheckRule": "Tambah aturan",
+    "saveOptionalCheckRule": "Simpan aturan",
+    "removeOptionalCheckRule": "Hapus aturan"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

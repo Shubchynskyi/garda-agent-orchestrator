@@ -384,5 +384,9 @@
         "description": "De optionele quality-checklist gate wordt overgeslagen zonder verplichte compile-, review- of full-suite-gates te vervangen."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Optionele kwaliteitscontroleregel",
+    "description": "Voegt een adviserende optionele kwaliteitscontroleregel toe, werkt die bij of verwijdert die via het gecontroleerde workflow-instellingenpad."
   }
 }

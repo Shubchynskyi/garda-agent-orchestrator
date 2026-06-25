@@ -384,5 +384,9 @@
         "description": "Gate quality-checklist tùy chọn được bỏ qua mà không thay thế các gate compile, review hoặc full-suite bắt buộc."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Quy tắc kiểm tra chất lượng tùy chọn",
+    "description": "Thêm, cập nhật hoặc xóa một quy tắc kiểm tra chất lượng tùy chọn mang tính tư vấn qua đường dẫn cài đặt workflow đã được kiểm toán."
   }
 }

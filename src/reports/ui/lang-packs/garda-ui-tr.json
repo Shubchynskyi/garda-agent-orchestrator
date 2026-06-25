@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "başarısız çalıştırmalar",
     "fullSuiteForecastExclusionNonzeroExit": "sıfır olmayan çıkışlı çalıştırmalar",
     "fullSuiteForecastExclusionInvalidDuration": "geçersiz süreler",
-    "fullSuiteForecastExclusionOutlierDuration": "aykırı süreler"
+    "fullSuiteForecastExclusionOutlierDuration": "aykırı süreler",
+    "addOptionalCheckRule": "Kural ekle",
+    "saveOptionalCheckRule": "Kuralı kaydet",
+    "removeOptionalCheckRule": "Kuralı kaldır"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

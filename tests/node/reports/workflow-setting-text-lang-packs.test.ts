@@ -9,8 +9,9 @@ const WORKFLOW_SETTING_TEXT_CATALOG = buildWorkflowSettingTextCatalog();
 const EXPECTED_SETTING_IDS = listWorkflowSettingTextCatalogIds(WORKFLOW_SETTING_TEXT_CATALOG);
 
 test('workflow setting text catalog covers every workflow setting definition plus compile-gate fallback', () => {
-    assert.equal(EXPECTED_SETTING_IDS.length, 38);
+    assert.equal(EXPECTED_SETTING_IDS.length, 39);
     assert.ok(EXPECTED_SETTING_IDS.includes('compile-gate-command-fallback'));
+    assert.ok(EXPECTED_SETTING_IDS.includes('optional-check-rule-management'));
     assert.ok(EXPECTED_SETTING_IDS.includes('full-suite-enabled'));
     assert.ok(EXPECTED_SETTING_IDS.includes('optional-checks-enabled'));
     assert.ok(EXPECTED_SETTING_IDS.includes('full-suite-timeout-blocker'));

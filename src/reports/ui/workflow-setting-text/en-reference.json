@@ -355,5 +355,9 @@
         "description": "Protected control-plane entry requires explicit operator confirmation."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Optional quality-check rule",
+    "description": "Adds, updates, or removes one advisory optional quality-check rule through the audited workflow-setting path."
   }
 }

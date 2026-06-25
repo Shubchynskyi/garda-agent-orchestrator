@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "تشغيلات غير ناجحة",
     "fullSuiteForecastExclusionNonzeroExit": "تشغيلات برمز خروج غير صفري",
     "fullSuiteForecastExclusionInvalidDuration": "مدد غير صالحة",
-    "fullSuiteForecastExclusionOutlierDuration": "مدد شاذة"
+    "fullSuiteForecastExclusionOutlierDuration": "مدد شاذة",
+    "addOptionalCheckRule": "إضافة قاعدة",
+    "saveOptionalCheckRule": "حفظ القاعدة",
+    "removeOptionalCheckRule": "إزالة القاعدة"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

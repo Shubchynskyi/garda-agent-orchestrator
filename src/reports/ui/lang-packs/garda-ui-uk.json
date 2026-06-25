@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "запуски без PASS",
     "fullSuiteForecastExclusionNonzeroExit": "запуски з ненульовим кодом виходу",
     "fullSuiteForecastExclusionInvalidDuration": "некоректні тривалості",
-    "fullSuiteForecastExclusionOutlierDuration": "викиди за тривалістю"
+    "fullSuiteForecastExclusionOutlierDuration": "викиди за тривалістю",
+    "addOptionalCheckRule": "Додати правило",
+    "saveOptionalCheckRule": "Зберегти правило",
+    "removeOptionalCheckRule": "Видалити правило"
   },
   "LOCAL_UI_SETTING_TEXT": {},
   "LOCAL_UI_INIT_SETTING_TEXT": {},

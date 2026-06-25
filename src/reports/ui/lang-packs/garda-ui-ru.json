@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "запуски без PASS",
     "fullSuiteForecastExclusionNonzeroExit": "запуски с ненулевым кодом выхода",
     "fullSuiteForecastExclusionInvalidDuration": "некорректные длительности",
-    "fullSuiteForecastExclusionOutlierDuration": "выбросы по длительности"
+    "fullSuiteForecastExclusionOutlierDuration": "выбросы по длительности",
+    "addOptionalCheckRule": "Добавить правило",
+    "saveOptionalCheckRule": "Сохранить правило",
+    "removeOptionalCheckRule": "Удалить правило"
   },
   "LOCAL_UI_SETTING_TEXT": {},
   "LOCAL_UI_INIT_SETTING_TEXT": {},

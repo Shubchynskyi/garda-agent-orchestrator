@@ -384,5 +384,9 @@
         "description": "Опціональний gate quality-checklist пропускається, але не замінює обов’язкові compile, review або full-suite gates."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Правило опціональної перевірки якості",
+    "description": "Додає, оновлює або видаляє одне рекомендаційне правило опціональної перевірки якості через перевірений шлях налаштувань workflow."
   }
 }

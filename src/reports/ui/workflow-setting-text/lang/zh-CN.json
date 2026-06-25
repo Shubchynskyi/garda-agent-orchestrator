@@ -384,5 +384,9 @@
         "description": "跳过可选的 quality-checklist gate，但不会替代必需的编译、评审或 full-suite gate。"
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "可选质量检查规则",
+    "description": "通过已审计的工作流设置路径添加、更新或移除一条建议性的可选质量检查规则。"
   }
 }

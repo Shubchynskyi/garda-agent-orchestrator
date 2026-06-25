@@ -384,5 +384,9 @@
         "description": "Il gate opzionale quality-checklist viene saltato senza sostituire i gate obbligatori di compilazione, review o full-suite."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Regola opzionale di controllo qualità",
+    "description": "Aggiunge, aggiorna o rimuove una regola opzionale e consultiva di controllo qualità tramite il percorso auditato delle impostazioni del workflow."
   }
 }

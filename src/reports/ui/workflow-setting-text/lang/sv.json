@@ -384,5 +384,9 @@
         "description": "Den valfria quality-checklist-gaten hoppas över utan att ersätta obligatoriska compile-, review- eller full-suite-gates."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Valfri kvalitetskontrollregel",
+    "description": "Lägger till, uppdaterar eller tar bort en rådgivande valfri kvalitetskontrollregel via den granskade workflow-inställningsvägen."
   }
 }

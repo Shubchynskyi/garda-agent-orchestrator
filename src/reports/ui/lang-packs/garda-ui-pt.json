@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "execuções não aprovadas",
     "fullSuiteForecastExclusionNonzeroExit": "execuções com saída diferente de zero",
     "fullSuiteForecastExclusionInvalidDuration": "durações inválidas",
-    "fullSuiteForecastExclusionOutlierDuration": "durações atípicas"
+    "fullSuiteForecastExclusionOutlierDuration": "durações atípicas",
+    "addOptionalCheckRule": "Adicionar regra",
+    "saveOptionalCheckRule": "Salvar regra",
+    "removeOptionalCheckRule": "Remover regra"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

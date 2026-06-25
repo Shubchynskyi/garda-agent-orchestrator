@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "niet-geslaagde runs",
     "fullSuiteForecastExclusionNonzeroExit": "runs met niet-nul exit",
     "fullSuiteForecastExclusionInvalidDuration": "ongeldige duur",
-    "fullSuiteForecastExclusionOutlierDuration": "uitschieterduur"
+    "fullSuiteForecastExclusionOutlierDuration": "uitschieterduur",
+    "addOptionalCheckRule": "Regel toevoegen",
+    "saveOptionalCheckRule": "Regel opslaan",
+    "removeOptionalCheckRule": "Regel verwijderen"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

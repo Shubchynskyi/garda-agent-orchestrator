@@ -35,6 +35,15 @@ function renderSettingResultMarkup(result) {
   const hasCurrentValue = Object.prototype.hasOwnProperty.call(result, 'current_value');
   const hasProposedValue = Object.prototype.hasOwnProperty.call(result, 'proposed_value');
   const errorText = result.error || result.message || '';
+  const exitCode = typeof result.exit_code === 'number' ? result.exit_code : null;
+  const successfulExecution = status === 'executed'
+    && !errorText
+    && !result.stderr
+    && result.timed_out !== true
+    && result.cancelled !== true
+    && (exitCode === null || exitCode === 0);
+  const suppressRoutineStdout = result.setting_id === 'optional-check-rule-management'
+    && successfulExecution;
   return '<section class="command-preview-panel">'
     + '<div class="command-preview-main"><strong>' + safe(label) + '</strong></div>'
     + '<div class="command-preview-meta">'
@@ -45,7 +54,7 @@ function renderSettingResultMarkup(result) {
     + (result.changed_keys && result.changed_keys.length > 0 ? '<p><strong>' + safe(t('changedKey')) + ':</strong> <code>' + safe(result.changed_keys.join(', ')) + '</code></p>' : '')
     + (result.audit_path ? '<p><strong>' + safe(t('audit')) + ':</strong> <code>' + safe(result.audit_path) + '</code></p>' : '')
     + (errorText ? '<p class="blocker-alert">' + safe(errorText) + '</p>' : '')
-    + outputBlock('stdout', result.stdout)
+    + (suppressRoutineStdout ? '' : outputBlock('stdout', result.stdout))
     + outputBlock('stderr', result.stderr)
     + '</section>';
 }
@@ -223,7 +232,7 @@ function renderOptionalRuleRow(rule, disabled) {
     + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + disabledAttr + '></td>'
     + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + disabledAttr + '></td>'
     + '<td><select id="' + safe(optionalRuleInputId(rule.id, 'enabled')) + '"' + disabledAttr + '><option value="true"' + (rule.enabled !== false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOn')) + '</option><option value="false"' + (rule.enabled === false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOff')) + '</option></select></td>'
-    + '<td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('save')) + '</button><button type="button" data-optional-rule-action="delete" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(t('removeOrdinaryDoc')) + '</button></div></td>'
+    + '<td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('saveOptionalCheckRule')) + '</button><button type="button" data-optional-rule-action="delete" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
     + '</tr>';
 }
 function renderOptionalRulesEditor(payload, disabled) {
@@ -241,7 +250,7 @@ function renderOptionalRulesEditor(payload, disabled) {
   return '<section class="workflow-group workflow-setting-group optional-rules-editor"><h3>' + safe(title) + '</h3>'
     + '<div class="workflow-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>'
     + rules.map(rule => renderOptionalRuleRow(rule, disabled)).join('')
-    + '<tr data-optional-rule-id="new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOrdinaryDoc')) + '</button></div></td></tr>'
+    + '<tr data-optional-rule-id="new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div></td></tr>'
     + '</tbody></table></div></section>';
 }
 async function submitOptionalRule(action, ruleId, title, prompt, enabled, confirmation, resultRenderer) {

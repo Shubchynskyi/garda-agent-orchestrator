@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "icke godkända körningar",
     "fullSuiteForecastExclusionNonzeroExit": "körningar med icke-noll exit",
     "fullSuiteForecastExclusionInvalidDuration": "ogiltiga varaktigheter",
-    "fullSuiteForecastExclusionOutlierDuration": "avvikande varaktigheter"
+    "fullSuiteForecastExclusionOutlierDuration": "avvikande varaktigheter",
+    "addOptionalCheckRule": "Lägg till regel",
+    "saveOptionalCheckRule": "Spara regel",
+    "removeOptionalCheckRule": "Ta bort regel"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

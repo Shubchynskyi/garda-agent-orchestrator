@@ -274,7 +274,10 @@
     "fullSuiteForecastExclusionNonPassingStatus": "असफल रन",
     "fullSuiteForecastExclusionNonzeroExit": "गैर-शून्य निकास रन",
     "fullSuiteForecastExclusionInvalidDuration": "अमान्य अवधि",
-    "fullSuiteForecastExclusionOutlierDuration": "असामान्य अवधि"
+    "fullSuiteForecastExclusionOutlierDuration": "असामान्य अवधि",
+    "addOptionalCheckRule": "नियम जोड़ें",
+    "saveOptionalCheckRule": "नियम सहेजें",
+    "removeOptionalCheckRule": "नियम हटाएँ"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

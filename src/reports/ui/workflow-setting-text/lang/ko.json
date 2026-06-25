@@ -384,5 +384,9 @@
         "description": "선택적 quality-checklist 게이트를 건너뛰지만 필수 컴파일, 리뷰, 전체 검증 게이트를 대체하지 않습니다."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "선택적 품질 점검 규칙",
+    "description": "감사되는 워크플로 설정 경로를 통해 권고용 선택적 품질 점검 규칙 하나를 추가, 업데이트 또는 제거합니다."
   }
 }

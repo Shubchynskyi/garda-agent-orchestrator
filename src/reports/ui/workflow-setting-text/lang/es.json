@@ -384,5 +384,9 @@
         "description": "Se omite la puerta opcional de quality-checklist sin sustituir las puertas obligatorias de compilación, revisión o suite completa."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "Regla opcional de control de calidad",
+    "description": "Añade, actualiza o elimina una regla opcional y consultiva de control de calidad mediante la ruta auditada de configuración del flujo de trabajo."
   }
 }

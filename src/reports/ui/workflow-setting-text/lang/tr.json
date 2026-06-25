@@ -384,5 +384,9 @@
         "description": "İsteğe bağlı quality-checklist gate atlanır; zorunlu compile, review veya full-suite gate yerine geçmez."
       }
     }
+  },
+  "optional-check-rule-management": {
+    "label": "İsteğe bağlı kalite kontrol kuralı",
+    "description": "Denetlenen workflow ayarı yolu üzerinden bir danışma niteliğindeki isteğe bağlı kalite kontrol kuralını ekler, günceller veya kaldırır."
   }
 }
