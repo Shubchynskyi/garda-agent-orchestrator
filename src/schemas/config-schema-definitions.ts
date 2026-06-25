@@ -497,6 +497,11 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                     type: 'boolean',
                     description: 'Enable advisory optional quality checks.'
                 },
+                baseline_version: {
+                    type: 'string',
+                    minLength: 1,
+                    description: 'Version id for the shipped baseline quality-check rule pack used by this config.'
+                },
                 rules: {
                     type: 'array',
                     minItems: 1,

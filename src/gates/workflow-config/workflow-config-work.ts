@@ -278,7 +278,7 @@ const COMPATIBILITY_PROJECT_MEMORY_MAINTENANCE_KEYS = [
 ];
 const COMPATIBILITY_TASK_RESET_KEYS = ['enabled'];
 const COMPATIBILITY_AUTO_BACKUP_KEYS = ['enabled', 'interval_days', 'keep_latest'];
-const COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS = ['enabled', 'rules'];
+const COMPATIBILITY_OPTIONAL_QUALITY_CHECKS_KEYS = ['baseline_version', 'enabled', 'rules'];
 const COMPATIBILITY_OPTIONAL_QUALITY_CHECK_RULE_KEYS = ['enabled', 'id', 'prompt', 'title'];
 const COMPATIBILITY_ORCHESTRATOR_WORK_POLICY_KEYS = ['mode'];
 
@@ -353,6 +353,7 @@ function isExactDefaultOptionalQualityChecksCompatibilityBaseline(input: unknown
         || optionalQualityChecks.enabled !== true
         || !rules
         || !defaultRules
+        || optionalQualityChecks.baseline_version !== defaultOptionalQualityChecks.baseline_version
         || rules.length !== defaultRules.length
     ) {
         return false;

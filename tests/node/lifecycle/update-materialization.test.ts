@@ -9,7 +9,8 @@ import { runContractMigrations } from '../../../src/lifecycle/contract-migration
 import { removePathRecursive } from '../../../src/lifecycle/common';
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
 import {
-    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
+    OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE
 } from '../../../src/core/workflow-config';
 
@@ -78,6 +79,12 @@ function seedWorkflowConfigCompileGateCommand(bundleRoot: string, command: strin
             command
         }
     }, null, 2), 'utf8');
+}
+
+function readTemplateOptionalQualityCheckRuleIds(repoRoot: string): string[] {
+    const templateConfigPath = path.join(repoRoot, 'template', 'config', 'workflow-config.json');
+    const templateConfig = JSON.parse(fs.readFileSync(templateConfigPath, 'utf8'));
+    return templateConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id);
 }
 
 function setupUpdateWorkspace(repoRoot: string) {
@@ -329,7 +336,7 @@ describe('runUpdate', () => {
             assert.equal(workflowConfig.optional_quality_checks.enabled, true);
             assert.deepEqual(
                 workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id),
-                DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+                readTemplateOptionalQualityCheckRuleIds(repoRoot)
             );
         } finally {
             removePathRecursive(projectRoot);
@@ -386,6 +393,51 @@ describe('runUpdate', () => {
                     enabled: true
                 }
             ]);
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('migrates exact legacy optional quality check defaults during update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    optional_quality_checks: {
+                        enabled: false,
+                        rules: LEGACY_OPTIONAL_QUALITY_CHECK_RULES
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(result.optionalQualityChecksNotice, null);
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(workflowConfig.optional_quality_checks.enabled, false);
+            assert.equal(workflowConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+            assert.deepEqual(
+                workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id),
+                readTemplateOptionalQualityCheckRuleIds(repoRoot)
+            );
         } finally {
             removePathRecursive(projectRoot);
         }

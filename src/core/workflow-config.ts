@@ -19,6 +19,26 @@ import {
     normalizeReviewCycleGuardConfig,
     type ReviewCycleGuardConfig
 } from './review-cycle-guard';
+import {
+    buildDefaultOptionalQualityChecksConfig,
+    isExactLegacyOptionalQualityChecksGeneratedDefault,
+    normalizeOptionalQualityChecksConfig,
+    type OptionalQualityChecksConfig
+} from './optional-quality-checks';
+
+export {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
+    OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+    OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE,
+    buildDefaultOptionalQualityChecksConfig,
+    isExactLegacyOptionalQualityChecksGeneratedDefault,
+    normalizeOptionalQualityChecksConfig
+} from './optional-quality-checks';
+export type {
+    OptionalQualityCheckRule,
+    OptionalQualityChecksConfig
+} from './optional-quality-checks';
 
 export interface FullSuiteValidationConfig {
     enabled: boolean;
@@ -99,67 +119,6 @@ export interface AutoBackupConfig {
     keep_latest: number;
     [key: string]: unknown;
 }
-
-export interface OptionalQualityCheckRule {
-    id: string;
-    title: string;
-    prompt: string;
-    enabled: boolean;
-    [key: string]: unknown;
-}
-
-export interface OptionalQualityChecksConfig {
-    enabled: boolean;
-    rules: OptionalQualityCheckRule[];
-    [key: string]: unknown;
-}
-
-export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
-
-export const DEFAULT_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
-    Object.freeze({
-        id: 'code_simplification',
-        title: 'Code simplification',
-        prompt: 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'project_style_fit',
-        title: 'Project style fit',
-        prompt: 'Check whether the change follows the local project style, naming, module boundaries, and existing helper patterns.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'unnecessary_abstraction',
-        title: 'Unnecessary abstraction',
-        prompt: 'Check whether the change introduced abstractions that do not remove real duplication, risk, or complexity.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'size_growth',
-        title: 'Class/function/file growth',
-        prompt: 'Check whether touched classes, functions, or files grew enough to need local extraction or clearer ownership.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'hardcoded_values_contracts',
-        title: 'Hardcoded values and contracts',
-        prompt: 'Check whether new literals, paths, statuses, or messages should be named constants, schema fields, or shared contracts.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'duplicated_logic_contracts',
-        title: 'Duplicated logic and contracts',
-        prompt: 'Check whether the change duplicates logic, validation, or contract strings that should stay defined in one place.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'test_verification_scope',
-        title: 'Test and verification scope',
-        prompt: 'Check whether the focused tests and mandatory gates cover the behavioral risk without adding unrelated slow coverage.',
-        enabled: true
-    })
-]);
 
 export const ORCHESTRATOR_WORK_POLICY_MODES = Object.freeze([
     'deny_agent_entry',
@@ -246,10 +205,7 @@ const DEFAULT_WORKFLOW_CONFIG: WorkflowConfigData = Object.freeze({
         interval_days: 1,
         keep_latest: 10
     }),
-    optional_quality_checks: Object.freeze({
-        enabled: true,
-        rules: cloneJsonValue(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES) as OptionalQualityCheckRule[]
-    }),
+    optional_quality_checks: Object.freeze(buildDefaultOptionalQualityChecksConfig()),
     orchestrator_work_policy: Object.freeze({
         mode: 'deny_agent_entry'
     })
@@ -327,45 +283,6 @@ export function normalizeAutoBackupConfig(input: unknown): AutoBackupConfig {
         enabled: input.enabled === true,
         interval_days: intervalDays,
         keep_latest: keepLatest
-    };
-}
-
-function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheckRule | null {
-    if (!isPlainObject(input)) {
-        return null;
-    }
-    const id = typeof input.id === 'string' ? input.id.trim().toLowerCase() : '';
-    const title = typeof input.title === 'string' ? input.title.trim() : '';
-    const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
-    if (!id || !title || !prompt) {
-        return null;
-    }
-    return {
-        ...cloneJsonValue(input),
-        id,
-        title,
-        prompt,
-        enabled: input.enabled === undefined ? true : input.enabled === true
-    };
-}
-
-export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQualityChecksConfig {
-    if (!isPlainObject(input)) {
-        return cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.optional_quality_checks);
-    }
-    const normalizedRules = Array.isArray(input.rules)
-        ? input.rules
-            .map((rule) => normalizeOptionalQualityCheckRule(rule))
-            .filter((rule): rule is OptionalQualityCheckRule => rule !== null)
-        : cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.optional_quality_checks.rules);
-    return {
-        ...cloneJsonValue(input),
-        enabled: input.enabled === undefined
-            ? DEFAULT_WORKFLOW_CONFIG.optional_quality_checks.enabled
-            : input.enabled === true,
-        rules: normalizedRules.length > 0
-            ? normalizedRules
-            : cloneJsonValue(DEFAULT_WORKFLOW_CONFIG.optional_quality_checks.rules)
     };
 }
 
@@ -562,6 +479,31 @@ function migrateLegacyReviewCycleGuardGeneratedDefault(
     return migrated;
 }
 
+function migrateLegacyOptionalQualityChecksGeneratedDefault(
+    existingConfig: Record<string, unknown> | null
+): Record<string, unknown> | null {
+    if (!isPlainObject(existingConfig)) {
+        return existingConfig;
+    }
+
+    const optionalChecksKey = findOwnCaseInsensitiveKey(existingConfig, 'optional_quality_checks');
+    if (
+        optionalChecksKey === undefined
+        || !isExactLegacyOptionalQualityChecksGeneratedDefault(existingConfig[optionalChecksKey])
+    ) {
+        return existingConfig;
+    }
+
+    const migrated = cloneJsonValue(existingConfig);
+    const migratedOptionalChecks = cloneJsonValue(migrated[optionalChecksKey]);
+    if (isPlainObject(migratedOptionalChecks)) {
+        delete migratedOptionalChecks.rules;
+        delete migratedOptionalChecks.baseline_version;
+        migrated[optionalChecksKey] = migratedOptionalChecks;
+    }
+    return migrated;
+}
+
 export function buildWorkflowConfigReviewCycleLimitDiagnostic(
     readStatus: WorkflowConfigReadStatus,
     existingConfig: Record<string, unknown> | null,
@@ -592,8 +534,10 @@ export function mergeWorkflowConfigWithTemplate(
     existingConfig: Record<string, unknown> | null,
     options: WorkflowConfigMergeOptions = {}
 ): Record<string, unknown> {
-    const existingConfigForMerge = migrateLegacyReviewCycleGuardGeneratedDefault(
-        migrateLegacyProjectMemoryGeneratedDefault(existingConfig)
+    const existingConfigForMerge = migrateLegacyOptionalQualityChecksGeneratedDefault(
+        migrateLegacyReviewCycleGuardGeneratedDefault(
+            migrateLegacyProjectMemoryGeneratedDefault(existingConfig)
+        )
     );
     const nextConfig = mergeConfig(templateConfig, existingConfigForMerge);
     const existingConfigOmittedReviewExecutionPolicy = isPlainObject(existingConfig)

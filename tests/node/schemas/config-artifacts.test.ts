@@ -19,7 +19,10 @@ import {
     validateRuntimeRetentionConfig,
     validateWorkflowConfig
 } from '../../../src/schemas/config-artifacts';
-import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
+import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION
+} from '../../../src/core/workflow-config';
 
 function readTemplateConfig(configName: string): Record<string, unknown> {
     return JSON.parse(
@@ -95,6 +98,21 @@ test('tracked template managed configs validate successfully', () => {
         const validated = validateManagedConfigByName(configName, readTemplateConfig(configName));
         assert.ok(validated);
     }
+});
+
+test('tracked workflow template ships current optional quality baseline', () => {
+    const workflowConfig = readTemplateConfig('workflow-config');
+    const optionalQualityChecks = workflowConfig.optional_quality_checks as Record<string, unknown>;
+    assert.equal(optionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+    assert.deepEqual(
+        optionalQualityChecks.rules,
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
+            id: rule.id,
+            title: rule.title,
+            prompt: rule.prompt,
+            enabled: rule.enabled
+        }))
+    );
 });
 
 test('validateTokenEconomyConfig canonicalizes integer arrays and boolean-like values', () => {
@@ -242,9 +260,22 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
     const defaultedOptionalQualityChecks = defaulted.optional_quality_checks as Record<string, unknown>;
     const defaultedRules = defaultedOptionalQualityChecks.rules as Array<Record<string, unknown>>;
     assert.equal(defaultedOptionalQualityChecks.enabled, true);
+    assert.equal(defaultedOptionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
     assert.deepEqual(
         defaultedRules.map((rule) => rule.id),
         DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+    );
+    assert.deepEqual(
+        [
+            'preflight_review_scope_regressions',
+            'classifier_intent_edge_cases',
+            'trust_artifact_identity',
+            'doc_impact_closeout_parity',
+            'task_queue_parser_state',
+            'review_cycle_scope_freshness',
+            'zero_diff_noop_preemption'
+        ].filter((id) => !defaultedRules.some((rule) => rule.id === id)),
+        []
     );
 
     assert.throws(

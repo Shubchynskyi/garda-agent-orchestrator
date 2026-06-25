@@ -20,7 +20,10 @@ import {
     UNCONFIGURED_COMPILE_GATE_COMMAND,
     resolveInitAnswersRelativePath
 } from '../../../../src/core/constants';
-import { OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE } from '../../../../src/core/workflow-config';
+import {
+    OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+    OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE
+} from '../../../../src/core/workflow-config';
 import { quoteCommandValue } from '../../../../src/core/command-quoting';
 import { PROJECT_MEMORY_INIT_REFRESH_PROMPT } from '../../../../src/core/project-memory-rollout';
 import { parseOptions } from '../../../../src/cli/commands/cli-helpers';
@@ -1017,6 +1020,7 @@ test('handleSetup preserves custom optional quality check rules across refreshes
         const refreshedConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
         assert.deepEqual(refreshedConfig.optional_quality_checks, {
             enabled: false,
+            baseline_version: OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
             rules: [customRule]
         });
         assert.equal(refreshOutput.includes(OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE), false);

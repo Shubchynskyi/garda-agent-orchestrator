@@ -308,7 +308,7 @@ function validateAutoBackupSection(input: unknown): Record<string, unknown> {
 
 function validateOptionalQualityChecksSection(input: unknown): Record<string, unknown> {
     const section = ensurePlainObject(input, 'workflow-config.optional_quality_checks');
-    const sectionKnownKeys = ['enabled', 'rules'];
+    const sectionKnownKeys = ['enabled', 'baseline_version', 'rules'];
     assertNoCaseMismatchedKnownKeys(
         section,
         sectionKnownKeys,
@@ -328,6 +328,10 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
     normalizedInput.enabled = normalizeBooleanLike(
         normalizedInput.enabled,
         'workflow-config.optional_quality_checks.enabled'
+    );
+    normalizedInput.baseline_version = normalizeNonEmptyString(
+        normalizedInput.baseline_version,
+        'workflow-config.optional_quality_checks.baseline_version'
     );
     if (!Array.isArray(normalizedInput.rules)) {
         throw new Error('workflow-config.optional_quality_checks.rules must be an array.');

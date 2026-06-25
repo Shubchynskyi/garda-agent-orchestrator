@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { DEFAULT_BUNDLE_NAME } from '../../../src/core/constants';
+import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
 import { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../src/core/project-memory';
 import { handleSetup } from '../../../src/cli/commands/setup';
 import { handleGate } from '../../../src/cli/commands/gate-command';
@@ -249,64 +250,48 @@ function assertGatePassed(result: { exitCode: number; outputLines?: string[]; ou
 }
 
 function buildQualityChecklistAnswersJson(): string {
-    return JSON.stringify([
-        {
-            rule_id: 'code_simplification',
-            status: 'PASS',
+    const answersByRuleId: Record<string, {
+        answer: string;
+        evidence_files: string[];
+    }> = {
+        code_simplification: {
             answer: 'The fixture change is intentionally tiny and keeps the lifecycle sequence direct.',
-            evidence_files: ['tests/app.test.ts'],
-            actions_taken: [],
-            actions_required: []
+            evidence_files: ['tests/app.test.ts']
         },
-        {
-            rule_id: 'project_style_fit',
-            status: 'PASS',
+        project_style_fit: {
             answer: 'The fixture follows the existing node:test style and local helper flow.',
-            evidence_files: ['tests/app.test.ts'],
-            actions_taken: [],
-            actions_required: []
+            evidence_files: ['tests/app.test.ts']
         },
-        {
-            rule_id: 'unnecessary_abstraction',
-            status: 'PASS',
+        unnecessary_abstraction: {
             answer: 'No abstraction is added in the fixture change.',
-            evidence_files: ['tests/app.test.ts'],
-            actions_taken: [],
-            actions_required: []
+            evidence_files: ['tests/app.test.ts']
         },
-        {
-            rule_id: 'size_growth',
-            status: 'PASS',
+        size_growth: {
             answer: 'The file growth is limited to one focused assertion.',
-            evidence_files: ['tests/app.test.ts'],
-            actions_taken: [],
-            actions_required: []
+            evidence_files: ['tests/app.test.ts']
         },
-        {
-            rule_id: 'hardcoded_values_contracts',
-            status: 'PASS',
+        hardcoded_values_contracts: {
             answer: 'The literal values are fixture assertions and do not introduce shared contracts.',
-            evidence_files: ['tests/app.test.ts'],
-            actions_taken: [],
-            actions_required: []
+            evidence_files: ['tests/app.test.ts']
         },
-        {
-            rule_id: 'duplicated_logic_contracts',
-            status: 'PASS',
+        duplicated_logic_contracts: {
             answer: 'No duplicated production logic is introduced.',
-            evidence_files: ['tests/app.test.ts'],
-            actions_taken: [],
-            actions_required: []
+            evidence_files: ['tests/app.test.ts']
         },
-        {
-            rule_id: 'test_verification_scope',
-            status: 'PASS',
+        test_verification_scope: {
             answer: 'The lifecycle fixture verifies the changed test through compile and full-suite gates.',
-            evidence_files: ['tests/app.test.ts', 'scripts/full-suite-check.cjs'],
-            actions_taken: [],
-            actions_required: []
+            evidence_files: ['tests/app.test.ts', 'scripts/full-suite-check.cjs']
         }
-    ]);
+    };
+    return JSON.stringify(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
+        rule_id: rule.id,
+        status: 'PASS',
+        answer: answersByRuleId[rule.id]?.answer
+            ?? `The fixture has no ${rule.title.toLowerCase()} risk beyond the focused test-only change.`,
+        evidence_files: answersByRuleId[rule.id]?.evidence_files ?? ['tests/app.test.ts'],
+        actions_taken: [],
+        actions_required: []
+    })));
 }
 
 async function runReviewGateCommand(repoRoot: string, args: string[]): Promise<void> {

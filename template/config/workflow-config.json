@@ -59,6 +59,7 @@
   },
   "optional_quality_checks": {
     "enabled": true,
+    "baseline_version": "2026-06-25.t839",
     "rules": [
       {
         "id": "code_simplification",
@@ -100,6 +101,48 @@
         "id": "test_verification_scope",
         "title": "Test and verification scope",
         "prompt": "Check whether the focused tests and mandatory gates cover the behavioral risk without adding unrelated slow coverage.",
+        "enabled": true
+      },
+      {
+        "id": "preflight_review_scope_regressions",
+        "title": "Preflight and review scope regressions",
+        "prompt": "Check whether regression tests added for runtime changes are included in the current preflight and review scope together with the implementation files.",
+        "enabled": true
+      },
+      {
+        "id": "classifier_intent_edge_cases",
+        "title": "Classifier intent edge cases",
+        "prompt": "Check classifier keyword or regex changes against acceptance wording, hyphen and space variants, standalone forms, and protocol or numeric suffixes such as OAuth2.",
+        "enabled": true
+      },
+      {
+        "id": "trust_artifact_identity",
+        "title": "Trust artifact identity",
+        "prompt": "Check new trust-bearing artifact or telemetry identity fields for stable-selection persistence, stale or forged value rejection, and legacy fallback behavior.",
+        "enabled": true
+      },
+      {
+        "id": "doc_impact_closeout_parity",
+        "title": "Doc impact closeout parity",
+        "prompt": "Check that next-step commands, direct gate validation, and CLI tests stay aligned for behaviorChanged internal evidence, docs-only evidence, and project-memory parity.",
+        "enabled": true
+      },
+      {
+        "id": "task_queue_parser_state",
+        "title": "Task queue parser state",
+        "prompt": "Check task queue parser and status-sync changes against comma-separated child ids, range notation, missing child rows, mixed statuses, and reentrant global RegExp state.",
+        "enabled": true
+      },
+      {
+        "id": "review_cycle_scope_freshness",
+        "title": "Review cycle scope freshness",
+        "prompt": "Check review-cycle or split guard changes so pending launch telemetry is not counted as a completed cycle, stale scope hashes are ignored, and helper growth is extracted before review.",
+        "enabled": true
+      },
+      {
+        "id": "zero_diff_noop_preemption",
+        "title": "Zero-diff no-op preemption",
+        "prompt": "Check zero-diff or no-op routing so missing, stale, or foreign no-op evidence preempts full-suite, review-context, and reviewer-launch routing after compile.",
         "enabled": true
       }
     ]

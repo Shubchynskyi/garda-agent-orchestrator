@@ -125,7 +125,7 @@ export function buildAutoBackupLine(config: AutoBackupConfig): string {
 
 export function buildOptionalQualityChecksLine(config: OptionalQualityChecksConfig): string {
     const enabledRules = config.rules.filter((rule) => rule.enabled !== false).length;
-    return `Optional quality checks: ${config.enabled ? 'enabled' : 'disabled'} rules=${config.rules.length} enabled_rules=${enabledRules}`;
+    return `Optional quality checks: ${config.enabled ? 'enabled' : 'disabled'} baseline=${config.baseline_version} rules=${config.rules.length} enabled_rules=${enabledRules}`;
 }
 
 export function buildOrchestratorWorkPolicyLine(config: OrchestratorWorkPolicyConfig): string {
@@ -318,6 +318,7 @@ export function formatWorkflowShowOutput(result: WorkflowCommandResultBase & { a
     lines.push(`AutoBackupIntervalDays: ${autoBackup.interval_days}`);
     lines.push(`AutoBackupKeepLatest: ${autoBackup.keep_latest}`);
     lines.push(`OptionalQualityChecksEnabled: ${optionalQualityChecks.enabled}`);
+    lines.push(`OptionalQualityChecksBaselineVersion: ${optionalQualityChecks.baseline_version}`);
     lines.push(`OptionalQualityChecksRuleCount: ${optionalQualityChecks.rules.length}`);
     lines.push(`OptionalQualityChecksEnabledRuleCount: ${optionalQualityChecks.rules.filter((rule) => rule.enabled !== false).length}`);
     lines.push(`OptionalQualityChecksRuleIds: ${optionalQualityChecks.rules.map((rule) => rule.id).join(', ')}`);
