@@ -29,7 +29,12 @@ import {
     buildRefactorHeuristicReasons,
     isPerformanceHeuristicTriggered
 } from './classify-change-heuristics';
-import { hasRefactorIntent } from './classify-change-intent';
+import {
+    hasApiReviewIntent,
+    hasPerformanceReviewIntent,
+    hasRefactorIntent,
+    hasSecurityReviewIntent
+} from './classify-change-intent';
 import { detectPathTriggers } from './classify-change-path-detection';
 import { buildRequiredReviews } from './classify-change-required-reviews';
 import { classifyScopeCategory, type ScopeCategory } from './classify-change-scope-category';
@@ -91,12 +96,15 @@ export interface ClassifyChangeTriggers {
     db_project_evidence: string[];
     security: boolean;
     api: boolean;
+    api_intent: boolean;
     api_path_changed_files: string[];
     api_test_only_suppressed_files: string[];
     test: boolean;
     performance: boolean;
+    performance_intent: boolean;
     infra: boolean;
     dependency: boolean;
+    security_intent: boolean;
     refactor: boolean;
     refactor_intent: boolean;
     refactor_heuristic: boolean;
@@ -227,7 +235,12 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
         dependencyTriggerRegexes: classificationConfig.dependency_trigger_regexes
     });
     const testOnlyDomainReviewSuppressed = scopeClassification.category === 'test-only';
+    const runtimeIntentReviewEligible = pathTriggers.runtimeCodeChanged && !testOnlyDomainReviewSuppressed;
 
+    const securityIntentTriggered = runtimeIntentReviewEligible && hasSecurityReviewIntent(taskIntent);
+    const apiIntentTriggered = runtimeIntentReviewEligible && hasApiReviewIntent(taskIntent);
+    const performanceIntentTriggered = runtimeIntentReviewEligible && hasPerformanceReviewIntent(taskIntent);
+    const securityTriggered = pathTriggers.securityTriggered || securityIntentTriggered;
     const refactorIntentTriggered = hasRefactorIntent(taskIntent);
     const refactorHeuristicReasons = buildRefactorHeuristicReasons({
         runtimeChanged: pathTriggers.runtimeChanged,
@@ -237,7 +250,7 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
         deletionsTotal,
         runtimeCodeLikeCount: pathTriggers.runtimeCodeLikeCount,
         dbTriggered: pathTriggers.dbTriggered,
-        securityTriggered: pathTriggers.securityTriggered
+        securityTriggered
     });
     const refactorHeuristicTriggered = refactorHeuristicReasons.length > 0;
     const refactorTriggered = refactorIntentTriggered || refactorHeuristicTriggered;
@@ -251,8 +264,8 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
         changedLinesTotal,
         performanceHeuristicMinLines
     });
-    const rawPerformanceTriggered = pathTriggers.performancePathTriggered || performanceHeuristicTriggered;
-    const apiTriggered = pathTriggers.apiTriggered && !testOnlyDomainReviewSuppressed;
+    const rawPerformanceTriggered = pathTriggers.performancePathTriggered || performanceHeuristicTriggered || performanceIntentTriggered;
+    const apiTriggered = (pathTriggers.apiTriggered || apiIntentTriggered) && !testOnlyDomainReviewSuppressed;
     const performanceTriggered = rawPerformanceTriggered && !testOnlyDomainReviewSuppressed;
 
     const fastPathEligible = (
@@ -265,7 +278,7 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
     );
 
     let mode = 'FULL_PATH';
-    if (fastPathEligible && !pathTriggers.dbTriggered && !pathTriggers.securityTriggered && !refactorTriggered
+    if (fastPathEligible && !pathTriggers.dbTriggered && !securityTriggered && !refactorTriggered
         && !apiTriggered && !pathTriggers.dependencyTriggered && !pathTriggers.infraTriggered && !performanceTriggered) {
         mode = 'FAST_PATH';
     }
@@ -274,7 +287,7 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
         runtimeCodeChanged: pathTriggers.runtimeCodeChanged,
         mode,
         dbTriggered: pathTriggers.dbTriggered,
-        securityTriggered: pathTriggers.securityTriggered,
+        securityTriggered,
         refactorTriggered,
         apiTriggered,
         testTriggered: pathTriggers.testTriggered,
@@ -316,14 +329,17 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             db_strong_changed_files: pathTriggers.dbStrongChangedFiles,
             db_weak_signal_files: pathTriggers.dbWeakSignalFiles,
             db_project_evidence: pathTriggers.dbProjectEvidence,
-            security: pathTriggers.securityTriggered,
+            security: securityTriggered,
             api: apiTriggered,
+            api_intent: apiIntentTriggered,
             api_path_changed_files: pathTriggers.apiTriggeredFiles,
             api_test_only_suppressed_files: testOnlyDomainReviewSuppressed ? pathTriggers.apiTriggeredFiles : [],
             test: pathTriggers.testTriggered,
             performance: performanceTriggered,
+            performance_intent: performanceIntentTriggered,
             infra: pathTriggers.infraTriggered,
             dependency: pathTriggers.dependencyTriggered,
+            security_intent: securityIntentTriggered,
             refactor: refactorTriggered,
             refactor_intent: refactorIntentTriggered,
             refactor_heuristic: refactorHeuristicTriggered,

@@ -280,6 +280,60 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.test, true);
         });
 
+        it('triggers security review from sensitive runtime intent when path names are generic', () => {
+            const sensitiveIntents = [
+                'Handle public webhook OAuth token refresh',
+                'Update OAuth2 provider handoff',
+                'Encrypt credentials before callback ownership handoff',
+                'Download Telegram Bot API files with secret-safe observability',
+                'Redact provider token values from sanitized observability',
+                'Record sanitized-observability for provider file-download failures'
+            ];
+
+            for (const taskIntent of sensitiveIntents) {
+                const result = classifyChange({
+                    normalizedFiles: ['src/integrations/telegram/update-flow.ts'],
+                    taskIntent,
+                    changedLinesTotal: 36,
+                    additionsTotal: 24,
+                    deletionsTotal: 12,
+                    renameCount: 0,
+                    detectionSource: 'explicit_changed_files',
+                    classificationConfig: makeConfig(),
+                    reviewCapabilities: defaultCapabilities
+                });
+
+                assert.equal(result.triggers.security, true, taskIntent);
+                assert.equal(result.triggers.security_intent, true, taskIntent);
+                assert.equal(result.required_reviews.security, true, taskIntent);
+            }
+        });
+
+        it('triggers api review from public webhook and callback intent on generic runtime paths', () => {
+            const apiIntents = [
+                'Change public webhook callback response contract for Telegram Bot API file download',
+                'Change provider file-download response contract'
+            ];
+
+            for (const taskIntent of apiIntents) {
+                const result = classifyChange({
+                    normalizedFiles: ['src/integrations/telegram/update-flow.ts'],
+                    taskIntent,
+                    changedLinesTotal: 34,
+                    additionsTotal: 20,
+                    deletionsTotal: 14,
+                    renameCount: 0,
+                    detectionSource: 'explicit_changed_files',
+                    classificationConfig: makeConfig(),
+                    reviewCapabilities: { ...defaultCapabilities, api: true }
+                });
+
+                assert.equal(result.triggers.api, true, taskIntent);
+                assert.equal(result.triggers.api_intent, true, taskIntent);
+                assert.equal(result.required_reviews.api, true, taskIntent);
+            }
+        });
+
         it('suppresses api and performance domain reviews for pure test-only maintenance', () => {
             const result = classifyChange({
                 normalizedFiles: [
@@ -307,6 +361,27 @@ describe('gates/classify-change', () => {
             assert.deepEqual(result.triggers.api_test_only_suppressed_files, ['tests/api/routes.test.ts']);
             assert.deepEqual(result.triggers.performance_path_changed_files, ['tests/performance/latency.test.ts']);
             assert.deepEqual(result.triggers.performance_test_only_suppressed_files, ['tests/performance/latency.test.ts']);
+        });
+
+        it('suppresses api intent for db-only test paths without runtime implementation scope', () => {
+            const result = classifyChange({
+                normalizedFiles: ['tests/db/callback-contract.test.ts'],
+                taskIntent: 'Cover callback API route behavior for repository migration tests',
+                changedLinesTotal: 48,
+                additionsTotal: 30,
+                deletionsTotal: 18,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, api: true, test: true }
+            });
+
+            assert.equal(result.scope_category, 'test-only');
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.triggers.api, false);
+            assert.equal(result.triggers.api_intent, false);
+            assert.equal(result.required_reviews.api, false);
+            assert.equal(result.required_reviews.test, true);
         });
 
         it('suppresses performance heuristic for large api-shaped test-only maintenance', () => {

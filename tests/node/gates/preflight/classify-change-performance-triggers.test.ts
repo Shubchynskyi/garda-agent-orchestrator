@@ -135,6 +135,38 @@ describe('gates/classify-change performance triggers', () => {
         );
     });
 
+    it('triggers performance review from worker queue and retry-storm runtime intent', () => {
+        const workerQueueResult = classifyChange({
+            normalizedFiles: ['src/integrations/telegram/update-flow.ts'],
+            taskIntent: 'Add worker queue ownership for provider retry storm backoff',
+            changedLinesTotal: 32,
+            additionsTotal: 22,
+            deletionsTotal: 10,
+            renameCount: 0,
+            detectionSource: 'git_auto',
+            classificationConfig: makeConfig(),
+            reviewCapabilities: { ...defaultCapabilities, performance: true }
+        });
+        const retryStormResult = classifyChange({
+            normalizedFiles: ['src/providers/openai/responder.ts'],
+            taskIntent: 'Prevent retry-storm latency spikes when provider callbacks fail',
+            changedLinesTotal: 28,
+            additionsTotal: 18,
+            deletionsTotal: 10,
+            renameCount: 0,
+            detectionSource: 'git_auto',
+            classificationConfig: makeConfig(),
+            reviewCapabilities: { ...defaultCapabilities, performance: true }
+        });
+
+        assert.equal(workerQueueResult.triggers.performance, true);
+        assert.equal(workerQueueResult.triggers.performance_intent, true);
+        assert.equal(workerQueueResult.required_reviews.performance, true);
+        assert.equal(retryStormResult.triggers.performance, true);
+        assert.equal(retryStormResult.triggers.performance_intent, true);
+        assert.equal(retryStormResult.required_reviews.performance, true);
+    });
+
     it('keeps performance review triggers for benchmark and profiling surfaces', () => {
         const profilingFilenameResult = classifyChange({
             normalizedFiles: ['src/runtime/RequestProfiling.ts'],
