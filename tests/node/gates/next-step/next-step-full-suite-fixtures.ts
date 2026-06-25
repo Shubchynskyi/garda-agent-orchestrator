@@ -422,6 +422,49 @@ export function seedPostPreflightRulePack(repoRoot: string, taskId: string, pref
     });
 }
 
+export function seedQualityChecklistPass(repoRoot: string, taskId: string): void {
+    const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    const workflowConfigPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
+    writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-quality-checklist.json`), {
+        schema_version: 1,
+        timestamp_utc: new Date().toISOString(),
+        event_source: 'quality-checklist',
+        task_id: taskId,
+        checklist_id: 'optional_quality_checks',
+        status: 'PASS',
+        outcome: 'PASS',
+        workflow_config_path: normalizeForTimeline(workflowConfigPath),
+        workflow_config_sha256: fs.existsSync(workflowConfigPath)
+            ? fileSha256(workflowConfigPath)
+            : null,
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fs.existsSync(preflightPath)
+            ? fileSha256(preflightPath)
+            : null,
+        changed_file_evidence: {
+            changed_files: snapshot.changed_files,
+            changed_files_count: snapshot.changed_files_count,
+            changed_files_sha256: snapshot.changed_files_sha256,
+            scope_sha256: snapshot.scope_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256
+        },
+        rules: [],
+        answers: [],
+        actions_taken: [],
+        actions_required: [],
+        violations: []
+    });
+    appendEvent(repoRoot, taskId, 'QUALITY_CHECKLIST_RECORDED', 'PASS', {
+        status: 'PASS',
+        artifact_path: normalizeForTimeline(path.join(reviewsRoot(repoRoot), `${taskId}-quality-checklist.json`)),
+        preflight_path: normalizeForTimeline(preflightPath),
+        preflight_sha256: fs.existsSync(preflightPath)
+            ? fileSha256(preflightPath)
+            : null
+    });
+}
+
 export function normalizeForTimeline(filePath: string): string {
     return filePath.replace(/\\/g, '/');
 }
@@ -531,8 +574,16 @@ export function writePreflight(
     return preflightPath;
 }
 
-export function seedCompilePass(repoRoot: string, taskId: string, timestampUtc?: string): void {
+export function seedCompilePass(
+    repoRoot: string,
+    taskId: string,
+    timestampUtc?: string,
+    options: { qualityChecklist?: boolean } = {}
+): void {
     const preflightPath = path.join(reviewsRoot(repoRoot), `${taskId}-preflight.json`);
+    if (options.qualityChecklist !== false) {
+        seedQualityChecklistPass(repoRoot, taskId);
+    }
     const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, ['src/app.ts']);
     writeJson(path.join(reviewsRoot(repoRoot), `${taskId}-compile-gate.json`), {
         timestamp_utc: timestampUtc || new Date().toISOString(),
@@ -1356,4 +1407,3 @@ afterEach(() => {
     }
     tempRoots = [];
 });
-

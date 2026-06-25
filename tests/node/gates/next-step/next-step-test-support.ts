@@ -1,4 +1,14 @@
-export { buildDefaultWorkflowConfig } from '../../../../src/core/workflow-config';
+import {
+    buildDefaultWorkflowConfig as buildSourceDefaultWorkflowConfig,
+    type WorkflowConfigData
+} from '../../../../src/core/workflow-config';
+
+export function buildDefaultWorkflowConfig(): WorkflowConfigData {
+    const config = buildSourceDefaultWorkflowConfig();
+    config.optional_quality_checks.enabled = false;
+    return config;
+}
+
 export { PROJECT_MEMORY_REQUIRED_FILE_NAMES } from '../../../../src/core/project-memory';
 export {
     COPILOT_PROVIDER_ENV_KEYS,

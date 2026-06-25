@@ -45,6 +45,14 @@ export interface NextStepCompileGateRoutingOptions extends NextStepReadinessStat
     compileCommand: string;
 }
 
+export interface NextStepQualityChecklistRoutingOptions extends NextStepReadinessState {
+    enabled: boolean;
+    required: boolean;
+    status: string | null;
+    actionRequiredSummary?: string | null;
+    command: string;
+}
+
 export interface NextStepPreGuardRoutingOptions {
     preflightCycleReadiness: NextStepReadinessState;
     preflightCycleRefreshCommand: string;
@@ -161,6 +169,48 @@ export function resolveNextStepPreGuardRoute(
     }
 
     return null;
+}
+
+export function resolveNextStepQualityChecklistRoute(
+    options: NextStepQualityChecklistRoutingOptions
+): NextStepPreReviewRoute | null {
+    if (!options.enabled || !options.required) {
+        return null;
+    }
+
+    if (options.ready && ['PASS', 'WARN', 'SKIPPED_DISABLED'].includes(options.status || '')) {
+        return null;
+    }
+
+    if (options.ready && options.status === 'ACTION_REQUIRED') {
+        const actionSummary = options.actionRequiredSummary
+            ? ` Action required: ${options.actionRequiredSummary}`
+            : '';
+        return {
+            status: 'BLOCKED',
+            nextGate: 'implementation',
+            title: 'Resolve quality checklist action items.',
+            reason:
+                `${options.reason}${actionSummary} Address the required quality checklist follow-up in implementation, ` +
+                'then refresh preflight if the workspace changed before rerunning compile, review, full-suite, or completion gates.',
+            commands: []
+        };
+    }
+
+    const label = options.ready && options.status === 'CONFIG_ERROR'
+        ? 'Rerun quality checklist after repairing configuration or answers'
+        : 'Run quality checklist';
+    return {
+        status: 'BLOCKED',
+        nextGate: 'quality-checklist',
+        title: options.ready && options.status === 'CONFIG_ERROR'
+            ? 'Repair quality checklist evidence.'
+            : 'Run optional quality checklist.',
+        reason: options.reason,
+        commands: [
+            buildCommand(label, options.command)
+        ]
+    };
 }
 
 export function resolveNextStepCompileGateRoute(

@@ -20,6 +20,7 @@ import {
     runHandshakeDiagnosticsCommand,
     runLoadRulePackCommand,
     runProjectMemoryImpactCommand,
+    runQualityChecklistCommand,
     runRequiredReviewsCheckCommand,
     runShellSmokePreflightCommand
 } from '../../../src/cli/commands/gates';
@@ -247,6 +248,67 @@ function assertGatePassed(result: { exitCode: number; outputLines?: string[]; ou
     );
 }
 
+function buildQualityChecklistAnswersJson(): string {
+    return JSON.stringify([
+        {
+            rule_id: 'code_simplification',
+            status: 'PASS',
+            answer: 'The fixture change is intentionally tiny and keeps the lifecycle sequence direct.',
+            evidence_files: ['tests/app.test.ts'],
+            actions_taken: [],
+            actions_required: []
+        },
+        {
+            rule_id: 'project_style_fit',
+            status: 'PASS',
+            answer: 'The fixture follows the existing node:test style and local helper flow.',
+            evidence_files: ['tests/app.test.ts'],
+            actions_taken: [],
+            actions_required: []
+        },
+        {
+            rule_id: 'unnecessary_abstraction',
+            status: 'PASS',
+            answer: 'No abstraction is added in the fixture change.',
+            evidence_files: ['tests/app.test.ts'],
+            actions_taken: [],
+            actions_required: []
+        },
+        {
+            rule_id: 'size_growth',
+            status: 'PASS',
+            answer: 'The file growth is limited to one focused assertion.',
+            evidence_files: ['tests/app.test.ts'],
+            actions_taken: [],
+            actions_required: []
+        },
+        {
+            rule_id: 'hardcoded_values_contracts',
+            status: 'PASS',
+            answer: 'The literal values are fixture assertions and do not introduce shared contracts.',
+            evidence_files: ['tests/app.test.ts'],
+            actions_taken: [],
+            actions_required: []
+        },
+        {
+            rule_id: 'duplicated_logic_contracts',
+            status: 'PASS',
+            answer: 'No duplicated production logic is introduced.',
+            evidence_files: ['tests/app.test.ts'],
+            actions_taken: [],
+            actions_required: []
+        },
+        {
+            rule_id: 'test_verification_scope',
+            status: 'PASS',
+            answer: 'The lifecycle fixture verifies the changed test through compile and full-suite gates.',
+            evidence_files: ['tests/app.test.ts', 'scripts/full-suite-check.cjs'],
+            actions_taken: [],
+            actions_required: []
+        }
+    ]);
+}
+
 async function runReviewGateCommand(repoRoot: string, args: string[]): Promise<void> {
     const previousExitCode = process.exitCode;
     try {
@@ -407,6 +469,15 @@ test('orchestration happy path reaches DONE from setup through task audit', { co
             ],
             emitMetrics: false
         }), 'load-rule-pack POST_PREFLIGHT');
+
+        assertNextGate(workspaceRoot, 'quality-checklist');
+        assertGatePassed(runQualityChecklistCommand({
+            repoRoot: workspaceRoot,
+            taskId: TASK_ID,
+            preflightPath,
+            answersJson: buildQualityChecklistAnswersJson(),
+            emitMetrics: false
+        }), 'quality-checklist');
 
         assertNextGate(workspaceRoot, 'compile-gate');
         assertGatePassed(await runCompileGateCommand({

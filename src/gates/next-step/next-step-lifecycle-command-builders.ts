@@ -454,6 +454,23 @@ export function buildCompileGateCommand(
     ].join(' ');
 }
 
+export function buildQualityChecklistCommand(
+    repoRoot: string,
+    cliPrefix: string,
+    taskId: string,
+    preflightCommandPath: string,
+    taskModePath: string | null
+): string {
+    return [
+        `${cliPrefix} gate quality-checklist`,
+        `--task-id "${taskId}"`,
+        `--preflight-path "${preflightCommandPath}"`,
+        ...buildTaskModePathCommandParts(repoRoot, taskId, taskModePath),
+        '--answers-json "<JSON array with one answer object per enabled optional_quality_checks rule>"',
+        '--repo-root "."'
+    ].join(' ');
+}
+
 export function buildReviewContextCommand(
     repoRoot: string,
     cliPrefix: string,
