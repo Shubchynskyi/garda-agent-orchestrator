@@ -44,6 +44,10 @@ export function renderTaskDetailTemplate(): string {
         '<div data-field="full-suite"></div>',
         '</section>',
         '<section>',
+        '<h3>Quality Checklist</h3>',
+        '<div data-field="quality-checklist"></div>',
+        '</section>',
+        '<section>',
         '<h3>Latest Cycle</h3>',
         '<pre data-field="latest-cycle"></pre>',
         '</section>',
@@ -190,6 +194,40 @@ function fullSuiteRows(fullSuite) {
     : '';
   return '<table><tbody>' + rows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(value) + '</td></tr>').join('') + '</tbody></table>' + summary + diagnosticsList;
 }
+function qualityChecklistList(items) {
+  if (!Array.isArray(items) || items.length === 0) return '<span class="muted">-</span>';
+  return '<ul>' + items.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>';
+}
+function qualityChecklistAnswers(answers) {
+  if (!Array.isArray(answers) || answers.length === 0) return '';
+  return '<h4>Rule answers</h4><ul>' + answers.map(answer => '<li><code>' + safe(answer.rule_id) + '</code> <strong>' + safe(answer.status) + '</strong><p class="meta">' + safe(answer.answer) + '</p></li>').join('') + '</ul>';
+}
+function qualityChecklistRows(checklist) {
+  const latest = checklist && checklist.latest ? checklist.latest : null;
+  const history = checklist && Array.isArray(checklist.action_required_history) ? checklist.action_required_history : [];
+  if (!latest && history.length === 0) return '<p class="meta">No quality checklist evidence for this task.</p>';
+  const latestRows = latest ? [
+    ['Status', latest.checklist_status],
+    ['Evidence', latest.evidence_status],
+    ['Effect', latest.effect],
+    ['Summary', latest.summary],
+    ['Actions taken', latest.action_taken_count],
+    ['Actions required', latest.action_required_count],
+    ['Changed files', latest.changed_files_count],
+    ['Artifact', latest.artifact_path]
+  ] : [];
+    const latestHtml = latest
+      ? '<table><tbody>' + latestRows.map(([label, value]) => '<tr><th>' + safe(label) + '</th><td>' + safe(value) + '</td></tr>').join('') + '</tbody></table>'
+      + (latest.stale_reasons && latest.stale_reasons.length > 0 ? '<h4>Diagnostics</h4>' + qualityChecklistList(latest.stale_reasons) : '')
+      + (latest.actions_required && latest.actions_required.length > 0 ? '<h4>Actions required</h4>' + qualityChecklistList(latest.actions_required) : '')
+      + (latest.actions_taken && latest.actions_taken.length > 0 ? '<h4>Actions taken</h4>' + qualityChecklistList(latest.actions_taken) : '')
+      + qualityChecklistAnswers(latest.answers)
+    : '';
+  const historyHtml = history.length > 0
+    ? '<h4>Action-required history</h4><ul>' + history.map(entry => '<li><code>' + safe(entry.timestamp_utc || '-') + '</code> ' + qualityChecklistList(entry.actions_required) + '</li>').join('') + '</ul>'
+    : '';
+  return latestHtml + historyHtml;
+}
 function renderList(items, formatter) {
   if (!items || items.length === 0) return '<li>none</li>';
   return items.map(formatter).join('');
@@ -210,6 +248,7 @@ function showTask(index) {
   node.querySelector('[data-metric="full-suite-state"]').innerHTML = metric('Full-suite', task.detail.full_suite_validation && task.detail.full_suite_validation.state);
   node.querySelector('[data-metric="full-suite-duration"]').innerHTML = metric('Full-suite Duration', task.detail.full_suite_validation && task.detail.full_suite_validation.duration_human);
   node.querySelector('[data-field="full-suite"]').innerHTML = fullSuiteRows(task.detail.full_suite_validation);
+  node.querySelector('[data-field="quality-checklist"]').innerHTML = qualityChecklistRows(task.detail.quality_checklist);
   node.querySelector('[data-field="latest-cycle"]').textContent = JSON.stringify(task.detail.latest_cycle_events || {}, null, 2);
   node.querySelector('[data-field="artifacts"]').innerHTML = renderList((task.detail.artifact_links || []).filter(item => item.exists).slice(0, 12), item => {
     const href = toArtifactHref(item.path);

@@ -124,6 +124,7 @@ export interface ReportTaskDetail {
         markdown: string | null;
     };
     artifact_links: ReportArtifactLink[];
+    quality_checklist: ReportTaskQualityChecklist;
     unavailable: ReportDataUnavailableEntry[];
 }
 
@@ -229,6 +230,34 @@ export interface ReportQualityGateActionRequiredHistoryEntry {
     actions_required: string[];
     changed_files_count: number | null;
     changed_files_preview: string[];
+}
+
+export interface ReportTaskQualityChecklistLatest {
+    artifact_path: string;
+    artifact_exists: boolean;
+    artifact_sha256: string | null;
+    evidence_status: ReportQualityGateEvidenceStatus;
+    checklist_status: string | null;
+    outcome: string | null;
+    effect: ReportQualityGateEffect;
+    summary_key?: string;
+    summary: string;
+    stale_reason_codes?: string[];
+    stale_reasons: string[];
+    timestamp_utc: string | null;
+    changed_files_count: number | null;
+    changed_files_preview: string[];
+    answer_count: number;
+    action_taken_count: number;
+    action_required_count: number;
+    actions_taken: string[];
+    actions_required: string[];
+    answers: ReportQualityGateAnswerSummary[];
+}
+
+export interface ReportTaskQualityChecklist {
+    latest: ReportTaskQualityChecklistLatest | null;
+    action_required_history: ReportQualityGateActionRequiredHistoryEntry[];
 }
 
 export interface ReportQualityGateTab {

@@ -81,7 +81,19 @@ tr.selected { background: #eef8f6; }
 .quality-gate-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; }
 .quality-gate-block { margin-top: 14px; }
 .quality-gate-detail .workflow-table { overflow-x: auto; }
-.quality-gate-detail .workflow-table table { min-width: 1040px; }
+.quality-gate-detail .quality-gate-rule-table table { min-width: 0; table-layout: fixed; }
+.quality-gate-detail .quality-gate-rule-table th:nth-child(1) { width: 14%; }
+.quality-gate-detail .quality-gate-rule-table th:nth-child(2) { width: 10%; }
+.quality-gate-detail .quality-gate-rule-table th:nth-child(3) { width: 12%; }
+.quality-gate-detail .quality-gate-rule-table th:nth-child(4) { width: 16%; }
+.quality-gate-detail .quality-gate-rule-table th:nth-child(5) { width: 24%; }
+.quality-gate-detail .quality-gate-rule-table th:nth-child(6) { width: 10%; }
+.quality-gate-detail .quality-gate-rule-table th:nth-child(7) { width: 14%; }
+.quality-gate-rule-table th, .quality-gate-rule-table td { overflow-wrap: anywhere; }
+.quality-gate-rule-table code { white-space: normal; overflow-wrap: anywhere; }
+.quality-gate-rule-table input, .quality-gate-rule-table select { width: 100%; min-width: 0; }
+.quality-gate-rule-table .setting-buttons { margin-top: 0; }
+.quality-gate-rule-table .setting-buttons button { flex: 1 1 104px; width: auto; min-width: 0; }
 .quality-gate-rule-active { background: #eaf7ee; color: #176333; }
 .quality-gate-rule-disabled { background: #f3f5f7; color: #4b5563; }
 .quality-gate-rule-locally_edited { background: #fff4d6; color: #7c4d00; }

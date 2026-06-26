@@ -8,6 +8,7 @@ import { UI_DASHBOARD_CLIENT_CORE } from '../../../src/reports/ui/dashboard/dash
 import { UI_DASHBOARD_CLIENT_QUALITY_GATE } from '../../../src/reports/ui/dashboard/dashboard-client-quality-gate';
 import { UI_DASHBOARD_CLIENT_SESSION_ACTIONS } from '../../../src/reports/ui/dashboard/dashboard-client-session-actions';
 import { UI_DASHBOARD_CLIENT_WORKFLOW } from '../../../src/reports/ui/dashboard/dashboard-client-workflow';
+import { UI_DASHBOARD_STYLES } from '../../../src/reports/ui/dashboard/dashboard-styles';
 import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 import {
     LOCAL_UI_LANGUAGES,
@@ -106,6 +107,8 @@ test('dashboard asset modules are readable template literals, not escaped string
 
     assert.ok(assetSources.some((source) => source.includes('export const UI_DASHBOARD_STYLES = `')));
     assert.ok(assetSources.some((source) => source.includes('export const UI_DASHBOARD_CLIENT_WORKFLOW = `')));
+    assert.match(UI_DASHBOARD_STYLES, /quality-gate-rule-table/u);
+    assert.doesNotMatch(UI_DASHBOARD_STYLES, /min-width: 1040px/u);
     for (const source of assetSources) {
         assert.doesNotMatch(source, /export const [A-Z0-9_]+ = "(?:\\\\n|[^"]){200,}";/u);
     }
@@ -528,13 +531,47 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
     assert.match(qualityGateNode.innerHTML, /Отключено/u);
     assert.match(qualityGateNode.innerHTML, /Удалено/u);
-    assert.match(qualityGateNode.innerHTML, /Последняя проверка/u);
-    assert.match(qualityGateNode.innerHTML, /Требует доработки/u);
+    assert.match(qualityGateNode.innerHTML, /quality-gate-rule-table/u);
     assert.match(qualityGateNode.innerHTML, /code_simplification/u);
-    assert.match(qualityGateNode.innerHTML, /Central parser helpers still need a smaller shape\./u);
-    assert.match(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
-    assert.match(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Последняя проверка/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Требует доработки/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Central parser helpers still need a smaller shape\./u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
     assert.match(qualityGateNode.innerHTML, /garda ui --actions/u);
+});
+
+test('quality gate rule table renders long localized disabled rows in responsive layout', () => {
+    const longRuleId = 'baseline_quality_rule_with_long_unbroken_identifier_for_wrap_regression_0123456789';
+    const longTitle = 'LongUnbrokenQualityGateRuleTitleThatMustStayInsideTheRulesTableWithoutExpandingTheTab';
+    const longPrompt = 'LongUnbrokenQualityGateRulePromptThatExercisesOverflowWrappingForTheRuleDescriptionCellAndInputValue';
+    const html = renderQualityGateHtml({
+        config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
+        status: 'present',
+        enabled: true,
+        baseline_rule_count: 1,
+        custom_rule_count: 0,
+        unavailable: [],
+        rules: [{
+            id: longRuleId,
+            title: longTitle,
+            prompt: longPrompt,
+            enabled: false,
+            present: true,
+            source: 'baseline',
+            statuses: ['disabled']
+        }]
+    }, false, 'ru');
+
+    assert.match(html, /workflow-table quality-gate-rule-table/u);
+    assert.match(html, new RegExp(longRuleId, 'u'));
+    assert.match(html, new RegExp(longTitle, 'u'));
+    assert.match(html, new RegExp(longPrompt, 'u'));
+    assert.match(html, /Базовое/u);
+    assert.match(html, /Отключено/u);
+    assert.match(html, /Сохранение отключено/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.quality-gate-rule-table th, \.quality-gate-rule-table td \{ overflow-wrap: anywhere; \}/u);
+    assert.match(UI_DASHBOARD_STYLES, /\.quality-gate-rule-table input, \.quality-gate-rule-table select \{ width: 100%; min-width: 0; \}/u);
 });
 
 test('system state renders quality baseline diagnostics with localized labels', () => {

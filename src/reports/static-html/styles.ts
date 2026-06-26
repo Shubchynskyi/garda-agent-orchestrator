@@ -23,6 +23,7 @@ main { padding: 16px 24px 28px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { background: var(--panel); color: #344054; position: sticky; top: 0; z-index: 1; }
+th, td, td code { overflow-wrap: anywhere; }
 tr[data-task-index] { cursor: pointer; }
 tr[data-task-index].selected, tr[data-task-index]:focus { outline: 2px solid var(--accent); outline-offset: -2px; background: #eef8f6; }
 .task-id { font-weight: 700; color: var(--accent); }

@@ -176,6 +176,121 @@ function closeTaskPlanModal() {
   planModalNode.hidden = true;
   planModalBodyNode.innerHTML = '';
 }
+function taskQualityChecklistEvidenceLabel(status) {
+  if (status === 'stale') return t('qualityGateEvidenceStale');
+  if (status === 'missing') return t('qualityGateEvidenceMissing');
+  if (status === 'invalid') return t('qualityGateEvidenceInvalid');
+  if (status === 'disabled') return t('qualityGateEffectDisabled');
+  return t('qualityGateEvidenceCurrent');
+}
+function taskQualityChecklistEffectLabel(effect) {
+  if (effect === 'helped') return t('qualityGateEffectHelped');
+  if (effect === 'warned') return t('qualityGateEffectWarned');
+  if (effect === 'required_rework') return t('qualityGateEffectRequiredRework');
+  if (effect === 'disabled') return t('qualityGateEffectDisabled');
+  if (effect === 'missing') return t('qualityGateEffectMissing');
+  if (effect === 'invalid') return t('qualityGateEffectInvalid');
+  if (effect === 'stale') return t('qualityGateEffectStale');
+  return t('qualityGateEffectPassed');
+}
+function taskQualityChecklistItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return '<span class="muted">-</span>';
+  }
+  return '<ul class="quality-gate-items">' + items.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>';
+}
+function taskQualityChecklistSummaryText(latest) {
+  const key = latest && latest.summary_key ? latest.summary_key : latest && latest.effect ? latest.effect : 'passed';
+  if (key === 'invalid') return t('qualityGateEvidenceInvalid');
+  if (key === 'stale') return t('qualityGateEvidenceStale');
+  if (key === 'required_rework') return t('qualityGateEffectRequiredRework') + ' (' + (latest.action_required_count || 0) + ')';
+  if (key === 'warned') return t('qualityGateEffectWarned');
+  if (key === 'helped') return t('qualityGateEffectHelped') + ' (' + (latest.action_taken_count || 0) + ')';
+  if (key === 'disabled') return t('qualityGateEffectDisabled');
+  return t('qualityGateEffectPassed');
+}
+function taskQualityChecklistDiagnosticLabel(code) {
+  if (code === 'artifact_json_invalid') return t('qualityGateEvidenceInvalid') + ': artifact JSON';
+  if (code === 'status_unsupported') return t('qualityGateEvidenceInvalid') + ': ' + t('statusColumn');
+  if (code === 'checklist_id_mismatch') return t('qualityGateEvidenceInvalid') + ': checklist_id';
+  if (code === 'task_id_mismatch') return t('qualityGateEvidenceInvalid') + ': task_id';
+  if (code === 'preflight_path_missing') return t('qualityGateEvidenceInvalid') + ': preflight_path';
+  if (code === 'preflight_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': preflight_sha256';
+  if (code === 'workflow_config_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': workflow_config_sha256';
+  if (code === 'changed_file_evidence_missing') return t('qualityGateEvidenceInvalid') + ': changed_file_evidence';
+  if (code === 'changed_files_missing') return t('qualityGateEvidenceInvalid') + ': changed_files';
+  if (code === 'changed_files_count_missing') return t('qualityGateEvidenceInvalid') + ': changed_files_count';
+  if (code === 'changed_files_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': changed_files_sha256';
+  if (code === 'scope_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': scope_sha256';
+  if (code === 'scope_content_sha256_invalid') return t('qualityGateEvidenceInvalid') + ': scope_content_sha256';
+  if (code === 'path_outside_repository') return t('qualityGateEvidenceInvalid') + ': ' + t('artifactPath');
+  if (code === 'referenced_artifact_missing') return t('qualityGateEvidenceMissing') + ': ' + t('artifactPath');
+  if (code === 'workflow_config_hash_changed') return t('qualityGateEvidenceStale') + ': ' + t('workflowConfigPath');
+  if (code === 'referenced_artifact_hash_changed') return t('qualityGateEvidenceStale') + ': ' + t('artifactPath');
+  if (code === 'changed_files_mismatch') return t('qualityGateEvidenceStale') + ': ' + t('qualityGateChangedFiles');
+  if (code === 'scope_binding_mismatch') return t('qualityGateEvidenceStale') + ': scope';
+  if (code === 'scope_content_mismatch') return t('qualityGateEvidenceStale') + ': scope_content_sha256';
+  if (code === 'newer_preflight_exists') return t('qualityGateEvidenceStale') + ': preflight';
+  return t('qualityGateEvidenceStale') + ': ' + (code || 'unknown');
+}
+function taskQualityChecklistDiagnostics(latest) {
+  const codes = latest && Array.isArray(latest.stale_reason_codes) ? latest.stale_reason_codes : [];
+  const fallbackCount = latest && Array.isArray(latest.stale_reasons) ? latest.stale_reasons.length : 0;
+  if (codes.length === 0 && fallbackCount === 0) {
+    return '';
+  }
+  const items = codes.length > 0 ? codes : ['unknown'];
+  return '<ul class="quality-gate-items">' + items.map(code => '<li>' + safe(taskQualityChecklistDiagnosticLabel(code)) + '</li>').join('') + '</ul>';
+}
+function taskQualityChecklistAnswers(answers) {
+  const entries = Array.isArray(answers) ? answers : [];
+  if (entries.length === 0) {
+    return '';
+  }
+  return '<div class="quality-gate-answer-summary"><strong>' + safe(t('qualityGateAnswers')) + '</strong><ul class="quality-gate-answer-list">'
+    + entries.map(answer => '<li><div class="quality-gate-answer-head"><code>' + safe(answer.rule_id || '-') + '</code>'
+      + badge(answer.status || '-', 'quality-gate-answer-status', 'quality-gate-answer-status-' + classToken(answer.status))
+      + '</div><p>' + safe(answer.answer || '-') + '</p>'
+      + (Array.isArray(answer.evidence_files) && answer.evidence_files.length > 0 ? '<div><span class="muted">' + safe(t('qualityGateChangedFiles')) + '</span>' + taskQualityChecklistItems(answer.evidence_files) + '</div>' : '')
+      + (Array.isArray(answer.actions_taken) && answer.actions_taken.length > 0 ? '<div><span class="muted">' + safe(t('qualityGateActionsTaken')) + '</span>' + taskQualityChecklistItems(answer.actions_taken) + '</div>' : '')
+      + (Array.isArray(answer.actions_required) && answer.actions_required.length > 0 ? '<div><span class="muted">' + safe(t('qualityGateActionsRequired')) + '</span>' + taskQualityChecklistItems(answer.actions_required) + '</div>' : '')
+      + '</li>').join('')
+    + '</ul></div>';
+}
+function taskQualityChecklistHistory(history) {
+  const entries = Array.isArray(history) ? history : [];
+  if (entries.length === 0) {
+    return '';
+  }
+  return '<h4>' + safe(t('qualityGateActionRequiredHistory')) + '</h4><ul class="list">'
+    + entries.map(entry => '<li><code>' + safe(entry.timestamp_utc || '-') + '</code>: ' + taskQualityChecklistItems(entry.actions_required) + '</li>').join('')
+    + '</ul>';
+}
+function taskQualityChecklistSummary(checklist) {
+  const latest = checklist && checklist.latest ? checklist.latest : null;
+  const history = checklist && Array.isArray(checklist.action_required_history) ? checklist.action_required_history : [];
+  if (!latest && history.length === 0) {
+    return '<p class="empty">' + safe(t('qualityGateEvidenceMissing')) + '</p>';
+  }
+  const latestHtml = latest
+    ? '<section class="quality-gate-block quality-gate-evidence"><div class="quality-gate-summary">'
+      + metric(t('qualityGateEvidenceState'), taskQualityChecklistEvidenceLabel(latest.evidence_status))
+      + metric(t('qualityGateEffect'), taskQualityChecklistEffectLabel(latest.effect))
+      + metric(t('statusColumn'), latest.checklist_status || '-')
+      + metric(t('qualityGateAnswers'), latest.answer_count)
+      + metric(t('qualityGateActionsTaken'), latest.action_taken_count)
+       + metric(t('qualityGateActionsRequired'), latest.action_required_count)
+      + '</div><p class="quality-gate-evidence-summary">' + safe(taskQualityChecklistSummaryText(latest)) + '</p>'
+      + taskQualityChecklistDiagnostics(latest)
+      + (Array.isArray(latest.actions_required) && latest.actions_required.length > 0 ? '<div><strong>' + safe(t('qualityGateActionsRequired')) + '</strong>' + taskQualityChecklistItems(latest.actions_required) + '</div>' : '')
+      + (Array.isArray(latest.actions_taken) && latest.actions_taken.length > 0 ? '<div><strong>' + safe(t('qualityGateActionsTaken')) + '</strong>' + taskQualityChecklistItems(latest.actions_taken) + '</div>' : '')
+      + (Array.isArray(latest.changed_files_preview) && latest.changed_files_preview.length > 0 ? '<div><strong>' + safe(t('qualityGateChangedFiles')) + '</strong>' + taskQualityChecklistItems(latest.changed_files_preview) + '</div>' : '')
+      + taskQualityChecklistAnswers(latest.answers)
+      + (latest.artifact_path ? '<p><strong>' + safe(t('artifacts')) + ':</strong> <code>' + safe(latest.artifact_path) + '</code></p>' : '')
+      + '</section>'
+    : '';
+  return latestHtml + taskQualityChecklistHistory(history);
+}
 async function loadDetail(taskId) {
   selectedTaskId = taskId;
   detailNode.innerHTML = '<p class="empty">' + safe(t('loadingTaskPrefix')) + ' ' + safe(taskId) + '...</p>';
@@ -218,6 +333,7 @@ function renderTaskDetail(detail) {
     + '</div>'
     + '<h3 class="task-section-title">' + safe(t('taskActionsTitle')) + '</h3><p class="empty">' + safe(t('taskActionsHelp')) + '</p><div class="task-command-buttons">' + planButton(detail) + '</div><div id="task-action-status" class="task-action-status"></div>' + taskCommandList(detail.task_id)
     + '<h3 class="task-section-title">' + safe(t('fullSuiteTitle')) + '</h3>' + fullSuiteSummary(fullSuite)
+    + '<h3 class="task-section-title">' + safe(t('qualityGateLatestCheck')) + '</h3>' + taskQualityChecklistSummary(detail.quality_checklist)
     + '<h3 class="task-section-title">' + safe(t('gateTimeline')) + '</h3><p class="empty">' + safe(t('gateTimelineHelp')) + '</p><pre>' + safe(JSON.stringify(detail.latest_cycle_events || {}, null, 2)) + '</pre>'
     + (blockers.length > 0 ? '<h3 class="task-section-title">' + safe(t('runtimeDiagnosticsTitle')) + '</h3>' + auditDiagnosticsList(blockers) : '')
     + '<h3 class="task-section-title">' + safe(t('reviews')) + '</h3>' + reviewSummary(audit)

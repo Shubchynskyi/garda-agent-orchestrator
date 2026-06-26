@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { buildDefaultWorkflowConfig } from '../../../src/core/workflow-config';
+import { buildScopeContentFingerprint } from '../../../src/gates/compile/compile-gate';
 import { buildEventIntegrityHash } from '../../../src/gate-runtime/task-events';
 import {
     buildBackupsTab,
@@ -14,6 +16,10 @@ import {
     buildReportTaskDetail,
     buildWorkflowConfigTab,
     readCanonicalActiveQueueRows
+} from '../../../src/reports/report-data-contract';
+import type {
+    ReportTaskQualityChecklist,
+    ReportTaskQualityChecklistLatest
 } from '../../../src/reports/report-data-contract';
 import { writeRollbackRecords } from '../../../src/lifecycle/common';
 
@@ -46,6 +52,35 @@ function writeTaskMdWithActiveRows(repoRoot: string, rows: readonly string[]): v
         ''
     ].join('\n'));
 }
+
+test('report-data-contract re-exports task quality checklist types', () => {
+    const latest: ReportTaskQualityChecklistLatest = {
+        artifact_path: 'runtime/reviews/T-100-quality-checklist.json',
+        artifact_exists: true,
+        artifact_sha256: 'abc123',
+        evidence_status: 'current',
+        checklist_status: 'WARN',
+        outcome: 'WARN',
+        effect: 'warned',
+        summary: 'Quality checklist passed with warnings.',
+        stale_reasons: [],
+        timestamp_utc: '2026-05-16T00:02:00.000Z',
+        changed_files_count: 1,
+        changed_files_preview: ['src/reports/report-data-contract.ts'],
+        answer_count: 0,
+        action_taken_count: 0,
+        action_required_count: 0,
+        actions_taken: [],
+        actions_required: [],
+        answers: []
+    };
+    const checklist: ReportTaskQualityChecklist = {
+        latest,
+        action_required_history: []
+    };
+
+    assert.equal(checklist.latest?.effect, 'warned');
+});
 
 function writeWorkflowConfig(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
@@ -150,6 +185,24 @@ function sha256Text(value: string): string {
 
 function sha256File(filePath: string): string {
     return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+}
+
+function runGit(repoRoot: string, args: string[]): string {
+    return execFileSync('git', ['-C', repoRoot, ...args], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+    });
+}
+
+function patchPreflightScopeContent(preflightPath: string, repoRoot: string, changedFiles: string[]): void {
+    const preflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as {
+        metrics?: Record<string, string>;
+    };
+    preflight.metrics = {
+        ...(preflight.metrics || {}),
+        scope_content_sha256: buildScopeContentFingerprint(repoRoot, 'git_auto', changedFiles) || ''
+    };
+    fs.writeFileSync(preflightPath, JSON.stringify(preflight, null, 2));
 }
 
 function writePreflight(repoRoot: string, taskId = 'T-100', options: {
@@ -791,6 +844,48 @@ test('buildReportDataContract exposes quality gate evidence and action-required 
     assert.equal(report.quality_gate_tab.action_required_history[0].task_id, 'T-099');
     assert.equal(report.quality_gate_tab.action_required_history[0].evidence_status, 'current');
     assert.deepEqual(report.quality_gate_tab.action_required_history[0].actions_required, ['Extract parser helpers before review.']);
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+    assert.equal(taskDetail.quality_checklist.latest?.checklist_status, 'WARN');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'warned');
+    assert.ok(taskDetail.quality_checklist.latest?.actions_taken.includes('Kept evidence scan bounded to recent artifacts.'));
+    assert.ok(taskDetail.artifact_links.some((artifact) => (
+        artifact.kind === 'quality-checklist'
+        && artifact.path.endsWith('T-100-quality-checklist.json')
+        && artifact.exists
+    )));
+    const actionTaskDetail = buildReportTaskDetail({ taskId: 'T-099', repoRoot });
+    assert.equal(actionTaskDetail.quality_checklist.latest?.checklist_status, 'ACTION_REQUIRED');
+    assert.deepEqual(actionTaskDetail.quality_checklist.action_required_history[0].actions_required, ['Extract parser helpers before review.']);
+});
+
+test('buildReportTaskDetail bounds task quality checklist action-required history', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'ACTION_REQUIRED',
+        timestampUtc: '2026-05-16T00:00:00.000Z',
+        preflightPath
+    });
+
+    for (let index = 0; index < 12; index += 1) {
+        writeQualityChecklistTimelineEvent(repoRoot, {
+            taskId: 'T-100',
+            status: 'ACTION_REQUIRED',
+            timestampUtc: `2026-05-16T00:${String(index).padStart(2, '0')}:00.000Z`,
+            actionsRequired: [`action-${String(index).padStart(2, '0')}`]
+        });
+    }
+
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(taskDetail.quality_checklist.action_required_history.length, 8);
+    assert.deepEqual(
+        taskDetail.quality_checklist.action_required_history.map((entry) => entry.actions_required[0]),
+        ['action-11', 'action-10', 'action-09', 'action-08', 'action-07', 'action-06', 'action-05', 'action-04']
+    );
 });
 
 test('buildReportDataContract bounds quality gate evidence discovery before parsing history', () => {
@@ -894,6 +989,8 @@ test('buildReportDataContract preserves action-required history after same-task 
     assert.equal(report.quality_gate_tab.action_required_history[0].task_id, 'T-100');
     assert.equal(report.quality_gate_tab.action_required_history[0].evidence_status, 'stale');
     assert.deepEqual(report.quality_gate_tab.action_required_history[0].actions_required, ['Extract parser helpers before review.']);
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+    assert.equal(taskDetail.quality_checklist.action_required_history[0].evidence_status, 'stale');
 });
 
 test('buildReportDataContract rejects invalid quality gate evidence status', () => {
@@ -918,6 +1015,105 @@ test('buildReportDataContract rejects invalid quality gate evidence status', () 
     assert.equal(report.quality_gate_tab.latest_check.effect, 'invalid');
     assert.ok(report.quality_gate_tab.latest_check.stale_reasons.some((reason) =>
         reason.includes('Unsupported quality checklist status')
+    ));
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'invalid');
+    assert.equal(taskDetail.quality_checklist.latest?.checklist_status, null);
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'invalid');
+    assert.equal(taskDetail.quality_checklist.latest?.summary_key, 'invalid');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reason_codes?.includes('status_unsupported'));
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reasons.some((reason) =>
+        reason.includes('Unsupported quality checklist status')
+    ));
+});
+
+test('buildReportTaskDetail rejects quality checklist evidence missing changed-file binding', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath
+    });
+    const artifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-100-quality-checklist.json');
+    const payload = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+    delete payload.changed_file_evidence;
+    fs.writeFileSync(artifactPath, JSON.stringify(payload, null, 2));
+
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'invalid');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'invalid');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reason_codes?.includes('changed_file_evidence_missing'));
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reasons.some((reason) =>
+        reason.includes('changed_file_evidence is missing')
+    ));
+});
+
+test('buildReportTaskDetail marks quality checklist evidence stale when changed-file binding drifts', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const preflightPath = writePreflight(repoRoot, 'T-100');
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath
+    });
+    const artifactPath = path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-100-quality-checklist.json');
+    const payload = JSON.parse(fs.readFileSync(artifactPath, 'utf8')) as Record<string, unknown>;
+    const changedFileEvidence = payload.changed_file_evidence as Record<string, unknown>;
+    changedFileEvidence.scope_sha256 = sha256Text('stale-scope');
+    fs.writeFileSync(artifactPath, JSON.stringify(payload, null, 2));
+
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'stale');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'stale');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reason_codes?.includes('scope_binding_mismatch'));
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reasons.some((reason) =>
+        reason.includes('Scope binding no longer matches the recorded preflight artifact')
+    ));
+});
+
+test('buildReportTaskDetail marks quality checklist evidence stale after current worktree drift', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    fs.writeFileSync(path.join(repoRoot, '.gitignore'), 'garda-agent-orchestrator/runtime/\n');
+    const changedFile = 'src/reports/report-data-contract.ts';
+    fs.mkdirSync(path.dirname(path.join(repoRoot, changedFile)), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 1;\n');
+    runGit(repoRoot, ['init']);
+    runGit(repoRoot, ['config', 'user.email', 'tests@example.invalid']);
+    runGit(repoRoot, ['config', 'user.name', 'Garda Tests']);
+    runGit(repoRoot, ['add', '.']);
+    runGit(repoRoot, ['commit', '-m', 'baseline']);
+
+    const preflightPath = writePreflight(repoRoot, 'T-100', {
+        changedFiles: [changedFile]
+    });
+    patchPreflightScopeContent(preflightPath, repoRoot, [changedFile]);
+    writeQualityChecklistArtifact(repoRoot, {
+        taskId: 'T-100',
+        status: 'WARN',
+        timestampUtc: '2026-05-16T00:02:00.000Z',
+        preflightPath
+    });
+
+    assert.equal(buildReportTaskDetail({ taskId: 'T-100', repoRoot }).quality_checklist.latest?.evidence_status, 'current');
+
+    fs.writeFileSync(path.join(repoRoot, changedFile), 'export const value = 2;\n');
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'stale');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'stale');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reasons.some((reason) =>
+        reason.includes('current git worktree')
     ));
 });
 
@@ -956,6 +1152,12 @@ test('buildReportDataContract marks outside-repo quality gate preflight referenc
     assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'stale');
     assert.equal(report.quality_gate_tab.latest_check.effect, 'stale');
     assert.ok(report.quality_gate_tab.latest_check.stale_reasons.some((reason) =>
+        reason.includes('outside the repository')
+    ));
+    const taskDetail = buildReportTaskDetail({ taskId: 'T-100', repoRoot });
+    assert.equal(taskDetail.quality_checklist.latest?.evidence_status, 'stale');
+    assert.equal(taskDetail.quality_checklist.latest?.effect, 'stale');
+    assert.ok(taskDetail.quality_checklist.latest?.stale_reasons.some((reason) =>
         reason.includes('outside the repository')
     ));
 });

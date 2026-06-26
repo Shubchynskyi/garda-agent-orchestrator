@@ -22,6 +22,7 @@ import {
 } from '../../gates/full-suite/full-suite-validation';
 import { getTaskModeEvidence, readOptionalMarkdownWorkingPlan } from '../../gates/task-mode';
 import { readCanonicalActiveQueueRows } from './task-queue';
+import { buildTaskQualityChecklist, withQualityChecklistArtifactLink } from './task-quality-checklist';
 import type {
     BuildReportTaskDetailOptions,
     ReportArtifactLink,
@@ -495,6 +496,7 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
         });
     }
     const audit = readTaskAuditSummary(taskId, repoRoot, eventsRoot, reviewsRoot, unavailable);
+    const qualityChecklist = buildTaskQualityChecklist(taskId, repoRoot, eventsRoot, reviewsRoot);
 
     return {
         task_id: taskId,
@@ -504,7 +506,8 @@ export function buildReportTaskDetail(options: BuildReportTaskDetailOptions): Re
         full_suite_validation: buildFullSuiteSummary(taskId, repoRoot, eventsRoot, reviewsRoot),
         audit: audit ? summarizeTaskAudit(audit) : null,
         plan: buildTaskPlanDetail(repoRoot, taskId, queueRow),
-        artifact_links: buildArtifactLinksFromAudit(audit),
+        artifact_links: withQualityChecklistArtifactLink(buildArtifactLinksFromAudit(audit), taskId, reviewsRoot),
+        quality_checklist: qualityChecklist,
         unavailable
     };
 }
@@ -582,6 +585,10 @@ export function buildSkippedTaskDetail(taskId: string, maxDetailedTasks: number)
             markdown: null
         },
         artifact_links: [],
+        quality_checklist: {
+            latest: null,
+            action_required_history: []
+        },
         unavailable: [{
             scope: `task:${taskId}:detail`,
             reason: `${detailLimitReason} to keep garda html responsive; use --max-detailed-tasks N for a heavier snapshot or garda task "${taskId}" stats/events for focused inspection.`

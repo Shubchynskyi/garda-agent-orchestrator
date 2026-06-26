@@ -21,6 +21,8 @@ export type {
     ReportQualityGateAnswerSummary,
     ReportQualityGateLatestCheck,
     ReportQualityGateActionRequiredHistoryEntry,
+    ReportTaskQualityChecklistLatest,
+    ReportTaskQualityChecklist,
     ReportQualityGateTab,
     ReportInstructionEntry,
     ReportValueRow,

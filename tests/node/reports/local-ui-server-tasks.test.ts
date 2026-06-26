@@ -973,10 +973,56 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
                 markdown_path: 'garda-agent-orchestrator/runtime/plans/T-100.md',
                 markdown: '# T-100 plan\n\n- Build UI'
             },
+            quality_checklist: {
+                latest: {
+                    artifact_path: 'runtime/reviews/T-100-quality-checklist.json',
+                    artifact_exists: true,
+                    artifact_sha256: 'quality123',
+                    evidence_status: 'current',
+                    checklist_status: 'ACTION_REQUIRED',
+                    outcome: 'FAIL',
+                    effect: 'required_rework',
+                    summary_key: 'required_rework',
+                    summary: 'Quality checklist required rework (1 action item).',
+                    stale_reason_codes: [],
+                    stale_reasons: [],
+                    timestamp_utc: '2026-05-19T00:02:00.000Z',
+                    changed_files_count: 1,
+                    changed_files_preview: ['src/reports/ui/dashboard/dashboard-client-task-detail.ts'],
+                    answer_count: 1,
+                    action_taken_count: 0,
+                    action_required_count: 1,
+                    actions_taken: [],
+                    actions_required: ['Move quality evidence into task detail.'],
+                    answers: [{
+                        rule_id: 'artifact_evidence_binding',
+                        status: 'WARN',
+                        answer: 'Task detail must keep quality evidence reachable.',
+                        evidence_files: ['src/reports/ui/dashboard/dashboard-client-task-detail.ts'],
+                        actions_taken: [],
+                        actions_required: ['Move quality evidence into task detail.']
+                    }]
+                },
+                action_required_history: [{
+                    task_id: 'T-100',
+                    timestamp_utc: '2026-05-19T00:02:00.000Z',
+                    artifact_path: 'runtime/reviews/T-100-quality-checklist.json',
+                    evidence_status: 'current',
+                    action_required_count: 1,
+                    actions_required: ['Move quality evidence into task detail.'],
+                    changed_files_count: 1,
+                    changed_files_preview: ['src/reports/ui/dashboard/dashboard-client-task-detail.ts']
+                }]
+            },
             artifact_links: [
                 {
                     kind: 'review',
                     path: 'runtime/reviews/T-100-code.md',
+                    exists: true
+                },
+                {
+                    kind: 'quality-checklist',
+                    path: 'runtime/reviews/T-100-quality-checklist.json',
                     exists: true
                 }
             ]
@@ -1693,6 +1739,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Gate Timeline/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Runtime diagnostics/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Full-suite validation/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Required rework \(1\)/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Move quality evidence into task detail\./u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /artifact_evidence_binding/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /2m 3\.5s/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Average duration/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /5m 43\.2s/u);
@@ -1703,6 +1752,22 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Timeout retry count/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Forecast excluded samples/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /full-suite timeout warning is visible in task detail/u);
+        Object.assign(detail.quality_checklist.latest as Record<string, unknown>, {
+            evidence_status: 'stale',
+            effect: 'stale',
+            summary_key: 'stale',
+            summary: 'Quality checklist artifact is stale: Workflow config hash changed after the quality checklist was recorded.',
+            stale_reason_codes: ['workflow_config_hash_changed'],
+            stale_reasons: ['Workflow config hash changed after the quality checklist was recorded.']
+        });
+        fakeDocument.elements['language-select'].value = 'ru';
+        await fakeDocument.elements['language-select'].dispatch('change');
+        assert.match(fakeDocument.elements.detail.innerHTML, /Устарело/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /Файл конфигурации/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Workflow config hash changed/u);
+        assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Quality checklist artifact is stale/u);
+        fakeDocument.elements['language-select'].value = 'en';
+        await fakeDocument.elements['language-select'].dispatch('change');
         Object.assign(detail.full_suite_validation.timeout_forecast as Record<string, unknown>, {
             history_path: 'runtime/full-suite-duration-history.json',
             sample_count: 0,
@@ -1726,6 +1791,7 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements.detail.innerHTML, /Forecast excluded samples<\/th><td>2<\/td>/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /Forecast exclusion reasons<\/th><td>timed-out runs=1, retry-contaminated runs=1<\/td>/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-full-suite-validation\.json/u);
+        assert.match(fakeDocument.elements.detail.innerHTML, /runtime\/reviews\/T-100-quality-checklist\.json/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /post-done-drift: blocked item/u);
         assert.doesNotMatch(fakeDocument.elements.detail.innerHTML, /Audit status/u);
         assert.match(fakeDocument.elements.detail.innerHTML, /blocked item/u);

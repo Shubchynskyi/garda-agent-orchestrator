@@ -14,92 +14,9 @@ function qualityGateStatusLabel(status) {
 function qualityGateSourceLabel(source) {
   return source === 'custom' ? t('qualityGateSourceCustom') : t('qualityGateSourceBaseline');
 }
-function qualityGateEvidenceLabel(status) {
-  if (status === 'stale') return t('qualityGateEvidenceStale');
-  if (status === 'missing') return t('qualityGateEvidenceMissing');
-  if (status === 'invalid') return t('qualityGateEvidenceInvalid');
-  if (status === 'disabled') return t('qualityGateEffectDisabled');
-  return t('qualityGateEvidenceCurrent');
-}
-function qualityGateEffectLabel(effect) {
-  if (effect === 'helped') return t('qualityGateEffectHelped');
-  if (effect === 'warned') return t('qualityGateEffectWarned');
-  if (effect === 'required_rework') return t('qualityGateEffectRequiredRework');
-  if (effect === 'disabled') return t('qualityGateEffectDisabled');
-  if (effect === 'missing') return t('qualityGateEffectMissing');
-  if (effect === 'invalid') return t('qualityGateEffectInvalid');
-  if (effect === 'stale') return t('qualityGateEffectStale');
-  return t('qualityGateEffectPassed');
-}
 function qualityGateStatusBadges(rule) {
   const statuses = Array.isArray(rule.statuses) && rule.statuses.length > 0 ? rule.statuses : ['active'];
   return statuses.map(status => badge(qualityGateStatusLabel(status), 'quality-gate-rule', 'quality-gate-rule-' + classToken(status))).join(' ');
-}
-function renderQualityGateItems(items) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return '<span class="muted">-</span>';
-  }
-  return '<ul class="quality-gate-items">' + items.map(item => '<li>' + safe(item) + '</li>').join('') + '</ul>';
-}
-function qualityGateMetricHtml(label, valueHtml) {
-  return '<div class="metric"><span>' + safe(label) + '</span><strong>' + valueHtml + '</strong></div>';
-}
-function renderQualityGateAnswerSummaries(answers) {
-  const entries = Array.isArray(answers) ? answers : [];
-  if (entries.length === 0) {
-    return '';
-  }
-  return '<div class="quality-gate-answer-summary"><strong>' + safe(t('qualityGateAnswers')) + '</strong><ul class="quality-gate-answer-list">'
-    + entries.map(answer => {
-      const evidence = Array.isArray(answer.evidence_files) && answer.evidence_files.length > 0
-        ? '<div><span class="muted">' + safe(t('qualityGateChangedFiles')) + '</span>' + renderQualityGateItems(answer.evidence_files) + '</div>'
-        : '';
-      const taken = Array.isArray(answer.actions_taken) && answer.actions_taken.length > 0
-        ? '<div><span class="muted">' + safe(t('qualityGateActionsTaken')) + '</span>' + renderQualityGateItems(answer.actions_taken) + '</div>'
-        : '';
-      const required = Array.isArray(answer.actions_required) && answer.actions_required.length > 0
-        ? '<div><span class="muted">' + safe(t('qualityGateActionsRequired')) + '</span>' + renderQualityGateItems(answer.actions_required) + '</div>'
-        : '';
-      return '<li><div class="quality-gate-answer-head"><code>' + safe(answer.rule_id || '-') + '</code>'
-        + badge(answer.status || '-', 'quality-gate-answer-status', 'quality-gate-answer-status-' + classToken(answer.status))
-        + '</div><p>' + safe(answer.answer || '-') + '</p>' + evidence + taken + required + '</li>';
-    }).join('')
-    + '</ul></div>';
-}
-function renderQualityGateLatestCheck(check) {
-  if (!check) {
-    return '';
-  }
-  const changedFiles = check.changed_files_count == null
-    ? '-'
-    : String(check.changed_files_count) + (check.changed_files_truncated ? ' +' : '');
-  return '<section class="quality-gate-block quality-gate-evidence"><h3>' + safe(t('qualityGateLatestCheck')) + '</h3>'
-    + '<div class="quality-gate-summary">'
-    + qualityGateMetricHtml(t('qualityGateEvidenceState'), badge(qualityGateEvidenceLabel(check.evidence_status), 'quality-gate-evidence-state', 'quality-gate-evidence-' + classToken(check.evidence_status)))
-    + qualityGateMetricHtml(t('qualityGateEffect'), badge(qualityGateEffectLabel(check.effect), 'quality-gate-effect-state', 'quality-gate-effect-' + classToken(check.effect)))
-    + metric(t('statusColumn'), check.checklist_status || '-')
-    + metric(t('qualityGateAnswers'), check.answer_count)
-    + metric(t('qualityGateActionsTaken'), check.action_taken_count)
-    + metric(t('qualityGateActionsRequired'), check.action_required_count)
-    + metric(t('qualityGateChangedFiles'), changedFiles)
-    + metric(t('qualityGateTimelineEvents'), check.timeline_event_count)
-    + '</div>'
-    + '<p class="quality-gate-evidence-summary">' + safe(check.summary || '') + '</p>'
-    + (Array.isArray(check.stale_reasons) && check.stale_reasons.length > 0 ? '<div class="blocker-alert">' + renderQualityGateItems(check.stale_reasons) + '</div>' : '')
-    + renderQualityGateAnswerSummaries(check.answers)
-    + (Array.isArray(check.actions_required) && check.actions_required.length > 0 ? '<div><strong>' + safe(t('qualityGateActionsRequired')) + '</strong>' + renderQualityGateItems(check.actions_required) + '</div>' : '')
-    + (Array.isArray(check.actions_taken) && check.actions_taken.length > 0 ? '<div><strong>' + safe(t('qualityGateActionsTaken')) + '</strong>' + renderQualityGateItems(check.actions_taken) + '</div>' : '')
-    + (Array.isArray(check.changed_files_preview) && check.changed_files_preview.length > 0 ? '<div><strong>' + safe(t('qualityGateChangedFiles')) + '</strong>' + renderQualityGateItems(check.changed_files_preview) + '</div>' : '')
-    + '</section>';
-}
-function renderQualityGateActionHistory(history) {
-  const entries = Array.isArray(history) ? history : [];
-  if (entries.length === 0) {
-    return '<section class="quality-gate-block"><h3>' + safe(t('qualityGateActionRequiredHistory')) + '</h3><p class="empty">' + safe(t('qualityGateNoActionRequiredHistory')) + '</p></section>';
-  }
-  return '<section class="quality-gate-block"><h3>' + safe(t('qualityGateActionRequiredHistory')) + '</h3><div class="workflow-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateEvidenceState')) + '</th><th>' + safe(t('qualityGateActionsRequired')) + '</th><th>' + safe(t('qualityGateChangedFiles')) + '</th><th>' + safe(t('fileColumn')) + '</th></tr></thead><tbody>'
-    + entries.map(entry => '<tr><td><code>' + safe(entry.task_id || '-') + '</code></td><td>' + badge(qualityGateEvidenceLabel(entry.evidence_status), 'quality-gate-evidence-state', 'quality-gate-evidence-' + classToken(entry.evidence_status)) + '</td><td>' + renderQualityGateItems(entry.actions_required) + '</td><td>' + safe(String(entry.changed_files_count == null ? '-' : entry.changed_files_count)) + '</td><td><code>' + safe(entry.artifact_path || '-') + '</code></td></tr>').join('')
-    + '</tbody></table></div></section>';
 }
 function renderQualityGateResult(result) {
   currentQualityGateSettingResult = result;
@@ -197,11 +114,9 @@ function renderQualityGate(report) {
     + metric(t('qualityGateBaselineRules'), tab.baseline_rule_count)
     + metric(t('qualityGateCustomRules'), tab.custom_rule_count)
     + '</section>'
-    + renderQualityGateLatestCheck(tab.latest_check)
-    + renderQualityGateActionHistory(tab.action_required_history)
     + renderQualityGateToggle(settingsPayload.settings || [], disabled)
     + '<section class="quality-gate-block"><h3>' + safe(t('qualityGateRuleSet')) + '</h3>'
-    + (rules.length === 0 ? '<p class="empty">' + safe(t('qualityGateRulesEmpty')) + '</p>' : '<div class="workflow-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateSourceColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('gardaSwitchState')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + rules.map(rule => renderQualityGateRuleRow(rule, disabled)).join('') + renderQualityGateNewRuleRow(disabled) + '</tbody></table></div>')
+    + (rules.length === 0 ? '<p class="empty">' + safe(t('qualityGateRulesEmpty')) + '</p>' : '<div class="workflow-table quality-gate-rule-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateSourceColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('gardaSwitchState')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + rules.map(rule => renderQualityGateRuleRow(rule, disabled)).join('') + renderQualityGateNewRuleRow(disabled) + '</tbody></table></div>')
     + '</section>';
   for (const button of qualityGateNode.querySelectorAll('button[data-quality-gate-setting-id]')) {
     button.addEventListener('click', () => {

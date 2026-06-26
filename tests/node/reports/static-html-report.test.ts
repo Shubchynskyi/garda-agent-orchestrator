@@ -106,6 +106,20 @@ function extractReportDataJson(html: string): string {
     return match[1];
 }
 
+function stripEmbeddedReportData(html: string): string {
+    return html.replace(/<script id="report-data" type="application\/json">[\s\S]*?<\/script>/u, '');
+}
+
+function extractStaticPanelHtml(html: string, panelId: string): string {
+    const start = html.indexOf(`id="${panelId}"`);
+    assert.notEqual(start, -1, `expected static panel ${panelId}`);
+    const sectionStart = html.lastIndexOf('<section', start);
+    const sectionEnd = html.indexOf('</section>', start);
+    assert.notEqual(sectionStart, -1, `expected static panel section ${panelId}`);
+    assert.notEqual(sectionEnd, -1, `expected static panel close ${panelId}`);
+    return html.slice(sectionStart, sectionEnd);
+}
+
 function executeStaticTaskClient(html: string): StaticFakeElement {
     const detailElement = new StaticFakeElement('task-detail');
     const reportDataElement = new StaticFakeElement('report-data');
@@ -218,12 +232,71 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     writeProjectMemoryReadme(repoRoot);
 
     const report = buildReportDataContract({ repoRoot, generatedAtUtc: '2026-05-16T00:00:00.000Z' });
+    const longQualityRuleId = 'baseline_quality_rule_with_long_unbroken_identifier_for_static_wrap_0123456789';
+    const longQualityRuleTitle = 'StaticLongUnbrokenQualityGateRuleTitleThatMustNotForceTheReportWiderThanTheViewport';
+    const longQualityRulePrompt = 'StaticLongUnbrokenQualityGateRulePromptThatExercisesOverflowWrappingInTheQualityRulesTable';
+    report.quality_gate_tab.rules.unshift({
+        id: longQualityRuleId,
+        title: longQualityRuleTitle,
+        prompt: longQualityRulePrompt,
+        baseline_title: longQualityRuleTitle,
+        baseline_prompt: longQualityRulePrompt,
+        enabled: false,
+        present: true,
+        source: 'baseline',
+        statuses: ['disabled']
+    });
+    report.quality_gate_tab.baseline_rule_count += 1;
     report.tasks_tab.rows[0].detail.artifact_links = [{
         kind: 'compile-output',
         path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-compile-output.log',
         exists: true,
         sha256: 'abc123'
+    }, {
+        kind: 'quality-checklist',
+        path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-quality-checklist.json',
+        exists: true,
+        sha256: 'quality123'
     }];
+    report.tasks_tab.rows[0].detail.quality_checklist = {
+        latest: {
+            artifact_path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-quality-checklist.json',
+            artifact_exists: true,
+            artifact_sha256: 'quality123',
+            evidence_status: 'current',
+            checklist_status: 'ACTION_REQUIRED',
+            outcome: 'FAIL',
+            effect: 'required_rework',
+            summary: 'Quality checklist required rework (1 action item).',
+            stale_reasons: [],
+            timestamp_utc: '2026-05-16T00:02:00.000Z',
+            changed_files_count: 1,
+            changed_files_preview: ['src/reports/static-html/tasks-tab.ts'],
+            answer_count: 1,
+            action_taken_count: 0,
+            action_required_count: 1,
+            actions_taken: [],
+            actions_required: ['Keep quality details in task history.'],
+            answers: [{
+                rule_id: 'artifact_evidence_binding',
+                status: 'WARN',
+                answer: 'Task detail keeps quality checklist evidence reachable.',
+                evidence_files: ['src/reports/static-html/tasks-tab.ts'],
+                actions_taken: [],
+                actions_required: ['Keep quality details in task history.']
+            }]
+        },
+        action_required_history: [{
+            task_id: 'T-100',
+            timestamp_utc: '2026-05-16T00:02:00.000Z',
+            artifact_path: 'C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-quality-checklist.json',
+            evidence_status: 'current',
+            action_required_count: 1,
+            actions_required: ['Keep quality details in task history.'],
+            changed_files_count: 1,
+            changed_files_preview: ['src/reports/static-html/tasks-tab.ts']
+        }]
+    };
     report.tasks_tab.rows[0].detail.full_suite_validation = {
         ...report.tasks_tab.rows[0].detail.full_suite_validation,
         state: 'passed',
@@ -290,9 +363,15 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('href="../../live/docs/project-memory/README.md"'));
     assert.ok(html.includes('Project Memory Optimization'));
     assert.ok(html.includes('Quality Gate'));
+    assert.ok(html.includes('th, td, td code { overflow-wrap: anywhere; }'));
     assert.ok(!html.includes('Shipped baseline'));
-    assert.ok(html.includes('Latest check'));
-    assert.ok(html.includes('Action-required history'));
+    const visibleHtml = stripEmbeddedReportData(html);
+    const visibleQualityGatePanelHtml = extractStaticPanelHtml(visibleHtml, 'tab-quality-gate');
+    assert.ok(visibleHtml.includes(longQualityRuleId));
+    assert.ok(visibleHtml.includes(longQualityRuleTitle));
+    assert.ok(visibleHtml.includes(longQualityRulePrompt));
+    assert.ok(!visibleQualityGatePanelHtml.includes('Latest check'));
+    assert.ok(!visibleQualityGatePanelHtml.includes('Action-required history'));
     report.quality_gate_tab.latest_check = {
         ...report.quality_gate_tab.latest_check,
         answers: [{
@@ -305,12 +384,13 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
         }]
     };
     const answerSummaryHtml = renderStaticHtmlReport(report);
+    const answerSummaryVisibleHtml = stripEmbeddedReportData(answerSummaryHtml);
 
     assert.ok(answerSummaryHtml.includes('ui_answer_visibility'));
-    assert.ok(answerSummaryHtml.includes('Renderer must show compact rule answer details.'));
-    assert.ok(answerSummaryHtml.includes('src/reports/static-html/quality-gate-tab.ts'));
-    assert.ok(answerSummaryHtml.includes('Rendered answer summary in static HTML.'));
-    assert.ok(answerSummaryHtml.includes('Keep UI and static renderers in parity.'));
+    assert.ok(!answerSummaryVisibleHtml.includes('Renderer must show compact rule answer details.'));
+    assert.ok(!answerSummaryVisibleHtml.includes('src/reports/static-html/quality-gate-tab.ts'));
+    assert.ok(!answerSummaryVisibleHtml.includes('Rendered answer summary in static HTML.'));
+    assert.ok(!answerSummaryVisibleHtml.includes('Keep UI and static renderers in parity.'));
     assert.ok(answerSummaryHtml.includes('garda-agent-orchestrator/template/docs/prompts/project-memory-optimization.md'));
     assert.ok(answerSummaryHtml.includes('href="../../template/docs/prompts/project-memory-optimization.md"'));
     assert.ok(!answerSummaryHtml.includes('href="AGENTS.md"'));
@@ -339,6 +419,10 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(answerRenderedDetail.innerHTML.includes('<th>Forecast excluded samples</th><td>1</td>'));
     assert.ok(answerRenderedDetail.innerHTML.includes('<th>Forecast exclusion reasons</th><td>timed-out runs=1</td>'));
     assert.ok(answerRenderedDetail.innerHTML.includes('full-suite timeout warning is visible in static task detail'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('Quality checklist required rework (1 action item).'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('Keep quality details in task history.'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('artifact_evidence_binding'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('T-100-quality-checklist.json'));
 
     report.quality_gate_tab.latest_check = {
         ...report.quality_gate_tab.latest_check,
@@ -400,9 +484,12 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
         stale_reasons: ['Unsupported quality checklist status: BROKEN.']
     };
     const invalidQualityGateHtml = renderStaticHtmlReport(report);
+    const invalidQualityGateVisibleHtml = stripEmbeddedReportData(invalidQualityGateHtml);
 
     assert.ok(invalidQualityGateHtml.includes('Latest quality checklist artifact is invalid.'));
     assert.ok(invalidQualityGateHtml.includes('Unsupported quality checklist status: BROKEN.'));
+    assert.ok(!invalidQualityGateVisibleHtml.includes('Latest quality checklist artifact is invalid.'));
+    assert.ok(!invalidQualityGateVisibleHtml.includes('Unsupported quality checklist status: BROKEN.'));
 });
 
 test('buildStaticHtmlReport writes default runtime report and returns a browser URL', () => {
