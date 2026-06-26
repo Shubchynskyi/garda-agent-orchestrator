@@ -243,6 +243,111 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('restarts a coherent cycle for same-task workflow-config work without laundering the baseline hash', async () => {
+        const repoRoot = createTempRepo();
+        const taskId = 'T-903a-restart-coherent-cycle-workflow-config';
+        const workflowConfigPath = 'garda-agent-orchestrator/live/config/workflow-config.json';
+        const taskSummary = 'Restart approved workflow-config policy changes after a closed cycle';
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        writeWorkflowConfig(repoRoot);
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+            `| ${taskId} | TODO | P1 | workflow | Update workflow-config policy changes | unassigned | 2026-03-28 | default | Owns workflow-config policy changes. |`
+        ].join('\n'), 'utf8');
+        seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
+        writeProtectedControlPlaneManifest(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            'restart-coherent-cycle-workflow-config'
+        );
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId,
+            taskSummary,
+            orchestratorWork: true,
+            workflowConfigWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            plannedChangedFiles: [workflowConfigPath]
+        });
+        assert.equal(taskModeResult.exitCode, 0);
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${taskId}-task-mode.json`);
+        const initialTaskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as {
+            workflow_config_file_hashes?: Record<string, string | null>;
+        };
+        const originalWorkflowConfigHash = initialTaskModeArtifact.workflow_config_file_hashes?.[workflowConfigPath];
+        assert.equal(typeof originalWorkflowConfigHash, 'string');
+
+        loadTaskEntryRulePack(repoRoot, taskId);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const workflowConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, workflowConfigPath), 'utf8')) as {
+            review_execution_policy: { mode: string };
+        };
+        workflowConfig.review_execution_policy.mode = 'strict_sequential';
+        fs.writeFileSync(path.join(repoRoot, workflowConfigPath), JSON.stringify(workflowConfig, null, 2) + '\n', 'utf8');
+        const currentWorkflowConfigHash = getCurrentWorkflowConfigFileHashes(repoRoot)[workflowConfigPath];
+        assert.notEqual(currentWorkflowConfigHash, originalWorkflowConfigHash);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            taskId,
+            taskSummary,
+            [workflowConfigPath],
+            `${taskId}-preflight.json`,
+            taskModePath
+        );
+        loadPostPreflightRulePack(repoRoot, taskId, preflightPath, true, '', taskModePath);
+        const initialCompileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(initialCompileResult.exitCode, 0, initialCompileResult.outputLines.join('\n'));
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            taskId,
+            'REVIEW_GATE_PASSED',
+            'PASS',
+            'Review gate passed before coherent restart.',
+            {}
+        );
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot,
+            taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+
+        const refreshedTaskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as {
+            workflow_config_file_hashes?: Record<string, string | null>;
+        };
+        assert.equal(refreshedTaskModeArtifact.workflow_config_file_hashes?.[workflowConfigPath], originalWorkflowConfigHash);
+        const refreshedPreflight = JSON.parse(fs.readFileSync(preflightPath, 'utf8')) as {
+            triggers?: { changed_workflow_config_files?: string[] };
+        };
+        assert.deepEqual(refreshedPreflight.triggers?.changed_workflow_config_files, [workflowConfigPath]);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('restarts a coherent cycle from a false-DONE legacy task-mode artifact without forcing a new start banner', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-restart-coherent-cycle-legacy-task-mode';

@@ -450,7 +450,7 @@ describe('runUpdate', () => {
         }
     });
 
-    it('backfills shipped optional quality checks for stale baseline without overwriting local edits', () => {
+    it('refreshes shipped optional quality checks while preserving enabled state and custom rules', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
             const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
@@ -464,6 +464,12 @@ describe('runUpdate', () => {
                 id: 'custom_quality_rule',
                 title: 'Custom quality rule',
                 prompt: 'Check the local custom quality rule.',
+                enabled: true
+            };
+            const deprecatedProjectRule = {
+                id: 'task_queue_parser_state',
+                title: 'Task queue parser state',
+                prompt: 'Check the old shipped task queue parser rule.',
                 enabled: true
             };
             fs.writeFileSync(
@@ -488,6 +494,7 @@ describe('runUpdate', () => {
                         ],
                         rules: [
                             editedShippedRule,
+                            deprecatedProjectRule,
                             customRule
                         ]
                     }
@@ -525,8 +532,15 @@ describe('runUpdate', () => {
                         .map((rule) => rule.id)
                 ]
             );
-            assert.deepEqual(firstMergeConfig.optional_quality_checks.rules[0], editedShippedRule);
+            assert.deepEqual(firstMergeConfig.optional_quality_checks.rules[0], {
+                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0],
+                enabled: false
+            });
             assert.deepEqual(firstMergeConfig.optional_quality_checks.rules[1], customRule);
+            assert.equal(
+                firstMergeConfig.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === deprecatedProjectRule.id),
+                false
+            );
 
             runUpdate({
                 targetRoot: projectRoot,

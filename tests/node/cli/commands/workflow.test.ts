@@ -121,7 +121,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes(`OptionalQualityChecksBaselineVersion: ${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION}`));
         assert.ok(output.includes(`OptionalQualityChecksRuleIds: ${defaultOptionalQualityCheckRuleIds()}`));
         assert.ok(output.includes('OptionalQualityCheckRule: code_simplification enabled=true title=Code simplification'));
-        assert.ok(output.includes('OptionalQualityCheckRule: zero_diff_noop_preemption enabled=true title=Zero-diff no-op preemption'));
+        assert.ok(output.includes('OptionalQualityCheckRule: gate_routing_self_regression enabled=true title=Gate routing self-regression'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -227,6 +227,11 @@ test('workflow set toggles optional quality checks without replacing rules', () 
     const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
 
     try {
+        const expectedRuleCount = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length + 1;
+        const expectedRuleIds = [
+            'custom_review_focus',
+            ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+        ];
         const { result, output } = captureConsole(() => handleWorkflow([
             'set',
             '--bundle-root', bundleRoot,
@@ -237,21 +242,72 @@ test('workflow set toggles optional quality checks without replacing rules', () 
         assert.equal(result.status, 'CHANGED');
         assert.equal(result.optional_quality_checks.enabled, false);
         assert.equal(result.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
-        assert.deepEqual(result.optional_quality_checks.rules.map((rule) => rule.id), ['custom_review_focus']);
+        assert.deepEqual(result.optional_quality_checks.rules.map((rule) => rule.id), expectedRuleIds);
         assert.ok(result.changed_fields.includes('optional_quality_checks.enabled'));
-        assert.ok(output.includes(`Optional quality checks: disabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=1 enabled_rules=1`));
+        assert.ok(output.includes(`Optional quality checks: disabled baseline=${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION} rules=${expectedRuleCount} enabled_rules=${expectedRuleCount}`));
 
         const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         assert.equal(parsedConfig.optional_quality_checks.enabled, false);
         assert.equal(parsedConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
-        assert.deepEqual(parsedConfig.optional_quality_checks.rules, [
-            {
-                id: 'custom_review_focus',
-                title: 'Custom review focus',
-                prompt: 'Check the custom local review focus.',
-                enabled: true
-            }
-        ]);
+        assert.deepEqual(parsedConfig.optional_quality_checks.rules[0], {
+            id: 'custom_review_focus',
+            title: 'Custom review focus',
+            prompt: 'Check the custom local review focus.',
+            enabled: true
+        });
+        assert.deepEqual(
+            parsedConfig.optional_quality_checks.rules.slice(1).map((rule: { id: string }) => rule.id),
+            DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+        );
+    } finally {
+        fs.rmSync(bundleRoot, { recursive: true, force: true });
+    }
+});
+
+test('workflow set refreshes stale optional quality baseline version when writing rules', () => {
+    const staleBaselineVersion = '2026-06-25.t839';
+    const customRule = {
+        id: 'custom_review_focus',
+        title: 'Custom review focus',
+        prompt: 'Check the custom local review focus.',
+        enabled: true
+    };
+    const baselineRule = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0];
+    const bundleRoot = createBundleRoot({}, {
+        optional_quality_checks: {
+            enabled: true,
+            baseline_version: staleBaselineVersion,
+            rules: [
+                customRule,
+                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({ ...rule }))
+            ]
+        }
+    });
+    const configPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+
+    try {
+        const { result } = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', baselineRule.id,
+            '--optional-check-rule-enabled', 'false',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON));
+        assert.ok(result && result.action === 'set');
+        assert.equal(result.status, 'CHANGED');
+        assert.ok(result.changed_fields.includes('optional_quality_checks.baseline_version'));
+        assert.ok(result.changed_fields.includes('optional_quality_checks.rules'));
+
+        const parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        assert.equal(parsedConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+        assert.deepEqual(parsedConfig.optional_quality_checks.rules[0], customRule);
+        const disabledBaselineRule = parsedConfig.optional_quality_checks.rules.find(
+            (rule: { id: string }) => rule.id === baselineRule.id
+        );
+        assert.deepEqual(disabledBaselineRule, {
+            ...baselineRule,
+            enabled: false
+        });
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -318,6 +374,46 @@ test('workflow set adds edits disables and deletes optional quality-check rules'
         assert.equal(
             parsedConfig.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'custom_focus'),
             false
+        );
+
+        const baselineRule = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0];
+        const baselineToggle = captureConsole(() => handleWorkflow([
+            'set',
+            '--bundle-root', bundleRoot,
+            '--optional-check-rule-id', baselineRule.id,
+            '--optional-check-rule-enabled', 'false',
+            ...buildOperatorConfirmationArgs()
+        ], PACKAGE_JSON)).result;
+        assert.ok(baselineToggle && baselineToggle.action === 'set');
+        assert.equal(baselineToggle.status, 'CHANGED');
+        assert.ok(baselineToggle.changed_fields.includes('optional_quality_checks.rules'));
+
+        parsedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        const disabledBaselineRule = parsedConfig.optional_quality_checks.rules.find((rule: { id: string }) => rule.id === baselineRule.id);
+        assert.deepEqual(disabledBaselineRule, {
+            ...baselineRule,
+            enabled: false
+        });
+
+        assert.throws(
+            () => captureConsole(() => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--optional-check-rule-id', baselineRule.id,
+                '--optional-check-rule-title', 'Locally edited baseline title',
+                '--optional-check-rule-prompt', baselineRule.prompt,
+                ...buildOperatorConfirmationArgs()
+            ], PACKAGE_JSON)),
+            /can only change enabled state/
+        );
+        assert.throws(
+            () => captureConsole(() => handleWorkflow([
+                'set',
+                '--bundle-root', bundleRoot,
+                '--optional-check-rule-delete', baselineRule.id,
+                ...buildOperatorConfirmationArgs()
+            ], PACKAGE_JSON)),
+            /cannot be deleted/
         );
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
@@ -959,7 +1055,7 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
         assert.equal(parsed.optional_quality_checks.rules.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
         assert.equal(parsed.optional_quality_checks.rules[0].id, 'code_simplification');
-        assert.ok(parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'trust_artifact_identity'));
+        assert.ok(parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'artifact_evidence_binding'));
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=false');

@@ -33,7 +33,9 @@ export {
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE,
     buildDefaultOptionalQualityChecksConfig,
+    getBaselineOptionalQualityCheckRule,
     isExactLegacyOptionalQualityChecksGeneratedDefault,
+    isBaselineOptionalQualityCheckRuleId,
     mergeOptionalQualityChecksWithBaseline,
     normalizeOptionalQualityChecksConfig
 } from './optional-quality-checks';

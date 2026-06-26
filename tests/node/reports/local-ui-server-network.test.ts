@@ -121,6 +121,25 @@ test('local UI server skips browser-unsafe ports in configured local ranges', as
     }
 });
 
+test('local UI server skips all fetch-forbidden configured local ports', async () => {
+    const repoRoot = makeTempRepo();
+    writeRepo(repoRoot);
+    const server = await startLocalUiServer({
+        repoRoot,
+        portStart: 4190,
+        portEnd: 4191
+    });
+    try {
+        assert.equal(server.host, DEFAULT_UI_HOST);
+        assert.equal(server.port, 4191);
+        const response = await fetch(server.url);
+        assert.equal(response.status, 200);
+        await response.text();
+    } finally {
+        await cleanupLocalUiTestResources({ repoRoot, server });
+    }
+});
+
 test('local UI server close drains unconsumed fetch response sockets', async () => {
     const repoRoot = makeTempRepo();
     writeRepo(repoRoot);
@@ -189,6 +208,10 @@ test('local UI server rejects browser-unsafe explicit ports', async () => {
     try {
         await assert.rejects(
             () => startLocalUiServer({ repoRoot, port: 6000 }),
+            /not browser-safe/
+        );
+        await assert.rejects(
+            () => startLocalUiServer({ repoRoot, port: 6679 }),
             /not browser-safe/
         );
     } finally {

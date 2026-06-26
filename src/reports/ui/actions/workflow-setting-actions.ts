@@ -1,4 +1,5 @@
 import { buildWorkflowConfigTab } from '../../report-data-contract';
+import { getBaselineOptionalQualityCheckRule, isBaselineOptionalQualityCheckRuleId } from '../../../core/workflow-config';
 import { validateCompileGateCommand } from '../../../gates/compile/compile-gate';
 import {
     WORKFLOW_SETTING_DEFINITIONS,
@@ -250,6 +251,9 @@ export function parseUiOptionalCheckRuleValue(payload: {
     const action: UiOptionalCheckRuleAction = payload.optional_rule_action === 'delete' ? 'delete' : 'upsert';
     const ruleId = normalizeRuleId(payload.rule_id);
     if (action === 'delete') {
+        if (isBaselineOptionalQualityCheckRuleId(ruleId)) {
+            throw new Error(`Baseline optional quality-check rule '${ruleId}' cannot be deleted. Disable it instead.`);
+        }
         return {
             action,
             rule_id: ruleId,
@@ -258,6 +262,41 @@ export function parseUiOptionalCheckRuleValue(payload: {
             enabled: null,
             proposed_value: { action, id: ruleId },
             command_args: ['--optional-check-rule-delete', ruleId]
+        };
+    }
+    const baselineRule = getBaselineOptionalQualityCheckRule(ruleId);
+    if (baselineRule) {
+        const title = normalizeOptionalText(payload.title);
+        const prompt = normalizeOptionalText(payload.prompt);
+        if (
+            (title !== null && title !== baselineRule.title)
+            || (prompt !== null && prompt !== baselineRule.prompt)
+        ) {
+            throw new Error(`Baseline optional quality-check rule '${ruleId}' can only change enabled state.`);
+        }
+        const enabled = normalizeOptionalRuleEnabled(payload.enabled);
+        if (enabled === null) {
+            throw new Error(`Baseline optional quality-check rule '${ruleId}' requires an explicit enabled state.`);
+        }
+        return {
+            action,
+            rule_id: ruleId,
+            title: baselineRule.title,
+            prompt: baselineRule.prompt,
+            enabled,
+            proposed_value: {
+                action,
+                id: ruleId,
+                title: baselineRule.title,
+                prompt: baselineRule.prompt,
+                enabled
+            },
+            command_args: [
+                '--optional-check-rule-id',
+                ruleId,
+                '--optional-check-rule-enabled',
+                String(enabled)
+            ]
         };
     }
     const title = normalizeOptionalText(payload.title);

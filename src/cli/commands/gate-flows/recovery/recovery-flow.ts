@@ -131,6 +131,12 @@ export async function runRestartCoherentCycleCommand(
             workflowConfigWork: previousTaskMode.workflow_config_work === true,
             operatorConfirmed: options.operatorConfirmed,
             operatorConfirmedAtUtc: options.operatorConfirmedAtUtc,
+            allowedDirtyWorkflowConfigFiles: previousTaskMode.orchestrator_work === true
+                && previousTaskMode.workflow_config_work === true
+                ? replayScope.plannedChangedFiles
+                : [],
+            workflowConfigFileHashesOverride: previousTaskMode.workflow_config_file_hashes,
+            workflowConfigCompatibilityBaselineFilesOverride: previousTaskMode.workflow_config_compatibility_baseline_files,
             provider: previousTaskMode.provider || undefined,
             routedTo: previousTaskMode.routed_to || undefined,
             planPath: previousTaskMode.plan?.plan_path || undefined,

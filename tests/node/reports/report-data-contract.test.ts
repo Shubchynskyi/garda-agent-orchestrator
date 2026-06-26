@@ -572,13 +572,13 @@ test('buildWorkflowConfigTab preserves unknown legacy enum-list values with diag
     assert.ok(!excludedReviewTypes.options.some((option) => option.value === 'legacy-review'));
 });
 
-test('buildReportDataContract exposes quality gate baseline and local rule status', () => {
+test('buildReportDataContract exposes quality gate baseline and custom rule status', () => {
     const repoRoot = makeTempRepo();
     writeTaskMd(repoRoot);
     writeWorkflowConfig(repoRoot);
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
-    const removedBaselineRule = config.optional_quality_checks.rules.find((rule) => rule.id === 'zero_diff_noop_preemption');
+    const removedBaselineRule = config.optional_quality_checks.rules.find((rule) => rule.id === 'gate_routing_self_regression');
     assert.ok(removedBaselineRule);
     config.optional_quality_checks.rules = config.optional_quality_checks.rules
         .filter((rule) => rule.id !== removedBaselineRule.id)
@@ -598,20 +598,23 @@ test('buildReportDataContract exposes quality gate baseline and local rule statu
         generatedAtUtc: '2026-05-16T00:00:00.000Z'
     });
 
-    const edited = report.quality_gate_tab.rules.find((rule) => rule.id === 'code_simplification');
-    const deleted = report.quality_gate_tab.rules.find((rule) => rule.id === removedBaselineRule.id);
+    const canonicalized = report.quality_gate_tab.rules.find((rule) => rule.id === 'code_simplification');
+    const restored = report.quality_gate_tab.rules.find((rule) => rule.id === removedBaselineRule.id);
     const custom = report.quality_gate_tab.rules.find((rule) => rule.id === 'custom_focus');
-    assert.ok(edited);
-    assert.deepEqual(edited.statuses, ['locally_edited']);
-    assert.equal(edited.source, 'baseline');
-    assert.ok(deleted);
-    assert.equal(deleted.present, false);
-    assert.deepEqual(deleted.statuses, ['deleted']);
+    assert.ok(canonicalized);
+    assert.deepEqual(canonicalized.statuses, ['active']);
+    assert.equal(canonicalized.source, 'baseline');
+    assert.equal(canonicalized.prompt, 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.');
+    assert.ok(restored);
+    assert.equal(restored.present, true);
+    assert.equal(restored.source, 'baseline');
+    assert.deepEqual(restored.statuses, ['active']);
+    assert.equal(restored.prompt, removedBaselineRule.prompt);
     assert.ok(custom);
     assert.equal(custom.source, 'custom');
     assert.deepEqual(custom.statuses, ['disabled']);
     assert.equal(report.quality_gate_tab.custom_rule_count, 1);
-    assert.equal(report.quality_gate_tab.deleted_baseline_rule_count, 1);
+    assert.equal(report.quality_gate_tab.deleted_baseline_rule_count, 0);
     assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'missing');
     assert.deepEqual(report.quality_gate_tab.action_required_history, []);
 });

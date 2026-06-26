@@ -16,7 +16,7 @@ export interface OptionalQualityChecksConfig {
 }
 
 export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
-export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-06-25.t839';
+export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-06-26.t843';
 
 export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
     Object.freeze({
@@ -66,48 +66,62 @@ export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckR
 export const DEFAULT_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
     ...LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
     Object.freeze({
-        id: 'preflight_review_scope_regressions',
-        title: 'Preflight and review scope regressions',
-        prompt: 'Check whether regression tests added for runtime changes are included in the current preflight and review scope together with the implementation files.',
-        enabled: true
-    }),
-    Object.freeze({
         id: 'classifier_intent_edge_cases',
         title: 'Classifier intent edge cases',
         prompt: 'Check classifier keyword or regex changes against acceptance wording, hyphen and space variants, standalone forms, and protocol or numeric suffixes such as OAuth2.',
         enabled: true
     }),
     Object.freeze({
-        id: 'trust_artifact_identity',
-        title: 'Trust artifact identity',
-        prompt: 'Check new trust-bearing artifact or telemetry identity fields for stable-selection persistence, stale or forged value rejection, and legacy fallback behavior.',
+        id: 'config_materialization_parity',
+        title: 'Config materialization parity',
+        prompt: 'Check config, default, template, materialization, schema, install, and update changes for parity while preserving explicit local user choices.',
         enabled: true
     }),
     Object.freeze({
-        id: 'doc_impact_closeout_parity',
-        title: 'Doc impact closeout parity',
-        prompt: 'Check that next-step commands, direct gate validation, and CLI tests stay aligned for behaviorChanged internal evidence, docs-only evidence, and project-memory parity.',
+        id: 'control_plane_action_safety',
+        title: 'Control-plane action safety',
+        prompt: 'Check UI, CLI, or other control-plane mutations use audited and validated action paths with confirmation, boundary checks, compact success output, and preserved failure diagnostics.',
         enabled: true
     }),
     Object.freeze({
-        id: 'task_queue_parser_state',
-        title: 'Task queue parser state',
-        prompt: 'Check task queue parser and status-sync changes against comma-separated child ids, range notation, missing child rows, mixed statuses, and reentrant global RegExp state.',
+        id: 'artifact_evidence_binding',
+        title: 'Artifact evidence binding',
+        prompt: 'Check artifact, history, cache, or telemetry evidence validates identity, freshness, scope or worktree binding, path ownership, and stale or forged negative cases before trust.',
         enabled: true
     }),
     Object.freeze({
-        id: 'review_cycle_scope_freshness',
-        title: 'Review cycle scope freshness',
-        prompt: 'Check review-cycle or split guard changes so pending launch telemetry is not counted as a completed cycle, stale scope hashes are ignored, and helper growth is extracted before review.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'zero_diff_noop_preemption',
-        title: 'Zero-diff no-op preemption',
-        prompt: 'Check zero-diff or no-op routing so missing, stale, or foreign no-op evidence preempts full-suite, review-context, and reviewer-launch routing after compile.',
+        id: 'gate_routing_self_regression',
+        title: 'Gate routing self-regression',
+        prompt: 'Check gate, guard, or routing changes with self-regression fixtures where blocking states preempt expensive work, pass states continue, and warning-only states do not block.',
         enabled: true
     })
 ]);
+
+const DEFAULT_OPTIONAL_QUALITY_CHECK_RULE_BY_ID = new Map(
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => [rule.id, rule])
+);
+
+const DEPRECATED_OPTIONAL_QUALITY_CHECK_BASELINE_RULE_IDS = new Set([
+    'preflight_review_scope_regressions',
+    'trust_artifact_identity',
+    'doc_impact_closeout_parity',
+    'task_queue_parser_state',
+    'review_cycle_scope_freshness',
+    'zero_diff_noop_preemption'
+]);
+
+function getOptionalQualityCheckBaselineRuleById(ruleId: string): OptionalQualityCheckRule | null {
+    return DEFAULT_OPTIONAL_QUALITY_CHECK_RULE_BY_ID.get(ruleId.trim().toLowerCase()) || null;
+}
+
+export function isBaselineOptionalQualityCheckRuleId(ruleId: string): boolean {
+    return getOptionalQualityCheckBaselineRuleById(ruleId) !== null;
+}
+
+export function getBaselineOptionalQualityCheckRule(ruleId: string): OptionalQualityCheckRule | null {
+    const baselineRule = getOptionalQualityCheckBaselineRuleById(ruleId);
+    return baselineRule ? cloneJsonValue(baselineRule) as OptionalQualityCheckRule : null;
+}
 
 export function buildDefaultOptionalQualityChecksConfig(): OptionalQualityChecksConfig {
     return {
@@ -127,6 +141,13 @@ function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheck
     if (!id || !title || !prompt) {
         return null;
     }
+    const baselineRule = getOptionalQualityCheckBaselineRuleById(id);
+    if (baselineRule) {
+        return {
+            ...cloneJsonValue(baselineRule),
+            enabled: input.enabled === undefined ? baselineRule.enabled : input.enabled === true
+        };
+    }
     return {
         ...cloneJsonValue(input),
         id,
@@ -145,10 +166,45 @@ function normalizeOptionalQualityCheckRules(input: unknown): OptionalQualityChec
         .filter((rule): rule is OptionalQualityCheckRule => rule !== null);
 }
 
-function getOptionalQualityChecksBaselineVersion(input: Record<string, unknown>): string {
-    return typeof input.baseline_version === 'string'
-        ? input.baseline_version.trim()
-        : '';
+function mergeOptionalQualityCheckRulesWithBaseline(
+    existingRules: readonly OptionalQualityCheckRule[],
+    baselineRules: readonly OptionalQualityCheckRule[],
+    staleBaselineVersion: boolean
+): OptionalQualityCheckRule[] {
+    const baselineRuleById = new Map(baselineRules.map((rule) => [rule.id, rule]));
+    const mergedRuleIds = new Set<string>();
+    const mergedRules: OptionalQualityCheckRule[] = [];
+
+    for (const existingRule of existingRules) {
+        if (staleBaselineVersion && DEPRECATED_OPTIONAL_QUALITY_CHECK_BASELINE_RULE_IDS.has(existingRule.id)) {
+            continue;
+        }
+        const baselineRule = baselineRuleById.get(existingRule.id);
+        if (baselineRule) {
+            if (!mergedRuleIds.has(existingRule.id)) {
+                const canonicalRule = cloneJsonValue(baselineRule) as OptionalQualityCheckRule;
+                mergedRules.push({
+                    ...canonicalRule,
+                    enabled: existingRule.enabled !== false
+                });
+                mergedRuleIds.add(existingRule.id);
+            }
+            continue;
+        }
+        if (!mergedRuleIds.has(existingRule.id)) {
+            mergedRules.push(cloneJsonValue(existingRule) as OptionalQualityCheckRule);
+            mergedRuleIds.add(existingRule.id);
+        }
+    }
+
+    for (const baselineRule of baselineRules) {
+        if (!mergedRuleIds.has(baselineRule.id)) {
+            mergedRules.push(cloneJsonValue(baselineRule) as OptionalQualityCheckRule);
+            mergedRuleIds.add(baselineRule.id);
+        }
+    }
+
+    return mergedRules;
 }
 
 function isExactOptionalQualityCheckRule(rule: unknown, expected: OptionalQualityCheckRule): boolean {
@@ -159,6 +215,12 @@ function isExactOptionalQualityCheckRule(rule: unknown, expected: OptionalQualit
         && normalized.prompt === expected.prompt
         && normalized.enabled === expected.enabled
         && Object.keys(normalized).sort().join('\n') === Object.keys(expected).sort().join('\n');
+}
+
+function getOptionalQualityChecksBaselineVersion(input: Record<string, unknown>): string {
+    return typeof input.baseline_version === 'string'
+        ? input.baseline_version.trim()
+        : '';
 }
 
 export function isExactLegacyOptionalQualityChecksGeneratedDefault(input: unknown): boolean {
@@ -182,17 +244,22 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
     if (!isPlainObject(input)) {
         return defaultConfig;
     }
+    const rawBaselineVersion = getOptionalQualityChecksBaselineVersion(input);
+    const baselineVersion = rawBaselineVersion || defaultConfig.baseline_version;
+    const baselineRules = cloneJsonValue(defaultConfig.rules) as OptionalQualityCheckRule[];
     const normalizedRules = Array.isArray(input.rules)
-        ? normalizeOptionalQualityCheckRules(input.rules)
-        : cloneJsonValue(defaultConfig.rules);
+        ? mergeOptionalQualityCheckRulesWithBaseline(
+            normalizeOptionalQualityCheckRules(input.rules),
+            baselineRules,
+            rawBaselineVersion !== defaultConfig.baseline_version
+        )
+        : baselineRules;
     return {
         ...cloneJsonValue(input),
         enabled: input.enabled === undefined
             ? defaultConfig.enabled
             : input.enabled === true,
-        baseline_version: typeof input.baseline_version === 'string' && input.baseline_version.trim()
-            ? input.baseline_version.trim()
-            : defaultConfig.baseline_version,
+        baseline_version: baselineVersion,
         rules: normalizedRules.length > 0
             ? normalizedRules
             : cloneJsonValue(defaultConfig.rules)
@@ -211,19 +278,12 @@ export function mergeOptionalQualityChecksWithBaseline(
     const existingConfig = cloneJsonValue(existingInput);
     const existingRules = normalizeOptionalQualityCheckRules(existingConfig.rules);
     const baselineRules = cloneJsonValue(templateConfig.rules);
-    const existingRuleIds = new Set(existingRules.map((rule) => rule.id));
-    const shouldBackfillShippedRules = getOptionalQualityChecksBaselineVersion(existingConfig)
-        !== templateConfig.baseline_version;
-    const mergedRules = [...existingRules];
-
-    if (shouldBackfillShippedRules) {
-        for (const baselineRule of baselineRules) {
-            if (!existingRuleIds.has(baselineRule.id)) {
-                mergedRules.push(baselineRule);
-                existingRuleIds.add(baselineRule.id);
-            }
-        }
-    }
+    const staleBaselineVersion = getOptionalQualityChecksBaselineVersion(existingConfig) !== templateConfig.baseline_version;
+    const mergedRules = mergeOptionalQualityCheckRulesWithBaseline(
+        existingRules,
+        baselineRules,
+        staleBaselineVersion
+    );
 
     return {
         ...cloneJsonValue(templateConfig),

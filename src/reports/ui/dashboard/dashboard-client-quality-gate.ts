@@ -131,17 +131,20 @@ function renderQualityGateToggle(settings, disabled) {
 }
 function renderQualityGateRuleRow(rule, disabled) {
   const ruleId = safe(rule.id || '');
+  const baselineRule = rule.source === 'baseline';
   const disabledAttr = disabled ? ' disabled' : '';
+  const immutableTextAttr = disabled || baselineRule ? ' disabled' : '';
+  const deleteDisabledAttr = disabled || baselineRule || rule.present === false ? ' disabled' : '';
   const source = qualityGateSourceLabel(rule.source);
   const actionLabel = rule.present === false ? t('addOptionalCheckRule') : t('saveOptionalCheckRule');
   return '<tr data-optional-rule-id="' + ruleId + '">'
     + '<td><code>' + ruleId + '</code></td>'
     + '<td>' + safe(source) + '</td>'
     + '<td>' + qualityGateStatusBadges(rule) + '</td>'
-    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + disabledAttr + '></td>'
-    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + disabledAttr + '></td>'
+    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + immutableTextAttr + '></td>'
+    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + immutableTextAttr + '></td>'
     + '<td><select id="' + safe(optionalRuleInputId(rule.id, 'enabled')) + '"' + disabledAttr + '><option value="true"' + (rule.enabled !== false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOn')) + '</option><option value="false"' + (rule.enabled === false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOff')) + '</option></select></td>'
-    + '<td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : actionLabel) + '</button><button type="button" data-quality-gate-rule-action="delete" data-quality-gate-rule-id="' + ruleId + '"' + (disabled || rule.present === false ? ' disabled' : '') + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
+    + '<td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : actionLabel) + '</button><button type="button" data-quality-gate-rule-action="delete" data-quality-gate-rule-id="' + ruleId + '"' + deleteDisabledAttr + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
     + '</tr>';
 }
 function renderQualityGateNewRuleRow(disabled) {

@@ -60,6 +60,7 @@ export interface AssertTaskModeProtectedEntryAllowedOptions {
     workflowConfigPreTaskBaseline: WorkflowConfigPreTaskBaselineState;
     orchestratorWork: boolean;
     workflowConfigWork: boolean;
+    allowedDirtyWorkflowConfigFiles?: unknown;
     taskQueueMetadata: TaskQueueMetadataForProtectedEntry | null;
 }
 
@@ -180,6 +181,37 @@ function isProtectedManifestOnlyBaselineDrift(
         && dirtyFiles.every((entry) => manifestFiles.includes(entry));
 }
 
+function normalizeWorkflowConfigPathList(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    return [...new Set(
+        value
+            .map((entry) => gateHelpers.normalizePath(entry))
+            .filter((entry) => entry && gateHelpers.isWorkflowConfigControlPlanePath(entry))
+    )].sort();
+}
+
+function canReplayDirtyWorkflowConfigFiles(input: {
+    dirtyWorkflowConfigFiles: readonly string[];
+    workflowConfigPlannedFiles: readonly string[];
+    allowedDirtyWorkflowConfigFiles: readonly string[];
+    orchestratorWork: boolean;
+    workflowConfigWork: boolean;
+}): boolean {
+    if (
+        input.dirtyWorkflowConfigFiles.length === 0
+        || !input.orchestratorWork
+        || !input.workflowConfigWork
+        || input.allowedDirtyWorkflowConfigFiles.length === 0
+    ) {
+        return false;
+    }
+    const allowed = new Set(input.allowedDirtyWorkflowConfigFiles);
+    const planned = new Set(input.workflowConfigPlannedFiles.map((entry) => gateHelpers.normalizePath(entry)));
+    return input.dirtyWorkflowConfigFiles.every((entry) => allowed.has(entry) && planned.has(entry));
+}
+
 export function requireTaskModeOperatorConfirmation(
     options: {
         operatorConfirmed?: unknown;
@@ -213,10 +245,21 @@ export function assertTaskModeProtectedEntryAllowed(input: AssertTaskModeProtect
         workflowConfigPreTaskBaseline,
         orchestratorWork,
         workflowConfigWork,
+        allowedDirtyWorkflowConfigFiles,
         taskQueueMetadata
     } = input;
+    const replayAllowedDirtyWorkflowConfigFiles = normalizeWorkflowConfigPathList(allowedDirtyWorkflowConfigFiles);
 
-    if (dirtyWorkflowConfigFiles.length > 0) {
+    if (
+        dirtyWorkflowConfigFiles.length > 0
+        && !canReplayDirtyWorkflowConfigFiles({
+            dirtyWorkflowConfigFiles,
+            workflowConfigPlannedFiles,
+            allowedDirtyWorkflowConfigFiles: replayAllowedDirtyWorkflowConfigFiles,
+            orchestratorWork,
+            workflowConfigWork
+        })
+    ) {
         if (isProtectedManifestOnlyBaselineDrift(dirtyWorkflowConfigFiles, workflowConfigPreTaskBaseline)) {
             throw new Error(
                 `Trusted protected control-plane manifest is stale before task-mode entry for workflow config files: ${dirtyWorkflowConfigFiles.join(', ')}. ` +

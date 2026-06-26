@@ -39,14 +39,56 @@ function validateType(value: unknown, expected: string, jsonPath: string): Schem
  * Validates a JSON value against a JSON Schema subset (draft-07).
  *
  * Supports: type, required, properties, additionalProperties, items,
- * enum, minimum, minLength, minProperties, uniqueItems.
+ * enum, const, not, oneOf, anyOf, allOf, contains, pattern, minimum,
+ * minLength, minItems, minProperties, uniqueItems, and the local
+ * x-case-insensitive-unique-item-properties extension.
  */
 export function validateAgainstSchema(value: unknown, schema: Record<string, unknown>, rootPath = ''): SchemaValidationResult {
     const errors: SchemaValidationError[] = [];
+    const jsonPath = rootPath || '$';
+
+    const constValue = schema.const;
+    if ('const' in schema && !schemaValueEquals(value, constValue)) {
+        errors.push({ path: jsonPath, message: `Value ${formatSchemaValue(value)} does not match const ${formatSchemaValue(constValue)}.` });
+    }
+
+    const enumValues = schema.enum as unknown[] | undefined;
+    if (enumValues && !enumValues.some((candidate) => schemaValueEquals(value, candidate))) {
+        errors.push({ path: jsonPath, message: `Value ${formatSchemaValue(value)} not in enum [${enumValues.map(formatSchemaValue).join(', ')}].` });
+    }
+
+    const notSchema = schema.not as Record<string, unknown> | undefined;
+    if (notSchema) {
+        const notResult = validateAgainstSchema(value, notSchema, rootPath);
+        if (notResult.valid) {
+            errors.push({ path: jsonPath, message: 'Value matches forbidden schema.' });
+        }
+    }
+
+    const allOf = schema.allOf as Array<Record<string, unknown>> | undefined;
+    if (allOf) {
+        for (const nestedSchema of allOf) {
+            const nestedResult = validateAgainstSchema(value, nestedSchema, rootPath);
+            errors.push(...nestedResult.errors);
+        }
+    }
+
+    const anyOf = schema.anyOf as Array<Record<string, unknown>> | undefined;
+    if (anyOf && !anyOf.some((nestedSchema) => validateAgainstSchema(value, nestedSchema, rootPath).valid)) {
+        errors.push({ path: jsonPath, message: 'Value does not match any allowed schema.' });
+    }
+
+    const oneOf = schema.oneOf as Array<Record<string, unknown>> | undefined;
+    if (oneOf) {
+        const matchCount = oneOf.filter((nestedSchema) => validateAgainstSchema(value, nestedSchema, rootPath).valid).length;
+        if (matchCount !== 1) {
+            errors.push({ path: jsonPath, message: `Value matches ${matchCount} oneOf schemas; expected exactly 1.` });
+        }
+    }
 
     const schemaType = schema.type as string | undefined;
     if (schemaType) {
-        const typeError = validateType(value, schemaType, rootPath || '$');
+        const typeError = validateType(value, schemaType, jsonPath);
         if (typeError) {
             errors.push(typeError);
             return { valid: false, errors };
@@ -57,11 +99,21 @@ export function validateAgainstSchema(value: unknown, schema: Record<string, unk
         const str = value as string;
         const minLength = schema.minLength as number | undefined;
         if (minLength !== undefined && str.length < minLength) {
-            errors.push({ path: rootPath || '$', message: `String length ${str.length} < minimum ${minLength}.` });
+            errors.push({ path: jsonPath, message: `String length ${str.length} < minimum ${minLength}.` });
         }
-        const enumValues = schema.enum as string[] | undefined;
-        if (enumValues && !enumValues.includes(str)) {
-            errors.push({ path: rootPath || '$', message: `Value '${str}' not in enum [${enumValues.join(', ')}].` });
+    }
+
+    const pattern = schema.pattern as string | undefined;
+    if (pattern !== undefined && typeof value === 'string') {
+        let regex: RegExp;
+        try {
+            regex = new RegExp(pattern, 'u');
+        } catch {
+            errors.push({ path: jsonPath, message: `Invalid schema pattern '${pattern}'.` });
+            regex = /(?:)/u;
+        }
+        if (!regex.test(value)) {
+            errors.push({ path: jsonPath, message: `String does not match pattern ${formatSchemaValue(pattern)}.` });
         }
     }
 
@@ -69,11 +121,15 @@ export function validateAgainstSchema(value: unknown, schema: Record<string, unk
         const num = value as number;
         const minimum = schema.minimum as number | undefined;
         if (minimum !== undefined && num < minimum) {
-            errors.push({ path: rootPath || '$', message: `Value ${num} < minimum ${minimum}.` });
+            errors.push({ path: jsonPath, message: `Value ${num} < minimum ${minimum}.` });
         }
     }
 
     if (schemaType === 'array' && Array.isArray(value)) {
+        const minItems = schema.minItems as number | undefined;
+        if (minItems !== undefined && value.length < minItems) {
+            errors.push({ path: jsonPath, message: `Array has ${value.length} items, minimum is ${minItems}.` });
+        }
         const itemsSchema = schema.items as Record<string, unknown> | undefined;
         if (itemsSchema) {
             for (let i = 0; i < value.length; i++) {
@@ -90,6 +146,18 @@ export function validateAgainstSchema(value: unknown, schema: Record<string, unk
                 }
                 seen.add(serialized);
             }
+        }
+        const caseInsensitiveUniqueItemProperties = schema['x-case-insensitive-unique-item-properties'] as unknown;
+        if (Array.isArray(caseInsensitiveUniqueItemProperties)) {
+            for (const propertyName of caseInsensitiveUniqueItemProperties) {
+                if (typeof propertyName === 'string' && propertyName) {
+                    validateUniqueItemProperty(value, propertyName, rootPath, errors);
+                }
+            }
+        }
+        const containsSchema = schema.contains as Record<string, unknown> | undefined;
+        if (containsSchema && !value.some((item, index) => validateAgainstSchema(item, containsSchema, `${rootPath}[${index}]`).valid)) {
+            errors.push({ path: jsonPath, message: 'Array does not contain an item matching the required schema.' });
         }
     }
 
@@ -137,11 +205,51 @@ export function validateAgainstSchema(value: unknown, schema: Record<string, unk
 
         const minProperties = schema.minProperties as number | undefined;
         if (minProperties !== undefined && Object.keys(obj).length < minProperties) {
-            errors.push({ path: rootPath || '$', message: `Object has ${Object.keys(obj).length} properties, minimum is ${minProperties}.` });
+            errors.push({ path: jsonPath, message: `Object has ${Object.keys(obj).length} properties, minimum is ${minProperties}.` });
         }
     }
 
     return { valid: errors.length === 0, errors };
+}
+
+function validateUniqueItemProperty(
+    value: readonly unknown[],
+    propertyName: string,
+    rootPath: string,
+    errors: SchemaValidationError[]
+): void {
+    const seen = new Map<string, number>();
+    for (let i = 0; i < value.length; i++) {
+        const item = value[i];
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+            continue;
+        }
+        const propertyValue = (item as Record<string, unknown>)[propertyName];
+        if (typeof propertyValue !== 'string') {
+            continue;
+        }
+        const normalizedValue = propertyValue.trim().toLowerCase();
+        if (!normalizedValue) {
+            continue;
+        }
+        const firstIndex = seen.get(normalizedValue);
+        if (firstIndex !== undefined) {
+            errors.push({
+                path: `${rootPath}[${i}].${propertyName}`,
+                message: `Duplicate case-insensitive '${propertyName}' value '${propertyValue}' also appears at ${rootPath}[${firstIndex}].${propertyName}.`
+            });
+            continue;
+        }
+        seen.set(normalizedValue, i);
+    }
+}
+
+function schemaValueEquals(left: unknown, right: unknown): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function formatSchemaValue(value: unknown): string {
+    return typeof value === 'string' ? `'${value}'` : JSON.stringify(value);
 }
 
 export interface ConfigValidationReport {
@@ -334,4 +442,3 @@ function resolveManifestConfigPath(configDir: string, relativePath: string): str
     }
     return resolvedPath;
 }
-

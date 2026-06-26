@@ -13,6 +13,7 @@ import {
 } from '../core/constants';
 import { REVIEW_EXECUTION_POLICY_MODES } from '../core/review-execution-policy';
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
     FULL_SUITE_VALIDATION_PLACEMENTS,
     PROJECT_MEMORY_MAINTENANCE_MODES,
@@ -23,6 +24,103 @@ const REVIEW_CAPABILITY_KEYS = [
     'code', 'db', 'security', 'refactor',
     'api', 'test', 'performance', 'infra', 'dependency'
 ] as const;
+
+const OPTIONAL_QUALITY_CHECK_BASELINE_RULE_IDS = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id);
+
+function escapeRegexLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+function buildCaseInsensitiveLiteralPattern(value: string): string {
+    return [...value]
+        .map((char) => {
+            const lower = char.toLowerCase();
+            const upper = char.toUpperCase();
+            return lower !== upper
+                ? `[${escapeRegexLiteral(lower)}${escapeRegexLiteral(upper)}]`
+                : escapeRegexLiteral(char);
+        })
+        .join('');
+}
+
+const OPTIONAL_QUALITY_CHECK_BASELINE_RULE_ID_PATTERN = `^(?:${OPTIONAL_QUALITY_CHECK_BASELINE_RULE_IDS
+    .map(buildCaseInsensitiveLiteralPattern)
+    .join('|')})$`;
+
+function buildBaselineOptionalQualityCheckRuleSchema(rule: typeof DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[number]): Record<string, unknown> {
+    return {
+        type: 'object',
+        properties: {
+            id: {
+                const: rule.id,
+                description: 'Shipped baseline quality-check rule id.'
+            },
+            title: {
+                const: rule.title,
+                description: 'Managed shipped baseline quality-check rule title.'
+            },
+            prompt: {
+                const: rule.prompt,
+                description: 'Managed shipped baseline quality-check rule prompt.'
+            },
+            enabled: {
+                type: 'boolean',
+                description: 'Enable this shipped baseline rule. This is the only user-editable baseline rule field.'
+            }
+        },
+        required: ['id', 'title', 'prompt'],
+        additionalProperties: true
+    };
+}
+
+const BASELINE_OPTIONAL_QUALITY_CHECK_RULE_SCHEMAS = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map(
+    buildBaselineOptionalQualityCheckRuleSchema
+);
+
+const CUSTOM_OPTIONAL_QUALITY_CHECK_RULE_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'object',
+    properties: {
+        id: {
+            type: 'string',
+            minLength: 1,
+            not: { pattern: OPTIONAL_QUALITY_CHECK_BASELINE_RULE_ID_PATTERN },
+            description: 'Stable machine id for a custom checklist rule. It must not reuse a shipped baseline rule id.'
+        },
+        title: {
+            type: 'string',
+            minLength: 1,
+            description: 'Human-readable custom checklist rule title.'
+        },
+        prompt: {
+            type: 'string',
+            minLength: 1,
+            description: 'Instruction the agent should evaluate for this custom advisory rule.'
+        },
+        enabled: {
+            type: 'boolean',
+            description: 'Enable this custom advisory rule.'
+        }
+    },
+    required: ['id', 'title', 'prompt'],
+    additionalProperties: true
+});
+
+const OPTIONAL_QUALITY_CHECK_RULES_SCHEMA: Record<string, unknown> = Object.freeze({
+    type: 'array',
+    minItems: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length,
+    'x-case-insensitive-unique-item-properties': ['id'],
+    description: 'Checklist rules shown to the agent before mandatory review/full-suite validation. Every shipped baseline rule must be present with managed id, title, and prompt; only enabled state is user-editable for baseline rules. Custom rules may define their own title, prompt, enabled state, and metadata.',
+    allOf: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
+        type: 'array',
+        contains: buildBaselineOptionalQualityCheckRuleSchema(rule)
+    })),
+    items: {
+        anyOf: [
+            ...BASELINE_OPTIONAL_QUALITY_CHECK_RULE_SCHEMAS,
+            CUSTOM_OPTIONAL_QUALITY_CHECK_RULE_SCHEMA
+        ]
+    }
+});
 
 export const reviewCapabilitiesSchema: Record<string, unknown> = Object.freeze({
     $schema: 'http://json-schema.org/draft-07/schema#',
@@ -503,35 +601,7 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                     description: 'Version id for the shipped baseline quality-check rule pack used by this config.'
                 },
                 rules: {
-                    type: 'array',
-                    minItems: 1,
-                    description: 'Checklist rules shown to the agent before mandatory review/full-suite validation.',
-                    items: {
-                        type: 'object',
-                        properties: {
-                            id: {
-                                type: 'string',
-                                minLength: 1,
-                                description: 'Stable machine id for the checklist rule.'
-                            },
-                            title: {
-                                type: 'string',
-                                minLength: 1,
-                                description: 'Human-readable checklist rule title.'
-                            },
-                            prompt: {
-                                type: 'string',
-                                minLength: 1,
-                                description: 'Instruction the agent should evaluate for this advisory rule.'
-                            },
-                            enabled: {
-                                type: 'boolean',
-                                description: 'Enable this individual advisory rule. Missing values default to true during runtime validation.'
-                            }
-                        },
-                        required: ['id', 'title', 'prompt'],
-                        additionalProperties: true
-                    }
+                    ...OPTIONAL_QUALITY_CHECK_RULES_SCHEMA
                 }
             },
             required: ['enabled'],

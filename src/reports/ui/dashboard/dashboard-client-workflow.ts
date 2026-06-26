@@ -229,17 +229,23 @@ function optionalRuleValue(rule, field) {
 function renderOptionalRuleRow(rule, disabled) {
   const ruleId = safe(rule.id || '');
   const disabledAttr = disabled ? ' disabled' : '';
+  const baselineRule = rule.source === 'baseline';
+  const immutableTextAttr = disabled || baselineRule ? ' disabled' : '';
+  const deleteDisabledAttr = disabled || baselineRule || rule.present === false ? ' disabled' : '';
   return '<tr data-optional-rule-id="' + ruleId + '">'
     + '<td><code>' + ruleId + '</code></td>'
-    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + disabledAttr + '></td>'
-    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + disabledAttr + '></td>'
+    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'title')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'title')) + '"' + immutableTextAttr + '></td>'
+    + '<td><input id="' + safe(optionalRuleInputId(rule.id, 'prompt')) + '" type="text" value="' + safe(optionalRuleValue(rule, 'prompt')) + '"' + immutableTextAttr + '></td>'
     + '<td><select id="' + safe(optionalRuleInputId(rule.id, 'enabled')) + '"' + disabledAttr + '><option value="true"' + (rule.enabled !== false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOn')) + '</option><option value="false"' + (rule.enabled === false ? ' selected' : '') + '>' + safe(t('gardaSwitchStateOff')) + '</option></select></td>'
-    + '<td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('saveOptionalCheckRule')) + '</button><button type="button" data-optional-rule-action="delete" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
+    + '<td><div class="setting-buttons"><button type="button" data-optional-rule-action="upsert" data-optional-rule-id="' + ruleId + '"' + (disabled ? ' disabled' : '') + '>' + safe(disabled ? t('saveDisabled') : t('saveOptionalCheckRule')) + '</button><button type="button" data-optional-rule-action="delete" data-optional-rule-id="' + ruleId + '"' + deleteDisabledAttr + '>' + safe(t('removeOptionalCheckRule')) + '</button></div></td>'
     + '</tr>';
 }
 function renderOptionalRulesEditor(payload, disabled) {
   const optionalChecks = payload.optional_quality_checks || {};
-  const rules = Array.isArray(optionalChecks.rules) ? optionalChecks.rules : [];
+  const qualityGate = payload.quality_gate || {};
+  const rules = Array.isArray(qualityGate.rules)
+    ? qualityGate.rules
+    : (Array.isArray(optionalChecks.rules) ? optionalChecks.rules : []);
   if (currentWorkflowSettingGroup !== 'validation') {
     return '';
   }

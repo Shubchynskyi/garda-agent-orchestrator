@@ -16,6 +16,75 @@ import {
 
 const DASHBOARD_ASSET_DIR = join(process.cwd(), 'src/reports/ui/dashboard');
 
+function htmlTagById(html: string, tagName: string, id: string): string {
+    const pattern = new RegExp(`<${tagName}\\b[^>]*\\bid="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>`, 'u');
+    const match = html.match(pattern);
+    assert.ok(match, `Expected <${tagName}> with id '${id}'.`);
+    return match[0];
+}
+
+function htmlButtonByRuleAction(html: string, ruleId: string, action: string): string {
+    const rulePattern = `data-quality-gate-rule-id="${ruleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`;
+    const actionPattern = `data-quality-gate-rule-action="${action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`;
+    const pattern = new RegExp(`<button\\b(?=[^>]*\\b${rulePattern})(?=[^>]*\\b${actionPattern})[^>]*>`, 'u');
+    const match = html.match(pattern);
+    assert.ok(match, `Expected quality-gate ${action} button for '${ruleId}'.`);
+    return match[0];
+}
+
+function htmlTagHasDisabled(tag: string): boolean {
+    return /\sdisabled(?:\s|>|=)/u.test(tag);
+}
+
+function renderQualityGateHtml(
+    qualityGate: Record<string, unknown>,
+    actionsEnabled: boolean,
+    initialLanguage = 'ru'
+): string {
+    const qualityGateNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => [],
+            getElementById: () => null
+        },
+        window: {
+            localStorage: null,
+            prompt: () => null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage,
+        qualityGateNode,
+        qualityGateStatusNode: {
+            innerHTML: '',
+            classList: { toggle: () => {} }
+        },
+        qualityGateConfigPathNode: { textContent: '' },
+        settingsEditorNode: {
+            innerHTML: '',
+            querySelectorAll: () => []
+        },
+        workflowNode: { innerHTML: '', hidden: false },
+        workflowPanelTitleNode: { textContent: '' },
+        workflowConfigPathNode: { textContent: '' },
+        currentSettingsPayload: {
+            enabled: actionsEnabled,
+            settings: [],
+            quality_gate: qualityGate
+        },
+        currentReport: null,
+        currentQualityGateSettingResult: null
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\n${UI_DASHBOARD_CLIENT_QUALITY_GATE}\nrenderQualityGate(null);`, context);
+    return qualityGateNode.innerHTML;
+}
+
 test('local UI dashboard renders packaged style and client assets', () => {
     const html = renderLocalUiHtml(true, 'asset-token', 'en');
 
@@ -364,8 +433,8 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                 config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
                 status: 'present',
                 enabled: true,
-                baseline_version: '2026-06-25.t839',
-                shipped_baseline_version: '2026-06-25.t839',
+                baseline_version: '2026-06-26.t843',
+                shipped_baseline_version: '2026-06-26.t843',
                 baseline_rule_count: 1,
                 custom_rule_count: 1,
                 deleted_baseline_rule_count: 1,
@@ -434,9 +503,9 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                         statuses: ['disabled']
                     },
                     {
-                        id: 'zero_diff_noop_preemption',
-                        title: 'Zero-diff no-op preemption',
-                        prompt: 'Check no-op routing.',
+                        id: 'gate_routing_self_regression',
+                        title: 'Gate routing self-regression',
+                        prompt: 'Check gate routing.',
                         enabled: false,
                         present: false,
                         source: 'baseline',
@@ -463,4 +532,57 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.match(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
     assert.match(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
     assert.match(qualityGateNode.innerHTML, /garda ui --actions/u);
+});
+
+test('quality gate tab keeps baseline rule content immutable while enabled state remains editable', () => {
+    const html = renderQualityGateHtml({
+        config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
+        status: 'present',
+        enabled: true,
+        baseline_version: '2026-06-26.t843',
+        shipped_baseline_version: '2026-06-26.t843',
+        baseline_rule_count: 1,
+        custom_rule_count: 1,
+        deleted_baseline_rule_count: 0,
+        latest_check: {
+            evidence_status: 'missing',
+            stale_reasons: [],
+            actions_taken: [],
+            actions_required: [],
+            answers: []
+        },
+        action_required_history: [],
+        unavailable: [],
+        rules: [
+            {
+                id: 'code_simplification',
+                title: 'Code simplification',
+                prompt: 'Check simplification.',
+                enabled: true,
+                present: true,
+                source: 'baseline',
+                statuses: ['active']
+            },
+            {
+                id: 'custom_focus',
+                title: 'Custom focus',
+                prompt: 'Check custom concern.',
+                enabled: false,
+                present: true,
+                source: 'custom',
+                statuses: ['disabled']
+            }
+        ]
+    }, true);
+
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-code_simplification-title')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-code_simplification-prompt')), true);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'select', 'optional-rule-code_simplification-enabled')), false);
+    assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'code_simplification', 'upsert')), false);
+    assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'code_simplification', 'delete')), true);
+
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-custom_focus-title')), false);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'input', 'optional-rule-custom_focus-prompt')), false);
+    assert.equal(htmlTagHasDisabled(htmlTagById(html, 'select', 'optional-rule-custom_focus-enabled')), false);
+    assert.equal(htmlTagHasDisabled(htmlButtonByRuleAction(html, 'custom_focus', 'delete')), false);
 });

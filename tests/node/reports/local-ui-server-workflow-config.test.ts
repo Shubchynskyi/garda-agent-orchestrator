@@ -207,6 +207,78 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         });
         assert.match(optionalRuleDeletePreview.command, /workflow set --optional-check-rule-delete custom_focus/u);
 
+        const baselineRuleTogglePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'upsert',
+                mode: 'preview',
+                rule_id: 'code_simplification',
+                title: 'Code simplification',
+                prompt: 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.',
+                enabled: 'false'
+            })
+        });
+        assert.equal(baselineRuleTogglePreviewResponse.status, 200);
+        const baselineRuleTogglePreview = await baselineRuleTogglePreviewResponse.json() as {
+            proposed_value: {
+                id: string;
+                title: string;
+                enabled: boolean;
+            };
+            command: string;
+        };
+        assert.deepEqual(baselineRuleTogglePreview.proposed_value, {
+            action: 'upsert',
+            id: 'code_simplification',
+            title: 'Code simplification',
+            prompt: 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.',
+            enabled: false
+        });
+        assert.match(baselineRuleTogglePreview.command, /workflow set --optional-check-rule-id code_simplification/u);
+        assert.match(baselineRuleTogglePreview.command, /--optional-check-rule-enabled false/u);
+        assert.doesNotMatch(baselineRuleTogglePreview.command, /--optional-check-rule-title/u);
+        assert.doesNotMatch(baselineRuleTogglePreview.command, /--optional-check-rule-prompt/u);
+
+        const baselineRuleMissingEnabledPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'upsert',
+                mode: 'preview',
+                rule_id: 'code_simplification'
+            })
+        });
+        assert.equal(baselineRuleMissingEnabledPreviewResponse.status, 400);
+        assert.equal((await baselineRuleMissingEnabledPreviewResponse.json() as { code: string }).code, 'invalid_setting_value');
+
+        const baselineRuleEditPreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'upsert',
+                mode: 'preview',
+                rule_id: 'code_simplification',
+                title: 'Edited shipped title',
+                prompt: 'Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.',
+                enabled: 'true'
+            })
+        });
+        assert.equal(baselineRuleEditPreviewResponse.status, 400);
+        assert.equal((await baselineRuleEditPreviewResponse.json() as { code: string }).code, 'invalid_setting_value');
+
+        const baselineRuleDeletePreviewResponse = await fetch(`${server.url}api/settings`, {
+            method: 'POST',
+            headers: actionHeaders,
+            body: JSON.stringify({
+                optional_rule_action: 'delete',
+                mode: 'preview',
+                rule_id: 'code_simplification'
+            })
+        });
+        assert.equal(baselineRuleDeletePreviewResponse.status, 400);
+        assert.equal((await baselineRuleDeletePreviewResponse.json() as { code: string }).code, 'invalid_setting_value');
+
         const invalidOptionalRulePreviewResponse = await fetch(`${server.url}api/settings`, {
             method: 'POST',
             headers: actionHeaders,

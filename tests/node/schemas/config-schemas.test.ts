@@ -30,6 +30,7 @@ import {
     gardaConfigSchema,
     OPTIONAL_ROOT_CONFIG_NAMES
 } from '../../../src/schemas/config-schemas';
+import { DEFAULT_OPTIONAL_QUALITY_CHECK_RULES } from '../../../src/core/workflow-config';
 
 function isWorkspaceRoot(candidate: string): boolean {
     return fs.existsSync(path.join(candidate, 'package.json')) &&
@@ -383,6 +384,86 @@ test('workflow-config schema accepts optional quality checks local metadata', ()
     rules[0].local_note = 'operator-owned';
     const result = validateAgainstSchema(clone, workflowConfigSchema);
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config schema keeps shipped optional quality baseline immutable except enabled state', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const optionalQualityChecks = clone.optional_quality_checks as Record<string, unknown>;
+    const rules = optionalQualityChecks.rules as Array<Record<string, unknown>>;
+    rules[0].enabled = false;
+    rules.push({
+        id: 'custom_focus',
+        title: 'Custom focus',
+        prompt: 'Check a local custom quality rule.',
+        enabled: true,
+        local_note: 'operator-owned'
+    });
+
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
+test('workflow-config schema rejects edited or deleted shipped optional quality baseline rules', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const edited = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const editedRules = (edited.optional_quality_checks as Record<string, unknown>).rules as Array<Record<string, unknown>>;
+    editedRules[0].title = 'Edited shipped title';
+
+    const editedResult = validateAgainstSchema(edited, workflowConfigSchema);
+    assert.equal(editedResult.valid, false);
+    assert.ok(editedResult.errors.some((error) => error.path.includes('optional_quality_checks.rules[0]')));
+
+    const duplicatedEdited = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const duplicatedEditedRules = (duplicatedEdited.optional_quality_checks as Record<string, unknown>).rules as Array<Record<string, unknown>>;
+    duplicatedEditedRules.push({
+        id: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0].id,
+        title: 'Edited shipped title',
+        prompt: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0].prompt,
+        enabled: false
+    });
+
+    const duplicatedEditedResult = validateAgainstSchema(duplicatedEdited, workflowConfigSchema);
+    assert.equal(duplicatedEditedResult.valid, false);
+    assert.ok(duplicatedEditedResult.errors.some((error) => error.path.includes(`optional_quality_checks.rules[${duplicatedEditedRules.length - 1}]`)));
+
+    const caseVariantDuplicate = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const caseVariantRules = (caseVariantDuplicate.optional_quality_checks as Record<string, unknown>).rules as Array<Record<string, unknown>>;
+    caseVariantRules.push({
+        id: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0].id.toUpperCase(),
+        title: 'Custom shadow',
+        prompt: 'Custom rule that shadows a shipped baseline id by case.',
+        enabled: true
+    });
+
+    const caseVariantDuplicateResult = validateAgainstSchema(caseVariantDuplicate, workflowConfigSchema);
+    assert.equal(caseVariantDuplicateResult.valid, false);
+    assert.ok(caseVariantDuplicateResult.errors.some((error) => error.path.includes(`optional_quality_checks.rules[${caseVariantRules.length - 1}]`)));
+
+    const duplicatedCanonical = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const duplicatedCanonicalRules = (duplicatedCanonical.optional_quality_checks as Record<string, unknown>).rules as Array<Record<string, unknown>>;
+    duplicatedCanonicalRules.push({
+        id: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0].id,
+        title: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0].title,
+        prompt: DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0].prompt,
+        enabled: false
+    });
+
+    const duplicatedCanonicalResult = validateAgainstSchema(duplicatedCanonical, workflowConfigSchema);
+    assert.equal(duplicatedCanonicalResult.valid, false);
+    assert.ok(duplicatedCanonicalResult.errors.some((error) => error.path.includes(`optional_quality_checks.rules[${duplicatedCanonicalRules.length - 1}].id`)));
+
+    const deleted = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const deletedOptionalQualityChecks = deleted.optional_quality_checks as Record<string, unknown>;
+    deletedOptionalQualityChecks.rules = (deletedOptionalQualityChecks.rules as Array<Record<string, unknown>>)
+        .filter((rule) => rule.id !== DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0].id);
+
+    const deletedResult = validateAgainstSchema(deleted, workflowConfigSchema);
+    assert.equal(deletedResult.valid, false);
+    assert.ok(deletedResult.errors.some((error) => (
+        error.path.includes('optional_quality_checks.rules')
+        && error.message.includes('required schema')
+    )));
 });
 
 test('workflow-config schema rejects unknown compile_gate keys', () => {

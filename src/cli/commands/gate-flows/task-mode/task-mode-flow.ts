@@ -24,7 +24,8 @@ import {
 } from '../../../../schemas/task-plan';
 import {
     getCurrentWorkflowConfigFileHashes,
-    getWorkflowConfigPreTaskBaselineState
+    getWorkflowConfigPreTaskBaselineState,
+    normalizeWorkflowConfigFileHashes
 } from '../../../../gates/workflow-config/workflow-config-work';
 import {
     readTaskQueueMetadata
@@ -123,6 +124,9 @@ export interface EnterTaskModeCommandOptions {
     workflowConfigWork?: unknown;
     operatorConfirmed?: unknown;
     operatorConfirmedAtUtc?: unknown;
+    allowedDirtyWorkflowConfigFiles?: unknown;
+    workflowConfigFileHashesOverride?: Record<string, string | null> | null;
+    workflowConfigCompatibilityBaselineFilesOverride?: unknown;
     provider?: unknown;
     routedTo?: unknown;
     actor?: unknown;
@@ -194,8 +198,14 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         workflowConfigPreTaskBaseline,
         orchestratorWork,
         workflowConfigWork,
+        allowedDirtyWorkflowConfigFiles: options.allowedDirtyWorkflowConfigFiles,
         taskQueueMetadata
     });
+    const workflowConfigFileHashesForArtifact = normalizeWorkflowConfigFileHashes(options.workflowConfigFileHashesOverride)
+        || workflowConfigFileHashes;
+    const workflowConfigCompatibilityBaselineFiles = options.workflowConfigCompatibilityBaselineFilesOverride === undefined
+        ? workflowConfigPreTaskBaseline.compatibility_baseline_files
+        : options.workflowConfigCompatibilityBaselineFilesOverride as string[];
 
     const rawTaskProfile = taskQueueMetadata?.profile || null;
     let taskProfile: string | null = null;
@@ -281,8 +291,8 @@ export function runEnterTaskModeCommand(options: EnterTaskModeCommandOptions): {
         runtimeActiveProfile,
         runtimeProfileSource,
         dirtyWorkspaceBaseline,
-        workflowConfigFileHashes,
-        workflowConfigCompatibilityBaselineFiles: workflowConfigPreTaskBaseline.compatibility_baseline_files
+        workflowConfigFileHashes: workflowConfigFileHashesForArtifact,
+        workflowConfigCompatibilityBaselineFiles
     });
     writeJsonArtifact(artifactPath, taskModeArtifact);
 

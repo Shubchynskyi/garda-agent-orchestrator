@@ -5,7 +5,10 @@ import { isRecognizedBundleName } from '../../../core/constants';
 import {
     buildDefaultWorkflowConfig,
     FULL_SUITE_TIMEOUT_RETRY_COUNT_MAX,
+    OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+    getBaselineOptionalQualityCheckRule,
     hasMaterializedWorkflowConfigBaseline,
+    isBaselineOptionalQualityCheckRuleId,
     normalizeAutoBackupConfig,
     normalizeCompileGateConfig,
     normalizeOptionalQualityChecksConfig,
@@ -97,6 +100,28 @@ function upsertOptionalCheckRule(
     const id = parseOptionalCheckRuleId(options.optionalCheckRuleId, '--optional-check-rule-id');
     const existingIndex = rules.findIndex((rule) => rule.id.toLowerCase() === id);
     const existing = existingIndex >= 0 ? rules[existingIndex] : null;
+    const baselineRule = getBaselineOptionalQualityCheckRule(id);
+    if (baselineRule) {
+        const requestedTitle = parseOptionalCheckRuleText(options.optionalCheckRuleTitle, '--optional-check-rule-title');
+        const requestedPrompt = parseOptionalCheckRuleText(options.optionalCheckRulePrompt, '--optional-check-rule-prompt');
+        if (
+            (requestedTitle !== null && requestedTitle !== baselineRule.title)
+            || (requestedPrompt !== null && requestedPrompt !== baselineRule.prompt)
+        ) {
+            throw new Error(`Baseline optional quality-check rule '${id}' can only change enabled state.`);
+        }
+        const enabled = typeof options.optionalCheckRuleEnabled === 'string'
+            ? parseBooleanText(options.optionalCheckRuleEnabled, '--optional-check-rule-enabled')
+            : existing?.enabled !== false;
+        const nextRule: OptionalQualityCheckRule = {
+            ...baselineRule,
+            enabled
+        };
+        if (existingIndex >= 0) {
+            return rules.map((rule, index) => index === existingIndex ? nextRule : rule);
+        }
+        return [...rules, nextRule];
+    }
     const title = parseOptionalCheckRuleText(options.optionalCheckRuleTitle, '--optional-check-rule-title')
         ?? existing?.title;
     const prompt = parseOptionalCheckRuleText(options.optionalCheckRulePrompt, '--optional-check-rule-prompt')
@@ -131,6 +156,9 @@ function deleteOptionalCheckRule(
         return rules;
     }
     const id = parseOptionalCheckRuleId(options.optionalCheckRuleDelete, '--optional-check-rule-delete');
+    if (isBaselineOptionalQualityCheckRuleId(id)) {
+        throw new Error(`Baseline optional quality-check rule '${id}' cannot be deleted. Disable it instead.`);
+    }
     const nextRules = rules.filter((rule) => rule.id.toLowerCase() !== id);
     if (nextRules.length === rules.length) {
         throw new Error(`Optional quality-check rule '${id}' does not exist.`);
@@ -493,6 +521,10 @@ export function handleSet(options: ParsedOptionsRecord): WorkflowSetResult {
     );
     if (JSON.stringify(nextOptionalQualityChecks.rules) !== optionalRulesBefore) {
         changedFields.push('optional_quality_checks.rules');
+    }
+    if (nextOptionalQualityChecks.baseline_version !== OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION) {
+        nextOptionalQualityChecks.baseline_version = OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION;
+        changedFields.push('optional_quality_checks.baseline_version');
     }
     nextConfig.optional_quality_checks = nextOptionalQualityChecks;
 

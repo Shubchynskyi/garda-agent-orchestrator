@@ -243,12 +243,12 @@ Controls the advisory self-checklist gate that runs after implementation changes
 {
   "optional_quality_checks": {
     "enabled": true,
-    "baseline_version": "2026-06-25.t839",
+    "baseline_version": "2026-06-26.t843",
     "rules": [
       {
-        "id": "simplification",
-        "title": "Simplification",
-        "prompt": "Check whether the change can be simpler without losing behavior.",
+        "id": "code_simplification",
+        "title": "Code simplification",
+        "prompt": "Check whether the changed code can be simplified without weakening behavior, validation, or diagnostics.",
         "enabled": true
       }
     ]
@@ -260,12 +260,13 @@ Contract:
 - the mode is default-enabled when the setting is absent;
 - the shipped baseline version records which default rule set was materialized;
 - default rules cover simplification, project style fit, unnecessary abstraction, class/function/file growth, hardcoded values or contracts, duplicated logic or contracts, and test/verification scope;
-- the current shipped baseline also includes checks for preflight/review scope regressions, classifier intent edge cases, trust artifact identity, doc-impact closeout parity, task queue parser state, review-cycle scope freshness, and zero-diff/no-op preemption;
+- the current shipped baseline also includes generic checks for classifier intent edge cases, config materialization parity, control-plane action safety, artifact evidence binding, and gate-routing self-regression;
 - `next-step` routes the gate after implementation and before compile, delegated review, or full-suite work when a current changed-file preflight needs checklist evidence;
 - `PASS` continues the normal lifecycle, while `ACTION_REQUIRED` sends the agent back to implementation before the expensive gates run;
 - disabled mode skips only the quality-checklist gate and does not replace or weaken compile-gate, full-suite validation, or independent review;
-- custom rules, disabled mode, local rule edits, and local audit metadata fields are preserved during init/update/materialization refresh;
-- when the local `baseline_version` is older than the shipped template, update/setup refreshes append newly shipped baseline rules without overwriting existing rule objects.
+- baseline rule ids, titles, prompts, and deletion are managed by the shipped baseline; users can only toggle each baseline rule's `enabled` state;
+- custom rules, disabled mode, custom rule edits, and local audit metadata fields are preserved during init/update/materialization refresh;
+- update/setup refreshes shipped baseline text, adds missing shipped baseline rules, removes deprecated shipped baseline rules, and preserves each baseline rule's enabled or disabled state.
 
 Manage the toggle and rules through the audited workflow-setting path:
 
@@ -276,6 +277,7 @@ node bin/garda.js workflow set --optional-check-rule-delete custom_focus --opera
 ```
 
 `garda ui --actions` exposes the same toggle and add/edit/delete controls in the workflow settings panel. The browser never writes `workflow-config.json` directly; it previews and runs the allow-listed `garda workflow set` commands with the normal typed confirmation and audit log.
+Baseline rows in the UI expose only the enabled toggle; title, prompt, and delete controls are reserved for custom rules.
 
 ## Skills Index
 

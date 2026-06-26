@@ -24,6 +24,15 @@ import {
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION
 } from '../../../src/core/workflow-config';
 
+const DEPRECATED_PROJECT_ONLY_OPTIONAL_QUALITY_RULE_IDS = [
+    'preflight_review_scope_regressions',
+    'trust_artifact_identity',
+    'doc_impact_closeout_parity',
+    'task_queue_parser_state',
+    'review_cycle_scope_freshness',
+    'zero_diff_noop_preemption'
+];
+
 function readTemplateConfig(configName: string): Record<string, unknown> {
     return JSON.parse(
         fs.readFileSync(path.join(process.cwd(), 'template', 'config', `${configName}.json`), 'utf8')
@@ -113,6 +122,18 @@ test('tracked workflow template ships current optional quality baseline', () => 
             enabled: rule.enabled
         }))
     );
+});
+
+test('tracked workflow template excludes deprecated project-only optional quality baseline ids', () => {
+    const workflowConfig = readTemplateConfig('workflow-config');
+    const optionalQualityChecks = workflowConfig.optional_quality_checks as Record<string, unknown>;
+    const templateRuleIds = new Set((optionalQualityChecks.rules as Array<{ id: string }>).map((rule) => rule.id));
+    const defaultRuleIds = new Set(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id));
+
+    for (const deprecatedRuleId of DEPRECATED_PROJECT_ONLY_OPTIONAL_QUALITY_RULE_IDS) {
+        assert.equal(defaultRuleIds.has(deprecatedRuleId), false);
+        assert.equal(templateRuleIds.has(deprecatedRuleId), false);
+    }
 });
 
 test('validateTokenEconomyConfig canonicalizes integer arrays and boolean-like values', () => {
@@ -248,16 +269,29 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
         }
     });
     const optionalQualityChecks = normalized.optional_quality_checks as Record<string, unknown>;
+    const optionalQualityCheckRules = optionalQualityChecks.rules as Array<Record<string, unknown>>;
     assert.equal(optionalQualityChecks.enabled, false);
-    assert.deepEqual(optionalQualityChecks.rules, [
-        {
-            id: 'custom_rule',
-            title: 'Custom rule',
-            prompt: 'Check custom local quality criteria.',
-            enabled: true,
-            local_note: 'operator-owned'
-        }
-    ]);
+    assert.equal(optionalQualityChecks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+    assert.deepEqual(optionalQualityCheckRules[0], {
+        id: 'custom_rule',
+        title: 'Custom rule',
+        prompt: 'Check custom local quality criteria.',
+        enabled: true,
+        local_note: 'operator-owned'
+    });
+    assert.deepEqual(
+        optionalQualityCheckRules.slice(1).map((rule) => rule.id),
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+    );
+    assert.deepEqual(
+        optionalQualityCheckRules.slice(1),
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => ({
+            id: rule.id,
+            title: rule.title,
+            prompt: rule.prompt,
+            enabled: true
+        }))
+    );
     assert.deepEqual(optionalQualityChecks.audit_history, [
         {
             at: '2026-06-24T00:00:00.000Z',
@@ -281,15 +315,43 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
     );
     assert.deepEqual(
         [
-            'preflight_review_scope_regressions',
             'classifier_intent_edge_cases',
-            'trust_artifact_identity',
-            'doc_impact_closeout_parity',
-            'task_queue_parser_state',
-            'review_cycle_scope_freshness',
-            'zero_diff_noop_preemption'
+            'config_materialization_parity',
+            'control_plane_action_safety',
+            'artifact_evidence_binding',
+            'gate_routing_self_regression'
         ].filter((id) => !defaultedRules.some((rule) => rule.id === id)),
         []
+    );
+
+    const baselineRule = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES[0];
+    const canonicalizedBaseline = validateWorkflowConfig({
+        ...baseConfig,
+        optional_quality_checks: {
+            enabled: true,
+            rules: [
+                {
+                    id: baselineRule.id,
+                    title: 'Locally edited shipped title',
+                    prompt: 'Locally edited shipped prompt.',
+                    enabled: false,
+                    local_note: 'operator-owned'
+                }
+            ]
+        }
+    });
+    const canonicalizedBaselineRules =
+        (canonicalizedBaseline.optional_quality_checks as { rules: Array<Record<string, unknown>> }).rules;
+    assert.deepEqual(
+        canonicalizedBaselineRules[0],
+        {
+            ...baselineRule,
+            enabled: false
+        }
+    );
+    assert.deepEqual(
+        canonicalizedBaselineRules.map((rule) => rule.id),
+        DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
     );
 
     assert.throws(

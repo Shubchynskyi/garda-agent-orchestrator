@@ -18,41 +18,31 @@ import {
     writeGateFixturePreflight
 } from '../../gate-fixtures';
 
-const T839_DERIVED_QUALITY_RULE_EXPECTATIONS = Object.freeze([
-    Object.freeze({
-        id: 'preflight_review_scope_regressions',
-        promptPatterns: [/regression tests/i, /current preflight and review scope/i, /implementation files/i],
-        action: 'Add the related tests/** regression files to the current preflight and review scope.'
-    }),
+const GENERIC_QUALITY_RULE_EXPECTATIONS = Object.freeze([
     Object.freeze({
         id: 'classifier_intent_edge_cases',
         promptPatterns: [/keyword or regex/i, /hyphen and space/i, /OAuth2/i],
         action: 'Cover classifier acceptance wording, separator variants, standalone forms, and protocol suffixes.'
     }),
     Object.freeze({
-        id: 'trust_artifact_identity',
-        promptPatterns: [/trust-bearing artifact/i, /stable-selection persistence/i, /stale or forged value rejection/i],
-        action: 'Add persistence, changed-selection, forged-value, stale-value, and legacy-fallback checks.'
+        id: 'config_materialization_parity',
+        promptPatterns: [/config, default, template, materialization, schema, install, and update/i, /preserving explicit local user choices/i],
+        action: 'Align config defaults, templates, schema validation, install, update, and local-choice preservation.'
     }),
     Object.freeze({
-        id: 'doc_impact_closeout_parity',
-        promptPatterns: [/next-step commands/i, /behaviorChanged internal evidence/i, /project-memory parity/i],
-        action: 'Synchronize doc-impact command generation, direct validation, and CLI tests for internal evidence parity.'
+        id: 'control_plane_action_safety',
+        promptPatterns: [/UI, CLI, or other control-plane mutations/i, /audited and validated action paths/i, /compact success output/i],
+        action: 'Route control-plane mutations through audited confirmation paths with compact success and failure diagnostics.'
     }),
     Object.freeze({
-        id: 'task_queue_parser_state',
-        promptPatterns: [/comma-separated child ids/i, /range notation/i, /reentrant global RegExp state/i],
-        action: 'Add parser regressions for child id forms, missing rows, mixed statuses, and reentrant RegExp checks.'
+        id: 'artifact_evidence_binding',
+        promptPatterns: [/artifact, history, cache, or telemetry evidence/i, /identity, freshness, scope or worktree binding/i, /stale or forged negative cases/i],
+        action: 'Add identity, freshness, scope binding, path ownership, and forged or stale negative coverage.'
     }),
     Object.freeze({
-        id: 'review_cycle_scope_freshness',
-        promptPatterns: [/pending launch telemetry/i, /stale scope hashes/i, /helper growth is extracted/i],
-        action: 'Ignore pending or stale review-cycle telemetry and extract bloated guard helpers before review.'
-    }),
-    Object.freeze({
-        id: 'zero_diff_noop_preemption',
-        promptPatterns: [/zero-diff or no-op routing/i, /missing, stale, or foreign no-op evidence/i, /reviewer-launch routing/i],
-        action: 'Preempt full-suite, review-context, and reviewer-launch routing until audited no-op evidence is current.'
+        id: 'gate_routing_self_regression',
+        promptPatterns: [/gate, guard, or routing changes/i, /blocking states preempt expensive work/i, /warning-only states do not block/i],
+        action: 'Add routing fixtures for blocking, pass-through, and warning-only gate states.'
     })
 ]);
 
@@ -66,9 +56,9 @@ function buildPassAnswers(): Array<Record<string, unknown>> {
     }));
 }
 
-function buildT839DerivedActionRequiredAnswers(): Array<Record<string, unknown>> {
+function buildGenericActionRequiredAnswers(): Array<Record<string, unknown>> {
     const actionByRuleId = new Map<string, string>(
-        T839_DERIVED_QUALITY_RULE_EXPECTATIONS.map((rule) => [rule.id, rule.action])
+        GENERIC_QUALITY_RULE_EXPECTATIONS.map((rule) => [rule.id, rule.action])
     );
     return buildPassAnswers().map((answer) => {
         const action = actionByRuleId.get(String(answer.rule_id));
@@ -90,10 +80,10 @@ function buildT839DerivedActionRequiredAnswers(): Array<Record<string, unknown>>
 }
 
 describe('quality-checklist gate', () => {
-    it('ships enabled T-839-derived baseline prompts that cover the review-saving regression classes', () => {
+    it('ships enabled generic baseline prompts that cover review-saving regression classes', () => {
         const rulesById = new Map(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => [rule.id, rule]));
 
-        for (const expectation of T839_DERIVED_QUALITY_RULE_EXPECTATIONS) {
+        for (const expectation of GENERIC_QUALITY_RULE_EXPECTATIONS) {
             const rule = rulesById.get(expectation.id);
             assert.ok(rule, `Expected shipped optional quality rule '${expectation.id}'.`);
             assert.equal(rule.enabled, true);
@@ -139,7 +129,7 @@ describe('quality-checklist gate', () => {
         }
     });
 
-    it('records ACTION_REQUIRED for every T-839-derived regression class before review setup', () => {
+    it('records ACTION_REQUIRED for every generic regression class before review setup', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-derived-actions' });
         try {
             const preflightPath = writeGateFixturePreflight(fixture, {
@@ -162,13 +152,13 @@ describe('quality-checklist gate', () => {
                 repoRoot: fixture.repoRoot,
                 taskId: fixture.taskId,
                 preflightPath,
-                answersJson: JSON.stringify(buildT839DerivedActionRequiredAnswers()),
+                answersJson: JSON.stringify(buildGenericActionRequiredAnswers()),
                 emitMetrics: false
             });
 
             assert.notEqual(result.exitCode, 0);
             assert.ok(result.outputLines.includes('QUALITY_CHECKLIST_ACTION_REQUIRED'));
-            assert.ok(result.outputLines.includes(`ActionsRequiredCount: ${T839_DERIVED_QUALITY_RULE_EXPECTATIONS.length}`));
+            assert.ok(result.outputLines.includes(`ActionsRequiredCount: ${GENERIC_QUALITY_RULE_EXPECTATIONS.length}`));
             const artifactPathLine = result.outputLines.find((line) => line.startsWith('QualityChecklistArtifactPath: '));
             assert.ok(artifactPathLine);
             const artifact = JSON.parse(fs.readFileSync(artifactPathLine.replace('QualityChecklistArtifactPath: ', ''), 'utf8'));
@@ -180,9 +170,9 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.status, 'ACTION_REQUIRED');
             assert.deepEqual(
                 requiredRuleIds,
-                T839_DERIVED_QUALITY_RULE_EXPECTATIONS.map((rule) => rule.id).sort()
+                GENERIC_QUALITY_RULE_EXPECTATIONS.map((rule) => rule.id).sort()
             );
-            assert.equal(artifact.actions_required.length, T839_DERIVED_QUALITY_RULE_EXPECTATIONS.length);
+            assert.equal(artifact.actions_required.length, GENERIC_QUALITY_RULE_EXPECTATIONS.length);
             assert.ok(artifact.changed_file_evidence.changed_files.some((filePath: string) => filePath.startsWith('tests/')));
         } finally {
             fixture.cleanup();

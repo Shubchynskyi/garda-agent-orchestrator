@@ -126,6 +126,7 @@ const BROWSER_UNSAFE_PORTS = new Set<number>([
     2049,
     3659,
     4045,
+    4190,
     5060,
     5061,
     6000,
@@ -135,6 +136,7 @@ const BROWSER_UNSAFE_PORTS = new Set<number>([
     6667,
     6668,
     6669,
+    6679,
     6697,
     10080
 ]);

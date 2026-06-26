@@ -178,6 +178,18 @@ function findDuplicateRuleIds(rules: readonly QualityChecklistRuleArtifact[]): s
         .sort();
 }
 
+function findConfiguredDuplicateRuleIds(optionalQualityChecksInput: unknown): string[] {
+    if (!isRecord(optionalQualityChecksInput) || !Array.isArray(optionalQualityChecksInput.rules)) {
+        return [];
+    }
+    const configuredRules = optionalQualityChecksInput.rules
+        .filter(isRecord)
+        .map((rule) => normalizeRuleId(rule.id))
+        .filter(Boolean)
+        .map((id) => ({ id, title: '', prompt: '', enabled: true }));
+    return findDuplicateRuleIds(configuredRules);
+}
+
 function resolveQualityChecklistArtifactPath(repoRoot: string, taskId: string, artifactPath = ''): string {
     const explicit = String(artifactPath || '').trim();
     if (explicit) {
@@ -295,9 +307,13 @@ function readChecklistRules(repoRoot: string): {
             violation: `Workflow config is not valid JSON object: ${normalizePath(workflowConfigPath)}.`
         };
     }
+    const configuredDuplicateRuleIds = findConfiguredDuplicateRuleIds(workflowConfig.optional_quality_checks);
     const optionalQualityChecks = normalizeOptionalQualityChecksConfig(workflowConfig.optional_quality_checks);
     const rules = optionalQualityChecks.rules.map(normalizeRuleForArtifact);
-    const duplicateRuleIds = findDuplicateRuleIds(rules);
+    const duplicateRuleIds = [...new Set([
+        ...configuredDuplicateRuleIds,
+        ...findDuplicateRuleIds(rules)
+    ])].sort();
     return {
         workflowConfigPath,
         workflowConfigSha256: fileSha256(workflowConfigPath),
