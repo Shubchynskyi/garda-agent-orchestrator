@@ -11,12 +11,8 @@ function updateWorkflowPanelTitle() {
   }
   workflowPanelTitleNode.textContent = settingGroupLabel(currentWorkflowSettingGroup);
 }
-function shouldSuppressRoutineSettingStdout(result, successfulExecution) {
-  if (!successfulExecution) {
-    return false;
-  }
-  return result.setting_id === 'optional-check-rule-management'
-    || result.setting_id === 'optional-checks-enabled';
+function shouldSuppressRoutineSettingStdout(successfulExecution) {
+  return successfulExecution;
 }
 function renderWorkflow(report) {
   const tab = report.workflow_config_tab;
@@ -49,7 +45,7 @@ function renderSettingResultMarkup(result) {
     && result.timed_out !== true
     && result.cancelled !== true
     && (exitCode === null || exitCode === 0);
-  const suppressRoutineStdout = shouldSuppressRoutineSettingStdout(result, successfulExecution);
+  const suppressRoutineStdout = shouldSuppressRoutineSettingStdout(successfulExecution);
   return '<section class="command-preview-panel">'
     + '<div class="command-preview-main"><strong>' + safe(label) + '</strong></div>'
     + '<div class="command-preview-meta">'

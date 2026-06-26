@@ -258,6 +258,22 @@ test('workflow setting result renderer suppresses routine quality-gate stdout af
     assert.match(workflowNode.innerHTML, /runtime\/toggle-audit\.jsonl/u);
     assert.doesNotMatch(workflowNode.innerHTML, /workflow set success output/u);
     assert.doesNotMatch(workflowNode.innerHTML, /data-label="stdout"/u);
+
+    vm.runInNewContext(`renderWorkflowSettingResult({
+  status: 'executed',
+  setting_id: 'task-reset-enabled',
+  key: 'task_reset.enabled',
+  changed_keys: ['task_reset.enabled'],
+  stdout: 'task reset workflow set success output '.repeat(250),
+  stderr: '',
+  audit_path: 'runtime/task-reset-audit.jsonl'
+});`, context);
+
+    assert.match(workflowNode.innerHTML, /Task reset/u);
+    assert.match(workflowNode.innerHTML, /task_reset\.enabled/u);
+    assert.match(workflowNode.innerHTML, /runtime\/task-reset-audit\.jsonl/u);
+    assert.doesNotMatch(workflowNode.innerHTML, /task reset workflow set success output/u);
+    assert.doesNotMatch(workflowNode.innerHTML, /data-label="stdout"/u);
 });
 
 test('workflow setting result renderer keeps optional-rule diagnostics on failed execution', () => {
