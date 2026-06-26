@@ -617,6 +617,111 @@ test('buildReportDataContract exposes quality gate baseline and custom rule stat
     assert.equal(report.quality_gate_tab.deleted_baseline_rule_count, 0);
     assert.equal(report.quality_gate_tab.latest_check.evidence_status, 'missing');
     assert.deepEqual(report.quality_gate_tab.action_required_history, []);
+    assert.equal(report.system_state.quality_baseline.status, 'attention');
+    assert.deepEqual(
+        (report.system_state.quality_baseline.value as { missing_shipped_rule_ids: string[] }).missing_shipped_rule_ids,
+        ['gate_routing_self_regression']
+    );
+    assert.equal(report.system_state.quality_baseline.summary, '1 shipped quality rule(s) are missing from the installed workflow config.');
+});
+
+test('buildReportDataContract surfaces stale quality baseline diagnostics in System State', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    config.optional_quality_checks.baseline_version = '2026-06-25.t842';
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+
+    assert.equal(report.system_state.quality_baseline.status, 'attention');
+    assert.match(report.system_state.quality_baseline.summary, /older than the shipped baseline/u);
+    assert.equal(
+        (report.system_state.quality_baseline.value as { installed_baseline_version: string }).installed_baseline_version,
+        '2026-06-25.t842'
+    );
+});
+
+test('buildSystemStateReport diagnoses missing shipped quality baseline ids without comparing custom rules', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    config.optional_quality_checks.rules = [
+        ...config.optional_quality_checks.rules.filter((rule) => rule.id !== 'artifact_evidence_binding'),
+        {
+            id: 'custom_focus',
+            title: 'Custom focus',
+            prompt: 'Check custom concern.',
+            enabled: true
+        }
+    ];
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+
+    const value = report.system_state.quality_baseline.value as {
+        missing_shipped_rule_ids: string[];
+        custom_rule_count: number;
+    };
+    assert.equal(report.system_state.quality_baseline.status, 'attention');
+    assert.deepEqual(value.missing_shipped_rule_ids, ['artifact_evidence_binding']);
+    assert.equal(value.custom_rule_count, 1);
+});
+
+test('buildSystemStateReport treats missing installed quality baseline evidence as incomplete', () => {
+    for (const variant of ['section', 'rules', 'version'] as const) {
+        const repoRoot = makeTempRepo();
+        writeTaskMd(repoRoot);
+        writeWorkflowConfig(repoRoot);
+        const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+        const shippedRuleCount = config.optional_quality_checks.rules.length;
+        const shippedBaselineVersion = config.optional_quality_checks.baseline_version;
+
+        if (variant === 'section') {
+            delete (config as { optional_quality_checks?: unknown }).optional_quality_checks;
+        } else if (variant === 'rules') {
+            delete (config.optional_quality_checks as { rules?: unknown }).rules;
+        } else {
+            delete (config.optional_quality_checks as { baseline_version?: unknown }).baseline_version;
+        }
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+        const report = buildReportDataContract({
+            repoRoot,
+            generatedAtUtc: '2026-05-16T00:00:00.000Z'
+        });
+
+        const value = report.system_state.quality_baseline.value as {
+            installed_baseline_version: string | null;
+            installed_baseline_rule_count: number;
+            shipped_baseline_rule_count: number;
+            missing_shipped_rule_ids: string[];
+            custom_rule_count: number;
+        };
+        assert.equal(report.system_state.quality_baseline.status, 'attention', variant);
+        assert.equal(value.installed_baseline_version, variant === 'rules' ? shippedBaselineVersion : null, variant);
+        assert.equal(value.shipped_baseline_rule_count, shippedRuleCount, variant);
+        assert.equal(value.custom_rule_count, 0, variant);
+
+        if (variant === 'version') {
+            assert.equal(value.installed_baseline_rule_count, shippedRuleCount, variant);
+            assert.deepEqual(value.missing_shipped_rule_ids, [], variant);
+        } else {
+            assert.equal(value.installed_baseline_rule_count, 0, variant);
+            assert.equal(value.missing_shipped_rule_ids.length, shippedRuleCount, variant);
+        }
+    }
 });
 
 test('buildQualityGateTab preserves legacy workflow-config-tab call signature', () => {

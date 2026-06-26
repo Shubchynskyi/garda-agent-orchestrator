@@ -2,6 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveTaskResetAvailability } from '../../core/task-reset-availability';
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
+    OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION
+} from '../../core/workflow-config';
+import {
     buildFullSuiteTimeoutForecast,
     formatFullSuiteTimeoutForecast,
     loadFullSuiteValidationConfig
@@ -311,6 +315,62 @@ function buildWorkflowSignal(repoRoot: string, workflowTab: ReportWorkflowConfig
     };
 }
 
+function buildQualityBaselineSignal(workflowTab: ReportWorkflowConfigTab): ReportSystemStateSignal {
+    const shippedRuleIds = DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id);
+    const shippedRuleIdSet = new Set(shippedRuleIds);
+    const rawConfig = safeReadJson(workflowTab.config_path);
+    const rawOptionalChecks = isRecord(rawConfig?.optional_quality_checks) ? rawConfig.optional_quality_checks : null;
+    const rawRules = Array.isArray(rawOptionalChecks?.rules) ? rawOptionalChecks.rules : [];
+    const configuredRules = rawRules
+            .filter(isRecord)
+            .map((rule) => ({
+                id: String(rule.id || '').trim().toLowerCase()
+            }))
+            .filter((rule) => rule.id);
+    const installedRules = configuredRules.filter((rule) => shippedRuleIdSet.has(rule.id));
+    const installedRuleIds = new Set(installedRules.map((rule) => rule.id));
+    const missingRuleIds = shippedRuleIds.filter((ruleId) => !installedRuleIds.has(ruleId));
+    const customRuleCount = configuredRules.filter((rule) => !shippedRuleIdSet.has(rule.id)).length;
+    const rawBaselineVersion = typeof rawOptionalChecks?.baseline_version === 'string'
+        ? rawOptionalChecks.baseline_version.trim()
+        : '';
+    const installedVersion = rawBaselineVersion;
+    const versionMatches = installedVersion === OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION;
+    const healthStatus: ReportSystemStateHealth = workflowTab.status === 'invalid'
+        ? 'error'
+        : workflowTab.status !== 'present'
+            ? 'unknown'
+            : missingRuleIds.length > 0 || !versionMatches
+                ? 'attention'
+                : 'ok';
+    const summary = workflowTab.status !== 'present'
+        ? 'Quality rule-pack health is unavailable because workflow config is not loaded.'
+        : missingRuleIds.length > 0
+            ? `${missingRuleIds.length} shipped quality rule(s) are missing from the installed workflow config.`
+            : !versionMatches
+                ? 'Installed quality rule-pack version is older than the shipped baseline.'
+                : 'Installed quality rule-pack matches the shipped baseline.';
+    const remediation = healthStatus === 'attention' || healthStatus === 'error'
+        ? 'Run update or workflow validation so shipped baseline rules are materialized without resetting custom rules.'
+        : null;
+    return signal(
+        'quality-baseline',
+        'Installed quality rules',
+        healthStatus,
+        summary,
+        remediation,
+        {
+            installed_baseline_version: installedVersion || null,
+            shipped_baseline_version: OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+            installed_baseline_rule_count: installedRules.length,
+            shipped_baseline_rule_count: shippedRuleIds.length,
+            missing_shipped_rule_ids: missingRuleIds,
+            custom_rule_count: customRuleCount
+        },
+        workflowTab.config_path
+    );
+}
+
 function buildProjectMemorySignal(tab: ReportProjectMemoryTab): ReportSystemStateSignal {
     const initialized = booleanValue(valueRowValue(tab.status, 'memory-initialized'));
     const validated = booleanValue(valueRowValue(tab.status, 'memory-validated'));
@@ -527,6 +587,7 @@ export function buildSystemStateReport(options: {
     const uiActions = buildUiActionsSignal();
     const taskQueue = buildTaskQueueSignal(options.tasks);
     const workflow = buildWorkflowSignal(options.repoRoot, options.workflowTab);
+    const qualityBaseline = buildQualityBaselineSignal(options.workflowTab);
     const projectMemory = buildProjectMemorySignal(options.projectMemoryTab);
     const protectedManifest = buildProtectedManifestSignal(options.repoRoot);
     const runtime = buildRuntimeSignals(options.repoRoot, options.tasks);
@@ -547,6 +608,7 @@ export function buildSystemStateReport(options: {
         uiActions,
         taskQueue,
         workflow,
+        qualityBaseline,
         projectMemory,
         protectedManifest,
         ...runtime.artifact_signals,
@@ -572,6 +634,7 @@ export function buildSystemStateReport(options: {
         ui_actions: uiActions,
         task_queue: taskQueue,
         workflow,
+        quality_baseline: qualityBaseline,
         project_memory: projectMemory,
         protected_manifest: protectedManifest,
         runtime,

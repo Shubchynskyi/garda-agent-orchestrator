@@ -194,11 +194,8 @@ function renderQualityGate(report) {
     + disabledNotice
     + '<section class="quality-gate-summary">'
     + metric(t('gardaSwitchState'), tab.enabled ? t('gardaSwitchStateOn') : t('gardaSwitchStateOff'))
-    + metric(t('qualityGateBaselineVersion'), tab.baseline_version || '-')
-    + metric(t('qualityGateShippedBaselineVersion'), tab.shipped_baseline_version || '-')
     + metric(t('qualityGateBaselineRules'), tab.baseline_rule_count)
     + metric(t('qualityGateCustomRules'), tab.custom_rule_count)
-    + metric(t('qualityGateDeletedBaselineRules'), tab.deleted_baseline_rule_count)
     + '</section>'
     + renderQualityGateLatestCheck(tab.latest_check)
     + renderQualityGateActionHistory(tab.action_required_history)

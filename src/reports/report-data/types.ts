@@ -391,6 +391,7 @@ export interface ReportSystemState {
         full_suite_timeout_latest_warning: string | null;
         task_reset_ready: boolean;
     };
+    quality_baseline: ReportSystemStateSignal;
     project_memory: ReportSystemStateSignal;
     protected_manifest: ReportSystemStateSignal & {
         assessment_code: string | null;

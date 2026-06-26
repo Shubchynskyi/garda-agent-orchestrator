@@ -6,6 +6,7 @@ import * as vm from 'node:vm';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../src/core/constants';
 import { UI_DASHBOARD_CLIENT_CORE } from '../../../src/reports/ui/dashboard/dashboard-client-core';
 import { UI_DASHBOARD_CLIENT_QUALITY_GATE } from '../../../src/reports/ui/dashboard/dashboard-client-quality-gate';
+import { UI_DASHBOARD_CLIENT_SESSION_ACTIONS } from '../../../src/reports/ui/dashboard/dashboard-client-session-actions';
 import { UI_DASHBOARD_CLIENT_WORKFLOW } from '../../../src/reports/ui/dashboard/dashboard-client-workflow';
 import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 import {
@@ -520,7 +521,9 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
 
     vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\n${UI_DASHBOARD_CLIENT_QUALITY_GATE}\nrenderQualityGate(null);`, context);
 
-    assert.match(qualityGateNode.innerHTML, /Поставляемый baseline/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Поставляемый baseline/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Текущий baseline/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /Удалённые baseline-правила/u);
     assert.match(qualityGateNode.innerHTML, /Изменено локально/u);
     assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
     assert.match(qualityGateNode.innerHTML, /Отключено/u);
@@ -532,6 +535,79 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.match(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
     assert.match(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
     assert.match(qualityGateNode.innerHTML, /garda ui --actions/u);
+});
+
+test('system state renders quality baseline diagnostics with localized labels', () => {
+    const systemStateNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => [],
+            getElementById: (id: string) => id === 'system-state-panel' ? systemStateNode : null
+        },
+        window: {
+            localStorage: null,
+            prompt: () => null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        actionTextPacks: {},
+        actionCategoryTextPacks: {},
+        fallbackLanguage: 'en',
+        initialLanguage: 'ru',
+        actionToken: '',
+        currentActionsPayload: null,
+        currentReport: null,
+        gardaSwitchNode: null,
+        actionStatusNode: { innerHTML: '' },
+        sessionSummaryNode: { innerHTML: '' },
+        sessionCountdownNode: { max: '', value: '' },
+        sessionPollTimer: null,
+        lastActivityPingAt: 0,
+        fetch: async () => ({ json: async () => ({}) }),
+        setInterval: () => 0,
+        clearInterval: () => {}
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_SESSION_ACTIONS}\nrenderSystemState({
+        generated_at_utc: '2026-05-16T00:00:00.000Z',
+        system_state: {
+            overall: { status: 'attention', label: 'Needs attention', summary: 'One or more System State signals need attention.', generated_at_utc: '2026-05-16T00:00:00.000Z' },
+            garda: null,
+            ui_actions: null,
+            task_queue: null,
+            workflow: null,
+            quality_baseline: {
+                id: 'quality-baseline',
+                label: 'Installed quality rules',
+                status: 'attention',
+                summary: 'Installed quality rule-pack version is older than the shipped baseline.',
+                remediation: 'Run update or workflow validation.',
+                value: {
+                    installed_baseline_version: '2026-06-25.t842',
+                    shipped_baseline_version: '2026-06-26.t843',
+                    installed_baseline_rule_count: 9,
+                    shipped_baseline_rule_count: 12,
+                    missing_shipped_rule_ids: ['artifact_evidence_binding']
+                },
+                source_path: 'garda-agent-orchestrator/live/config/workflow-config.json'
+            },
+            project_memory: null,
+            protected_manifest: null,
+            runtime: {},
+            configuration_files: [],
+            signals: []
+        }
+    });`, context);
+
+    assert.match(systemStateNode.innerHTML, /Установленные правила качества/u);
+    assert.match(systemStateNode.innerHTML, /Установленный набор правил/u);
+    assert.match(systemStateNode.innerHTML, /Поставляемый набор правил/u);
+    assert.match(systemStateNode.innerHTML, /Отсутствующие поставляемые правила/u);
+    assert.match(systemStateNode.innerHTML, /artifact_evidence_binding/u);
 });
 
 test('quality gate tab keeps baseline rule content immutable while enabled state remains editable', () => {

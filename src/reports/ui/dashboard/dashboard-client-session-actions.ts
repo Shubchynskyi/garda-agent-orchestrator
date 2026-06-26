@@ -245,6 +245,7 @@ function systemSignalLabel(signal) {
   if (id === 'ui-actions') return t('actionsTab');
   if (id === 'task-queue') return t('taskQueueStatus');
   if (id === 'workflow-readiness') return t('workflowTab');
+  if (id === 'quality-baseline') return t('qualityBaselineHealth');
   if (id === 'project-memory') return t('projectMemoryTab');
   if (id === 'protected-manifest') return t('workflowGroupSafety');
   if (id === 'runtime-locks') return t('runtimeDiagnosticsTitle');
@@ -304,6 +305,18 @@ function renderSystemSignal(signal) {
 }
 function systemSignalDetailsHtml(signal) {
   const id = signal && signal.id;
+  if (id === 'quality-baseline') {
+    const value = signal && signal.value && typeof signal.value === 'object' ? signal.value : {};
+    const missing = Array.isArray(value.missing_shipped_rule_ids) && value.missing_shipped_rule_ids.length > 0
+      ? value.missing_shipped_rule_ids.join(', ')
+      : '-';
+    return '<div class="system-inline-details">'
+      + '<span>' + safe(t('qualityBaselineInstalled')) + ': <strong>' + safe(value.installed_baseline_version || '-') + '</strong></span>'
+      + '<span>' + safe(t('qualityBaselineShipped')) + ': <strong>' + safe(value.shipped_baseline_version || '-') + '</strong></span>'
+      + '<span>' + safe(t('qualityBaselineRulePackRules')) + ': <strong>' + safe(String(value.installed_baseline_rule_count || 0)) + '/' + safe(String(value.shipped_baseline_rule_count || 0)) + '</strong></span>'
+      + '<span>' + safe(t('qualityBaselineMissingRules')) + ': <strong>' + safe(missing) + '</strong></span>'
+      + '</div>';
+  }
   if (id !== 'active-task-timelines' && id !== 'incomplete-task-timelines') {
     return '';
   }
@@ -388,6 +401,7 @@ function renderSystemState(report) {
     enrichUiActionsSignal(state.ui_actions),
     state.task_queue,
     state.workflow,
+    state.quality_baseline,
     state.project_memory,
     state.protected_manifest,
     state.runtime && state.runtime.stale_locks,

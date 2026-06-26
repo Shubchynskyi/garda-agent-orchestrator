@@ -290,7 +290,7 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('href="../../live/docs/project-memory/README.md"'));
     assert.ok(html.includes('Project Memory Optimization'));
     assert.ok(html.includes('Quality Gate'));
-    assert.ok(html.includes('Shipped baseline'));
+    assert.ok(!html.includes('Shipped baseline'));
     assert.ok(html.includes('Latest check'));
     assert.ok(html.includes('Action-required history'));
     report.quality_gate_tab.latest_check = {
