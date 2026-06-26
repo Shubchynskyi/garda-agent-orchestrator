@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import * as vm from 'node:vm';
 import { UNCONFIGURED_COMPILE_GATE_COMMAND } from '../../../src/core/constants';
 import { UI_DASHBOARD_CLIENT_CORE } from '../../../src/reports/ui/dashboard/dashboard-client-core';
+import { UI_DASHBOARD_CLIENT_QUALITY_GATE } from '../../../src/reports/ui/dashboard/dashboard-client-quality-gate';
 import { UI_DASHBOARD_CLIENT_WORKFLOW } from '../../../src/reports/ui/dashboard/dashboard-client-workflow';
 import { renderLocalUiHtml } from '../../../src/reports/ui/ui-dashboard-html';
 import {
@@ -21,8 +22,10 @@ test('local UI dashboard renders packaged style and client assets', () => {
     assert.match(html, /<style>\s*:root \{ color-scheme: light;/u);
     assert.match(html, /<script>[\s\S]*const actionToken = "asset-token";/u);
     assert.match(html, /data-tab="workflow-tab"/u);
+    assert.match(html, /data-tab="quality-gate-tab"/u);
     assert.match(html, /function renderTasks\(report\)/u);
     assert.match(html, /function renderWorkflow\(report\)/u);
+    assert.match(html, /function renderQualityGate\(report\)/u);
     assert.match(html, /function renderTaskDetail\(detail\)/u);
 });
 
@@ -191,7 +194,7 @@ test('workflow settings editor uses optional-rule labels without ordinary-doc te
     assert.doesNotMatch(settingsEditorNode.innerHTML, /Добавить документ/u);
 });
 
-test('workflow setting result renderer suppresses routine optional-rule stdout after success', () => {
+test('workflow setting result renderer suppresses routine quality-gate stdout after success', () => {
     const workflowNode = {
         innerHTML: '',
         hidden: true,
@@ -225,7 +228,9 @@ test('workflow setting result renderer suppresses routine optional-rule stdout a
         currentWorkflowSettingGroup: 'validation'
     };
 
-    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\nrenderWorkflowSettingResult({
+    const script = `${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}`;
+
+    vm.runInNewContext(`${script}\nrenderWorkflowSettingResult({
   status: 'executed',
   setting_id: 'optional-check-rule-management',
   key: 'optional_quality_checks.rules',
@@ -238,6 +243,20 @@ test('workflow setting result renderer suppresses routine optional-rule stdout a
     assert.match(workflowNode.innerHTML, /Optional quality-check rule/u);
     assert.match(workflowNode.innerHTML, /runtime\/audit\.jsonl/u);
     assert.doesNotMatch(workflowNode.innerHTML, /routine success output/u);
+    assert.doesNotMatch(workflowNode.innerHTML, /data-label="stdout"/u);
+
+    vm.runInNewContext(`renderWorkflowSettingResult({
+  status: 'executed',
+  setting_id: 'optional-checks-enabled',
+  key: 'optional_quality_checks.enabled',
+  stdout: 'workflow set success output '.repeat(200),
+  stderr: '',
+  audit_path: 'runtime/toggle-audit.jsonl'
+});`, context);
+
+    assert.match(workflowNode.innerHTML, /Optional quality checks/u);
+    assert.match(workflowNode.innerHTML, /runtime\/toggle-audit\.jsonl/u);
+    assert.doesNotMatch(workflowNode.innerHTML, /workflow set success output/u);
     assert.doesNotMatch(workflowNode.innerHTML, /data-label="stdout"/u);
 });
 
@@ -288,4 +307,94 @@ test('workflow setting result renderer keeps optional-rule diagnostics on failed
     assert.match(workflowNode.innerHTML, /diagnostic stderr/u);
     assert.match(workflowNode.innerHTML, /data-label="stdout"/u);
     assert.match(workflowNode.innerHTML, /data-label="stderr"/u);
+});
+
+test('quality gate tab renders baseline custom deleted and edited rule status', () => {
+    const qualityGateNode = {
+        innerHTML: '',
+        querySelectorAll: () => []
+    };
+    const context = {
+        document: {
+            querySelectorAll: () => [],
+            getElementById: () => null
+        },
+        window: {
+            localStorage: null,
+            prompt: () => null
+        },
+        languageMetadata: LOCAL_UI_LANGUAGES,
+        languagePacks: LOCAL_UI_TEXT,
+        settingTextPacks: LOCAL_UI_SETTING_TEXT,
+        fallbackLanguage: 'en',
+        initialLanguage: 'ru',
+        qualityGateNode,
+        qualityGateStatusNode: {
+            innerHTML: '',
+            classList: { toggle: () => {} }
+        },
+        qualityGateConfigPathNode: { textContent: '' },
+        settingsEditorNode: {
+            innerHTML: '',
+            querySelectorAll: () => []
+        },
+        workflowNode: { innerHTML: '', hidden: false },
+        workflowPanelTitleNode: { textContent: '' },
+        workflowConfigPathNode: { textContent: '' },
+        currentSettingsPayload: {
+            enabled: false,
+            settings: [],
+            quality_gate: {
+                config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
+                status: 'present',
+                enabled: true,
+                baseline_version: '2026-06-25.t839',
+                shipped_baseline_version: '2026-06-25.t839',
+                baseline_rule_count: 1,
+                custom_rule_count: 1,
+                deleted_baseline_rule_count: 1,
+                unavailable: [],
+                rules: [
+                    {
+                        id: 'code_simplification',
+                        title: 'Code simplification',
+                        prompt: 'Changed locally.',
+                        enabled: true,
+                        present: true,
+                        source: 'baseline',
+                        statuses: ['locally_edited']
+                    },
+                    {
+                        id: 'custom_focus',
+                        title: 'Custom focus',
+                        prompt: 'Check custom concern.',
+                        enabled: false,
+                        present: true,
+                        source: 'custom',
+                        statuses: ['disabled']
+                    },
+                    {
+                        id: 'zero_diff_noop_preemption',
+                        title: 'Zero-diff no-op preemption',
+                        prompt: 'Check no-op routing.',
+                        enabled: false,
+                        present: false,
+                        source: 'baseline',
+                        statuses: ['deleted']
+                    }
+                ]
+            }
+        },
+        currentReport: null,
+        currentQualityGateSettingResult: null
+    };
+
+    vm.runInNewContext(`${UI_DASHBOARD_CLIENT_CORE}\n${UI_DASHBOARD_CLIENT_WORKFLOW}\n${UI_DASHBOARD_CLIENT_QUALITY_GATE}\nrenderQualityGate(null);`, context);
+
+    assert.match(qualityGateNode.innerHTML, /Поставляемый baseline/u);
+    assert.match(qualityGateNode.innerHTML, /Изменено локально/u);
+    assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
+    assert.match(qualityGateNode.innerHTML, /Отключено/u);
+    assert.match(qualityGateNode.innerHTML, /Удалено/u);
+    assert.match(qualityGateNode.innerHTML, /garda ui --actions/u);
 });

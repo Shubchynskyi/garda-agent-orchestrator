@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "durações atípicas",
     "addOptionalCheckRule": "Adicionar regra",
     "saveOptionalCheckRule": "Salvar regra",
-    "removeOptionalCheckRule": "Remover regra"
+    "removeOptionalCheckRule": "Remover regra",
+    "qualityGateTab": "Portal de qualidade",
+    "qualityGateRuleSet": "Regras de qualidade",
+    "qualityGateBaselineVersion": "Baseline atual",
+    "qualityGateShippedBaselineVersion": "Baseline entregue",
+    "qualityGateBaselineRules": "Regras baseline",
+    "qualityGateCustomRules": "Regras customizadas",
+    "qualityGateDeletedBaselineRules": "Regras baseline removidas",
+    "qualityGateSourceColumn": "Origem",
+    "qualityGateSourceBaseline": "Linha de base",
+    "qualityGateSourceCustom": "Customizada",
+    "qualityGateStatusActive": "Ativa",
+    "qualityGateStatusDisabled": "Desativada",
+    "qualityGateStatusLocallyEdited": "Editada localmente",
+    "qualityGateStatusDeleted": "Removida",
+    "qualityGateRulesEmpty": "Nenhuma regra de qualidade disponível.",
+    "qualityGateNewRule": "Nova regra"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

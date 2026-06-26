@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "Ausreißer-Dauern",
     "addOptionalCheckRule": "Regel hinzufügen",
     "saveOptionalCheckRule": "Regel speichern",
-    "removeOptionalCheckRule": "Regel entfernen"
+    "removeOptionalCheckRule": "Regel entfernen",
+    "qualityGateTab": "Qualitätsprüfung",
+    "qualityGateRuleSet": "Qualitätsregeln",
+    "qualityGateBaselineVersion": "Aktuelle Basis",
+    "qualityGateShippedBaselineVersion": "Mitgelieferte Basis",
+    "qualityGateBaselineRules": "Basisregeln",
+    "qualityGateCustomRules": "Eigene Regeln",
+    "qualityGateDeletedBaselineRules": "Gelöschte Basisregeln",
+    "qualityGateSourceColumn": "Quelle",
+    "qualityGateSourceBaseline": "Basis",
+    "qualityGateSourceCustom": "Eigen",
+    "qualityGateStatusActive": "Aktiv",
+    "qualityGateStatusDisabled": "Deaktiviert",
+    "qualityGateStatusLocallyEdited": "Lokal bearbeitet",
+    "qualityGateStatusDeleted": "Gelöscht",
+    "qualityGateRulesEmpty": "Keine Qualitätsregeln verfügbar.",
+    "qualityGateNewRule": "Neue Regel"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "مدد شاذة",
     "addOptionalCheckRule": "إضافة قاعدة",
     "saveOptionalCheckRule": "حفظ القاعدة",
-    "removeOptionalCheckRule": "إزالة القاعدة"
+    "removeOptionalCheckRule": "إزالة القاعدة",
+    "qualityGateTab": "بوابة الجودة",
+    "qualityGateRuleSet": "قواعد الجودة",
+    "qualityGateBaselineVersion": "خط الأساس الحالي",
+    "qualityGateShippedBaselineVersion": "خط الأساس المرفق",
+    "qualityGateBaselineRules": "قواعد خط الأساس",
+    "qualityGateCustomRules": "قواعد مخصصة",
+    "qualityGateDeletedBaselineRules": "قواعد خط أساس محذوفة",
+    "qualityGateSourceColumn": "المصدر",
+    "qualityGateSourceBaseline": "خط الأساس",
+    "qualityGateSourceCustom": "مخصص",
+    "qualityGateStatusActive": "نشط",
+    "qualityGateStatusDisabled": "معطل",
+    "qualityGateStatusLocallyEdited": "معدل محليًا",
+    "qualityGateStatusDeleted": "محذوف",
+    "qualityGateRulesEmpty": "لا توجد قواعد جودة متاحة.",
+    "qualityGateNewRule": "قاعدة جديدة"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

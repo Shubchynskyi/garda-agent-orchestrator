@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "离群时长",
     "addOptionalCheckRule": "添加规则",
     "saveOptionalCheckRule": "保存规则",
-    "removeOptionalCheckRule": "移除规则"
+    "removeOptionalCheckRule": "移除规则",
+    "qualityGateTab": "质量门禁",
+    "qualityGateRuleSet": "质量规则",
+    "qualityGateBaselineVersion": "当前基线",
+    "qualityGateShippedBaselineVersion": "随附基线",
+    "qualityGateBaselineRules": "基线规则",
+    "qualityGateCustomRules": "自定义规则",
+    "qualityGateDeletedBaselineRules": "已删除基线规则",
+    "qualityGateSourceColumn": "来源",
+    "qualityGateSourceBaseline": "基线",
+    "qualityGateSourceCustom": "自定义",
+    "qualityGateStatusActive": "启用",
+    "qualityGateStatusDisabled": "停用",
+    "qualityGateStatusLocallyEdited": "本地已编辑",
+    "qualityGateStatusDeleted": "已删除",
+    "qualityGateRulesEmpty": "没有可用的质量规则。",
+    "qualityGateNewRule": "新规则"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "thời lượng ngoại lệ",
     "addOptionalCheckRule": "Thêm quy tắc",
     "saveOptionalCheckRule": "Lưu quy tắc",
-    "removeOptionalCheckRule": "Xóa quy tắc"
+    "removeOptionalCheckRule": "Xóa quy tắc",
+    "qualityGateTab": "Cổng chất lượng",
+    "qualityGateRuleSet": "Quy tắc chất lượng",
+    "qualityGateBaselineVersion": "Baseline hiện tại",
+    "qualityGateShippedBaselineVersion": "Baseline đi kèm",
+    "qualityGateBaselineRules": "Quy tắc baseline",
+    "qualityGateCustomRules": "Quy tắc tùy chỉnh",
+    "qualityGateDeletedBaselineRules": "Quy tắc baseline đã xóa",
+    "qualityGateSourceColumn": "Nguồn",
+    "qualityGateSourceBaseline": "Nền tảng",
+    "qualityGateSourceCustom": "Tùy chỉnh",
+    "qualityGateStatusActive": "Đang bật",
+    "qualityGateStatusDisabled": "Đã tắt",
+    "qualityGateStatusLocallyEdited": "Đã sửa cục bộ",
+    "qualityGateStatusDeleted": "Đã xóa",
+    "qualityGateRulesEmpty": "Không có quy tắc chất lượng.",
+    "qualityGateNewRule": "Quy tắc mới"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

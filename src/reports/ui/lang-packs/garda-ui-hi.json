@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "असामान्य अवधि",
     "addOptionalCheckRule": "नियम जोड़ें",
     "saveOptionalCheckRule": "नियम सहेजें",
-    "removeOptionalCheckRule": "नियम हटाएँ"
+    "removeOptionalCheckRule": "नियम हटाएँ",
+    "qualityGateTab": "गुणवत्ता गेट",
+    "qualityGateRuleSet": "गुणवत्ता नियम",
+    "qualityGateBaselineVersion": "मौजूदा बेसलाइन",
+    "qualityGateShippedBaselineVersion": "शिप की गई बेसलाइन",
+    "qualityGateBaselineRules": "बेसलाइन नियम",
+    "qualityGateCustomRules": "कस्टम नियम",
+    "qualityGateDeletedBaselineRules": "हटाए गए बेसलाइन नियम",
+    "qualityGateSourceColumn": "स्रोत",
+    "qualityGateSourceBaseline": "बेसलाइन",
+    "qualityGateSourceCustom": "कस्टम",
+    "qualityGateStatusActive": "सक्रिय",
+    "qualityGateStatusDisabled": "बंद",
+    "qualityGateStatusLocallyEdited": "स्थानीय रूप से बदला",
+    "qualityGateStatusDeleted": "हटाया गया",
+    "qualityGateRulesEmpty": "कोई गुणवत्ता नियम उपलब्ध नहीं है।",
+    "qualityGateNewRule": "नया नियम"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

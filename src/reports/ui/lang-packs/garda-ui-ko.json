@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "이상치 지속 시간",
     "addOptionalCheckRule": "규칙 추가",
     "saveOptionalCheckRule": "규칙 저장",
-    "removeOptionalCheckRule": "규칙 제거"
+    "removeOptionalCheckRule": "규칙 제거",
+    "qualityGateTab": "품질 게이트",
+    "qualityGateRuleSet": "품질 규칙",
+    "qualityGateBaselineVersion": "현재 기준선",
+    "qualityGateShippedBaselineVersion": "제공 기준선",
+    "qualityGateBaselineRules": "기준선 규칙",
+    "qualityGateCustomRules": "사용자 규칙",
+    "qualityGateDeletedBaselineRules": "삭제된 기준선 규칙",
+    "qualityGateSourceColumn": "출처",
+    "qualityGateSourceBaseline": "기준선",
+    "qualityGateSourceCustom": "사용자 지정",
+    "qualityGateStatusActive": "활성",
+    "qualityGateStatusDisabled": "비활성",
+    "qualityGateStatusLocallyEdited": "로컬 수정됨",
+    "qualityGateStatusDeleted": "삭제됨",
+    "qualityGateRulesEmpty": "사용 가능한 품질 규칙이 없습니다.",
+    "qualityGateNewRule": "새 규칙"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

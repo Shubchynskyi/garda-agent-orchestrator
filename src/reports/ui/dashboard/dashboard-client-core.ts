@@ -293,6 +293,10 @@ function applyLanguage() {
   if (currentSettingsPayload) {
     renderSettingsEditor(currentSettingsPayload);
   }
+  renderQualityGate(currentReport);
+  if (currentQualityGateSettingResult) {
+    renderQualityGateResult(currentQualityGateSettingResult);
+  }
   if (currentWorkflowSettingResult) {
     renderWorkflowSettingResult(currentWorkflowSettingResult);
   }

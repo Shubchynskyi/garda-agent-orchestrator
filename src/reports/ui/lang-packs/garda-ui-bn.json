@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "আউটলায়ার সময়কাল",
     "addOptionalCheckRule": "নিয়ম যোগ করুন",
     "saveOptionalCheckRule": "নিয়ম সংরক্ষণ করুন",
-    "removeOptionalCheckRule": "নিয়ম সরান"
+    "removeOptionalCheckRule": "নিয়ম সরান",
+    "qualityGateTab": "গুণমান গেট",
+    "qualityGateRuleSet": "গুণমানের নিয়ম",
+    "qualityGateBaselineVersion": "বর্তমান বেসলাইন",
+    "qualityGateShippedBaselineVersion": "প্যাকেজের বেসলাইন",
+    "qualityGateBaselineRules": "বেসলাইন নিয়ম",
+    "qualityGateCustomRules": "কাস্টম নিয়ম",
+    "qualityGateDeletedBaselineRules": "মুছে ফেলা বেসলাইন নিয়ম",
+    "qualityGateSourceColumn": "উৎস",
+    "qualityGateSourceBaseline": "বেসলাইন",
+    "qualityGateSourceCustom": "কাস্টম",
+    "qualityGateStatusActive": "সক্রিয়",
+    "qualityGateStatusDisabled": "নিষ্ক্রিয়",
+    "qualityGateStatusLocallyEdited": "স্থানীয়ভাবে সম্পাদিত",
+    "qualityGateStatusDeleted": "মুছে ফেলা",
+    "qualityGateRulesEmpty": "কোনো গুণমান নিয়ম নেই।",
+    "qualityGateNewRule": "নতুন নিয়ম"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

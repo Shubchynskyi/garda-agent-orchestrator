@@ -11,6 +11,13 @@ function updateWorkflowPanelTitle() {
   }
   workflowPanelTitleNode.textContent = settingGroupLabel(currentWorkflowSettingGroup);
 }
+function shouldSuppressRoutineSettingStdout(result, successfulExecution) {
+  if (!successfulExecution) {
+    return false;
+  }
+  return result.setting_id === 'optional-check-rule-management'
+    || result.setting_id === 'optional-checks-enabled';
+}
 function renderWorkflow(report) {
   const tab = report.workflow_config_tab;
   setPanelConfigPath(workflowConfigPathNode, tab && tab.config_path ? tab.config_path : '');
@@ -42,8 +49,7 @@ function renderSettingResultMarkup(result) {
     && result.timed_out !== true
     && result.cancelled !== true
     && (exitCode === null || exitCode === 0);
-  const suppressRoutineStdout = result.setting_id === 'optional-check-rule-management'
-    && successfulExecution;
+  const suppressRoutineStdout = shouldSuppressRoutineSettingStdout(result, successfulExecution);
   return '<section class="command-preview-panel">'
     + '<div class="command-preview-main"><strong>' + safe(label) + '</strong></div>'
     + '<div class="command-preview-meta">'
@@ -350,6 +356,7 @@ function renderSettingsEditor(payload) {
 async function refreshSettingsPayload() {
   const response = await fetch('/api/settings');
   renderSettingsEditor(await response.json());
+  renderQualityGate(currentReport);
   if (currentReport) {
     renderProjectMemory(currentReport);
   }

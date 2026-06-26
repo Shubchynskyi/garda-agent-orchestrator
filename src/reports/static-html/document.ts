@@ -4,12 +4,14 @@ import { renderBackupsPanel } from './backups-tab';
 import { renderInitSettingsPanel } from './init-settings-tab';
 import { renderInstructionsPanel } from './instructions-tab';
 import { renderProjectMemoryPanel } from './project-memory-tab';
+import { renderQualityGatePanel } from './quality-gate-tab';
 import { STATIC_HTML_REPORT_STYLES } from './styles';
 import { renderTaskDetailTemplate, renderTasksPanel, STATIC_HTML_TASK_CLIENT_SCRIPT } from './tasks-tab';
 import { renderWorkflowPanel } from './workflow-tab';
 
 export const STATIC_HTML_REPORT_TABS = [
     { id: 'tasks', label: 'Tasks' },
+    { id: 'quality-gate', label: 'Quality Gate' },
     { id: 'workflow', label: 'Workflow Config' },
     { id: 'init-settings', label: 'Init Settings' },
     { id: 'project-memory', label: 'Project Memory' },
@@ -50,6 +52,7 @@ ${renderTabButtons()}
 </nav>
 <main>
 ${renderTasksPanel(rows)}
+${renderQualityGatePanel(report.quality_gate_tab)}
 ${renderWorkflowPanel(report.workflow_config_tab)}
 ${renderInitSettingsPanel(report.init_settings_tab, context)}
 ${renderProjectMemoryPanel(report.project_memory_tab, context)}

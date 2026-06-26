@@ -4,6 +4,7 @@ import { buildBackupsTab } from './backups-tab';
 import { buildInitSettingsTab } from './init-settings-tab';
 import { buildInstructionEntries } from './instructions-tab';
 import { buildProjectMemoryTab } from './project-memory-tab';
+import { buildQualityGateTab } from './quality-gate-tab';
 import { readCanonicalActiveQueueRows } from './task-queue';
 import { buildSystemStateReport } from './system-state';
 import {
@@ -36,6 +37,7 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
             : buildSkippedTaskDetail(row.task_id, maxDetailedTasks)
     }));
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
+    const qualityGateTab = buildQualityGateTab(workflowConfigTab);
     const initSettingsTab = buildInitSettingsTab(repoRoot);
     const projectMemoryTab = buildProjectMemoryTab(repoRoot, workflowConfigTab);
     const backupsTab = buildBackupsTab(repoRoot);
@@ -66,6 +68,7 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
             rows: tasks
         },
         workflow_config_tab: workflowConfigTab,
+        quality_gate_tab: qualityGateTab,
         init_settings_tab: initSettingsTab,
         project_memory_tab: projectMemoryTab,
         backups_tab: backupsTab,

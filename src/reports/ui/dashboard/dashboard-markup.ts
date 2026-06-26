@@ -22,6 +22,7 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <nav>
 <div class="tab-buttons">
 <button type="button" class="active" data-tab="tasks-tab" data-i18n="tasksTab">\${text.tasksTab}</button>
+<button type="button" data-tab="quality-gate-tab" data-i18n="qualityGateTab">\${text.qualityGateTab}</button>
 <button type="button" data-tab="workflow-tab" data-setting-group="validation" data-i18n="workflowGroupValidation">\${text.workflowGroupValidation}</button>
 <button type="button" data-tab="workflow-tab" data-setting-group="review" data-i18n="workflowGroupReview">\${text.workflowGroupReview}</button>
 <button type="button" data-tab="workflow-tab" data-setting-group="scope" data-i18n="workflowGroupScope">\${text.workflowGroupScope}</button>
@@ -59,6 +60,13 @@ export const UI_DASHBOARD_MARKUP = `<header>
 <div class="panel-head"><h2 data-i18n="taskDetailTitle">\${text.taskDetailTitle}</h2></div>
 <div class="detail" id="detail"><p class="empty" data-i18n="chooseTask">\${text.chooseTask}</p></div>
 </section>
+</div>
+</section>
+<section class="panel tab" id="quality-gate-tab" hidden>
+<div class="panel-head tab-head"><h2 data-i18n="qualityGateTab">\${text.qualityGateTab}</h2><span class="config-path" id="quality-gate-config-path"></span></div>
+<div class="detail tab-body quality-gate-detail">
+<section id="quality-gate-status" class="action-status empty"></section>
+<section id="quality-gate"><p class="empty" data-i18n="loading">\${text.loading}</p></section>
 </div>
 </section>
 <section class="panel tab" id="workflow-tab" hidden>

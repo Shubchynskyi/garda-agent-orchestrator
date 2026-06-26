@@ -83,8 +83,12 @@ const tabs = Array.from(document.querySelectorAll('.tab'));
 for (const tab of tabs) {
   tab.addEventListener('click', () => {
     for (const item of tabs) item.setAttribute('aria-selected', String(item === tab));
-    for (const panel of document.querySelectorAll('.panel')) panel.classList.remove('active');
-    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    const activePanel = document.getElementById('tab-' + tab.dataset.tab);
+    for (const panel of document.querySelectorAll('.panel')) {
+      const active = panel === activePanel;
+      panel.classList.toggle('active', active);
+      panel.hidden = !active;
+    }
   });
 }
 function text(value) { return value === null || value === undefined || value === '' ? '-' : String(value); }

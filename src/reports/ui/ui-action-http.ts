@@ -1,5 +1,5 @@
 import type * as http from 'node:http';
-import { buildWorkflowConfigTab } from '../report-data-contract';
+import { buildQualityGateTab, buildWorkflowConfigTab } from '../report-data-contract';
 import {
     buildUiSettingDefinitions,
     buildUiWorkspaceAndBackupActionDefinitions,
@@ -34,10 +34,12 @@ export function buildUiActionsPayload(repoRoot: string, actionsEnabled: boolean)
 
 export function buildUiSettingsPayload(repoRoot: string, actionsEnabled: boolean): Record<string, unknown> {
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
+    const qualityGateTab = buildQualityGateTab(workflowConfigTab);
     return {
         enabled: actionsEnabled,
         settings: buildUiSettingDefinitions(repoRoot),
-        optional_quality_checks: workflowConfigTab.optional_quality_checks
+        optional_quality_checks: workflowConfigTab.optional_quality_checks,
+        quality_gate: qualityGateTab
     };
 }
 

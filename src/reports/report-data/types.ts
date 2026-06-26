@@ -165,6 +165,35 @@ export interface ReportWorkflowConfigTab {
     unavailable: ReportDataUnavailableEntry[];
 }
 
+export type ReportQualityGateRuleSource = 'baseline' | 'custom';
+export type ReportQualityGateRuleStatus = 'active' | 'disabled' | 'locally_edited' | 'deleted';
+
+export interface ReportQualityGateRule {
+    id: string;
+    title: string;
+    prompt: string;
+    enabled: boolean;
+    present: boolean;
+    source: ReportQualityGateRuleSource;
+    statuses: ReportQualityGateRuleStatus[];
+    baseline_title: string | null;
+    baseline_prompt: string | null;
+}
+
+export interface ReportQualityGateTab {
+    config_path: string;
+    config_exists: boolean;
+    status: ReportWorkflowConfigTab['status'];
+    enabled: boolean;
+    baseline_version: string;
+    shipped_baseline_version: string;
+    baseline_rule_count: number;
+    custom_rule_count: number;
+    deleted_baseline_rule_count: number;
+    rules: ReportQualityGateRule[];
+    unavailable: ReportDataUnavailableEntry[];
+}
+
 export interface ReportInstructionEntry {
     id: string;
     title: string;
@@ -335,6 +364,7 @@ export interface ReportDataContract {
         rows: ReportTaskRow[];
     };
     workflow_config_tab: ReportWorkflowConfigTab;
+    quality_gate_tab: ReportQualityGateTab;
     init_settings_tab: ReportInitSettingsTab;
     project_memory_tab: ReportProjectMemoryTab;
     backups_tab: ReportBackupsTab;

@@ -419,6 +419,48 @@ test('buildWorkflowConfigTab preserves unknown legacy enum-list values with diag
     assert.ok(!excludedReviewTypes.options.some((option) => option.value === 'legacy-review'));
 });
 
+test('buildReportDataContract exposes quality gate baseline and local rule status', () => {
+    const repoRoot = makeTempRepo();
+    writeTaskMd(repoRoot);
+    writeWorkflowConfig(repoRoot);
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
+    const removedBaselineRule = config.optional_quality_checks.rules.find((rule) => rule.id === 'zero_diff_noop_preemption');
+    assert.ok(removedBaselineRule);
+    config.optional_quality_checks.rules = config.optional_quality_checks.rules
+        .filter((rule) => rule.id !== removedBaselineRule.id)
+        .map((rule) => rule.id === 'code_simplification'
+            ? { ...rule, prompt: `${rule.prompt} Local edit.` }
+            : rule);
+    config.optional_quality_checks.rules.push({
+        id: 'custom_focus',
+        title: 'Custom focus',
+        prompt: 'Check custom concern.',
+        enabled: false
+    });
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+    const report = buildReportDataContract({
+        repoRoot,
+        generatedAtUtc: '2026-05-16T00:00:00.000Z'
+    });
+
+    const edited = report.quality_gate_tab.rules.find((rule) => rule.id === 'code_simplification');
+    const deleted = report.quality_gate_tab.rules.find((rule) => rule.id === removedBaselineRule.id);
+    const custom = report.quality_gate_tab.rules.find((rule) => rule.id === 'custom_focus');
+    assert.ok(edited);
+    assert.deepEqual(edited.statuses, ['locally_edited']);
+    assert.equal(edited.source, 'baseline');
+    assert.ok(deleted);
+    assert.equal(deleted.present, false);
+    assert.deepEqual(deleted.statuses, ['deleted']);
+    assert.ok(custom);
+    assert.equal(custom.source, 'custom');
+    assert.deepEqual(custom.statuses, ['disabled']);
+    assert.equal(report.quality_gate_tab.custom_rule_count, 1);
+    assert.equal(report.quality_gate_tab.deleted_baseline_rule_count, 1);
+});
+
 test('buildReportDataContract exposes tasks, workflow config, and instruction tabs', () => {
     const repoRoot = makeTempRepo();
     writeTaskMd(repoRoot);
@@ -452,6 +494,16 @@ test('buildReportDataContract exposes tasks, workflow config, and instruction ta
     assert.deepEqual(report.tasks_tab.rows.map((row) => row.task_id), ['T-100', 'T-101']);
     assert.equal(report.tasks_tab.rows[0].detail.detail_status, 'skipped');
     assert.equal(report.workflow_config_tab.status, 'present');
+    assert.equal(report.quality_gate_tab.status, 'present');
+    assert.equal(report.quality_gate_tab.enabled, true);
+    assert.equal(report.quality_gate_tab.baseline_version, report.quality_gate_tab.shipped_baseline_version);
+    assert.ok(report.quality_gate_tab.rules.some((rule) => (
+        rule.id === 'code_simplification'
+        && rule.source === 'baseline'
+        && rule.present
+        && rule.statuses.includes('active')
+    )));
+    assert.equal(report.quality_gate_tab.deleted_baseline_rule_count, 0);
     assert.equal(report.init_settings_tab.init_answers_status, 'present');
     assert.equal(report.init_settings_tab.agent_init_state_status, 'present');
     assert.ok(report.init_settings_tab.init_answers.some((row) => row.id === 'SourceOfTruth' && row.value === 'Codex (AGENTS.md)' && row.file_path === 'AGENTS.md'));

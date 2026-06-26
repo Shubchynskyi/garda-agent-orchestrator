@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "durasi pencilan",
     "addOptionalCheckRule": "Tambah aturan",
     "saveOptionalCheckRule": "Simpan aturan",
-    "removeOptionalCheckRule": "Hapus aturan"
+    "removeOptionalCheckRule": "Hapus aturan",
+    "qualityGateTab": "Gerbang kualitas",
+    "qualityGateRuleSet": "Aturan kualitas",
+    "qualityGateBaselineVersion": "Baseline saat ini",
+    "qualityGateShippedBaselineVersion": "Baseline bawaan",
+    "qualityGateBaselineRules": "Aturan baseline",
+    "qualityGateCustomRules": "Aturan kustom",
+    "qualityGateDeletedBaselineRules": "Aturan baseline terhapus",
+    "qualityGateSourceColumn": "Sumber",
+    "qualityGateSourceBaseline": "Bawaan",
+    "qualityGateSourceCustom": "Kustom",
+    "qualityGateStatusActive": "Aktif",
+    "qualityGateStatusDisabled": "Nonaktif",
+    "qualityGateStatusLocallyEdited": "Diedit lokal",
+    "qualityGateStatusDeleted": "Dihapus",
+    "qualityGateRulesEmpty": "Tidak ada aturan kualitas.",
+    "qualityGateNewRule": "Aturan baru"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

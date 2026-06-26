@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "durées aberrantes",
     "addOptionalCheckRule": "Ajouter une règle",
     "saveOptionalCheckRule": "Enregistrer la règle",
-    "removeOptionalCheckRule": "Retirer la règle"
+    "removeOptionalCheckRule": "Retirer la règle",
+    "qualityGateTab": "Contrôle qualité",
+    "qualityGateRuleSet": "Règles qualité",
+    "qualityGateBaselineVersion": "Base actuelle",
+    "qualityGateShippedBaselineVersion": "Base livrée",
+    "qualityGateBaselineRules": "Règles de base",
+    "qualityGateCustomRules": "Règles personnalisées",
+    "qualityGateDeletedBaselineRules": "Règles de base supprimées",
+    "qualityGateSourceColumn": "Origine",
+    "qualityGateSourceBaseline": "Base",
+    "qualityGateSourceCustom": "Personnalisée",
+    "qualityGateStatusActive": "Activé",
+    "qualityGateStatusDisabled": "Désactivée",
+    "qualityGateStatusLocallyEdited": "Modifiée localement",
+    "qualityGateStatusDeleted": "Supprimée",
+    "qualityGateRulesEmpty": "Aucune règle qualité disponible.",
+    "qualityGateNewRule": "Nouvelle règle"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

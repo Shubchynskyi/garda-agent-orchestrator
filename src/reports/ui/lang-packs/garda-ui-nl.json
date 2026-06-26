@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "uitschieterduur",
     "addOptionalCheckRule": "Regel toevoegen",
     "saveOptionalCheckRule": "Regel opslaan",
-    "removeOptionalCheckRule": "Regel verwijderen"
+    "removeOptionalCheckRule": "Regel verwijderen",
+    "qualityGateTab": "Kwaliteitscontrole",
+    "qualityGateRuleSet": "Kwaliteitsregels",
+    "qualityGateBaselineVersion": "Huidige basislijn",
+    "qualityGateShippedBaselineVersion": "Meegeleverde basislijn",
+    "qualityGateBaselineRules": "Basisregels",
+    "qualityGateCustomRules": "Aangepaste regels",
+    "qualityGateDeletedBaselineRules": "Verwijderde basisregels",
+    "qualityGateSourceColumn": "Bron",
+    "qualityGateSourceBaseline": "Basislijn",
+    "qualityGateSourceCustom": "Aangepast",
+    "qualityGateStatusActive": "Actief",
+    "qualityGateStatusDisabled": "Uitgeschakeld",
+    "qualityGateStatusLocallyEdited": "Lokaal bewerkt",
+    "qualityGateStatusDeleted": "Verwijderd",
+    "qualityGateRulesEmpty": "Geen kwaliteitsregels beschikbaar.",
+    "qualityGateNewRule": "Nieuwe regel"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

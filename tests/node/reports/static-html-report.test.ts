@@ -44,6 +44,7 @@ class StaticFakeElement {
     readonly listeners = new Map<string, StaticFakeListener[]>();
     textContent = '';
     innerHTML = '';
+    hidden = false;
 
     constructor(readonly id: string) {}
 
@@ -59,8 +60,10 @@ class StaticFakeElement {
         }
     }
 
-    setAttribute(): void {
-        // The static script toggles tab ARIA state; these tests inspect task detail rendering only.
+    setAttribute(name: string, value: string): void {
+        if (name === 'aria-selected') {
+            this.dataset.ariaSelected = value;
+        }
     }
 
     replaceChildren(node: StaticFakeFragment): void {
@@ -117,13 +120,21 @@ function executeStaticTaskClient(html: string): StaticFakeElement {
         'task-detail': detailElement,
         'task-detail-template': new StaticFakeTemplate('task-detail-template'),
         'tab-tasks': new StaticFakeElement('tab-tasks'),
+        'tab-quality-gate': new StaticFakeElement('tab-quality-gate'),
         'tab-workflow': new StaticFakeElement('tab-workflow'),
         'tab-init-settings': new StaticFakeElement('tab-init-settings'),
         'tab-project-memory': new StaticFakeElement('tab-project-memory'),
         'tab-backups': new StaticFakeElement('tab-backups'),
         'tab-instructions': new StaticFakeElement('tab-instructions')
     };
-    const tabs = ['tasks', 'workflow', 'init-settings', 'project-memory', 'backups', 'instructions'].map((tabId) => {
+    elements['tab-tasks'].classList.add('active');
+    elements['tab-quality-gate'].hidden = true;
+    elements['tab-workflow'].hidden = true;
+    elements['tab-init-settings'].hidden = true;
+    elements['tab-project-memory'].hidden = true;
+    elements['tab-backups'].hidden = true;
+    elements['tab-instructions'].hidden = true;
+    const tabs = ['tasks', 'quality-gate', 'workflow', 'init-settings', 'project-memory', 'backups', 'instructions'].map((tabId) => {
         const tab = new StaticFakeElement(`tab-button-${tabId}`);
         tab.dataset.tab = tabId;
         return tab;
@@ -150,6 +161,9 @@ function executeStaticTaskClient(html: string): StaticFakeElement {
         encodeURI
     });
     rows[0].dispatch('click');
+    tabs[1].dispatch('click');
+    assert.equal(elements['tab-quality-gate'].hidden, false);
+    assert.equal(elements['tab-tasks'].hidden, true);
     return detailElement;
 }
 
@@ -257,12 +271,14 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     const html = renderStaticHtmlReport(report);
 
     assert.ok(html.includes('data-tab="tasks"'));
+    assert.ok(html.includes('data-tab="quality-gate"'));
     assert.ok(html.includes('data-tab="workflow"'));
     assert.ok(html.includes('data-tab="init-settings"'));
     assert.ok(html.includes('data-tab="project-memory"'));
     assert.ok(html.includes('data-tab="backups"'));
     assert.ok(html.includes('data-tab="instructions"'));
     assert.ok(html.includes('id="tab-init-settings"'));
+    assert.ok(html.includes('id="tab-quality-gate"'));
     assert.ok(html.includes('id="tab-project-memory"'));
     assert.ok(html.includes('id="tab-backups"'));
     assert.ok(html.includes('read-only in static HTML'));
@@ -273,6 +289,8 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('href="../../../AGENTS.md"'));
     assert.ok(html.includes('href="../../live/docs/project-memory/README.md"'));
     assert.ok(html.includes('Project Memory Optimization'));
+    assert.ok(html.includes('Quality Gate'));
+    assert.ok(html.includes('Shipped baseline'));
     assert.ok(html.includes('garda-agent-orchestrator/template/docs/prompts/project-memory-optimization.md'));
     assert.ok(html.includes('href="../../template/docs/prompts/project-memory-optimization.md"'));
     assert.ok(!html.includes('href="AGENTS.md"'));

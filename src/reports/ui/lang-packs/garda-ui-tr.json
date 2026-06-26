@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "aykırı süreler",
     "addOptionalCheckRule": "Kural ekle",
     "saveOptionalCheckRule": "Kuralı kaydet",
-    "removeOptionalCheckRule": "Kuralı kaldır"
+    "removeOptionalCheckRule": "Kuralı kaldır",
+    "qualityGateTab": "Kalite kapısı",
+    "qualityGateRuleSet": "Kalite kuralları",
+    "qualityGateBaselineVersion": "Geçerli temel",
+    "qualityGateShippedBaselineVersion": "Paket temel",
+    "qualityGateBaselineRules": "Temel kurallar",
+    "qualityGateCustomRules": "Özel kurallar",
+    "qualityGateDeletedBaselineRules": "Silinen temel kurallar",
+    "qualityGateSourceColumn": "Kaynak",
+    "qualityGateSourceBaseline": "Temel",
+    "qualityGateSourceCustom": "Özel",
+    "qualityGateStatusActive": "Etkin",
+    "qualityGateStatusDisabled": "Devre dışı",
+    "qualityGateStatusLocallyEdited": "Yerel düzenlendi",
+    "qualityGateStatusDeleted": "Silindi",
+    "qualityGateRulesEmpty": "Kalite kuralı yok.",
+    "qualityGateNewRule": "Yeni kural"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

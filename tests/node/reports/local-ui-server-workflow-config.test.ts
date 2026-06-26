@@ -52,11 +52,26 @@ test('local UI settings use guarded workflow commands with preview confirmation 
             enabled: boolean;
             optional_quality_checks: {
                 enabled: boolean;
+                baseline_version?: string;
                 rules: Array<{
                     id: string;
                     title: string;
                     prompt: string;
                     enabled: boolean;
+                }>;
+            };
+            quality_gate: {
+                enabled: boolean;
+                baseline_version: string;
+                shipped_baseline_version: string;
+                baseline_rule_count: number;
+                custom_rule_count: number;
+                deleted_baseline_rule_count: number;
+                rules: Array<{
+                    id: string;
+                    source: string;
+                    present: boolean;
+                    statuses: string[];
                 }>;
             };
             settings: Array<{
@@ -87,6 +102,17 @@ test('local UI settings use guarded workflow commands with preview confirmation 
         assert.ok(list.settings.some((setting) => setting.key === 'full_suite_validation.enabled'));
         assert.ok(list.settings.some((setting) => setting.id === 'optional-checks-enabled'));
         assert.equal(list.optional_quality_checks.enabled, true);
+        assert.equal(list.quality_gate.enabled, true);
+        assert.equal(list.quality_gate.baseline_version, list.quality_gate.shipped_baseline_version);
+        assert.ok(list.quality_gate.baseline_rule_count >= 7);
+        assert.equal(list.quality_gate.custom_rule_count, 0);
+        assert.equal(list.quality_gate.deleted_baseline_rule_count, 0);
+        assert.ok(list.quality_gate.rules.some((rule) => (
+            rule.id === 'code_simplification'
+            && rule.source === 'baseline'
+            && rule.present
+            && rule.statuses.includes('active')
+        )));
         assert.ok(list.optional_quality_checks.rules.some((rule) => rule.id === 'code_simplification'));
         const taskResetSetting = list.settings.find((setting) => setting.key === 'task_reset.enabled');
         assert.ok(taskResetSetting);

@@ -50,6 +50,7 @@ function renderTasks(report) {
   setOptions(priorityFilterNode, uniqueSorted(report.tasks_tab.rows.map(task => task.priority)), t('allPriorities'));
   renderTaskRows();
   renderWorkflow(report);
+  renderQualityGate(report);
   renderInitSettings(report);
   renderProjectMemory(report);
   renderBackups(report);

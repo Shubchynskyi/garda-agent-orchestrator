@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "durações atípicas",
     "addOptionalCheckRule": "Adicionar regra",
     "saveOptionalCheckRule": "Salvar regra",
-    "removeOptionalCheckRule": "Remover regra"
+    "removeOptionalCheckRule": "Remover regra",
+    "qualityGateTab": "Portão de qualidade",
+    "qualityGateRuleSet": "Regras de qualidade",
+    "qualityGateBaselineVersion": "Baseline atual",
+    "qualityGateShippedBaselineVersion": "Baseline incluída",
+    "qualityGateBaselineRules": "Regras baseline",
+    "qualityGateCustomRules": "Regras personalizadas",
+    "qualityGateDeletedBaselineRules": "Regras baseline removidas",
+    "qualityGateSourceColumn": "Origem",
+    "qualityGateSourceBaseline": "Linha base",
+    "qualityGateSourceCustom": "Personalizada",
+    "qualityGateStatusActive": "Ativa",
+    "qualityGateStatusDisabled": "Desativada",
+    "qualityGateStatusLocallyEdited": "Editada localmente",
+    "qualityGateStatusDeleted": "Removida",
+    "qualityGateRulesEmpty": "Nenhuma regra de qualidade disponível.",
+    "qualityGateNewRule": "Nova regra"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

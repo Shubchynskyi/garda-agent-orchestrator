@@ -78,6 +78,15 @@ tr.selected { background: #eef8f6; }
 .metric { min-height: 50px; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
 .metric span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
 .metric strong { overflow-wrap: anywhere; }
+.quality-gate-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; }
+.quality-gate-block { margin-top: 14px; }
+.quality-gate-detail .workflow-table { overflow-x: auto; }
+.quality-gate-detail .workflow-table table { min-width: 1040px; }
+.quality-gate-rule-active { background: #eaf7ee; color: #176333; }
+.quality-gate-rule-disabled { background: #f3f5f7; color: #4b5563; }
+.quality-gate-rule-locally_edited { background: #fff4d6; color: #7c4d00; }
+.quality-gate-rule-deleted { background: #fee7e7; color: #8a1f1f; }
+.quality-gate-rule-new { background: #eaf1ff; color: #244b8f; }
 .kv { width: 100%; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .kv div { display: grid; grid-template-columns: minmax(160px, .35fr) 1fr; border-bottom: 1px solid var(--line); }
 .kv div:last-child { border-bottom: 0; }
@@ -235,4 +244,4 @@ button.file-open-inline, .file-open-inline { min-width: auto; width: auto; min-h
 @media (max-width: 1160px) { nav { flex-wrap: wrap; } .session-compact { margin-left: 0; } }
 @media (max-width: 860px) { .command-preview-meta, .cleanup-grid, .cleanup-policy-list, .plan-meta, .system-inline-details, .system-signal-grid { grid-template-columns: 1fr; } .cleanup-section:first-child { grid-column: auto; } .system-health-summary { flex-direction: column; } }
 @media (max-width: 760px) { .overview { grid-template-columns: repeat(2, minmax(120px, 1fr)); } .toolbar { grid-template-columns: 1fr; } .session-compact { flex: 1 1 100%; max-width: none; width: 100%; min-width: 0; margin-left: 0; } .switch-strip { align-items: flex-start; flex-direction: column; } }
-@media (max-width: 640px) { header, main, nav { padding-left: 14px; padding-right: 14px; } th, td { padding: 8px; } .tab-buttons { flex: 1 1 100%; width: 100%; } .metrics { grid-template-columns: 1fr; } .header-row { grid-template-columns: 1fr; } .top-controls { justify-content: flex-end; justify-self: end; } }`;
+@media (max-width: 640px) { header, main, nav { padding-left: 14px; padding-right: 14px; } th, td { padding: 8px; } .tab-buttons { flex: 1 1 100%; width: 100%; } .metrics, .quality-gate-summary { grid-template-columns: 1fr; } .header-row { grid-template-columns: 1fr; } .top-controls { justify-content: flex-end; justify-self: end; } }`;

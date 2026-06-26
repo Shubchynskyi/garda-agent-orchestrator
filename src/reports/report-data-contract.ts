@@ -13,6 +13,10 @@ export type {
     ReportTaskRow,
     ReportWorkflowSetting,
     ReportWorkflowConfigTab,
+    ReportQualityGateRuleSource,
+    ReportQualityGateRuleStatus,
+    ReportQualityGateRule,
+    ReportQualityGateTab,
     ReportInstructionEntry,
     ReportValueRow,
     ReportCommandInfo,
@@ -33,6 +37,7 @@ export type {
 } from './report-data/types';
 export { readCanonicalActiveQueueRows } from './report-data/task-queue';
 export { buildWorkflowConfigTab } from './report-data/workflow-config-tab';
+export { buildQualityGateTab } from './report-data/quality-gate-tab';
 export { buildInitSettingsTab } from './report-data/init-settings-tab';
 export { buildProjectMemoryTab } from './report-data/project-memory-tab';
 export { buildBackupsTab } from './report-data/backups-tab';

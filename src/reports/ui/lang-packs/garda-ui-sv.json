@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "avvikande varaktigheter",
     "addOptionalCheckRule": "Lägg till regel",
     "saveOptionalCheckRule": "Spara regel",
-    "removeOptionalCheckRule": "Ta bort regel"
+    "removeOptionalCheckRule": "Ta bort regel",
+    "qualityGateTab": "Kvalitetsgrind",
+    "qualityGateRuleSet": "Kvalitetsregler",
+    "qualityGateBaselineVersion": "Aktuell baslinje",
+    "qualityGateShippedBaselineVersion": "Levererad baslinje",
+    "qualityGateBaselineRules": "Baslinjeregler",
+    "qualityGateCustomRules": "Egna regler",
+    "qualityGateDeletedBaselineRules": "Borttagna baslinjeregler",
+    "qualityGateSourceColumn": "Källa",
+    "qualityGateSourceBaseline": "Baslinje",
+    "qualityGateSourceCustom": "Egen",
+    "qualityGateStatusActive": "Aktiv",
+    "qualityGateStatusDisabled": "Inaktiverad",
+    "qualityGateStatusLocallyEdited": "Lokalt redigerad",
+    "qualityGateStatusDeleted": "Borttagen",
+    "qualityGateRulesEmpty": "Inga kvalitetsregler tillgängliga.",
+    "qualityGateNewRule": "Ny regel"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {

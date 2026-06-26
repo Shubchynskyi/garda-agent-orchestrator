@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "外れ値の所要時間",
     "addOptionalCheckRule": "ルールを追加",
     "saveOptionalCheckRule": "ルールを保存",
-    "removeOptionalCheckRule": "ルールを削除"
+    "removeOptionalCheckRule": "ルールを削除",
+    "qualityGateTab": "品質ゲート",
+    "qualityGateRuleSet": "品質ルール",
+    "qualityGateBaselineVersion": "現在のベースライン",
+    "qualityGateShippedBaselineVersion": "同梱ベースライン",
+    "qualityGateBaselineRules": "ベースラインルール",
+    "qualityGateCustomRules": "カスタムルール",
+    "qualityGateDeletedBaselineRules": "削除済みベースラインルール",
+    "qualityGateSourceColumn": "ソース",
+    "qualityGateSourceBaseline": "ベースライン",
+    "qualityGateSourceCustom": "カスタム",
+    "qualityGateStatusActive": "有効",
+    "qualityGateStatusDisabled": "無効",
+    "qualityGateStatusLocallyEdited": "ローカル編集済み",
+    "qualityGateStatusDeleted": "削除済み",
+    "qualityGateRulesEmpty": "品質ルールはありません。",
+    "qualityGateNewRule": "新しいルール"
   },
   "LOCAL_UI_ACTION_TEXT": {
     "status": {

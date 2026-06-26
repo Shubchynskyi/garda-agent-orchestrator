@@ -277,7 +277,23 @@
     "fullSuiteForecastExclusionOutlierDuration": "odstające czasy trwania",
     "addOptionalCheckRule": "Dodaj regułę",
     "saveOptionalCheckRule": "Zapisz regułę",
-    "removeOptionalCheckRule": "Usuń regułę"
+    "removeOptionalCheckRule": "Usuń regułę",
+    "qualityGateTab": "Brama jakości",
+    "qualityGateRuleSet": "Reguły jakości",
+    "qualityGateBaselineVersion": "Bieżąca baza",
+    "qualityGateShippedBaselineVersion": "Dostarczona baza",
+    "qualityGateBaselineRules": "Reguły bazowe",
+    "qualityGateCustomRules": "Reguły własne",
+    "qualityGateDeletedBaselineRules": "Usunięte reguły bazowe",
+    "qualityGateSourceColumn": "Źródło",
+    "qualityGateSourceBaseline": "Baza",
+    "qualityGateSourceCustom": "Własna",
+    "qualityGateStatusActive": "Aktywna",
+    "qualityGateStatusDisabled": "Wyłączona",
+    "qualityGateStatusLocallyEdited": "Edytowana lokalnie",
+    "qualityGateStatusDeleted": "Usunięta",
+    "qualityGateRulesEmpty": "Brak dostępnych reguł jakości.",
+    "qualityGateNewRule": "Nowa reguła"
   },
   "LOCAL_UI_PROJECT_MEMORY_TEXT": {
     "garda-agent-orchestrator/live/docs/project-memory/README.md": {
