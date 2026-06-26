@@ -9,6 +9,7 @@ import { runContractMigrations } from '../../../src/lifecycle/contract-migration
 import { removePathRecursive } from '../../../src/lifecycle/common';
 import { formatManifestResult, formatVerifyResult, runVerify, validateManifest } from '../../../src/validators';
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE
@@ -385,14 +386,20 @@ describe('runUpdate', () => {
             assert.equal(result.optionalQualityChecksNotice, null);
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
             assert.equal(workflowConfig.optional_quality_checks.enabled, false);
-            assert.deepEqual(workflowConfig.optional_quality_checks.rules, [
-                {
-                    id: 'custom_quality_rule',
-                    title: 'Custom quality rule',
-                    prompt: 'Check the local custom quality rule.',
-                    enabled: true
-                }
-            ]);
+            assert.equal(workflowConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+            assert.deepEqual(
+                workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id),
+                [
+                    'custom_quality_rule',
+                    ...readTemplateOptionalQualityCheckRuleIds(repoRoot)
+                ]
+            );
+            assert.deepEqual(workflowConfig.optional_quality_checks.rules[0], {
+                id: 'custom_quality_rule',
+                title: 'Custom quality rule',
+                prompt: 'Check the local custom quality rule.',
+                enabled: true
+            });
         } finally {
             removePathRecursive(projectRoot);
         }
@@ -443,6 +450,102 @@ describe('runUpdate', () => {
         }
     });
 
+    it('backfills shipped optional quality checks for stale baseline without overwriting local edits', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            const editedShippedRule = {
+                ...LEGACY_OPTIONAL_QUALITY_CHECK_RULES[0],
+                prompt: 'Use the locally edited simplification checklist.',
+                enabled: false,
+                local_note: 'operator-owned'
+            };
+            const customRule = {
+                id: 'custom_quality_rule',
+                title: 'Custom quality rule',
+                prompt: 'Check the local custom quality rule.',
+                enabled: true
+            };
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    full_suite_validation: {
+                        enabled: true,
+                        command: 'npm run test:full',
+                        timeout_ms: 123456,
+                        green_summary_max_lines: 7,
+                        red_failure_chunk_lines: 42,
+                        out_of_scope_failure_policy: 'AUDIT_AND_WARN'
+                    },
+                    optional_quality_checks: {
+                        enabled: false,
+                        baseline_version: '2026-06-24.legacy',
+                        audit_history: [
+                            {
+                                at: '2026-06-24T00:00:00.000Z',
+                                action: 'operator-edited'
+                            }
+                        ],
+                        rules: [
+                            editedShippedRule,
+                            customRule
+                        ]
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            assert.equal(result.optionalQualityChecksNotice, null);
+
+            const firstMergeConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.equal(firstMergeConfig.optional_quality_checks.enabled, false);
+            assert.equal(firstMergeConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+            assert.deepEqual(firstMergeConfig.optional_quality_checks.audit_history, [
+                {
+                    at: '2026-06-24T00:00:00.000Z',
+                    action: 'operator-edited'
+                }
+            ]);
+            assert.deepEqual(
+                firstMergeConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id),
+                [
+                    editedShippedRule.id,
+                    customRule.id,
+                    ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+                        .filter((rule) => rule.id !== editedShippedRule.id)
+                        .map((rule) => rule.id)
+                ]
+            );
+            assert.deepEqual(firstMergeConfig.optional_quality_checks.rules[0], editedShippedRule);
+            assert.deepEqual(firstMergeConfig.optional_quality_checks.rules[1], customRule);
+
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            const secondMergeConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.deepEqual(
+                secondMergeConfig.optional_quality_checks,
+                firstMergeConfig.optional_quality_checks
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
     it('does not repeat the optional quality checks notice for already-configured enabled workspaces', () => {
         const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
         try {
@@ -481,14 +584,14 @@ describe('runUpdate', () => {
             assert.equal(result.optionalQualityChecksNotice, null);
             const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
             assert.equal(workflowConfig.optional_quality_checks.enabled, true);
-            assert.deepEqual(workflowConfig.optional_quality_checks.rules, [
-                {
-                    id: 'custom_quality_rule',
-                    title: 'Custom quality rule',
-                    prompt: 'Check the local custom quality rule.',
-                    enabled: true
-                }
-            ]);
+            assert.equal(workflowConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+            assert.deepEqual(
+                workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id),
+                [
+                    'custom_quality_rule',
+                    ...readTemplateOptionalQualityCheckRuleIds(repoRoot)
+                ]
+            );
         } finally {
             removePathRecursive(projectRoot);
         }

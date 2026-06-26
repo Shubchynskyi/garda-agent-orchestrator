@@ -369,6 +369,22 @@ test('workflow-config schema accepts optional quality checks without explicit ru
     assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
 });
 
+test('workflow-config schema accepts optional quality checks local metadata', () => {
+    const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
+    const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const optionalQualityChecks = clone.optional_quality_checks as Record<string, unknown>;
+    optionalQualityChecks.audit_history = [
+        {
+            at: '2026-06-24T00:00:00.000Z',
+            action: 'operator-edited'
+        }
+    ];
+    const rules = optionalQualityChecks.rules as Array<Record<string, unknown>>;
+    rules[0].local_note = 'operator-owned';
+    const result = validateAgainstSchema(clone, workflowConfigSchema);
+    assert.equal(result.valid, true, `Errors: ${JSON.stringify(result.errors)}`);
+});
+
 test('workflow-config schema rejects unknown compile_gate keys', () => {
     const data = readTemplateConfig('workflow-config.json') as Record<string, unknown>;
     const clone = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;

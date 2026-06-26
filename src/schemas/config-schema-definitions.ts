@@ -530,12 +530,12 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                             }
                         },
                         required: ['id', 'title', 'prompt'],
-                        additionalProperties: false
+                        additionalProperties: true
                     }
                 }
             },
             required: ['enabled'],
-            additionalProperties: false
+            additionalProperties: true
         },
         orchestrator_work_policy: {
             type: 'object',

@@ -231,11 +231,18 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
         ...baseConfig,
         optional_quality_checks: {
             enabled: 'false',
+            audit_history: [
+                {
+                    at: '2026-06-24T00:00:00.000Z',
+                    action: 'operator-edited'
+                }
+            ],
             rules: [
                 {
                     id: 'Custom_Rule',
                     title: 'Custom rule',
-                    prompt: 'Check custom local quality criteria.'
+                    prompt: 'Check custom local quality criteria.',
+                    local_note: 'operator-owned'
                 }
             ]
         }
@@ -247,7 +254,14 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
             id: 'custom_rule',
             title: 'Custom rule',
             prompt: 'Check custom local quality criteria.',
-            enabled: true
+            enabled: true,
+            local_note: 'operator-owned'
+        }
+    ]);
+    assert.deepEqual(optionalQualityChecks.audit_history, [
+        {
+            at: '2026-06-24T00:00:00.000Z',
+            action: 'operator-edited'
         }
     ]);
 

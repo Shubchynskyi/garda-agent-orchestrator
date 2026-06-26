@@ -314,11 +314,6 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
         sectionKnownKeys,
         'workflow-config.optional_quality_checks'
     );
-    assertNoUnknownKeys(
-        section,
-        sectionKnownKeys,
-        'workflow-config.optional_quality_checks'
-    );
 
     const defaults = buildDefaultWorkflowConfig().optional_quality_checks as unknown as Record<string, unknown>;
     const normalizedInput = {
@@ -345,13 +340,13 @@ function validateOptionalQualityChecksSection(input: unknown): Record<string, un
         const rule = ensurePlainObject(rawRule, rulePath);
         const ruleKnownKeys = ['id', 'title', 'prompt', 'enabled'];
         assertNoCaseMismatchedKnownKeys(rule, ruleKnownKeys, rulePath);
-        assertNoUnknownKeys(rule, ruleKnownKeys, rulePath);
         const id = normalizeNonEmptyString(rule.id, `${rulePath}.id`).trim().toLowerCase();
         if (seenRuleIds.has(id)) {
             throw new Error(`workflow-config.optional_quality_checks.rules has duplicate id '${id}'.`);
         }
         seenRuleIds.add(id);
         return {
+            ...rule,
             id,
             title: normalizeNonEmptyString(rule.title, `${rulePath}.title`),
             prompt: normalizeNonEmptyString(rule.prompt, `${rulePath}.prompt`),

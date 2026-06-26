@@ -22,6 +22,7 @@ import {
 import {
     buildDefaultOptionalQualityChecksConfig,
     isExactLegacyOptionalQualityChecksGeneratedDefault,
+    mergeOptionalQualityChecksWithBaseline,
     normalizeOptionalQualityChecksConfig,
     type OptionalQualityChecksConfig
 } from './optional-quality-checks';
@@ -33,6 +34,7 @@ export {
     OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE,
     buildDefaultOptionalQualityChecksConfig,
     isExactLegacyOptionalQualityChecksGeneratedDefault,
+    mergeOptionalQualityChecksWithBaseline,
     normalizeOptionalQualityChecksConfig
 } from './optional-quality-checks';
 export type {
@@ -504,6 +506,16 @@ function migrateLegacyOptionalQualityChecksGeneratedDefault(
     return migrated;
 }
 
+function resolveOptionalQualityChecksForMerge(existingConfig: Record<string, unknown> | null): unknown {
+    if (!isPlainObject(existingConfig)) {
+        return undefined;
+    }
+    const optionalChecksKey = findOwnCaseInsensitiveKey(existingConfig, 'optional_quality_checks');
+    return optionalChecksKey === undefined
+        ? undefined
+        : existingConfig[optionalChecksKey];
+}
+
 export function buildWorkflowConfigReviewCycleLimitDiagnostic(
     readStatus: WorkflowConfigReadStatus,
     existingConfig: Record<string, unknown> | null,
@@ -548,6 +560,10 @@ export function mergeWorkflowConfigWithTemplate(
     if (existingConfigOmittedReviewExecutionPolicy || preserveMissingConfigLegacyOmission) {
         delete nextConfig.review_execution_policy;
     }
+    nextConfig.optional_quality_checks = mergeOptionalQualityChecksWithBaseline(
+        templateConfig.optional_quality_checks,
+        resolveOptionalQualityChecksForMerge(existingConfigForMerge)
+    );
     return nextConfig;
 }
 

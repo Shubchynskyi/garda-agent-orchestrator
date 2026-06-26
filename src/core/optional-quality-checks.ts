@@ -136,6 +136,21 @@ function normalizeOptionalQualityCheckRule(input: unknown): OptionalQualityCheck
     };
 }
 
+function normalizeOptionalQualityCheckRules(input: unknown): OptionalQualityCheckRule[] {
+    if (!Array.isArray(input)) {
+        return [];
+    }
+    return input
+        .map((rule) => normalizeOptionalQualityCheckRule(rule))
+        .filter((rule): rule is OptionalQualityCheckRule => rule !== null);
+}
+
+function getOptionalQualityChecksBaselineVersion(input: Record<string, unknown>): string {
+    return typeof input.baseline_version === 'string'
+        ? input.baseline_version.trim()
+        : '';
+}
+
 function isExactOptionalQualityCheckRule(rule: unknown, expected: OptionalQualityCheckRule): boolean {
     const normalized = normalizeOptionalQualityCheckRule(rule);
     return normalized !== null
@@ -168,9 +183,7 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
         return defaultConfig;
     }
     const normalizedRules = Array.isArray(input.rules)
-        ? input.rules
-            .map((rule) => normalizeOptionalQualityCheckRule(rule))
-            .filter((rule): rule is OptionalQualityCheckRule => rule !== null)
+        ? normalizeOptionalQualityCheckRules(input.rules)
         : cloneJsonValue(defaultConfig.rules);
     return {
         ...cloneJsonValue(input),
@@ -183,5 +196,44 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
         rules: normalizedRules.length > 0
             ? normalizedRules
             : cloneJsonValue(defaultConfig.rules)
+    };
+}
+
+export function mergeOptionalQualityChecksWithBaseline(
+    templateInput: unknown,
+    existingInput: unknown
+): OptionalQualityChecksConfig {
+    const templateConfig = normalizeOptionalQualityChecksConfig(templateInput);
+    if (!isPlainObject(existingInput)) {
+        return cloneJsonValue(templateConfig);
+    }
+
+    const existingConfig = cloneJsonValue(existingInput);
+    const existingRules = normalizeOptionalQualityCheckRules(existingConfig.rules);
+    const baselineRules = cloneJsonValue(templateConfig.rules);
+    const existingRuleIds = new Set(existingRules.map((rule) => rule.id));
+    const shouldBackfillShippedRules = getOptionalQualityChecksBaselineVersion(existingConfig)
+        !== templateConfig.baseline_version;
+    const mergedRules = [...existingRules];
+
+    if (shouldBackfillShippedRules) {
+        for (const baselineRule of baselineRules) {
+            if (!existingRuleIds.has(baselineRule.id)) {
+                mergedRules.push(baselineRule);
+                existingRuleIds.add(baselineRule.id);
+            }
+        }
+    }
+
+    return {
+        ...cloneJsonValue(templateConfig),
+        ...existingConfig,
+        enabled: existingConfig.enabled === undefined
+            ? templateConfig.enabled
+            : existingConfig.enabled === true,
+        baseline_version: templateConfig.baseline_version,
+        rules: mergedRules.length > 0
+            ? mergedRules
+            : baselineRules
     };
 }

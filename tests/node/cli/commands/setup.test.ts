@@ -21,6 +21,7 @@ import {
     resolveInitAnswersRelativePath
 } from '../../../../src/core/constants';
 import {
+    DEFAULT_OPTIONAL_QUALITY_CHECK_RULES,
     OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
     OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE
 } from '../../../../src/core/workflow-config';
@@ -946,6 +947,12 @@ test('handleSetup materializes code_first_optional review_execution_policy for a
         assert.equal(workflowConfig.compile_gate.command, UNCONFIGURED_COMPILE_GATE_COMMAND);
         assert.equal(workflowConfig.review_cycle_guard.max_failed_non_test_reviews, 15);
         assert.equal(workflowConfig.review_cycle_guard.max_total_non_test_reviews, 30);
+        assert.equal(workflowConfig.optional_quality_checks.enabled, true);
+        assert.equal(workflowConfig.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
+        assert.deepEqual(
+            workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id),
+            DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+        );
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }
@@ -1021,7 +1028,10 @@ test('handleSetup preserves custom optional quality check rules across refreshes
         assert.deepEqual(refreshedConfig.optional_quality_checks, {
             enabled: false,
             baseline_version: OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
-            rules: [customRule]
+            rules: [
+                customRule,
+                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES
+            ]
         });
         assert.equal(refreshOutput.includes(OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE), false);
     } finally {
