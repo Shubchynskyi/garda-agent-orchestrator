@@ -60,6 +60,8 @@ export function buildReportSnapshotFingerprint(repoRoot: string): string {
         statFingerprint(path.join(runtimeRoot, 'switch', 'state.json')),
         statFingerprint(path.join(runtimeRoot, 'switch', 'off', 'AGENTS.md')),
         treeFingerprint(path.join(runtimeRoot, 'task-events'), /\.lock(?:\.json)?$/iu),
+        treeFingerprint(path.join(runtimeRoot, 'task-events'), /\.jsonl$/iu),
+        treeFingerprint(path.join(runtimeRoot, 'reviews'), /(?:-quality-checklist|-preflight)\.json$/iu),
         treeFingerprint(path.join(runtimeRoot, 'full-suite'), /\.lock(?:\.json)?$/iu),
         treeFingerprint(path.join(runtimeRoot, 'locks'), /\.lock(?:\.json)?$/iu),
         statFingerprint(getBackupSnapshotsRoot(resolvedRoot))

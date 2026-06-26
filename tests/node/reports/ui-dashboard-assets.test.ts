@@ -353,6 +353,50 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                 baseline_rule_count: 1,
                 custom_rule_count: 1,
                 deleted_baseline_rule_count: 1,
+                latest_check: {
+                    artifact_path: 'garda-agent-orchestrator/runtime/reviews/T-100-quality-checklist.json',
+                    artifact_exists: true,
+                    evidence_status: 'current',
+                    checklist_status: 'ACTION_REQUIRED',
+                    outcome: 'FAIL',
+                    effect: 'required_rework',
+                    summary: 'Quality checklist required rework (1 action item).',
+                    stale_reasons: [],
+                    task_id: 'T-100',
+                    timestamp_utc: '2026-05-16T00:00:00.000Z',
+                    preflight_path: 'garda-agent-orchestrator/runtime/reviews/T-100-preflight.json',
+                    preflight_sha256: '1'.repeat(64),
+                    workflow_config_sha256: '2'.repeat(64),
+                    changed_files_count: 2,
+                    changed_files_preview: ['src/reports/report-data/quality-gate-evidence.ts'],
+                    changed_files_truncated: false,
+                    enabled_rule_count: 1,
+                    answer_count: 1,
+                    action_taken_count: 0,
+                    action_required_count: 1,
+                    actions_taken: [],
+                    actions_required: ['Extract parser helpers before review.'],
+                    answers: [{
+                        rule_id: 'code_simplification',
+                        status: 'WARN',
+                        answer: 'Central parser helpers still need a smaller shape.',
+                        evidence_files: ['src/reports/report-data/quality-gate-evidence.ts'],
+                        actions_taken: ['Bounded answer summary rendering added.'],
+                        actions_required: ['Extract parser helpers before review.']
+                    }],
+                    timeline_event_count: 1,
+                    latest_timeline_event_utc: '2026-05-16T00:00:00.000Z'
+                },
+                action_required_history: [{
+                    task_id: 'T-100',
+                    timestamp_utc: '2026-05-16T00:00:00.000Z',
+                    artifact_path: 'garda-agent-orchestrator/runtime/reviews/T-100-quality-checklist.json',
+                    evidence_status: 'current',
+                    action_required_count: 1,
+                    actions_required: ['Extract parser helpers before review.'],
+                    changed_files_count: 2,
+                    changed_files_preview: ['src/reports/report-data/quality-gate-evidence.ts']
+                }],
                 unavailable: [],
                 rules: [
                     {
@@ -396,5 +440,11 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
     assert.match(qualityGateNode.innerHTML, /Отключено/u);
     assert.match(qualityGateNode.innerHTML, /Удалено/u);
+    assert.match(qualityGateNode.innerHTML, /Последняя проверка/u);
+    assert.match(qualityGateNode.innerHTML, /Требует доработки/u);
+    assert.match(qualityGateNode.innerHTML, /code_simplification/u);
+    assert.match(qualityGateNode.innerHTML, /Central parser helpers still need a smaller shape\./u);
+    assert.match(qualityGateNode.innerHTML, /Bounded answer summary rendering added\./u);
+    assert.match(qualityGateNode.innerHTML, /Extract parser helpers before review\./u);
     assert.match(qualityGateNode.innerHTML, /garda ui --actions/u);
 });

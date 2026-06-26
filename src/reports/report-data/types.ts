@@ -180,6 +180,57 @@ export interface ReportQualityGateRule {
     baseline_prompt: string | null;
 }
 
+export type ReportQualityGateEvidenceStatus = 'current' | 'stale' | 'missing' | 'invalid' | 'disabled';
+export type ReportQualityGateEffect = 'passed' | 'helped' | 'warned' | 'required_rework' | 'disabled' | 'missing' | 'invalid' | 'stale';
+
+export interface ReportQualityGateAnswerSummary {
+    rule_id: string;
+    status: string;
+    answer: string;
+    evidence_files: string[];
+    actions_taken: string[];
+    actions_required: string[];
+}
+
+export interface ReportQualityGateLatestCheck {
+    artifact_path: string | null;
+    artifact_exists: boolean;
+    evidence_status: ReportQualityGateEvidenceStatus;
+    checklist_status: string | null;
+    outcome: string | null;
+    effect: ReportQualityGateEffect;
+    summary: string;
+    stale_reasons: string[];
+    task_id: string | null;
+    timestamp_utc: string | null;
+    preflight_path: string | null;
+    preflight_sha256: string | null;
+    workflow_config_sha256: string | null;
+    changed_files_count: number | null;
+    changed_files_preview: string[];
+    changed_files_truncated: boolean;
+    enabled_rule_count: number;
+    answer_count: number;
+    action_taken_count: number;
+    action_required_count: number;
+    actions_taken: string[];
+    actions_required: string[];
+    answers: ReportQualityGateAnswerSummary[];
+    timeline_event_count: number;
+    latest_timeline_event_utc: string | null;
+}
+
+export interface ReportQualityGateActionRequiredHistoryEntry {
+    task_id: string | null;
+    timestamp_utc: string | null;
+    artifact_path: string;
+    evidence_status: ReportQualityGateEvidenceStatus;
+    action_required_count: number;
+    actions_required: string[];
+    changed_files_count: number | null;
+    changed_files_preview: string[];
+}
+
 export interface ReportQualityGateTab {
     config_path: string;
     config_exists: boolean;
@@ -191,6 +242,8 @@ export interface ReportQualityGateTab {
     custom_rule_count: number;
     deleted_baseline_rule_count: number;
     rules: ReportQualityGateRule[];
+    latest_check: ReportQualityGateLatestCheck;
+    action_required_history: ReportQualityGateActionRequiredHistoryEntry[];
     unavailable: ReportDataUnavailableEntry[];
 }
 

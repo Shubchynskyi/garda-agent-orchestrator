@@ -37,7 +37,12 @@ export function buildReportDataContract(options: BuildReportDataContractOptions)
             : buildSkippedTaskDetail(row.task_id, maxDetailedTasks)
     }));
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
-    const qualityGateTab = buildQualityGateTab(workflowConfigTab);
+    const qualityGateTab = buildQualityGateTab({
+        repoRoot,
+        reviewsRoot,
+        eventsRoot,
+        workflowConfigTab
+    });
     const initSettingsTab = buildInitSettingsTab(repoRoot);
     const projectMemoryTab = buildProjectMemoryTab(repoRoot, workflowConfigTab);
     const backupsTab = buildBackupsTab(repoRoot);

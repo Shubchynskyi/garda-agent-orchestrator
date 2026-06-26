@@ -72,13 +72,8 @@ import {
     buildDefaultWorkflowConfig,
     formatGardaSelfGuardProtectedControlPlaneGuidance,
     isGardaSelfGuardDenyAgentEntryForBundle,
-    normalizeOptionalQualityChecksConfig,
     type FullSuiteValidationPlacement
 } from '../../core/workflow-config';
-import {
-    QUALITY_CHECKLIST_ID,
-    QUALITY_CHECKLIST_STATUSES
-} from '../quality-checklist';
 import {
     isOrchestratorSourceCheckout
 } from '../protected-control-plane/protected-control-plane';
@@ -195,6 +190,12 @@ import {
     resolveNextStepPreGuardRoute
 } from './next-step-pre-review-routing';
 import {
+    buildNextStepQualityChecklistSummary,
+    markQualityChecklistReadinessStaleForWorkspace,
+    readQualityChecklistReadiness,
+    type NextStepQualityChecklistSummary
+} from './next-step-quality-checklist-readiness';
+import {
     readPostDoneWorkspaceDriftDecision,
     readReadyFinalReportSummary,
     type NextStepFinalReportSummary
@@ -241,6 +242,7 @@ import {
     buildScopedDiffCommand,
     buildTaskModePathCommandParts
 } from './next-step-review-command-builders';
+export type { NextStepQualityChecklistSummary } from './next-step-quality-checklist-readiness';
 import {
     buildDocImpactCommand,
     buildDocImpactCompatibilityHint,
@@ -415,6 +417,7 @@ export interface NextStepResult {
     profile: NextStepProfileSummary | null;
     markdown_working_plan: TaskModeMarkdownWorkingPlanMetadata | null;
     optional_skill_selection: NextStepOptionalSkillSelectionSummary | null;
+    quality_checklist: NextStepQualityChecklistSummary | null;
     warnings: string[];
     invalidation_impact: NextStepInvalidationImpactSummary | null;
     known_non_blocking_signals: KnownNonBlockingSignal[];
@@ -856,192 +859,6 @@ function readWorkflowConfigRecordForNextStep(repoRoot: string): Record<string, u
     return workflowConfig;
 }
 
-interface NextStepQualityChecklistReadiness {
-    enabled: boolean;
-    required: boolean;
-    ready: boolean;
-    status: string | null;
-    reason: string;
-    actionRequiredSummary: string | null;
-}
-
-function preflightHasChangedFiles(preflight: Record<string, unknown> | null): boolean {
-    if (!preflight) {
-        return false;
-    }
-    if (Array.isArray(preflight.changed_files) && preflight.changed_files.length > 0) {
-        return true;
-    }
-    const metrics = isPlainRecord(preflight.metrics) ? preflight.metrics : {};
-    const changedFilesCount = parseOptionalNumberField(metrics.changed_files_count);
-    return changedFilesCount !== null && changedFilesCount > 0;
-}
-
-function readJsonRecordOrNull(filePath: string): Record<string, unknown> | null {
-    try {
-        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        return isPlainRecord(parsed) ? parsed : null;
-    } catch {
-        return null;
-    }
-}
-
-function formatQualityChecklistActions(actions: unknown): string | null {
-    if (!Array.isArray(actions)) {
-        return null;
-    }
-    const normalizedActions = actions
-        .map((entry) => String(entry || '').trim())
-        .filter(Boolean);
-    if (normalizedActions.length === 0) {
-        return null;
-    }
-    const preview = normalizedActions.slice(0, 3).join('; ');
-    const remainder = normalizedActions.length > 3
-        ? `; +${normalizedActions.length - 3} more`
-        : '';
-    return `${preview}${remainder}`;
-}
-
-function readQualityChecklistReadiness(options: {
-    repoRoot: string;
-    reviewsRoot: string;
-    taskId: string;
-    preflight: Record<string, unknown> | null;
-    preflightPath: string;
-    preflightSha256: string | null;
-    workflowConfig: Record<string, unknown> | null;
-}): NextStepQualityChecklistReadiness {
-    const hasOptionalQualityChecksConfig = options.workflowConfig?.optional_quality_checks !== undefined;
-    const optionalQualityChecks = normalizeOptionalQualityChecksConfig(options.workflowConfig?.optional_quality_checks);
-    const required = preflightHasChangedFiles(options.preflight);
-    const enabledRuleCount = optionalQualityChecks.rules.filter((rule) => rule.enabled).length;
-    const sourceCheckoutDefaultEnabled = !hasOptionalQualityChecksConfig && isOrchestratorSourceCheckout(options.repoRoot);
-    const enabled = (hasOptionalQualityChecksConfig || sourceCheckoutDefaultEnabled) && optionalQualityChecks.enabled && enabledRuleCount > 0;
-    if (!enabled) {
-        return {
-            enabled: false,
-            required,
-            ready: true,
-            status: null,
-            reason: 'Optional quality checks are disabled for the effective workflow configuration.',
-            actionRequiredSummary: null
-        };
-    }
-    if (!required) {
-        return {
-            enabled,
-            required: false,
-            ready: true,
-            status: null,
-            reason: 'The current preflight has no changed files, so optional quality checks are not required for this cycle.',
-            actionRequiredSummary: null
-        };
-    }
-
-    const artifactPath = path.join(options.reviewsRoot, `${options.taskId}-quality-checklist.json`);
-    if (!fileExists(artifactPath)) {
-        return {
-            enabled,
-            required,
-            ready: false,
-            status: null,
-            reason: 'Optional quality checks are enabled and the current changed-file preflight has no quality checklist evidence yet.',
-            actionRequiredSummary: null
-        };
-    }
-
-    const artifact = readJsonRecordOrNull(artifactPath);
-    if (!artifact) {
-        return {
-            enabled,
-            required,
-            ready: false,
-            status: null,
-            reason: `Quality checklist evidence at ${formatNextStepInlineValue(toRepoDisplayPath(options.repoRoot, artifactPath))} is not a valid JSON object.`,
-            actionRequiredSummary: null
-        };
-    }
-
-    const status = String(artifact.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
-    if (!QUALITY_CHECKLIST_STATUSES.includes(status as typeof QUALITY_CHECKLIST_STATUSES[number])) {
-        return {
-            enabled,
-            required,
-            ready: false,
-            status: null,
-            reason: `Quality checklist evidence has unsupported status ${formatNextStepInlineValue(status || '<empty>')}.`,
-            actionRequiredSummary: null
-        };
-    }
-    if (artifact.task_id !== options.taskId) {
-        return {
-            enabled,
-            required,
-            ready: false,
-            status,
-            reason: `Quality checklist evidence belongs to task ${formatNextStepInlineValue(String(artifact.task_id || '<missing>'))}, not ${formatNextStepInlineValue(options.taskId)}.`,
-            actionRequiredSummary: formatQualityChecklistActions(artifact.actions_required)
-        };
-    }
-    if (artifact.checklist_id !== QUALITY_CHECKLIST_ID) {
-        return {
-            enabled,
-            required,
-            ready: false,
-            status,
-            reason: `Quality checklist evidence has checklist_id ${formatNextStepInlineValue(String(artifact.checklist_id || '<missing>'))}, not ${formatNextStepInlineValue(QUALITY_CHECKLIST_ID)}.`,
-            actionRequiredSummary: formatQualityChecklistActions(artifact.actions_required)
-        };
-    }
-
-    const expectedPreflightSha256 = String(options.preflightSha256 || '').trim().toLowerCase()
-        || (fileExists(options.preflightPath) ? fileSha256(options.preflightPath) : '');
-    const artifactPreflightSha256 = String(artifact.preflight_sha256 || '').trim().toLowerCase();
-    if (expectedPreflightSha256 && artifactPreflightSha256 !== expectedPreflightSha256) {
-        return {
-            enabled,
-            required,
-            ready: false,
-            status,
-            reason:
-                'Quality checklist evidence is stale for the current preflight hash. ' +
-                `Expected ${formatNextStepInlineValue(expectedPreflightSha256)}, found ${formatNextStepInlineValue(artifactPreflightSha256 || '<missing>')}.`,
-            actionRequiredSummary: formatQualityChecklistActions(artifact.actions_required)
-        };
-    }
-
-    const expectedWorkflowConfigSha256 = fileExists(resolveWorkflowConfigPath(options.repoRoot))
-        ? fileSha256(resolveWorkflowConfigPath(options.repoRoot))
-        : null;
-    const artifactWorkflowConfigSha256 = typeof artifact.workflow_config_sha256 === 'string'
-        ? artifact.workflow_config_sha256.trim().toLowerCase()
-        : null;
-    if (expectedWorkflowConfigSha256 !== artifactWorkflowConfigSha256) {
-        return {
-            enabled,
-            required,
-            ready: false,
-            status,
-            reason:
-                'Quality checklist evidence is stale for the current workflow configuration. ' +
-                `Expected ${formatNextStepInlineValue(expectedWorkflowConfigSha256 || '<missing>')}, found ${formatNextStepInlineValue(artifactWorkflowConfigSha256 || '<missing>')}.`,
-            actionRequiredSummary: formatQualityChecklistActions(artifact.actions_required)
-        };
-    }
-
-    return {
-        enabled,
-        required,
-        ready: true,
-        status,
-        reason:
-            `Quality checklist evidence is current with status ${formatNextStepInlineValue(status)} at ` +
-            `${formatNextStepInlineValue(toRepoDisplayPath(options.repoRoot, artifactPath))}.`,
-        actionRequiredSummary: formatQualityChecklistActions(artifact.actions_required)
-    };
-}
-
 function resolveReviewExecutionPolicyForNextStep(
     workflowConfig: Record<string, unknown> | null
 ): ResolvedReviewExecutionPolicyConfig {
@@ -1409,6 +1226,7 @@ function buildResult(params: {
     profile: NextStepProfileSummary | null;
     markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
     optionalSkillSelection?: NextStepOptionalSkillSelectionSummary | null;
+    qualityChecklist?: NextStepQualityChecklistSummary | null;
     warnings?: string[];
     reviewCycleBlock?: NextStepReviewCycleBlock | null;
     finalReport?: NextStepFinalReportSummary | null;
@@ -2055,6 +1873,17 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
     });
 
     const sourceRuntimeStaleness = detectSourceCheckoutRuntimeStaleness(repoRoot);
+    const qualityChecklistReadiness = preflight
+        ? readQualityChecklistReadiness({
+            repoRoot,
+            reviewsRoot,
+            taskId,
+            preflight,
+            preflightPath,
+            preflightSha256,
+            workflowConfig: workflowConfigRecord
+        })
+        : null;
     const resultBase = {
         taskId,
         navigatorCommand,
@@ -2066,6 +1895,9 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         profile: profileSummary,
         markdownWorkingPlan,
         optionalSkillSelection: optionalSkillSelectionSummary,
+        qualityChecklist: qualityChecklistReadiness
+            ? buildNextStepQualityChecklistSummary(qualityChecklistReadiness)
+            : null,
         auditStatus: summary.status,
         warnings: [] as string[],
         sourceRuntimeStaleness
@@ -2496,13 +2328,19 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         }
     });
     if (preGuardRoute) {
+        const qualityChecklist = preGuardRoute.nextGate === 'classify-change' && qualityChecklistReadiness
+            ? buildNextStepQualityChecklistSummary(
+                markQualityChecklistReadinessStaleForWorkspace(qualityChecklistReadiness, preGuardRoute.reason)
+            )
+            : resultBase.qualityChecklist;
         return buildResult({
             ...resultBase,
             status: preGuardRoute.status,
             nextGate: preGuardRoute.nextGate,
             title: preGuardRoute.title,
             reason: preGuardRoute.reason,
-            commands: preGuardRoute.commands
+            commands: preGuardRoute.commands,
+            qualityChecklist
         });
     }
 
@@ -2763,16 +2601,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
         });
     }
 
-    const qualityChecklistReadiness = readQualityChecklistReadiness({
-        repoRoot,
-        reviewsRoot,
-        taskId,
-        preflight,
-        preflightPath,
-        preflightSha256,
-        workflowConfig: workflowConfigRecord
-    });
-    const qualityChecklistRoute = resolveNextStepQualityChecklistRoute({
+    const qualityChecklistRoute = qualityChecklistReadiness ? resolveNextStepQualityChecklistRoute({
         enabled: qualityChecklistReadiness.enabled,
         required: qualityChecklistReadiness.required,
         ready: qualityChecklistReadiness.ready,
@@ -2786,7 +2615,7 @@ export function resolveNextStepDecisionRoute(context: NextStepResolutionContext)
             preflightCommandPath,
             taskModePath
         )
-    });
+    }) : null;
     if (qualityChecklistRoute) {
         return buildResult({
             ...resultBase,

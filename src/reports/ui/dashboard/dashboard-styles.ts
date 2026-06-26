@@ -87,6 +87,13 @@ tr.selected { background: #eef8f6; }
 .quality-gate-rule-locally_edited { background: #fff4d6; color: #7c4d00; }
 .quality-gate-rule-deleted { background: #fee7e7; color: #8a1f1f; }
 .quality-gate-rule-new { background: #eaf1ff; color: #244b8f; }
+.quality-gate-evidence-summary { margin: 8px 0; color: var(--muted); }
+.quality-gate-items { margin: 6px 0 0; padding-left: 18px; }
+.quality-gate-items li { margin: 2px 0; overflow-wrap: anywhere; }
+.quality-gate-evidence-current, .quality-gate-effect-passed, .quality-gate-effect-helped { background: #eaf7ee; color: #176333; }
+.quality-gate-evidence-stale, .quality-gate-effect-stale, .quality-gate-effect-warned { background: #fff4d6; color: #7c4d00; }
+.quality-gate-evidence-missing, .quality-gate-effect-missing, .quality-gate-effect-disabled { background: #f3f5f7; color: #4b5563; }
+.quality-gate-evidence-invalid, .quality-gate-effect-invalid, .quality-gate-effect-required_rework { background: #fee7e7; color: #8a1f1f; }
 .kv { width: 100%; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .kv div { display: grid; grid-template-columns: minmax(160px, .35fr) 1fr; border-bottom: 1px solid var(--line); }
 .kv div:last-child { border-bottom: 0; }

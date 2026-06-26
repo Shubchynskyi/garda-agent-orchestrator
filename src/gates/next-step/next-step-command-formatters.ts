@@ -226,6 +226,9 @@ export function formatNextStepText(result: NextStepResult): string {
             }
         }
     }
+    if (result.quality_checklist) {
+        lines.push(result.quality_checklist.visible_summary_line);
+    }
     lines.push(`ReviewPolicy: ${result.review.review_execution_policy_mode} (${result.review.review_execution_policy_source})`);
     if (result.review.required_reviews.length > 0) {
         lines.push(`RequiredReviews: ${result.review.required_reviews.join(', ')}`);

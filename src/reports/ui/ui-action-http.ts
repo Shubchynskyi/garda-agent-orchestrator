@@ -1,5 +1,7 @@
 import type * as http from 'node:http';
+import * as path from 'node:path';
 import { buildQualityGateTab, buildWorkflowConfigTab } from '../report-data-contract';
+import { joinOrchestratorPath } from '../../gates/shared/helpers';
 import {
     buildUiSettingDefinitions,
     buildUiWorkspaceAndBackupActionDefinitions,
@@ -34,7 +36,12 @@ export function buildUiActionsPayload(repoRoot: string, actionsEnabled: boolean)
 
 export function buildUiSettingsPayload(repoRoot: string, actionsEnabled: boolean): Record<string, unknown> {
     const workflowConfigTab = buildWorkflowConfigTab(repoRoot);
-    const qualityGateTab = buildQualityGateTab(workflowConfigTab);
+    const qualityGateTab = buildQualityGateTab({
+        repoRoot,
+        reviewsRoot: joinOrchestratorPath(repoRoot, path.join('runtime', 'reviews')),
+        eventsRoot: joinOrchestratorPath(repoRoot, path.join('runtime', 'task-events')),
+        workflowConfigTab
+    });
     return {
         enabled: actionsEnabled,
         settings: buildUiSettingDefinitions(repoRoot),

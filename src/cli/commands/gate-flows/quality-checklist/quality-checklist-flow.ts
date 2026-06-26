@@ -119,11 +119,17 @@ export function runQualityChecklistCommand(options: QualityChecklistCommandOptio
             workflow_config_path: artifact.workflow_config_path,
             workflow_config_sha256: artifact.workflow_config_sha256,
             changed_files_sha256: artifact.changed_file_evidence.changed_files_sha256,
+            changed_files_count: artifact.changed_file_evidence.changed_files_count,
+            changed_files_preview: artifact.changed_file_evidence.changed_files.slice(0, 8),
+            changed_files_truncated: artifact.changed_file_evidence.changed_files.length > 8,
             scope_sha256: artifact.changed_file_evidence.scope_sha256,
             scope_content_sha256: artifact.changed_file_evidence.scope_content_sha256,
             enabled_rule_count: artifact.rules.filter((rule) => rule.enabled).length,
             answer_count: artifact.answers.length,
             action_required_count: artifact.actions_required.length,
+            actions_required: artifact.actions_required,
+            action_taken_count: artifact.actions_taken.length,
+            actions_taken: artifact.actions_taken,
             violations: artifact.violations
         }
     );

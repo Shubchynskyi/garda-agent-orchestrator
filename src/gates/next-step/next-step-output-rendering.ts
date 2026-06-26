@@ -7,6 +7,7 @@ import type {
     NextStepOptionalSkillSelectionSummary,
     NextStepProfileSummary,
     NextStepProjectMemorySummary,
+    NextStepQualityChecklistSummary,
     NextStepResult,
     NextStepReviewCycleBlock,
     NextStepReviewSummary,
@@ -42,6 +43,7 @@ export interface RenderNextStepOutputParams {
     profile: NextStepProfileSummary | null;
     markdownWorkingPlan?: TaskModeMarkdownWorkingPlanMetadata | null;
     optionalSkillSelection?: NextStepOptionalSkillSelectionSummary | null;
+    qualityChecklist?: NextStepQualityChecklistSummary | null;
     warnings?: string[];
     invalidationImpact: NextStepInvalidationImpactSummary | null;
     knownNonBlockingSignals: KnownNonBlockingSignal[];
@@ -71,6 +73,7 @@ export function renderNextStepOutput(params: RenderNextStepOutputParams): NextSt
         profile: params.profile,
         markdown_working_plan: params.markdownWorkingPlan || null,
         optional_skill_selection: params.optionalSkillSelection || null,
+        quality_checklist: params.qualityChecklist || null,
         warnings: params.warnings || [],
         invalidation_impact: params.invalidationImpact,
         known_non_blocking_signals: params.knownNonBlockingSignals,

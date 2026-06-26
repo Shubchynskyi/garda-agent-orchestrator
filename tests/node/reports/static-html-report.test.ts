@@ -291,22 +291,59 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(html.includes('Project Memory Optimization'));
     assert.ok(html.includes('Quality Gate'));
     assert.ok(html.includes('Shipped baseline'));
-    assert.ok(html.includes('garda-agent-orchestrator/template/docs/prompts/project-memory-optimization.md'));
-    assert.ok(html.includes('href="../../template/docs/prompts/project-memory-optimization.md"'));
-    assert.ok(!html.includes('href="AGENTS.md"'));
-    assert.ok(html.includes('C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-compile-output.log'));
-    assert.ok(html.includes('Full-suite Validation'));
-    assert.ok(html.includes('T-100-full-suite-validation.json'));
-    assert.ok(html.includes('2m 3.5s'));
-    assert.ok(html.includes('Average duration'));
-    assert.ok(html.includes('Recommended timeout'));
-    assert.ok(html.includes('Timeout blocks task'));
-    assert.ok(html.includes('Forecast excluded samples'));
-    assert.ok(html.includes('fullSuiteDurationSeconds(forecast.average_duration_seconds)'));
-    assert.ok(html.includes('"average_duration_seconds":343.2'));
-    assert.ok(html.includes('"recommended_timeout_seconds":476'));
-    assert.ok(html.includes('"task_id":"T-100"'));
-    assert.ok(!html.includes('Must stay out of the upper queue'));
+    assert.ok(html.includes('Latest check'));
+    assert.ok(html.includes('Action-required history'));
+    report.quality_gate_tab.latest_check = {
+        ...report.quality_gate_tab.latest_check,
+        answers: [{
+            rule_id: 'ui_answer_visibility',
+            status: 'WARN',
+            answer: 'Renderer must show compact rule answer details.',
+            evidence_files: ['src/reports/static-html/quality-gate-tab.ts'],
+            actions_taken: ['Rendered answer summary in static HTML.'],
+            actions_required: ['Keep UI and static renderers in parity.']
+        }]
+    };
+    const answerSummaryHtml = renderStaticHtmlReport(report);
+
+    assert.ok(answerSummaryHtml.includes('ui_answer_visibility'));
+    assert.ok(answerSummaryHtml.includes('Renderer must show compact rule answer details.'));
+    assert.ok(answerSummaryHtml.includes('src/reports/static-html/quality-gate-tab.ts'));
+    assert.ok(answerSummaryHtml.includes('Rendered answer summary in static HTML.'));
+    assert.ok(answerSummaryHtml.includes('Keep UI and static renderers in parity.'));
+    assert.ok(answerSummaryHtml.includes('garda-agent-orchestrator/template/docs/prompts/project-memory-optimization.md'));
+    assert.ok(answerSummaryHtml.includes('href="../../template/docs/prompts/project-memory-optimization.md"'));
+    assert.ok(!answerSummaryHtml.includes('href="AGENTS.md"'));
+    assert.ok(answerSummaryHtml.includes('C:/repo/garda-agent-orchestrator/runtime/reviews/T-100-compile-output.log'));
+    assert.ok(answerSummaryHtml.includes('Full-suite Validation'));
+    assert.ok(answerSummaryHtml.includes('T-100-full-suite-validation.json'));
+    assert.ok(answerSummaryHtml.includes('2m 3.5s'));
+    assert.ok(answerSummaryHtml.includes('Average duration'));
+    assert.ok(answerSummaryHtml.includes('Recommended timeout'));
+    assert.ok(answerSummaryHtml.includes('Timeout blocks task'));
+    assert.ok(answerSummaryHtml.includes('Forecast excluded samples'));
+    assert.ok(answerSummaryHtml.includes('fullSuiteDurationSeconds(forecast.average_duration_seconds)'));
+    assert.ok(answerSummaryHtml.includes('"average_duration_seconds":343.2'));
+    assert.ok(answerSummaryHtml.includes('"recommended_timeout_seconds":476'));
+    assert.ok(answerSummaryHtml.includes('"task_id":"T-100"'));
+    assert.ok(!answerSummaryHtml.includes('Must stay out of the upper queue'));
+    const answerRenderedDetail = executeStaticTaskClient(answerSummaryHtml);
+
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Configured timeout</th><td>10m</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Average duration</th><td>5m 43.2s</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>High-watermark duration</th><td>6m 36.3s</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Recommended timeout</th><td>7m 56s</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Timeout blocks task</th><td>true</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Timeout attempts</th><td>#1 timed out</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Timeout repair task proposal</th><td>T-100-F1 - Fix timed-out full-suite validation</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Forecast excluded samples</th><td>1</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('<th>Forecast exclusion reasons</th><td>timed-out runs=1</td>'));
+    assert.ok(answerRenderedDetail.innerHTML.includes('full-suite timeout warning is visible in static task detail'));
+
+    report.quality_gate_tab.latest_check = {
+        ...report.quality_gate_tab.latest_check,
+        answers: []
+    };
     const renderedDetail = executeStaticTaskClient(html);
 
     assert.ok(renderedDetail.innerHTML.includes('<th>Configured timeout</th><td>10m</td>'));
@@ -353,6 +390,19 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(noHistoryRenderedDetail.innerHTML.includes('<th>Average duration</th><td>-</td>'));
     assert.ok(noHistoryRenderedDetail.innerHTML.includes('<th>High-watermark duration</th><td>-</td>'));
     assert.ok(noHistoryRenderedDetail.innerHTML.includes('<th>Recommended timeout</th><td>10m</td>'));
+
+    report.quality_gate_tab.latest_check = {
+        ...report.quality_gate_tab.latest_check,
+        artifact_exists: true,
+        evidence_status: 'invalid',
+        effect: 'invalid',
+        summary: 'Latest quality checklist artifact is invalid.',
+        stale_reasons: ['Unsupported quality checklist status: BROKEN.']
+    };
+    const invalidQualityGateHtml = renderStaticHtmlReport(report);
+
+    assert.ok(invalidQualityGateHtml.includes('Latest quality checklist artifact is invalid.'));
+    assert.ok(invalidQualityGateHtml.includes('Unsupported quality checklist status: BROKEN.'));
 });
 
 test('buildStaticHtmlReport writes default runtime report and returns a browser URL', () => {
