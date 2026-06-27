@@ -574,6 +574,46 @@ test('quality gate rule table renders long localized disabled rows in responsive
     assert.match(UI_DASHBOARD_STYLES, /\.quality-gate-rule-table input, \.quality-gate-rule-table select \{ width: 100%; min-width: 0; \}/u);
 });
 
+test('quality gate rule table renders new custom row before custom rules and baseline rules', () => {
+    const html = renderQualityGateHtml({
+        config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
+        status: 'present',
+        enabled: true,
+        baseline_rule_count: 1,
+        custom_rule_count: 1,
+        unavailable: [],
+        rules: [
+            {
+                id: 'code_simplification',
+                title: 'Code simplification',
+                prompt: 'Check simplification.',
+                enabled: true,
+                present: true,
+                source: 'baseline',
+                statuses: ['active']
+            },
+            {
+                id: 'custom_focus',
+                title: 'Custom focus',
+                prompt: 'Check custom concern.',
+                enabled: true,
+                present: true,
+                source: 'custom',
+                statuses: ['active']
+            }
+        ]
+    }, true);
+
+    const newRuleIndex = html.indexOf('data-optional-rule-id="quality-gate-new"');
+    const customRuleIndex = html.indexOf('data-optional-rule-id="custom_focus"');
+    const baselineRuleIndex = html.indexOf('data-optional-rule-id="code_simplification"');
+    assert.ok(newRuleIndex >= 0, 'Expected the new custom rule row to render.');
+    assert.ok(customRuleIndex >= 0, 'Expected the custom rule row to render.');
+    assert.ok(baselineRuleIndex >= 0, 'Expected the baseline rule row to render.');
+    assert.ok(newRuleIndex < customRuleIndex, 'Expected the new custom rule row before existing custom rules.');
+    assert.ok(customRuleIndex < baselineRuleIndex, 'Expected custom rules before baseline rules.');
+});
+
 test('system state renders quality baseline diagnostics with localized labels', () => {
     const systemStateNode = {
         innerHTML: '',

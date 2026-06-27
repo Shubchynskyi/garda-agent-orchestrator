@@ -1631,6 +1631,8 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /System state/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Garda switch/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Switch action is hidden/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Managed Garda instruction surfaces are active/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /AGENTS\.md/u);
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /2026-05-19T00:00:00\.000Z/u);
         assert.ok(
             fakeDocument.elements['system-state-panel'].innerHTML.indexOf('system-garda-switch')
@@ -1638,7 +1640,9 @@ test('local UI dashboard client filters tabs and renders lazy details', async ()
         );
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Blockers: 1 task\(s\) are blocked/u);
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /No blockers reported/u);
-        assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Queue status/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Queue status/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Task queue readiness/u);
+        assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /TASK\.md/u);
         assert.match(fakeDocument.elements['system-state-panel'].innerHTML, /Protected controls/u);
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Recommended full-suite command timeout/u);
         assert.doesNotMatch(fakeDocument.elements['system-state-panel'].innerHTML, /Timeout blocks task/u);

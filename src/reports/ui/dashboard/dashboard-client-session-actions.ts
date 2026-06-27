@@ -217,6 +217,14 @@ function isPrimarySystemHealthSignal(signal) {
   const id = signal && signal.id ? String(signal.id) : '';
   return !id.startsWith('config-file-');
 }
+function isVisibleSystemSignal(signal) {
+  const id = signal && signal.id ? String(signal.id) : '';
+  return id !== 'garda-switch' && id !== 'task-queue';
+}
+function shouldRenderSystemSignalSourcePath(signal) {
+  const id = signal && signal.id ? String(signal.id) : '';
+  return id !== 'active-task-timelines' && id !== 'incomplete-task-timelines';
+}
 function systemBlockingSignals(signals) {
   return (signals || []).filter(signal => signal && signal.status === 'error');
 }
@@ -300,7 +308,7 @@ function renderSystemSignal(signal) {
     + (signal.remediation ? '<p class="empty">' + inlineText(signal.remediation) + '</p>' : '')
     + systemSignalDetailsHtml(signal)
     + systemRepairActionHtml(signal)
-    + (signal.source_path ? '<code>' + safe(signal.source_path) + '</code>' : '')
+    + (signal.source_path && shouldRenderSystemSignalSourcePath(signal) ? '<code>' + safe(signal.source_path) + '</code>' : '')
     + '</div>';
 }
 function systemSignalDetailsHtml(signal) {
@@ -408,7 +416,7 @@ function renderSystemState(report) {
     state.runtime && state.runtime.incomplete_timeline
   ].filter(Boolean);
   const allSignals = enrichSystemSignals(state.signals && state.signals.length > 0 ? state.signals : primarySignals);
-  const signals = mergeSystemSignals(primarySignals, allSignals);
+  const signals = mergeSystemSignals(primarySignals, allSignals).filter(isVisibleSystemSignal);
   const renderedOverallStatus = systemWorstHealth(allSignals.filter(isPrimarySystemHealthSignal));
   const renderedOverallLabel = systemHealthLabel(renderedOverallStatus, state.overall.label);
   const renderedOverallSummary = systemOverallSummary(renderedOverallStatus, state.overall.summary, state, allSignals.filter(isPrimarySystemHealthSignal));

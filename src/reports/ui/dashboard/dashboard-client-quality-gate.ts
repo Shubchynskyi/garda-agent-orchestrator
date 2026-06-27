@@ -72,6 +72,13 @@ function renderQualityGateNewRuleRow(disabled) {
   const newEnabled = optionalRuleInputId('quality-gate-new', 'enabled');
   return '<tr data-optional-rule-id="quality-gate-new"><td><input id="' + safe(newId) + '" type="text" placeholder="custom_rule_id"' + disabledAttr + '></td><td>' + safe(t('qualityGateSourceCustom')) + '</td><td>' + badge(t('qualityGateNewRule'), 'quality-gate-rule', 'quality-gate-rule-new') + '</td><td><input id="' + safe(newTitle) + '" type="text"' + disabledAttr + '></td><td><input id="' + safe(newPrompt) + '" type="text"' + disabledAttr + '></td><td><select id="' + safe(newEnabled) + '"' + disabledAttr + '><option value="true">' + safe(t('gardaSwitchStateOn')) + '</option><option value="false">' + safe(t('gardaSwitchStateOff')) + '</option></select></td><td><div class="setting-buttons"><button type="button" data-quality-gate-rule-action="upsert" data-quality-gate-rule-id="quality-gate-new"' + (disabled ? ' disabled' : '') + '>' + safe(t('addOptionalCheckRule')) + '</button></div></td></tr>';
 }
+function renderQualityGateRuleRows(rules, disabled) {
+  const customRules = rules.filter(rule => rule.source === 'custom');
+  const baselineRules = rules.filter(rule => rule.source !== 'custom');
+  return renderQualityGateNewRuleRow(disabled)
+    + customRules.map(rule => renderQualityGateRuleRow(rule, disabled)).join('')
+    + baselineRules.map(rule => renderQualityGateRuleRow(rule, disabled)).join('');
+}
 function readQualityGateRuleForm(ruleId) {
   const formId = ruleId === 'quality-gate-new' ? 'quality-gate-new' : ruleId;
   const actualId = ruleId === 'quality-gate-new'
@@ -116,7 +123,7 @@ function renderQualityGate(report) {
     + '</section>'
     + renderQualityGateToggle(settingsPayload.settings || [], disabled)
     + '<section class="quality-gate-block"><h3>' + safe(t('qualityGateRuleSet')) + '</h3>'
-    + (rules.length === 0 ? '<p class="empty">' + safe(t('qualityGateRulesEmpty')) + '</p>' : '<div class="workflow-table quality-gate-rule-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateSourceColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('gardaSwitchState')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + rules.map(rule => renderQualityGateRuleRow(rule, disabled)).join('') + renderQualityGateNewRuleRow(disabled) + '</tbody></table></div>')
+    + (rules.length === 0 ? '<p class="empty">' + safe(t('qualityGateRulesEmpty')) + '</p>' : '<div class="workflow-table quality-gate-rule-table"><table><thead><tr><th>' + safe(t('idColumn')) + '</th><th>' + safe(t('qualityGateSourceColumn')) + '</th><th>' + safe(t('statusColumn')) + '</th><th>' + safe(t('titleColumn')) + '</th><th>' + safe(t('descriptionColumn')) + '</th><th>' + safe(t('gardaSwitchState')) + '</th><th>' + safe(t('changeColumn')) + '</th></tr></thead><tbody>' + renderQualityGateRuleRows(rules, disabled) + '</tbody></table></div>')
     + '</section>';
   for (const button of qualityGateNode.querySelectorAll('button[data-quality-gate-setting-id]')) {
     button.addEventListener('click', () => {
