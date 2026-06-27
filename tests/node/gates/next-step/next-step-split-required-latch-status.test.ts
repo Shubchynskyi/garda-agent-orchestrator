@@ -300,6 +300,106 @@ describe('gates/next-step split-required latch status', () => {
         assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
     });
 
+    it('does not latch localization-only UI i18n scopes by raw language-pack file count', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | ui/i18n-only | Update generated language packs | gpt-5.4 | 2026-05-03 | strict | Generated language pack refresh only. |`,
+            ''
+        ].join('\n'), 'utf8');
+        const changedFiles = [
+            'src/reports/ui/lang-packs/garda-ui-ar.json',
+            'src/reports/ui/lang-packs/garda-ui-bn.json',
+            'src/reports/ui/lang-packs/garda-ui-de.json',
+            'src/reports/ui/lang-packs/garda-ui-en.json',
+            'src/reports/ui/lang-packs/garda-ui-es.json',
+            'src/reports/ui/lang-packs/garda-ui-fr.json',
+            'src/reports/ui/lang-packs/garda-ui-hi.json',
+            'src/reports/ui/lang-packs/garda-ui-id.json',
+            'src/reports/ui/lang-packs/garda-ui-it.json',
+            'src/reports/ui/lang-packs/garda-ui-ru.json'
+        ];
+        for (const filePath of changedFiles) {
+            fs.mkdirSync(path.dirname(path.join(repoRoot, filePath)), { recursive: true });
+            fs.writeFileSync(
+                path.join(repoRoot, filePath),
+                Array.from({ length: 50 }, (_, index) => `line_${index + 1}`).join('\n') + '\n',
+                'utf8'
+            );
+        }
+        seedStartedTask(repoRoot, TASK_ID);
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FULL_PATH',
+            scope_category: 'config-only',
+            metrics: {
+                changed_files_count: changedFiles.length,
+                changed_lines_total: 500,
+                review_trigger_effective_changed_files_count: 0,
+                review_trigger_effective_changed_lines_total: 0,
+                review_trigger_suppressed_files_count: changedFiles.length,
+                companion_scope_kind: 'ui-i18n',
+                companion_scope_effective_changed_files_count: 0,
+                companion_scope_effective_changed_lines_total: 0,
+                companion_scope_exempted_files_count: changedFiles.length,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            triggers: {
+                ui_i18n_companion_scope: false,
+                ui_i18n_companion_reason: 'standalone_i18n_scope',
+                ui_i18n_companion_driver_files: [],
+                ui_i18n_companion_files: changedFiles,
+                ui_i18n_review_trigger_suppressed: true,
+                ui_i18n_review_trigger_files: [],
+                ui_i18n_review_trigger_suppressed_files: changedFiles
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS },
+            changed_files: changedFiles,
+            review_execution_policy: {
+                mode: 'code_first_optional',
+                visible_summary_line: 'Review execution policy: code_first_optional'
+            },
+            profile_selection: {
+                task_profile: 'strict',
+                profile_selection_source: 'task_queue',
+                effective_profile: 'strict',
+                effective_profile_source: 'built_in',
+                runtime_active_profile: 'balanced',
+                runtime_profile_source: 'built_in'
+            },
+            budget_forecast: {
+                changed_files_count: 0,
+                changed_lines_total: 0,
+                total_estimated_review_tokens: 0
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'single-cycle',
+            taskSummary: 'Seeded next-step task',
+            expectedReviewTypes: ['none']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.ok(result.commands[0].command.includes('gate compile-gate'));
+        assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+    });
+
     it('falls back to raw line budget when companion UI i18n effective line metric is missing', () => {
         const repoRoot = makeTempRepo();
         fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [

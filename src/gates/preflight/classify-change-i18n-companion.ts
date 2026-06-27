@@ -9,8 +9,11 @@ export interface ChangedFileLineStats {
 
 export interface UiI18nCompanionScope {
     eligible: boolean;
+    reviewTriggerSuppressionEligible: boolean;
+    localizationOnly: boolean;
     driverFiles: string[];
     i18nFiles: string[];
+    reviewTriggerFiles: string[];
     effectiveChangedFilesCount: number;
     effectiveChangedLinesTotal: number | null;
     reason: string;
@@ -64,6 +67,15 @@ function hasAnySegment(pathValue: string, segments: ReadonlySet<string>): boolea
     return pathSegments(pathValue).some((segment) => segments.has(segment));
 }
 
+function hasI18nSegment(pathValue: string): boolean {
+    return pathSegments(pathValue).some((segment) => (
+        I18N_SEGMENTS.has(segment)
+        || segment.endsWith('-setting-text')
+        || segment.endsWith('-status-text')
+        || segment.endsWith('-tab-text')
+    ));
+}
+
 function isJsonLikeI18nFile(pathValue: string): boolean {
     return /\.(json|jsonc)$/i.test(pathValue);
 }
@@ -82,7 +94,7 @@ function isUiSurfacePath(pathValue: string, classificationConfig: ResolvedClassi
 
 function isUiI18nPath(pathValue: string, classificationConfig: ResolvedClassificationConfig): boolean {
     return isJsonLikeI18nFile(pathValue)
-        && hasAnySegment(pathValue, I18N_SEGMENTS)
+        && hasI18nSegment(pathValue)
         && isUiSurfacePath(pathValue, classificationConfig);
 }
 
@@ -122,9 +134,13 @@ export function analyzeUiI18nCompanionScope(input: AnalyzeUiI18nCompanionScopeIn
     const i18nFiles = input.normalizedFiles.filter((filePath) => isUiI18nPath(filePath, input.classificationConfig));
     const driverFiles = input.normalizedFiles.filter((filePath) => !i18nFiles.includes(filePath));
     const driverChangedLinesTotal = sumDriverChangedLines(driverFiles, input.changedFileStats);
+    const hasUiI18nFiles = i18nFiles.length > 0;
     const baseResult = {
+        reviewTriggerSuppressionEligible: hasUiI18nFiles,
+        localizationOnly: hasUiI18nFiles && driverFiles.length === 0,
         driverFiles,
         i18nFiles,
+        reviewTriggerFiles: hasUiI18nFiles ? driverFiles : input.normalizedFiles,
         effectiveChangedFilesCount: driverFiles.length,
         effectiveChangedLinesTotal: driverChangedLinesTotal
     };
@@ -133,7 +149,14 @@ export function analyzeUiI18nCompanionScope(input: AnalyzeUiI18nCompanionScopeIn
         return { ...baseResult, eligible: false, reason: 'no_ui_i18n_files' };
     }
     if (driverFiles.length === 0) {
-        return { ...baseResult, eligible: false, reason: 'standalone_i18n_scope' };
+        return {
+            ...baseResult,
+            eligible: false,
+            reviewTriggerFiles: [],
+            effectiveChangedFilesCount: 0,
+            effectiveChangedLinesTotal: 0,
+            reason: 'standalone_i18n_scope'
+        };
     }
     if (driverFiles.length > input.maxDriverFiles) {
         return { ...baseResult, eligible: false, reason: 'too_many_driver_files' };
@@ -154,5 +177,11 @@ export function analyzeUiI18nCompanionScope(input: AnalyzeUiI18nCompanionScopeIn
         return { ...baseResult, eligible: false, reason: 'driver_sensitive_path' };
     }
 
-    return { ...baseResult, eligible: true, reason: 'ui_i18n_companion_scope' };
+    return {
+        ...baseResult,
+        eligible: true,
+        reviewTriggerSuppressionEligible: true,
+        reviewTriggerFiles: driverFiles,
+        reason: 'ui_i18n_companion_scope'
+    };
 }

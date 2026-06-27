@@ -172,13 +172,17 @@ function getCompanionScopeEffectivePreflightMetricNumber(
     field: 'changed_files_count' | 'changed_lines_total'
 ): number | null {
     const triggers = getPreflightTriggers(preflight);
-    if (triggers.ui_i18n_companion_scope !== true) {
+    if (triggers.ui_i18n_companion_scope !== true && triggers.ui_i18n_review_trigger_suppressed !== true) {
         return null;
     }
     const effectiveField = field === 'changed_files_count'
+        ? 'review_trigger_effective_changed_files_count'
+        : 'review_trigger_effective_changed_lines_total';
+    const legacyEffectiveField = field === 'changed_files_count'
         ? 'companion_scope_effective_changed_files_count'
         : 'companion_scope_effective_changed_lines_total';
-    return getPreflightMetricNumber(preflight, effectiveField);
+    return getPreflightMetricNumber(preflight, effectiveField)
+        ?? getPreflightMetricNumber(preflight, legacyEffectiveField);
 }
 
 function getPreflightChangedFilesCount(preflight: Record<string, unknown> | null): number {

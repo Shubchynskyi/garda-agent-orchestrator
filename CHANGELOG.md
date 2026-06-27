@@ -13,6 +13,7 @@
 ### Task Workflow And Quality Gates
 - Reduced the shipped optional quality-check baseline to broadly applicable rules and moved Garda implementation-specific checks out of the universal default rule set.
 - Preserved Garda-specific quality checks as source-checkout custom rules during both stale-config migration and fresh workflow-config materialization.
+- Localization file changes no longer trigger unnecessary review types.
 - Kept mutable closeout evidence such as `TASK.md` out of review-reuse fingerprints so post-review task-status sync does not force redundant reviewer cycles, while preserving provider instruction surfaces in review scope.
 
 ## 1.1.0

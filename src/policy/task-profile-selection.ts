@@ -27,6 +27,7 @@ export interface TaskProfileSelectionOptions {
     domainSurface?: Record<string, boolean>;
     forceAllDomainReviews?: boolean;
     forceCodeReview?: boolean;
+    localizationOnlyScope?: boolean;
     protectedControlPlaneChanged?: boolean;
     protectedControlPlaneDocsOnly?: boolean;
     zeroDiffBaselineOnly?: boolean;
@@ -55,6 +56,7 @@ export function resolveTaskProfileSelection(
         ...(options.domainSurface ? { domainSurface: options.domainSurface } : {}),
         ...(options.forceAllDomainReviews === true ? { forceAllDomainReviews: true } : {}),
         ...(options.forceCodeReview === true ? { forceCodeReview: true } : {}),
+        ...(options.localizationOnlyScope === true ? { localizationOnlyScope: true } : {}),
         ...(options.protectedControlPlaneChanged === true ? { protectedControlPlaneChanged: true } : {}),
         ...(options.protectedControlPlaneDocsOnly === true ? { protectedControlPlaneDocsOnly: true } : {}),
         ...(options.zeroDiffBaselineOnly === true ? { zeroDiffBaselineOnly: true } : {})

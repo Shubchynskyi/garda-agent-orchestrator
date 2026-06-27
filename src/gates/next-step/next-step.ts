@@ -853,14 +853,18 @@ function getCompanionScopeEffectiveMetric(
     field: 'changed_files_count' | 'changed_lines_total'
 ): number | null {
     const triggers = isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
-    if (triggers.ui_i18n_companion_scope !== true) {
+    if (triggers.ui_i18n_companion_scope !== true && triggers.ui_i18n_review_trigger_suppressed !== true) {
         return null;
     }
     const metrics = isPlainRecord(preflight?.metrics) ? preflight.metrics : {};
     const effectiveField = field === 'changed_files_count'
+        ? 'review_trigger_effective_changed_files_count'
+        : 'review_trigger_effective_changed_lines_total';
+    const legacyEffectiveField = field === 'changed_files_count'
         ? 'companion_scope_effective_changed_files_count'
         : 'companion_scope_effective_changed_lines_total';
-    return parseOptionalNumberField(metrics[effectiveField]);
+    return parseOptionalNumberField(metrics[effectiveField])
+        ?? parseOptionalNumberField(metrics[legacyEffectiveField]);
 }
 
 function readWorkflowConfigRecordForNextStep(repoRoot: string): Record<string, unknown> | null {

@@ -113,6 +113,37 @@ function reconcileProfileGuardrailsWithRequiredReviews(
     };
 }
 
+function parseFiniteNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function isLocalizationOnlyReviewTriggerScope(result: ClassifyChangeResult): boolean {
+    return result.triggers.ui_i18n_review_trigger_suppressed === true
+        && result.triggers.ui_i18n_companion_driver_files.length === 0
+        && result.triggers.ui_i18n_companion_files.length > 0;
+}
+
+function getReviewTriggerEffectiveMetric(
+    result: ClassifyChangeResult,
+    rawMetric: 'changed_files_count' | 'changed_lines_total'
+): number {
+    if (result.triggers.ui_i18n_review_trigger_suppressed !== true && result.triggers.ui_i18n_companion_scope !== true) {
+        return result.metrics[rawMetric];
+    }
+    const effectiveValue = rawMetric === 'changed_files_count'
+        ? result.metrics.review_trigger_effective_changed_files_count
+        : result.metrics.review_trigger_effective_changed_lines_total;
+    return parseFiniteNumber(effectiveValue)
+        ?? result.metrics[rawMetric];
+}
+
 export interface ClassifyChangeCommandOptions {
     repoRoot?: string;
     changedFiles?: unknown;
@@ -281,6 +312,7 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
                         domainSurface,
                         forceAllDomainReviews: parseBooleanOption(options.forceAllDomainReviews, false),
                         forceCodeReview: parseBooleanOption(options.forceCodeReview, false),
+                        localizationOnlyScope: isLocalizationOnlyReviewTriggerScope(result),
                         protectedControlPlaneChanged: result.triggers.protected_control_plane_changed === true,
                         protectedControlPlaneDocsOnly: result.triggers.protected_control_plane_docs_only === true,
                         zeroDiffBaselineOnly: isZeroDiffBaselineOnlyNoReviewableScope(
@@ -560,14 +592,16 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         );
 
         const effectiveDepth = riskAwareDepth.effective_depth;
+        const reviewTriggerChangedFilesCount = getReviewTriggerEffectiveMetric(result, 'changed_files_count');
+        const reviewTriggerChangedLinesTotal = getReviewTriggerEffectiveMetric(result, 'changed_lines_total');
 
         const depthEscalation = resolveDepthEscalation({
             taskId: resolvedTaskId,
             requestedDepth,
             effectiveDepth,
             pathMode: result.mode,
-            changedFilesCount: result.metrics.changed_files_count,
-            changedLinesTotal: result.metrics.changed_lines_total,
+            changedFilesCount: reviewTriggerChangedFilesCount,
+            changedLinesTotal: reviewTriggerChangedLinesTotal,
             requiredReviews: result.required_reviews
         });
 
@@ -576,8 +610,8 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
             requestedDepth,
             effectiveDepth,
             pathMode: result.mode,
-            changedFilesCount: result.metrics.changed_files_count,
-            changedLinesTotal: result.metrics.changed_lines_total,
+            changedFilesCount: reviewTriggerChangedFilesCount,
+            changedLinesTotal: reviewTriggerChangedLinesTotal,
             requiredReviews: result.required_reviews,
             tokenEconomyEnabled,
             tokenEconomyEnabledDepths: enabledDepths

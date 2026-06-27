@@ -646,6 +646,73 @@ describe('cli/commands/gates — preflight', () => {
         fs.rmSync(repoRoot, { recursive: true, force: true });
     });
 
+    it('classify-change strict profile keeps localization-only scopes out of review and budget pressure', { concurrency: false }, () => {
+        const repoRoot = createTempRepo();
+        const outputPath = path.join(repoRoot, 'preflight-strict-localization-only.json');
+        const taskId = 'T-930-strict-localization-only';
+        const localizationFiles = [
+            'src/reports/ui/lang-packs/garda-ui-ru.json',
+            'src/reports/ui/workflow-setting-text/en-reference.json',
+            'src/reports/ui/workflow-setting-text/lang/de.json'
+        ];
+        for (const filePath of localizationFiles) {
+            const absolutePath = path.join(repoRoot, filePath);
+            fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+            fs.writeFileSync(
+                absolutePath,
+                JSON.stringify({ label: `translated ${filePath}` }, null, 2) + '\n',
+                'utf8'
+            );
+        }
+        seedStrictProfileConfig(repoRoot);
+        seedTaskQueue(repoRoot, taskId, 'TODO', 'strict');
+        seedInitAnswers(repoRoot);
+        runEnterTaskMode({
+            repoRoot,
+            taskId,
+            requestedDepth: 3,
+            effectiveDepth: 3,
+            taskSummary: 'Update local UI translations only'
+        });
+        assert.equal(loadTaskEntryRulePack(repoRoot, taskId).exitCode, 0);
+        runHandshakeForTask(repoRoot, taskId);
+        runShellSmokeForTask(repoRoot, taskId);
+
+        const result = runClassifyChangeCommand({
+            repoRoot,
+            changedFiles: localizationFiles,
+            taskId,
+            taskIntent: 'Update local UI translations only',
+            outputPath,
+            emitMetrics: false
+        });
+
+        const payload = JSON.parse(result.outputText);
+        assert.equal(payload.scope_category, 'config-only');
+        assert.equal(payload.profile_selection.effective_profile, 'strict');
+        assert.equal(payload.triggers.ui_i18n_companion_scope, false);
+        assert.equal(payload.triggers.ui_i18n_review_trigger_suppressed, true);
+        assert.deepEqual(payload.triggers.ui_i18n_review_trigger_files, []);
+        assert.deepEqual(payload.changed_files, localizationFiles);
+        for (const reviewType of ['code', 'security', 'refactor', 'api', 'test', 'performance', 'infra', 'dependency']) {
+            assert.equal(payload.required_reviews[reviewType], false, `${reviewType} should not be required`);
+        }
+        for (const reviewType of ['code', 'security', 'refactor']) {
+            const decision = payload.profile_guardrails.decisions.find(
+                (entry: Record<string, unknown>) => entry.review_type === reviewType
+            );
+            assert.equal(decision?.decision, 'lightened_by_profile');
+            assert.match(String(decision?.reason || ''), /localization-only/);
+        }
+        assert.equal(payload.metrics.changed_files_count, localizationFiles.length);
+        assert.equal(payload.metrics.review_trigger_effective_changed_files_count, 0);
+        assert.equal(payload.budget_forecast.changed_files_count, 0);
+        assert.equal(payload.budget_forecast.changed_lines_total, 0);
+        assert.deepEqual(payload.budget_forecast.required_reviews, []);
+
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
     it('classify-change strict profile keeps mixed docs plus code on full review path', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
         const outputPath = path.join(repoRoot, 'preflight-strict-docs-code.json');

@@ -108,8 +108,14 @@ describe('gates/classify-change', () => {
             assert.equal(result.triggers.fast_path_eligible, true);
             assert.equal(result.triggers.ui_i18n_companion_scope, true);
             assert.equal(result.triggers.ui_i18n_companion_reason, 'ui_i18n_companion_scope');
+            assert.equal(result.triggers.ui_i18n_review_trigger_suppressed, true);
+            assert.deepEqual(result.triggers.ui_i18n_review_trigger_files, [driverFile]);
+            assert.deepEqual(result.triggers.ui_i18n_review_trigger_suppressed_files, langPackFiles);
             assert.deepEqual(result.triggers.ui_i18n_companion_driver_files, [driverFile]);
             assert.deepEqual(result.triggers.ui_i18n_companion_files, langPackFiles);
+            assert.equal(result.metrics.review_trigger_effective_changed_files_count, 1);
+            assert.equal(result.metrics.review_trigger_effective_changed_lines_total, 12);
+            assert.equal(result.metrics.review_trigger_suppressed_files_count, langPackFiles.length);
             assert.equal(result.metrics.companion_scope_kind, 'ui-i18n');
             assert.equal(result.metrics.companion_scope_effective_changed_files_count, 1);
             assert.equal(result.metrics.companion_scope_effective_changed_lines_total, 12);
@@ -118,7 +124,7 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.performance, false);
         });
 
-        it('does not treat standalone UI language-pack edits as companion scope', () => {
+        it('keeps standalone UI language-pack edits audited without review-trigger pressure', () => {
             const langPackFile = 'src/reports/ui/lang-packs/garda-ui-ru.json';
             const result = classifyChange({
                 normalizedFiles: [langPackFile],
@@ -138,10 +144,109 @@ describe('gates/classify-change', () => {
             assert.equal(result.mode, 'FULL_PATH');
             assert.equal(result.triggers.ui_i18n_companion_scope, false);
             assert.equal(result.triggers.ui_i18n_companion_reason, 'standalone_i18n_scope');
-            assert.equal(result.metrics.companion_scope_kind, undefined);
+            assert.equal(result.triggers.ui_i18n_review_trigger_suppressed, true);
+            assert.deepEqual(result.triggers.ui_i18n_review_trigger_files, []);
+            assert.deepEqual(result.triggers.ui_i18n_review_trigger_suppressed_files, [langPackFile]);
+            assert.deepEqual(result.changed_files, [langPackFile]);
+            assert.equal(result.metrics.changed_files_count, 1);
+            assert.equal(result.metrics.changed_lines_total, 24);
+            assert.equal(result.metrics.review_trigger_effective_changed_files_count, 0);
+            assert.equal(result.metrics.review_trigger_effective_changed_lines_total, 0);
+            assert.equal(result.metrics.companion_scope_kind, 'ui-i18n');
+            assert.equal(result.required_reviews.api, false);
+            assert.equal(result.required_reviews.test, false);
+            assert.equal(result.required_reviews.performance, false);
+            assert.equal(result.required_reviews.infra, false);
+            assert.equal(result.required_reviews.dependency, false);
         });
 
-        it('does not exempt non-UI config changes paired with language packs', () => {
+        it('keeps workflow-setting text packs audited without review-trigger pressure', () => {
+            const textPackFiles = [
+                'src/reports/ui/workflow-setting-text/en-reference.json',
+                'src/reports/ui/workflow-setting-text/lang/ru.json',
+                'src/reports/ui/workflow-setting-text/lang/de.json'
+            ];
+            const result = classifyChange({
+                normalizedFiles: textPackFiles,
+                taskIntent: 'Update API and performance wording in workflow-setting translations',
+                changedLinesTotal: 420,
+                additionsTotal: 300,
+                deletionsTotal: 120,
+                changedFileStats: Object.fromEntries(
+                    textPackFiles.map((filePath) => [filePath, { additions: 100, deletions: 40, changed_lines: 140 }])
+                ),
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: {
+                    ...defaultCapabilities,
+                    api: true,
+                    test: true,
+                    performance: true,
+                    infra: true,
+                    dependency: true
+                }
+            });
+
+            assert.equal(result.triggers.ui_i18n_companion_scope, false);
+            assert.equal(result.triggers.ui_i18n_companion_reason, 'standalone_i18n_scope');
+            assert.equal(result.triggers.ui_i18n_review_trigger_suppressed, true);
+            assert.deepEqual(result.triggers.ui_i18n_companion_files, textPackFiles);
+            assert.deepEqual(result.triggers.ui_i18n_review_trigger_files, []);
+            assert.equal(result.metrics.changed_files_count, textPackFiles.length);
+            assert.equal(result.metrics.changed_lines_total, 420);
+            assert.equal(result.metrics.review_trigger_effective_changed_files_count, 0);
+            assert.equal(result.metrics.review_trigger_effective_changed_lines_total, 0);
+            assert.equal(result.triggers.performance_heuristic, false);
+            assert.equal(result.required_reviews.api, false);
+            assert.equal(result.required_reviews.test, false);
+            assert.equal(result.required_reviews.performance, false);
+            assert.equal(result.required_reviews.infra, false);
+            assert.equal(result.required_reviews.dependency, false);
+        });
+
+        it('keeps mixed source, test, and config drivers while excluding localization files from trigger pressure', () => {
+            const sourceFile = 'src/reports/ui/dashboard-client-workflow.ts';
+            const testFile = 'tests/node/reports/workflow-setting-text-lang-packs.test.ts';
+            const dependencyFile = 'package.json';
+            const langPackFile = 'src/reports/ui/lang-packs/garda-ui-ru.json';
+            const result = classifyChange({
+                normalizedFiles: [sourceFile, testFile, dependencyFile, langPackFile],
+                taskIntent: 'Update workflow UI behavior, tests, package metadata, and translations',
+                changedLinesTotal: 180,
+                additionsTotal: 140,
+                deletionsTotal: 40,
+                changedFileStats: {
+                    [sourceFile]: { additions: 20, deletions: 5, changed_lines: 25 },
+                    [testFile]: { additions: 30, deletions: 10, changed_lines: 40 },
+                    [dependencyFile]: { additions: 2, deletions: 1, changed_lines: 3 },
+                    [langPackFile]: { additions: 88, deletions: 24, changed_lines: 112 }
+                },
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: {
+                    ...defaultCapabilities,
+                    test: true,
+                    dependency: true,
+                    performance: true
+                }
+            });
+
+            assert.equal(result.triggers.ui_i18n_companion_scope, false);
+            assert.equal(result.triggers.ui_i18n_review_trigger_suppressed, true);
+            assert.deepEqual(result.triggers.ui_i18n_review_trigger_files, [sourceFile, testFile, dependencyFile]);
+            assert.equal(result.metrics.review_trigger_effective_changed_files_count, 3);
+            assert.equal(result.metrics.review_trigger_effective_changed_lines_total, 68);
+            assert.equal(result.triggers.test, true);
+            assert.equal(result.triggers.dependency, true);
+            assert.equal(result.required_reviews.test, true);
+            assert.equal(result.required_reviews.dependency, true);
+            assert.equal(result.triggers.performance_heuristic, false);
+            assert.equal(result.required_reviews.performance, false);
+        });
+
+        it('does not fast-path non-UI config changes paired with language packs', () => {
             const configFile = 'garda-agent-orchestrator/live/config/workflow-config.json';
             const langPackFile = 'src/reports/ui/lang-packs/garda-ui-ru.json';
             const result = classifyChange({
@@ -162,7 +267,32 @@ describe('gates/classify-change', () => {
 
             assert.equal(result.triggers.ui_i18n_companion_scope, false);
             assert.equal(result.triggers.ui_i18n_companion_reason, 'driver_not_ui_surface');
+            assert.equal(result.triggers.ui_i18n_review_trigger_suppressed, true);
+            assert.deepEqual(result.triggers.ui_i18n_review_trigger_files, [configFile]);
+            assert.equal(result.metrics.review_trigger_effective_changed_files_count, 1);
             assert.equal(result.triggers.fast_path_eligible, false);
+        });
+
+        it('does not treat ordinary JSON config files as localization suppression scope', () => {
+            const result = classifyChange({
+                normalizedFiles: ['package.json'],
+                taskIntent: 'Update package metadata',
+                changedLinesTotal: 8,
+                additionsTotal: 6,
+                deletionsTotal: 2,
+                changedFileStats: {
+                    'package.json': { additions: 6, deletions: 2, changed_lines: 8 }
+                },
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, dependency: true }
+            });
+
+            assert.equal(result.triggers.ui_i18n_review_trigger_suppressed, false);
+            assert.equal(result.metrics.review_trigger_effective_changed_files_count, undefined);
+            assert.equal(result.triggers.dependency, true);
+            assert.equal(result.required_reviews.dependency, true);
         });
 
         it('keeps default CHANGELOG.md as an ordinary doc path with auditable match evidence', () => {

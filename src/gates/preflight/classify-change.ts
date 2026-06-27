@@ -79,6 +79,9 @@ export interface ClassifyChangeMetrics {
     fast_path_max_files: number;
     fast_path_max_changed_lines: number;
     performance_heuristic_min_lines: number;
+    review_trigger_effective_changed_files_count?: number;
+    review_trigger_effective_changed_lines_total?: number | null;
+    review_trigger_suppressed_files_count?: number;
     companion_scope_kind?: string;
     companion_scope_effective_changed_files_count?: number;
     companion_scope_effective_changed_lines_total?: number | null;
@@ -131,6 +134,9 @@ export interface ClassifyChangeTriggers {
     ui_i18n_companion_reason: string;
     ui_i18n_companion_files: string[];
     ui_i18n_companion_driver_files: string[];
+    ui_i18n_review_trigger_suppressed: boolean;
+    ui_i18n_review_trigger_files: string[];
+    ui_i18n_review_trigger_suppressed_files: string[];
     ignored_generated_runtime_files: string[];
     protected_control_plane_snapshot_sha256?: string;
     protected_control_plane_manifest_status?: string;
@@ -215,8 +221,18 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
         caseInsensitive: true
     });
 
-    const pathTriggers = detectPathTriggers({
+    const uiI18nCompanionScope = analyzeUiI18nCompanionScope({
         normalizedFiles,
+        classificationConfig,
+        changedFileStats: options.changedFileStats,
+        maxDriverFiles: fastPathMaxFiles,
+        maxDriverChangedLines: fastPathMaxChangedLines
+    });
+    const reviewTriggerFiles = uiI18nCompanionScope.reviewTriggerSuppressionEligible
+        ? uiI18nCompanionScope.reviewTriggerFiles
+        : normalizedFiles;
+    const pathTriggers = detectPathTriggers({
+        normalizedFiles: reviewTriggerFiles,
         repoRoot: options.repoRoot,
         taskIntent,
         classificationConfig,
@@ -232,18 +248,10 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             isOrdinaryOrchestratorCacheMaintenancePath
         }
     });
-
-    const uiI18nCompanionScope = analyzeUiI18nCompanionScope({
-        normalizedFiles,
-        classificationConfig,
-        changedFileStats: options.changedFileStats,
-        maxDriverFiles: fastPathMaxFiles,
-        maxDriverChangedLines: fastPathMaxChangedLines
-    });
-    const companionEffectiveChangedFilesCount = uiI18nCompanionScope.eligible
+    const companionEffectiveChangedFilesCount = uiI18nCompanionScope.reviewTriggerSuppressionEligible
         ? uiI18nCompanionScope.effectiveChangedFilesCount
         : normalizedFiles.length;
-    const companionEffectiveChangedLinesTotal = uiI18nCompanionScope.eligible && uiI18nCompanionScope.effectiveChangedLinesTotal !== null
+    const companionEffectiveChangedLinesTotal = uiI18nCompanionScope.reviewTriggerSuppressionEligible && uiI18nCompanionScope.effectiveChangedLinesTotal !== null
         ? uiI18nCompanionScope.effectiveChangedLinesTotal
         : changedLinesTotal;
 
@@ -350,8 +358,11 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             fast_path_max_files: fastPathMaxFiles,
             fast_path_max_changed_lines: fastPathMaxChangedLines,
             performance_heuristic_min_lines: performanceHeuristicMinLines,
-            ...(uiI18nCompanionScope.eligible
+            ...(uiI18nCompanionScope.reviewTriggerSuppressionEligible
                 ? {
+                    review_trigger_effective_changed_files_count: uiI18nCompanionScope.effectiveChangedFilesCount,
+                    review_trigger_effective_changed_lines_total: uiI18nCompanionScope.effectiveChangedLinesTotal,
+                    review_trigger_suppressed_files_count: uiI18nCompanionScope.i18nFiles.length,
                     companion_scope_kind: 'ui-i18n',
                     companion_scope_effective_changed_files_count: uiI18nCompanionScope.effectiveChangedFilesCount,
                     companion_scope_effective_changed_lines_total: uiI18nCompanionScope.effectiveChangedLinesTotal,
@@ -401,6 +412,11 @@ export function classifyChange(options: ClassifyChangeOptions): ClassifyChangeRe
             ui_i18n_companion_reason: uiI18nCompanionScope.reason,
             ui_i18n_companion_files: uiI18nCompanionScope.i18nFiles,
             ui_i18n_companion_driver_files: uiI18nCompanionScope.driverFiles,
+            ui_i18n_review_trigger_suppressed: uiI18nCompanionScope.reviewTriggerSuppressionEligible,
+            ui_i18n_review_trigger_files: reviewTriggerFiles,
+            ui_i18n_review_trigger_suppressed_files: uiI18nCompanionScope.reviewTriggerSuppressionEligible
+                ? uiI18nCompanionScope.i18nFiles
+                : [],
             ignored_generated_runtime_files: ignoredGeneratedRuntimeFiles
         },
         required_reviews: requiredReviews,

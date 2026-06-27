@@ -115,6 +115,8 @@ export interface ResolveOptions {
     forceAllDomainReviews?: boolean;
     /** Explicit task/preflight request to keep code review enabled. */
     forceCodeReview?: boolean;
+    /** Current preflight proved that only localization files remain after review-trigger filtering. */
+    localizationOnlyScope?: boolean;
     /** Whether current scope touches protected orchestrator control-plane files. */
     protectedControlPlaneChanged?: boolean;
     /** Whether every protected control-plane change is documentation-only surface. */
@@ -175,6 +177,7 @@ export interface ProfileGuardrailOptions {
     domainSurface?: Record<string, boolean>;
     forceAllDomainReviews?: boolean;
     forceCodeReview?: boolean;
+    localizationOnlyScope?: boolean;
     protectedControlPlaneChanged?: boolean;
     protectedControlPlaneDocsOnly?: boolean;
     zeroDiffBaselineOnly?: boolean;
@@ -218,6 +221,15 @@ function shouldLightenReviewForTestOnlyScope(
         return options.domainSurface !== undefined && options.domainSurface.security === false;
     }
     return true;
+}
+
+function shouldLightenReviewForLocalizationOnlyScope(
+    reviewType: string,
+    options: ProfileGuardrailOptions
+): boolean {
+    return options.localizationOnlyScope === true
+        && !options.forceCodeReview
+        && TEST_ONLY_SUPPRESSIBLE_REVIEW_TYPES.has(reviewType);
 }
 
 function hasAnyDomainSurface(domainSurface: Record<string, boolean> | undefined): boolean {
@@ -447,7 +459,8 @@ export function applyProfileGuardrails(
             profileValue,
             scopeCategory,
             options
-        ) || shouldLightenReviewForTestOnlyScope(key, scopeCategory, options);
+        ) || shouldLightenReviewForTestOnlyScope(key, scopeCategory, options)
+            || shouldLightenReviewForLocalizationOnlyScope(key, options);
         const codeReviewExplicitlyForced = key === 'code' && options.forceCodeReview === true;
         const effectiveValue = zeroDiffNoReviewableScope
             ? false
@@ -475,7 +488,9 @@ export function applyProfileGuardrails(
             reason = `${key} review requested by profile '${profileName}', but no ${key} trigger or project surface evidence was found`;
         } else if (scopeLightenedExplicitReview) {
             decision = 'lightened_by_profile';
-            reason = scopeCategory === 'test-only'
+            reason = options.localizationOnlyScope === true
+                ? `${key} review suppressed because scope is localization-only and no source/security/control-plane trigger requires it`
+                : scopeCategory === 'test-only'
                 ? `${key} review suppressed because scope is test-only and no source/security/control-plane trigger requires it`
                 : `${key} review lightened by profile '${profileName}' for true ${scopeCategory} scope`;
         } else if (forcedDomainWithoutSurface) {
@@ -682,6 +697,7 @@ export function resolveEffectivePolicy(
                 domainSurface: options.domainSurface,
                 forceAllDomainReviews: options.forceAllDomainReviews,
                 forceCodeReview: options.forceCodeReview,
+                localizationOnlyScope: options.localizationOnlyScope,
                 protectedControlPlaneChanged: options.protectedControlPlaneChanged,
                 protectedControlPlaneDocsOnly: options.protectedControlPlaneDocsOnly,
                 zeroDiffBaselineOnly: options.zeroDiffBaselineOnly
