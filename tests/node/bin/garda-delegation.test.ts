@@ -526,16 +526,13 @@ test('delegation trust model treats self-hosted deployed bundle as launcher-loca
 
 test('delegation trust model classifies direct deployed bundle roots as bundle targets', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-delegation-trust-direct-bundle-'));
-    const previousBundleName = process.env.GARDA_BUNDLE_NAME;
     try {
         const workspaceRoot = path.join(tempRoot, 'workspace');
         const installedRoot = path.join(workspaceRoot, 'node_modules', 'garda-agent-orchestrator');
         const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
-        const alternateBundleRoot = path.join(workspaceRoot, 'alternate-garda-bundle');
         writeFile(path.join(workspaceRoot, 'TASK.md'), '# Tasks\n');
         writePackageRoot(installedRoot);
         writePackageRoot(bundleRoot, { deployedBundle: true });
-        writePackageRoot(alternateBundleRoot, { deployedBundle: true });
         const currentScriptPath = path.join(installedRoot, 'bin', 'garda.js');
 
         const targetEvidence = resolveDelegatedLauncherTrustEvidence(
@@ -557,24 +554,7 @@ test('delegation trust model classifies direct deployed bundle roots as bundle t
         assert.equal(cwdEvidence.delegated_runtime?.cli_path, path.join(bundleRoot, 'bin', 'garda.js'));
         assert.equal(cwdEvidence.delegated_runtime?.runtime_kind, 'deployed_bundle');
         assert.equal(cwdEvidence.delegated_runtime?.reason, 'cwd_deployed_bundle');
-
-        process.env.GARDA_BUNDLE_NAME = 'non-default-garda-bundle';
-        const explicitTargetEvidence = resolveDelegatedLauncherTrustEvidence(
-            ['status', '--target-root', alternateBundleRoot],
-            workspaceRoot,
-            currentScriptPath,
-            installedRoot
-        );
-
-        assert.equal(explicitTargetEvidence.delegated_runtime?.cli_path, path.join(alternateBundleRoot, 'bin', 'garda.js'));
-        assert.equal(explicitTargetEvidence.delegated_runtime?.runtime_kind, 'deployed_bundle');
-        assert.equal(explicitTargetEvidence.delegated_runtime?.reason, 'target_root_deployed_bundle');
     } finally {
-        if (previousBundleName === undefined) {
-            delete process.env.GARDA_BUNDLE_NAME;
-        } else {
-            process.env.GARDA_BUNDLE_NAME = previousBundleName;
-        }
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });

@@ -87,7 +87,6 @@ function resolvePropagatedTimeoutEnvValue(name: string, timeoutMs: number): stri
 
 function buildFullSuiteValidationCommandEnv(timeoutMs: number): NodeJS.ProcessEnv {
     return {
-        GARDA_BUNDLE_NAME: undefined,
         GARDA_NODE_FOUNDATION_REUSE_PUBLISH_RUNTIME: '1',
         GARDA_NODE_FOUNDATION_TEST_PREBUILT: '1',
         [BUILD_SCRIPTS_PROCESS_TIMEOUT_MS_ENV]: resolvePropagatedTimeoutEnvValue(

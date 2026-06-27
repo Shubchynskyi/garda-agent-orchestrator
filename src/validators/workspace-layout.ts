@@ -37,7 +37,8 @@ function resolveExistingCliPath(rootPath: string, bundleName?: string): string {
         : path.join(rootPath, PRIMARY_CLI_ENTRYPOINT);
 }
 
-export function getBaseRequiredPaths(bundleName: string): readonly string[] {
+export function getBaseRequiredPaths(): readonly string[] {
+    const bundleName = DEFAULT_BUNDLE_NAME;
     return Object.freeze([
         'TASK.md',
         `${bundleName}/.gitattributes`,
@@ -90,9 +91,9 @@ export function getBaseRequiredPaths(bundleName: string): readonly string[] {
 /**
  * Required workspace paths that must exist after a full install.
  * Matches the deployed Node-only bundle surface.
- * Uses the default bundle name for backwards compatibility.
+ * Uses the fixed deployed bundle name.
  */
-export const BASE_REQUIRED_PATHS = getBaseRequiredPaths(DEFAULT_BUNDLE_NAME);
+export const BASE_REQUIRED_PATHS = getBaseRequiredPaths();
 
 export const RULE_FILES = Object.freeze([
     '00-core.md',
@@ -197,9 +198,9 @@ export function getBundlePath(targetRoot: string, bundleName?: string): string {
 export function buildRequiredPaths(options: BuildRequiredPathsOptions): string[] {
     const activeAgentFiles = options.activeAgentFiles || [];
     const claudeOrchestratorFullAccess = options.claudeOrchestratorFullAccess || false;
-    const effectiveBundleName = resolveBundleName(options.bundleName);
+    const effectiveBundleName = resolveBundleName();
 
-    const paths: string[] = [...getBaseRequiredPaths(effectiveBundleName)];
+    const paths: string[] = [...getBaseRequiredPaths()];
 
     for (const ruleFile of RULE_FILES) {
         paths.push(`${effectiveBundleName}/live/docs/agent-rules/${ruleFile}`);

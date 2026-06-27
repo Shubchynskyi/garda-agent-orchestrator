@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as childProcess from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -925,6 +926,30 @@ test('extractGlobalFlags handles --offline at end of argv', () => {
     assert.deepEqual(result.rest, ['check-update']);
 });
 
+test('extractGlobalFlags does not treat --bundle-name as a supported global flag', () => {
+    const result = extractGlobalFlags(['--bundle-name', 'custom-garda', 'status']);
+    assert.equal(result.noColor, false);
+    assert.equal(result.offline, false);
+    assert.equal(result.forceNetwork, false);
+    assert.deepEqual(result.rest, ['--bundle-name', 'custom-garda', 'status']);
+});
+
+test('public CLI rejects --bundle-name as an unsupported command', () => {
+    const cliPath = path.join(process.cwd(), 'bin', 'garda.js');
+    const result = childProcess.spawnSync(
+        process.execPath,
+        [cliPath, '--bundle-name', 'custom-garda', 'status'],
+        {
+            cwd: process.cwd(),
+            encoding: 'utf8',
+            env: { ...process.env, NO_COLOR: '1' }
+        }
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /Unsupported command: --bundle-name/);
+});
+
 test('applyNoColorFlag sets NO_COLOR when true', () => {
     const saved = process.env.NO_COLOR;
     try {
@@ -1003,6 +1028,7 @@ test('buildHelpText includes --no-color in global options', () => {
     const text = buildHelpText({ name: 'test', version: '1.0.0' });
     assert.ok(text.includes('--no-color'));
     assert.ok(text.includes('NO_COLOR'));
+    assert.ok(!text.includes('--bundle-name'));
 });
 
 test('buildHelpText documents aggregate retention override', () => {
@@ -1091,6 +1117,7 @@ async function captureRunCliMain(argv: string[], options: { cwd?: string } = {})
 }
 
 test('runCliMain prints command help for the user-facing invocation matrix', async () => {
+    const sourceCheckoutRoot = createSourceCheckoutWithoutDeployedBundle();
     const commands: Array<{ command: string; expectedUsage: string }> = [
         { command: 'stats', expectedUsage: 'garda stats' },
         { command: 'task', expectedUsage: 'garda task' },
@@ -1103,19 +1130,23 @@ test('runCliMain prints command help for the user-facing invocation matrix', asy
         { command: 'templates', expectedUsage: 'garda templates' }
     ];
 
-    for (const { command, expectedUsage } of commands) {
-        const invocations = [
-            ['help', command],
-            [command, 'help'],
-            [command, '--help'],
-            [command, '-h']
-        ];
-        for (const argv of invocations) {
-            const text = await captureRunCliMain(argv);
-            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
-            assert.ok(text.includes(command), `${argv.join(' ')} should name the command`);
-            assert.ok(text.includes(expectedUsage), `${argv.join(' ')} should include command-specific usage`);
+    try {
+        for (const { command, expectedUsage } of commands) {
+            const invocations = [
+                ['help', command],
+                [command, 'help'],
+                [command, '--help'],
+                [command, '-h']
+            ];
+            for (const argv of invocations) {
+                const text = await captureRunCliMain(argv, { cwd: sourceCheckoutRoot });
+                assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+                assert.ok(text.includes(command), `${argv.join(' ')} should name the command`);
+                assert.ok(text.includes(expectedUsage), `${argv.join(' ')} should include command-specific usage`);
+            }
         }
+    } finally {
+        fs.rmSync(sourceCheckoutRoot, { recursive: true, force: true });
     }
 });
 
@@ -1139,86 +1170,94 @@ test('runCliMain prints debug help for namespace and debug env help forms', asyn
 });
 
 test('runCliMain command help does not execute side-effect-prone command bodies', async () => {
+    const sourceCheckoutRoot = createSourceCheckoutWithoutDeployedBundle();
     const doctorInvocations = [
         ['doctor', '--help'],
         ['doctor', '-h'],
         ['doctor', 'help'],
         ['help', 'doctor']
     ];
-    for (const argv of doctorInvocations) {
-        const text = await captureRunCliMain(argv);
-        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
-        assert.ok(text.includes('garda doctor'), `${argv.join(' ')} should include doctor usage`);
-        assert.ok(!text.includes('Workspace ready'), `${argv.join(' ')} should not run status formatting`);
-        assert.ok(!text.includes('Agent setup required'), `${argv.join(' ')} should not run status formatting`);
-        assert.ok(!text.includes('Not installed'), `${argv.join(' ')} should not run status formatting`);
-    }
+    try {
+        for (const argv of doctorInvocations) {
+            const text = await captureRunCliMain(argv, { cwd: sourceCheckoutRoot });
+            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+            assert.ok(text.includes('garda doctor'), `${argv.join(' ')} should include doctor usage`);
+            assert.ok(!text.includes('Workspace ready'), `${argv.join(' ')} should not run status formatting`);
+            assert.ok(!text.includes('Agent setup required'), `${argv.join(' ')} should not run status formatting`);
+            assert.ok(!text.includes('Not installed'), `${argv.join(' ')} should not run status formatting`);
+        }
 
-    const cleanupInvocations = [
-        ['cleanup', '--help'],
-        ['cleanup', '-h'],
-        ['cleanup', 'help'],
-        ['help', 'cleanup'],
-        ['gc', '--help'],
-        ['gc', '-h'],
-        ['gc', 'help'],
-        ['help', 'gc']
-    ];
-    for (const argv of cleanupInvocations) {
-        const text = await captureRunCliMain(argv);
-        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
-        assert.ok(text.includes('ledger history') || text.includes('ledger-only') || text.includes('verified ledger'), `${argv.join(' ')} should explain ledger retention`);
-        assert.ok(text.includes('confirmed purge') || text.includes('Full purge is never automatic'), `${argv.join(' ')} should explain confirm-only purge`);
-        assert.ok(text.includes('--runtime-retention-older-than-days'), `${argv.join(' ')} should document runtime retention age overrides`);
-        assert.ok(text.includes('--runtime-retention-keep-latest-tasks'), `${argv.join(' ')} should document runtime retention count overrides`);
-        assert.ok(!text.includes('GARDA_CLEANUP'), `${argv.join(' ')} should not run cleanup`);
-    }
+        const cleanupInvocations = [
+            ['cleanup', '--help'],
+            ['cleanup', '-h'],
+            ['cleanup', 'help'],
+            ['help', 'cleanup'],
+            ['gc', '--help'],
+            ['gc', '-h'],
+            ['gc', 'help'],
+            ['help', 'gc']
+        ];
+        for (const argv of cleanupInvocations) {
+            const text = await captureRunCliMain(argv, { cwd: sourceCheckoutRoot });
+            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+            assert.ok(text.includes('ledger history') || text.includes('ledger-only') || text.includes('verified ledger'), `${argv.join(' ')} should explain ledger retention`);
+            assert.ok(text.includes('confirmed purge') || text.includes('Full purge is never automatic'), `${argv.join(' ')} should explain confirm-only purge`);
+            assert.ok(text.includes('--runtime-retention-older-than-days'), `${argv.join(' ')} should document runtime retention age overrides`);
+            assert.ok(text.includes('--runtime-retention-keep-latest-tasks'), `${argv.join(' ')} should document runtime retention count overrides`);
+            assert.ok(!text.includes('GARDA_CLEANUP'), `${argv.join(' ')} should not run cleanup`);
+        }
 
-    const statsInvocations = [
-        ['stats', '--help'],
-        ['stats', '-h'],
-        ['stats', 'help'],
-        ['help', 'stats']
-    ];
-    for (const argv of statsInvocations) {
-        const text = await captureRunCliMain(argv);
-        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
-        assert.ok(!text.includes('GARDA_STATS'), `${argv.join(' ')} should not run stats`);
+        const statsInvocations = [
+            ['stats', '--help'],
+            ['stats', '-h'],
+            ['stats', 'help'],
+            ['help', 'stats']
+        ];
+        for (const argv of statsInvocations) {
+            const text = await captureRunCliMain(argv, { cwd: sourceCheckoutRoot });
+            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print command help`);
+            assert.ok(!text.includes('GARDA_STATS'), `${argv.join(' ')} should not run stats`);
+        }
+    } finally {
+        fs.rmSync(sourceCheckoutRoot, { recursive: true, force: true });
     }
 });
 
 test('runCliMain prints gate help through overview and per-gate aliases', async () => {
+    const sourceCheckoutRoot = createSourceCheckoutWithoutDeployedBundle();
     const overviewInvocations = [
         ['help', 'gate'],
         ['gate', 'help'],
         ['gate', '--help'],
         ['gate', '-h']
     ];
-    for (const argv of overviewInvocations) {
-        const text = await captureRunCliMain(argv);
-        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print gate overview help`);
-        assert.ok(text.includes('gate <gate-name>'), `${argv.join(' ')} should include gate overview usage`);
-    }
+    try {
+        for (const argv of overviewInvocations) {
+            const text = await captureRunCliMain(argv, { cwd: sourceCheckoutRoot });
+            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print gate overview help`);
+            assert.ok(text.includes('gate <gate-name>'), `${argv.join(' ')} should include gate overview usage`);
+        }
 
-    const perGateInvocations = [
-        ['help', 'gate', 'task-events-summary'],
-        ['gate', 'help', 'task-events-summary'],
-        ['gate', 'task-events-summary', '--help'],
-        ['gate', 'task-events-summary', '-h']
-    ];
-    for (const argv of perGateInvocations) {
-        const text = await captureRunCliMain(argv);
-        assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print per-gate help`);
-        assert.ok(text.includes('gate task-events-summary'), `${argv.join(' ')} should include per-gate usage`);
-        assert.ok(text.includes('--task-id "<task-id>"'), `${argv.join(' ')} should include task-id syntax`);
+        const perGateInvocations = [
+            ['help', 'gate', 'task-events-summary'],
+            ['gate', 'help', 'task-events-summary'],
+            ['gate', 'task-events-summary', '--help'],
+            ['gate', 'task-events-summary', '-h']
+        ];
+        for (const argv of perGateInvocations) {
+            const text = await captureRunCliMain(argv, { cwd: sourceCheckoutRoot });
+            assert.ok(text.includes('GARDA_COMMAND_HELP'), `${argv.join(' ')} should print per-gate help`);
+            assert.ok(text.includes('gate task-events-summary'), `${argv.join(' ')} should include per-gate usage`);
+            assert.ok(text.includes('--task-id "<task-id>"'), `${argv.join(' ')} should include task-id syntax`);
+        }
+    } finally {
+        fs.rmSync(sourceCheckoutRoot, { recursive: true, force: true });
     }
 });
 
 test('runCliMain prints help-only commands without requiring deployed bundle parity', async () => {
     const sourceCheckoutRoot = createSourceCheckoutWithoutDeployedBundle();
-    const savedBundleName = process.env.GARDA_BUNDLE_NAME;
     try {
-        process.env.GARDA_BUNDLE_NAME = 'custom-garda-bundle';
         const helpCases: Array<{ argv: string[]; expected: string }> = [
             { argv: ['profile', '--help'], expected: 'garda profile' },
             { argv: ['gate', '--help'], expected: 'gate <gate-name>' },
@@ -1231,11 +1270,6 @@ test('runCliMain prints help-only commands without requiring deployed bundle par
             assert.ok(!text.includes('PARITY_BLOCKED'), `${helpCase.argv.join(' ')} should not run parity blocking`);
         }
     } finally {
-        if (savedBundleName === undefined) {
-            delete process.env.GARDA_BUNDLE_NAME;
-        } else {
-            process.env.GARDA_BUNDLE_NAME = savedBundleName;
-        }
         fs.rmSync(sourceCheckoutRoot, { recursive: true, force: true });
     }
 });

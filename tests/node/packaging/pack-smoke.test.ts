@@ -97,10 +97,8 @@ function quoteWindowsArgument(argument: string): string {
     return escaped;
 }
 
-function buildEnvWithoutBundleName(): NodeJS.ProcessEnv {
-    const env = { ...process.env };
-    delete env.GARDA_BUNDLE_NAME;
-    return env;
+function buildPackagingEnv(): NodeJS.ProcessEnv {
+    return { ...process.env };
 }
 
 function spawnNpm(args: string[], cwd: string, timeoutMs = NPM_PACK_TIMEOUT_MS): childProcess.SpawnSyncReturns<string> {
@@ -285,7 +283,7 @@ function runCli(cliScriptPath: string, args: string[], cwd: string): childProces
         {
             cwd,
             encoding: 'utf8',
-            env: buildEnvWithoutBundleName(),
+            env: buildPackagingEnv(),
             timeout: 30_000
         }
     );

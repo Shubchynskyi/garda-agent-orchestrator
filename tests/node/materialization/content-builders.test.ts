@@ -765,21 +765,10 @@ describe('buildProviderOrchestratorAgentContent', () => {
         }
     });
 
-    it('uses the configured bundle name in provider bridge snippets', { concurrency: false }, () => {
-        const previousBundleName = process.env.GARDA_BUNDLE_NAME;
-        process.env.GARDA_BUNDLE_NAME = 'custom-garda-bundle';
-        try {
-            const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'AGENTS.md', '.github/agents/orchestrator.md');
-            assert.ok(result.includes('node custom-garda-bundle/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
-            assert.ok(result.includes('custom-garda-bundle/live/docs/agent-rules/00-core.md'));
-            assert.ok(!result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
-        } finally {
-            if (previousBundleName == null) {
-                delete process.env.GARDA_BUNDLE_NAME;
-            } else {
-                process.env.GARDA_BUNDLE_NAME = previousBundleName;
-            }
-        }
+    it('uses the fixed deployed bundle name in provider bridge snippets', () => {
+        const result = buildProviderOrchestratorAgentContent('GitHub Copilot', 'AGENTS.md', '.github/agents/orchestrator.md');
+        assert.ok(result.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode --task-id "<task-id>"'));
+        assert.ok(result.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
     });
 });
 

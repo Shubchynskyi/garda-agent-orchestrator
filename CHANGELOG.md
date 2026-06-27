@@ -7,6 +7,7 @@
 
 ### Install, Update, And Package Safety
 - Preserved existing `TASK.md` task rows and user-owned notes when install/update refreshes the managed template, including overwrite-style setup paths.
+- Removed public custom deployed-bundle selection through `--bundle-name` and `GARDA_BUNDLE_NAME`; install/update now use the fixed `garda-agent-orchestrator` bundle directory.
 
 ## 1.1.0
 

@@ -399,49 +399,8 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
         }
     });
 
-    it('detects workflow-config edits under a custom configured bundle name', { concurrency: false }, () => {
+    it('keeps the fixed bundle workflow config protected', { concurrency: false }, () => {
         const repoRoot = createTempRepo();
-        const previousBundleName = process.env.GARDA_BUNDLE_NAME;
-        process.env.GARDA_BUNDLE_NAME = 'custom-garda';
-        const configPath = path.join(repoRoot, 'custom-garda', 'live', 'config', 'workflow-config.json');
-
-        try {
-            fs.mkdirSync(path.dirname(configPath), { recursive: true });
-            fs.writeFileSync(configPath, JSON.stringify({
-                full_suite_validation: { out_of_scope_failure_policy: 'FAIL' }
-            }, null, 2) + '\n', 'utf8');
-            const baseline = getCurrentWorkflowConfigFileHashes(repoRoot);
-            assert.ok(getWorkflowConfigControlPlanePaths(repoRoot).includes(
-                'custom-garda/live/config/workflow-config.json'
-            ));
-
-            fs.writeFileSync(configPath, JSON.stringify({
-                full_suite_validation: { out_of_scope_failure_policy: 'AUDIT_AND_WARN' }
-            }, null, 2) + '\n', 'utf8');
-            const changes = getCurrentWorkflowConfigChanges(repoRoot, baseline);
-
-            assert.deepEqual(changes.changed_files, ['custom-garda/live/config/workflow-config.json']);
-            assert.match(getWorkflowConfigWorkViolations({
-                changedFiles: changes.changed_files,
-                taskModeEvidence: { orchestrator_work: true },
-                phaseLabel: 'preflight',
-                baselineFileHashes: baseline,
-                currentFileHashes: changes.current_file_hashes
-            }).join('\n'), /--workflow-config-work/);
-        } finally {
-            if (previousBundleName === undefined) {
-                delete process.env.GARDA_BUNDLE_NAME;
-            } else {
-                process.env.GARDA_BUNDLE_NAME = previousBundleName;
-            }
-            fs.rmSync(repoRoot, { recursive: true, force: true });
-        }
-    });
-
-    it('keeps the default bundle workflow config protected when GARDA_BUNDLE_NAME is wrong', { concurrency: false }, () => {
-        const repoRoot = createTempRepo();
-        const previousBundleName = process.env.GARDA_BUNDLE_NAME;
-        process.env.GARDA_BUNDLE_NAME = 'wrong-garda';
         const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
 
         try {
@@ -461,11 +420,6 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
 
             assert.deepEqual(changes.changed_files, ['garda-agent-orchestrator/live/config/workflow-config.json']);
         } finally {
-            if (previousBundleName === undefined) {
-                delete process.env.GARDA_BUNDLE_NAME;
-            } else {
-                process.env.GARDA_BUNDLE_NAME = previousBundleName;
-            }
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
     });

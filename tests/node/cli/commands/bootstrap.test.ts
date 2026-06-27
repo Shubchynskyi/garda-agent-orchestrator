@@ -78,16 +78,13 @@ test('buildBootstrapSuccessOutput uses npx for default bundle name', () => {
     assert.ok(output.includes('install'));
 });
 
-test('buildBootstrapSuccessOutput uses Node CLI for custom bundle paths', () => {
+test('buildBootstrapSuccessOutput rejects non-default bundle paths', () => {
     const dest = path.join('/workspace', 'custom-bundle');
     const pkg = { version: '1.0.8', name: 'garda-agent-orchestrator' };
-    const output = buildBootstrapSuccessOutput(pkg, '1.0.8', dest);
-    assert.ok(output.includes('Custom bundle paths should still use the Node CLI'));
-    assert.ok(output.includes('node'));
-    assert.ok(output.includes('garda.js'));
-    assert.ok(output.includes('install'));
-    assert.ok(output.includes('node'));
-    assert.ok(output.includes('Qwen'));
+    assert.throws(
+        () => buildBootstrapSuccessOutput(pkg, '1.0.8', dest),
+        /Bootstrap destination must be the supported deployed bundle directory 'garda-agent-orchestrator'/
+    );
 });
 
 test('handleBootstrap deploys bundle to destination', async () => {
@@ -123,7 +120,7 @@ test('handleBootstrap uses positional as destination fallback', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-integ-'));
     try {
         const repoRoot = findRepoRoot(__dirname);
-        const dest = path.join(tmpDir, 'my-bundle');
+        const dest = path.join(tmpDir, 'garda-agent-orchestrator');
 
         const originalLog = console.log;
         const lines: string[] = [];

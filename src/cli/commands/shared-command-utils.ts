@@ -218,7 +218,6 @@ export function ensureBundleExists(targetRoot: string, commandName: string): str
             `Run 'npx garda-agent-orchestrator' first, then rerun '${commandName}'.`
         ].join('\n'));
     }
-    process.env.GARDA_BUNDLE_NAME = path.basename(bundlePath);
     return bundlePath;
 }
 

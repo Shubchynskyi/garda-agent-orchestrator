@@ -75,10 +75,8 @@ function readJson(filePath: string): Record<string, unknown> {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
-function buildEnvWithoutBundleName(): NodeJS.ProcessEnv {
-    const env = { ...process.env };
-    delete env.GARDA_BUNDLE_NAME;
-    return env;
+function buildPackagingEnv(): NodeJS.ProcessEnv {
+    return { ...process.env };
 }
 
 function syncGeneratedCliEntrypoint(repoRoot: string): void {
@@ -133,7 +131,7 @@ test('published runtime works when the package is executed from node_modules', (
             {
                 cwd: workspaceRoot,
                 encoding: 'utf8',
-                env: buildEnvWithoutBundleName()
+                env: buildPackagingEnv()
             }
         );
 
@@ -191,7 +189,7 @@ test('published runtime setup stays in agent handoff state and uninstall restore
             {
                 cwd: workspaceRoot,
                 encoding: 'utf8',
-                env: buildEnvWithoutBundleName()
+                env: buildPackagingEnv()
             }
         );
 
@@ -215,7 +213,7 @@ test('published runtime setup stays in agent handoff state and uninstall restore
             {
                 cwd: workspaceRoot,
                 encoding: 'utf8',
-                env: buildEnvWithoutBundleName()
+                env: buildPackagingEnv()
             }
         );
 

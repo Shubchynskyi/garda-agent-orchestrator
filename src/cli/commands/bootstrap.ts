@@ -1,5 +1,5 @@
 import * as path from 'node:path';
-import { DEFAULT_BUNDLE_NAME, PRIMARY_CLI_ENTRYPOINT, resolveBundleName, SOURCE_OF_TRUTH_VALUES } from '../../core/constants';
+import { DEFAULT_BUNDLE_NAME, resolveBundleName } from '../../core/constants';
 import {
     acquireSourceRoot,
     deployFreshBundle,
@@ -18,12 +18,11 @@ export const BOOTSTRAP_DEFINITIONS = {
 
 // Emits GARDA_BOOTSTRAP_OK contract output.
 export function buildBootstrapSuccessOutput(packageJson: PackageJsonLike, bundleVersion: string, destinationPath: string): string {
+    assertSupportedBundleDestination(destinationPath);
     const targetRoot = path.dirname(destinationPath);
     const bundleRelativePath = path.relative(targetRoot, destinationPath) || path.basename(destinationPath);
     const initPromptPath = path.join(destinationPath, 'AGENT_INIT_PROMPT.md');
-    const bundleCliPath = path.join(destinationPath, path.basename(PRIMARY_CLI_ENTRYPOINT));
     const initAnswersRelativePath = path.join(bundleRelativePath, 'runtime', 'init-answers.json');
-    const sourceOfTruthOptions = SOURCE_OF_TRUTH_VALUES.join('|');
 
     const lines = [];
     lines.push('GARDA_BOOTSTRAP_OK');
@@ -37,15 +36,20 @@ export function buildBootstrapSuccessOutput(packageJson: PackageJsonLike, bundle
     lines.push(`1. Give your agent "${initPromptPath}".`);
     lines.push(`2. Let the agent write "${path.join(targetRoot, initAnswersRelativePath)}".`);
 
-    if (bundleRelativePath === DEFAULT_BUNDLE_NAME) {
-        lines.push('3. After init answers exist, run the lifecycle CLI:');
-        lines.push(`   npx ${packageJson.name} install --target-root "${targetRoot}" --init-answers-path "${initAnswersRelativePath}"`);
-    } else {
-        lines.push('3. Custom bundle paths should still use the Node CLI:');
-        lines.push(`   node "${bundleCliPath}" install --target-root "${targetRoot}" --assistant-language "<language>" --assistant-brevity "<concise|detailed>" --source-of-truth "<${sourceOfTruthOptions}>" --init-answers-path "${initAnswersRelativePath}"`);
-    }
+    lines.push('3. After init answers exist, run the lifecycle CLI:');
+    lines.push(`   npx ${packageJson.name} install --target-root "${targetRoot}" --init-answers-path "${initAnswersRelativePath}"`);
 
     return lines.join('\n');
+}
+
+function assertSupportedBundleDestination(destinationPath: string): void {
+    const bundleName = path.basename(path.resolve(destinationPath));
+    if (bundleName !== DEFAULT_BUNDLE_NAME) {
+        throw new Error(
+            `Bootstrap destination must be the supported deployed bundle directory '${DEFAULT_BUNDLE_NAME}'. ` +
+            `Received '${bundleName}'.`
+        );
+    }
 }
 
 export function printBootstrapSuccess(packageJson: PackageJsonLike, bundleVersion: string, destinationPath: string): void {
@@ -66,6 +70,7 @@ export async function handleBootstrap(commandArgv: string[], packageJson: Packag
     const branch = typeof options.branch === 'string' ? options.branch : undefined;
 
     const destinationPath = normalizePathValue(destinationOption || positionals[0] || resolveBundleName());
+    assertSupportedBundleDestination(destinationPath);
     const source = await acquireSourceRoot(repoUrl, branch, packageRoot);
     try {
         deployFreshBundle(source.sourceRoot, destinationPath);

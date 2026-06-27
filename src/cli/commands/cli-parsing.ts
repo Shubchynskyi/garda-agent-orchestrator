@@ -19,7 +19,6 @@ type OptionDefinitions = Record<string, { key: string; type: string }>;
 
 export interface GlobalFlags {
     noColor: boolean;
-    bundleName: string | undefined;
     offline: boolean;
     forceNetwork: boolean;
     rest: string[];
@@ -27,7 +26,6 @@ export interface GlobalFlags {
 
 export function extractGlobalFlags(argv: string[]): GlobalFlags {
     let noColor = false;
-    let bundleName: string | undefined;
     let offline = false;
     let forceNetwork = false;
     const rest: string[] = [];
@@ -39,16 +37,11 @@ export function extractGlobalFlags(argv: string[]): GlobalFlags {
             offline = true;
         } else if (arg === '--force-network') {
             forceNetwork = true;
-        } else if (arg === '--bundle-name' && i + 1 < argv.length) {
-            bundleName = argv[i + 1];
-            i += 1;
-        } else if (arg.startsWith('--bundle-name=')) {
-            bundleName = arg.slice('--bundle-name='.length);
         } else {
             rest.push(arg);
         }
     }
-    return { noColor, bundleName, offline, forceNetwork, rest };
+    return { noColor, offline, forceNetwork, rest };
 }
 
 export function parseOptions(

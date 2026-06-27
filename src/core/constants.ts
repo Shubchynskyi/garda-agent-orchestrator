@@ -30,31 +30,12 @@ export const LEGACY_CLI_ENTRYPOINT = PRIMARY_CLI_ENTRYPOINT;
 export const CLI_ENTRYPOINT_CANDIDATES: readonly string[] = Object.freeze([
     PRIMARY_CLI_ENTRYPOINT
 ]);
-export const BUNDLE_NAME_ENV_VARS: readonly string[] = Object.freeze([
-    'GARDA_BUNDLE_NAME'
-]);
-
 /**
  * Return the effective bundle name.
- * Resolution order: explicit override > GARDA_BUNDLE_NAME env var > DEFAULT_BUNDLE_NAME.
+ * The deployed bundle directory is fixed for installed workspaces.
  */
-export function resolveBundleName(override?: string): string {
-    if (override && override.trim()) return override.trim();
-    for (const envVar of BUNDLE_NAME_ENV_VARS) {
-        const envValue = process.env[envVar];
-        if (envValue && envValue.trim()) return envValue.trim();
-    }
+export function resolveBundleName(_override?: string): string {
     return DEFAULT_BUNDLE_NAME;
-}
-
-function hasExplicitBundleNameConfiguration(override?: string): boolean {
-    if (override && override.trim()) {
-        return true;
-    }
-    return BUNDLE_NAME_ENV_VARS.some(function (envVar) {
-        const envValue = process.env[envVar];
-        return Boolean(envValue && envValue.trim());
-    });
 }
 
 export function isBundleRootLike(candidateRoot: string): boolean {
@@ -77,11 +58,8 @@ export function isBundleRootLike(candidateRoot: string): boolean {
     }
 }
 
-export function resolveBundleNameForTarget(targetRoot: string, override?: string): string {
-    const preferredName = resolveBundleName(override);
-    if (hasExplicitBundleNameConfiguration(override)) {
-        return preferredName;
-    }
+export function resolveBundleNameForTarget(targetRoot: string, _override?: string): string {
+    const preferredName = resolveBundleName();
 
     const normalizedTarget = path.resolve(targetRoot);
     const candidateRoot = path.join(normalizedTarget, preferredName);

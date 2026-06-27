@@ -290,10 +290,9 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         }
     });
 
-    it('renders help paths with the configured bundle name instead of hardcoding the default bundle', () => {
+    it('renders help paths with the fixed deployed bundle name', () => {
         const childEnv: NodeJS.ProcessEnv = {
             ...process.env,
-            GARDA_BUNDLE_NAME: 'custom-garda-bundle',
             NO_COLOR: '1'
         };
         delete childEnv.FORCE_COLOR;
@@ -317,9 +316,8 @@ describe('cli/commands/gates command help and syntax remediation', () => {
         });
         assert.equal(result.status, 0, result.stderr);
         const helpOutput = stripAnsi(result.stdout);
-        assert.ok(helpOutput.includes('custom-garda-bundle/live/docs/agent-rules/00-core.md'));
-        assert.ok(helpOutput.includes('custom-garda-bundle/runtime/reviews/<task-id>-preflight.json'));
-        assert.ok(!helpOutput.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
+        assert.ok(helpOutput.includes('garda-agent-orchestrator/live/docs/agent-rules/00-core.md'));
+        assert.ok(helpOutput.includes('garda-agent-orchestrator/runtime/reviews/<task-id>-preflight.json'));
     });
 
     it('includes real-subagent hard-stop guidance in delegation-start help', () => {

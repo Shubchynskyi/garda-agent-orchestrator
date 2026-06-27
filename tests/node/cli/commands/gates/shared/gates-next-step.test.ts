@@ -201,15 +201,9 @@ describe('cli/commands/gates next-step', () => {
         }
     });
 
-    it('uses the configured bundle name in generated commands', async () => {
+    it('uses the fixed default bundle name in generated commands', async () => {
         const repoRoot = createTempRepo();
-        const previousBundleName = process.env.GARDA_BUNDLE_NAME;
         try {
-            process.env.GARDA_BUNDLE_NAME = 'custom-orchestrator';
-            fs.renameSync(
-                path.join(repoRoot, 'garda-agent-orchestrator'),
-                path.join(repoRoot, 'custom-orchestrator')
-            );
             const result = await runCliWithStdoutCapture([
                 'gate',
                 'next-step',
@@ -221,13 +215,8 @@ describe('cli/commands/gates next-step', () => {
 
             assert.equal(result.exitCode, 0);
             assert.equal(result.errors.length, 0);
-            assert.ok(result.stdout.includes('node custom-orchestrator/bin/garda.js gate enter-task-mode'));
+            assert.ok(result.stdout.includes('node garda-agent-orchestrator/bin/garda.js gate enter-task-mode'));
         } finally {
-            if (previousBundleName === undefined) {
-                delete process.env.GARDA_BUNDLE_NAME;
-            } else {
-                process.env.GARDA_BUNDLE_NAME = previousBundleName;
-            }
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }
     });

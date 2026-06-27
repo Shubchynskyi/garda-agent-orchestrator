@@ -1,6 +1,5 @@
 import {
     ALL_CLI_NAMES,
-    DEFAULT_BUNDLE_NAME,
     PRIMARY_CLI_NAME,
     PRIMARY_PACKAGE_NAME,
     PRODUCT_ACRONYM,
@@ -647,7 +646,6 @@ export function buildHelpText(packageJson: PackageJsonLike): string {
             '  -h, --help                 Show this help message.',
             '  -v, --version              Show the package version.',
             '      --no-color             Disable colored output (honors NO_COLOR env var).',
-            `      --bundle-name NAME     Override deployed bundle directory name (default: ${DEFAULT_BUNDLE_NAME}; env: GARDA_BUNDLE_NAME).`,
             '      --offline              Block network-sensitive commands (env: GARDA_OFFLINE=1).',
             '      --force-network        Override --offline for a single invocation.'
         ],

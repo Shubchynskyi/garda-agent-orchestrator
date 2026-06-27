@@ -5,7 +5,6 @@ import {
     DEFAULT_BUNDLE_NAME,
     DEPLOYED_BUNDLE_PROVENANCE_PATHS,
     PRIMARY_CLI_ENTRYPOINT,
-    PRODUCT_NAME,
     RECOGNIZED_PACKAGE_NAMES,
     SOURCE_CHECKOUT_PROVENANCE_PATHS
 } from './launcher-constants';
@@ -15,50 +14,8 @@ export interface PackageMetadata {
     version: string | null;
 }
 
-export function validateBundleName(bundleName: string, source: string): string {
-    if (
-        bundleName === ''
-        || bundleName.trim() !== bundleName
-        || bundleName === '.'
-        || bundleName === '..'
-        || bundleName.startsWith('-')
-        || path.isAbsolute(bundleName)
-        || bundleName.includes('/')
-        || bundleName.includes('\\')
-    ) {
-        throw new Error(
-            `${PRODUCT_NAME} ${source} must be a deployed bundle directory name, not a path: ` +
-            `${JSON.stringify(bundleName)}. Pass a direct child directory name such as ` +
-            `"${DEFAULT_BUNDLE_NAME}".`
-        );
-    }
-    return bundleName;
-}
-
 export function resolveBundleName(): string {
-    const bundleName = process.env.GARDA_BUNDLE_NAME;
-    return bundleName === undefined
-        ? DEFAULT_BUNDLE_NAME
-        : validateBundleName(bundleName, 'GARDA_BUNDLE_NAME');
-}
-
-export function extractBundleNameArg(argv: string[]): string | null {
-    for (let index = 0; index < argv.length; index += 1) {
-        const token = argv[index];
-        if (token === '--bundle-name') {
-            const value = argv[index + 1];
-            if (value === undefined || value.startsWith('-')) {
-                throw new Error(
-                    `${PRODUCT_NAME} --bundle-name requires a deployed bundle directory name value.`
-                );
-            }
-            return value;
-        }
-        if (token.startsWith('--bundle-name=')) {
-            return token.slice('--bundle-name='.length);
-        }
-    }
-    return null;
+    return DEFAULT_BUNDLE_NAME;
 }
 
 export function isRecognizedPackageName(value: unknown): boolean {
@@ -182,7 +139,11 @@ export function findDeployedBundleRoot(startDir: string): string | null {
     const effectiveName = resolveBundleName();
     const current = path.resolve(startDir);
 
-    if (isGardaPackageRoot(current) && looksLikeDeployedBundleRoot(current)) {
+    if (
+        path.basename(current) === effectiveName
+        && isGardaPackageRoot(current)
+        && looksLikeDeployedBundleRoot(current)
+    ) {
         return current;
     }
 
@@ -221,19 +182,4 @@ export function resolveDelegationStartDirs(argv: string[], cwd: string): { start
         seen.add(key);
         return true;
     });
-}
-
-export function inferBundleNameFromPackageRoot(packageRoot: string): string | null {
-    if (!packageRoot || isPackageInstalledUnderNodeModules(packageRoot)) {
-        return null;
-    }
-    if (!looksLikeDeployedBundleRoot(packageRoot)) {
-        return null;
-    }
-    const parentDir = path.dirname(path.resolve(packageRoot));
-    if (!fs.existsSync(path.join(parentDir, 'TASK.md'))) {
-        return null;
-    }
-    const inferredName = path.basename(packageRoot).trim();
-    return inferredName ? inferredName : null;
 }

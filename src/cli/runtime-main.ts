@@ -37,9 +37,6 @@ export async function runCliRuntimeMain(
 
     const globalFlags = extractGlobalFlags(argv);
     applyNoColorFlag(globalFlags.noColor);
-    if (globalFlags.bundleName) {
-        process.env.GARDA_BUNDLE_NAME = globalFlags.bundleName;
-    }
     const effectiveArgv = globalFlags.rest;
     const packageJson = readPackageJson(packageRoot);
 

@@ -8,67 +8,31 @@ test('DEFAULT_BUNDLE_NAME is the expected constant', () => {
 });
 
 test('resolveBundleName returns default when no override and no env var', () => {
+    assert.equal(resolveBundleName(), 'garda-agent-orchestrator');
+});
+
+test('resolveBundleName ignores explicit override', () => {
+    assert.equal(resolveBundleName('my-bundle'), 'garda-agent-orchestrator');
+});
+
+test('resolveBundleName ignores GARDA_BUNDLE_NAME env var', () => {
     const saved = process.env.GARDA_BUNDLE_NAME;
-    delete process.env.GARDA_BUNDLE_NAME;
     try {
+        process.env.GARDA_BUNDLE_NAME = 'custom-bundle';
         assert.equal(resolveBundleName(), 'garda-agent-orchestrator');
     } finally {
-        if (saved !== undefined) process.env.GARDA_BUNDLE_NAME = saved;
-    }
-});
-
-test('resolveBundleName returns explicit override when provided', () => {
-    const saved = process.env.GARDA_BUNDLE_NAME;
-    process.env.GARDA_BUNDLE_NAME = 'env-bundle';
-    try {
-        assert.equal(resolveBundleName('my-bundle'), 'my-bundle');
-    } finally {
-        if (saved !== undefined) {
-            process.env.GARDA_BUNDLE_NAME = saved;
-        } else {
+        if (saved === undefined) {
             delete process.env.GARDA_BUNDLE_NAME;
-        }
-    }
-});
-
-test('resolveBundleName reads GARDA_BUNDLE_NAME env var when no override', () => {
-    const saved = process.env.GARDA_BUNDLE_NAME;
-    process.env.GARDA_BUNDLE_NAME = 'custom-orchestrator';
-    try {
-        assert.equal(resolveBundleName(), 'custom-orchestrator');
-    } finally {
-        if (saved !== undefined) {
-            process.env.GARDA_BUNDLE_NAME = saved;
         } else {
-            delete process.env.GARDA_BUNDLE_NAME;
+            process.env.GARDA_BUNDLE_NAME = saved;
         }
     }
 });
 
 test('resolveBundleName ignores whitespace-only override', () => {
-    const saved = process.env.GARDA_BUNDLE_NAME;
-    delete process.env.GARDA_BUNDLE_NAME;
-    try {
-        assert.equal(resolveBundleName('  '), 'garda-agent-orchestrator');
-    } finally {
-        if (saved !== undefined) process.env.GARDA_BUNDLE_NAME = saved;
-    }
+    assert.equal(resolveBundleName('  '), 'garda-agent-orchestrator');
 });
 
-test('resolveBundleName ignores whitespace-only env var', () => {
-    const saved = process.env.GARDA_BUNDLE_NAME;
-    process.env.GARDA_BUNDLE_NAME = '  ';
-    try {
-        assert.equal(resolveBundleName(), 'garda-agent-orchestrator');
-    } finally {
-        if (saved !== undefined) {
-            process.env.GARDA_BUNDLE_NAME = saved;
-        } else {
-            delete process.env.GARDA_BUNDLE_NAME;
-        }
-    }
-});
-
-test('resolveBundleName trims override', () => {
-    assert.equal(resolveBundleName('  custom-name  '), 'custom-name');
+test('resolveBundleName does not use trimmed override as bundle name', () => {
+    assert.equal(resolveBundleName('  custom-name  '), 'garda-agent-orchestrator');
 });
