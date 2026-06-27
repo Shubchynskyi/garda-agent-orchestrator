@@ -131,8 +131,8 @@
     "description": "范围预算防护触发前的最大变更行数。"
   },
   "scope-budget-max-required-reviews": {
-    "label": "范围预算评审通道上限",
-    "description": "范围预算防护触发前的最大必填评审通道数。"
+    "label": "必需评审类型上限",
+    "description": "当前 preflight 要求的不同评审类型数量上限，超过后范围预算防护会响应。已禁用的评审能力不会因为匹配文件发生变化就变成必需；这里统计的是评审类型，不是评审人员、尝试次数或评审周期。"
   },
   "scope-budget-max-review-tokens": {
     "label": "范围预算评审令牌预测",

@@ -163,8 +163,8 @@
     "description": "Maximum changed-line count before the scope budget guard reacts."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Scope budget review-lane limit",
-    "description": "Maximum required review-lane count before the scope budget guard reacts."
+    "label": "Mandatory review type limit",
+    "description": "Maximum number of distinct review types required by the current preflight before the scope budget guard reacts. Disabled review capabilities do not become mandatory just because matching files changed; this counts review types, not reviewers, attempts, or review cycles."
   },
   "scope-budget-max-review-tokens": {
     "label": "Scope budget review-token forecast",

@@ -131,8 +131,8 @@
     "description": "Kapsam bütçesi koruması tepki vermeden önceki maksimum değişen satır sayısı."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Kapsam bütçesi inceleme hattı limiti",
-    "description": "Kapsam bütçesi koruması tepki vermeden önceki maksimum gerekli inceleme hattı sayısı."
+    "label": "Zorunlu inceleme türü limiti",
+    "description": "Geçerli preflight tarafından zorunlu kılınan farklı inceleme türlerinin, kapsam bütçesi koruması tepki vermeden önceki en yüksek sayısıdır. Devre dışı bırakılmış bir inceleme capability, eşleşen dosyalar değişti diye zorunlu olmaz; bu değer reviewer, deneme veya inceleme döngüsü değil inceleme türü sayar."
   },
   "scope-budget-max-review-tokens": {
     "label": "Kapsam bütçesi inceleme token tahmini",

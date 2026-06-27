@@ -131,8 +131,8 @@
     "description": "Nombre maximal de lignes modifiées avant réaction du garde-fou de budget de périmètre."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Limite de review lanes",
-    "description": "Nombre maximal de review lanes requises avant réaction du garde-fou de budget de périmètre."
+    "label": "Limite de types de revue obligatoires",
+    "description": "Nombre maximal de types de revue distincts requis par le preflight courant avant réaction du garde-fou de budget de périmètre. Une capacité de revue désactivée ne devient pas obligatoire parce que des fichiers correspondants ont changé; ce compteur vise les types de revue, pas les relecteurs, tentatives ou cycles de revue."
   },
   "scope-budget-max-review-tokens": {
     "label": "Prévision de tokens de review",

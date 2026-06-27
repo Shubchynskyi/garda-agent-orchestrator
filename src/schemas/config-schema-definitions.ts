@@ -472,7 +472,7 @@ export const workflowConfigSchema: Record<string, unknown> = Object.freeze({
                 },
                 max_files: { type: 'integer', minimum: 1, description: 'Maximum changed files before guard action.' },
                 max_changed_lines: { type: 'integer', minimum: 1, description: 'Maximum changed lines before guard action.' },
-                max_required_reviews: { type: 'integer', minimum: 1, description: 'Maximum required review lanes before guard action.' },
+                max_required_reviews: { type: 'integer', minimum: 1, description: 'Maximum distinct required review types before guard action.' },
                 max_review_tokens: { type: 'integer', minimum: 1, description: 'Maximum estimated review tokens before guard action.' }
             },
             required: ['enabled', 'profiles', 'action', 'max_files', 'max_changed_lines', 'max_required_reviews', 'max_review_tokens'],

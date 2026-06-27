@@ -131,8 +131,8 @@
     "description": "Maximalt antal ändrade rader innan scope-budgetvakten reagerar."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Gräns för review-lanes",
-    "description": "Maximalt antal obligatoriska review-lanes innan scope-budgetvakten reagerar."
+    "label": "Gräns för obligatoriska reviewtyper",
+    "description": "Maximalt antal olika reviewtyper som aktuell preflight kräver innan scope-budgetvakten reagerar. En inaktiverad review capability blir inte obligatorisk bara för att matchande filer ändras; detta räknar reviewtyper, inte granskare, försök eller reviewcykler."
   },
   "scope-budget-max-review-tokens": {
     "label": "Gräns för review-tokens",

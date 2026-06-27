@@ -131,8 +131,8 @@
     "description": "Số dòng thay đổi tối đa trước khi bảo vệ ngân sách phạm vi phản ứng."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Giới hạn lane review",
-    "description": "Số lane review bắt buộc tối đa trước khi bảo vệ ngân sách phạm vi phản ứng."
+    "label": "Giới hạn loại review bắt buộc",
+    "description": "Số loại review riêng biệt tối đa mà preflight hiện tại yêu cầu trước khi bảo vệ ngân sách phạm vi phản ứng. Capability review đã tắt không trở thành bắt buộc chỉ vì các file khớp thay đổi; giá trị này đếm loại review, không phải reviewer, lượt thử hay chu kỳ review."
   },
   "scope-budget-max-review-tokens": {
     "label": "Dự báo token review",

@@ -131,8 +131,8 @@
     "description": "범위 예산 가드가 반응하기 전 최대 변경 줄 수입니다."
   },
   "scope-budget-max-required-reviews": {
-    "label": "범위 예산 리뷰 레인 한도",
-    "description": "범위 예산 가드가 반응하기 전 최대 필수 리뷰 레인 수입니다."
+    "label": "필수 리뷰 유형 한도",
+    "description": "현재 preflight가 필수로 지정한 서로 다른 리뷰 유형의 최대 수이며, 이 값을 넘으면 범위 예산 가드가 반응합니다. 비활성화된 리뷰 capability는 일치하는 파일이 변경되었다는 이유만으로 필수가 되지 않습니다. 이 값은 리뷰어, 시도 횟수, 리뷰 사이클 수가 아니라 리뷰 유형 수입니다."
   },
   "scope-budget-max-review-tokens": {
     "label": "범위 예산 리뷰 토큰 예측",

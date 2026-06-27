@@ -360,8 +360,8 @@ export const WORKFLOW_SETTING_DEFINITIONS: readonly WorkflowSettingDefinition[] 
     {
         id: 'scope-budget-max-required-reviews',
         key: 'scope_budget_guard.max_required_reviews',
-        label: 'Scope budget review-lane limit',
-        description: 'Maximum required review-lane count before the scope budget guard reacts.',
+        label: 'Mandatory review type limit',
+        description: 'Maximum number of distinct review types required by the current preflight before the scope budget guard reacts. Disabled review capabilities do not become mandatory just because matching files changed; this counts review types, not reviewers, attempts, or review cycles.',
         flag: '--scope-budget-max-required-reviews',
         value_type: 'integer',
         min: 1,

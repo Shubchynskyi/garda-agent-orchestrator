@@ -131,8 +131,8 @@
     "description": "Numero massimo di righe modificate prima che reagisca il controllo del budget di scope."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Limite review lanes",
-    "description": "Numero massimo di review lane richieste prima che reagisca il controllo del budget di scope."
+    "label": "Limite dei tipi di review obbligatori",
+    "description": "Numero massimo di tipi di review distinti richiesti dal preflight corrente prima che reagisca il controllo del budget di scope. Una capability di review disattivata non diventa obbligatoria solo perché sono cambiati file corrispondenti; il conteggio riguarda i tipi di review, non reviewer, tentativi o cicli di review."
   },
   "scope-budget-max-review-tokens": {
     "label": "Previsione token di review",

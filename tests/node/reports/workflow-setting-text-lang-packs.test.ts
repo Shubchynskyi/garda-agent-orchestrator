@@ -63,6 +63,26 @@ test('excluded review type options are translated with human-readable labels', (
     );
 });
 
+test('scope budget required review limit text names review types instead of lanes', () => {
+    const english = LOCAL_UI_SETTING_TEXT.en['scope-budget-max-required-reviews'];
+    assert.equal(english.label, 'Mandatory review type limit');
+    assert.match(english.description || '', /distinct review types required by the current preflight/u);
+    assert.match(english.description || '', /Disabled review capabilities do not become mandatory/u);
+
+    const russian = LOCAL_UI_SETTING_TEXT.ru['scope-budget-max-required-reviews'];
+    assert.equal(russian.label, 'Лимит обязательных типов ревью');
+    assert.match(russian.description || '', /Выключенный тип ревью не становится обязательным/u);
+
+    for (const [languageId, pack] of Object.entries(LOCAL_UI_SETTING_TEXT)) {
+        const setting = pack['scope-budget-max-required-reviews'];
+        assert.doesNotMatch(
+            `${setting.label} ${setting.description}`,
+            /review[- ]?lanes?/iu,
+            `${languageId} still describes the required-review limit as review lanes`
+        );
+    }
+});
+
 test('workflow setting text packs do not contain unexpected setting ids', () => {
     for (const [languageId, pack] of Object.entries(loadWorkflowSettingTextTranslations())) {
         const issues = validateWorkflowSettingTextPack(languageId, pack, WORKFLOW_SETTING_TEXT_CATALOG);

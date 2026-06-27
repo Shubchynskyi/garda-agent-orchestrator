@@ -200,6 +200,7 @@ function isIgnoredOnlyGitStatus(statusLines: readonly string[]): boolean {
 }
 
 const SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE = buildDefaultWorkflowConfig();
+const LEGACY_SCOPE_BUDGET_MAX_REQUIRED_REVIEWS_COMPATIBILITY_LIMIT = 6;
 const SAFE_FULL_SUITE_COMPATIBILITY_COMMANDS = new Set([
     UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND,
     'npm test'
@@ -312,6 +313,15 @@ function numberAtMost(record: Record<string, unknown>, key: string, limit: unkno
     const actual = getPositiveInteger(record[key]);
     const maximum = getPositiveInteger(limit);
     return actual !== null && maximum !== null && actual <= maximum;
+}
+
+function scopeBudgetMaxRequiredReviewsAtMostCompatibilityLimit(scopeBudgetGuard: Record<string, unknown>): boolean {
+    const defaultScopeBudgetGuard = SAFE_WORKFLOW_CONFIG_COMPATIBILITY_BASELINE.scope_budget_guard as unknown as Record<string, unknown>;
+    const currentDefault = getPositiveInteger(defaultScopeBudgetGuard.max_required_reviews);
+    const compatibilityLimit = currentDefault === null
+        ? LEGACY_SCOPE_BUDGET_MAX_REQUIRED_REVIEWS_COMPATIBILITY_LIMIT
+        : Math.max(currentDefault, LEGACY_SCOPE_BUDGET_MAX_REQUIRED_REVIEWS_COMPATIBILITY_LIMIT);
+    return numberAtMost(scopeBudgetGuard, 'max_required_reviews', compatibilityLimit);
 }
 
 function numberEquals(record: Record<string, unknown>, key: string, expected: unknown): boolean {
@@ -476,7 +486,7 @@ function isSafeIgnoredWorkflowConfigCompatibilityBaseline(config: Record<string,
         )
         || !numberAtMost(scopeBudgetGuard, 'max_files', defaultScopeBudgetGuard.max_files)
         || !numberAtMost(scopeBudgetGuard, 'max_changed_lines', defaultScopeBudgetGuard.max_changed_lines)
-        || !numberAtMost(scopeBudgetGuard, 'max_required_reviews', defaultScopeBudgetGuard.max_required_reviews)
+        || !scopeBudgetMaxRequiredReviewsAtMostCompatibilityLimit(scopeBudgetGuard)
         || !numberAtMost(scopeBudgetGuard, 'max_review_tokens', defaultScopeBudgetGuard.max_review_tokens)
     ) {
         return false;

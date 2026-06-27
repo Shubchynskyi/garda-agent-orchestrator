@@ -109,6 +109,9 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes('FullSuiteTimeoutRetryCount: 1'));
         assert.ok(output.includes('FullSuitePlacement: before_test_review'));
         assert.ok(output.includes('Scope budget guard: BLOCK_FOR_SPLIT'));
+        assert.ok(output.includes('max_reviews=5'));
+        assert.ok(output.includes('ScopeBudgetGuardMaxRequiredReviews: 5'));
+        assert.equal(result.scope_budget_guard.max_required_reviews, 5);
         assert.ok(output.includes('Review cycle guard: BLOCK_FOR_OPERATOR_DECISION'));
         assert.ok(output.includes('max_failed_non_test_reviews=15 max_total_non_test_reviews=30'));
         assert.ok(output.includes('Project memory maintenance: update read_strategy=index_first'));

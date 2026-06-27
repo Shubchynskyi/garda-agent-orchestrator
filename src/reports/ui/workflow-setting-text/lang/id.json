@@ -131,8 +131,8 @@
     "description": "Jumlah baris yang diubah maksimum sebelum penjaga anggaran cakupan bereaksi."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Batas jalur review",
-    "description": "Jumlah jalur review wajib maksimum sebelum penjaga anggaran cakupan bereaksi."
+    "label": "Batas jenis review wajib",
+    "description": "Jumlah maksimum jenis review berbeda yang diwajibkan oleh preflight saat ini sebelum penjaga anggaran cakupan bereaksi. Kapabilitas review yang dinonaktifkan tidak menjadi wajib hanya karena file yang cocok berubah; ini menghitung jenis review, bukan reviewer, upaya, atau siklus review."
   },
   "scope-budget-max-review-tokens": {
     "label": "Perkiraan token review",

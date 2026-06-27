@@ -131,8 +131,8 @@
     "description": "Maximale Anzahl geänderter Zeilen, bevor der Scope-Budget-Schutz reagiert."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Limit Review-Lanes",
-    "description": "Maximale Anzahl erforderlicher Review-Lanes, bevor der Scope-Budget-Schutz reagiert."
+    "label": "Limit für verpflichtende Review-Typen",
+    "description": "Maximale Anzahl unterschiedlicher Review-Typen, die der aktuelle Preflight verpflichtend macht, bevor der Scope-Budget-Schutz reagiert. Deaktivierte Review-Capabilities werden nicht allein durch passende geänderte Dateien verpflichtend; gezählt werden Review-Typen, nicht Reviewer, Versuche oder Review-Zyklen."
   },
   "scope-budget-max-review-tokens": {
     "label": "Review-Token-Prognose",

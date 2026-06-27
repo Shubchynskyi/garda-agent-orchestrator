@@ -131,8 +131,8 @@
     "description": "Maksymalna liczba zmienionych linii przed reakcją kontroli budżetu zakresu."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Limit review lanes",
-    "description": "Maksymalna liczba wymaganych review lanes przed reakcją kontroli budżetu zakresu."
+    "label": "Limit obowiązkowych typów review",
+    "description": "Maksymalna liczba różnych typów review wymaganych przez bieżący preflight, zanim zareaguje kontrola budżetu zakresu. Wyłączona capability review nie staje się obowiązkowa tylko dlatego, że zmieniły się pasujące pliki; to liczba typów review, a nie reviewerów, prób ani cykli review."
   },
   "scope-budget-max-review-tokens": {
     "label": "Limit tokenów review",

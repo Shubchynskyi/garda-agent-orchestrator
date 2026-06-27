@@ -131,8 +131,8 @@
     "description": "Número máximo de linhas alteradas antes de a guarda de orçamento de âmbito reagir."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Limite de lanes de review",
-    "description": "Número máximo de lanes de review obrigatórias antes de a guarda de orçamento de âmbito reagir."
+    "label": "Limite de tipos de review obrigatórios",
+    "description": "Número máximo de tipos de review distintos exigidos pelo preflight atual antes de a guarda de orçamento de âmbito reagir. Uma capacidade de review desativada não se torna obrigatória só porque ficheiros correspondentes mudaram; isto conta tipos de review, não revisores, tentativas ou ciclos de review."
   },
   "scope-budget-max-review-tokens": {
     "label": "Limite de tokens de review",

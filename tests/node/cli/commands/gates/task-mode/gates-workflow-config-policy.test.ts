@@ -231,6 +231,15 @@ function weakenScopeBudgetGuard(repoRoot: string): void {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 }
 
+function setScopeBudgetMaxRequiredReviews(repoRoot: string, maxRequiredReviews: number): void {
+    const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+        scope_budget_guard: { max_required_reviews?: number };
+    };
+    config.scope_budget_guard.max_required_reviews = maxRequiredReviews;
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+}
+
 function weakenReviewCycleExcludedReviews(repoRoot: string): void {
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
@@ -640,6 +649,38 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
         }
     });
 
+    it('allows ignored pre-existing materialized workflow-config with legacy required-review limit', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-legacy-review-limit';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
+            initializeGitRepo(repoRoot);
+            setScopeBudgetMaxRequiredReviews(repoRoot, 6);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.changed_files, []);
+            assert.ok(baselineState.compatibility_baseline_files.includes(
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ));
+
+            const result = runEnterTaskMode({
+                repoRoot,
+                taskId,
+                taskSummary: 'Start after workflow-config baseline upgrade with legacy required-review limit'
+            });
+            assert.equal(result.exitCode, 0);
+            assert.ok(result.outputLines.includes('WorkflowConfigCompatibilityBaselineCount: 1'));
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('allows ignored pre-existing legacy generated workflow-config when no trusted baseline exists yet', { concurrency: false }, () => {
         const taskId = 'T-900workflow-config-upgrade-ignored-generated-legacy-baseline';
         const repoRoot = createTempRepo();
@@ -664,6 +705,30 @@ describe('cli/commands/gates — workflow-config protected control-plane', () =>
                 taskSummary: 'Start after legacy generated workflow-config baseline upgrade'
             });
             assert.equal(result.exitCode, 0);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('blocks ignored pre-existing materialized workflow-config above the legacy required-review limit', { concurrency: false }, () => {
+        const taskId = 'T-900workflow-config-upgrade-ignored-high-review-limit';
+        const repoRoot = createTempRepo();
+
+        try {
+            writeIgnoredRuntimePolicy(repoRoot, { ignoreBundle: true });
+            writeBaselineAgentEntrypoint(repoRoot);
+            seedTaskQueue(repoRoot, taskId);
+            seedInitAnswers(repoRoot);
+            enableProjectMemoryMaintenancePolicy(repoRoot);
+            resetCompileGateCommandToUnconfigured(repoRoot);
+            initializeGitRepo(repoRoot);
+            setScopeBudgetMaxRequiredReviews(repoRoot, 7);
+
+            const baselineState = getWorkflowConfigPreTaskBaselineState(repoRoot);
+            assert.deepEqual(baselineState.compatibility_baseline_files, []);
+            assert.deepEqual(baselineState.changed_files, [
+                'garda-agent-orchestrator/live/config/workflow-config.json'
+            ]);
         } finally {
             fs.rmSync(repoRoot, { recursive: true, force: true });
         }

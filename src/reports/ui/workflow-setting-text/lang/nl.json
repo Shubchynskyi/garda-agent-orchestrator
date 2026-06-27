@@ -131,8 +131,8 @@
     "description": "Maximaal aantal gewijzigde regels voordat de scope-budgetbewaking reageert."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Limiet reviewlanes",
-    "description": "Maximaal aantal verplichte reviewlanes voordat de scope-budgetbewaking reageert."
+    "label": "Limiet voor verplichte reviewtypen",
+    "description": "Maximum aantal verschillende reviewtypen dat de huidige preflight verplicht maakt voordat de scope-budgetbewaking reageert. Uitgeschakelde reviewmogelijkheden worden niet verplicht alleen omdat overeenkomende bestanden zijn gewijzigd; dit telt reviewtypen, geen reviewers, pogingen of reviewcycli."
   },
   "scope-budget-max-review-tokens": {
     "label": "Limiet reviewtokens",

@@ -131,8 +131,8 @@
     "description": "Número máximo de líneas modificadas antes de que reaccione el control de presupuesto de alcance."
   },
   "scope-budget-max-required-reviews": {
-    "label": "Límite de review lanes",
-    "description": "Número máximo de review lanes requeridas antes de que reaccione el control de presupuesto de alcance."
+    "label": "Límite de tipos de revisión obligatorios",
+    "description": "Número máximo de tipos de revisión distintos que el preflight actual marca como obligatorios antes de que reaccione el control de presupuesto de alcance. Una capacidad de revisión desactivada no se vuelve obligatoria solo porque cambiaron archivos coincidentes; esto cuenta tipos de revisión, no revisores, intentos ni ciclos de revisión."
   },
   "scope-budget-max-review-tokens": {
     "label": "Previsión de tokens de review",
