@@ -44,6 +44,135 @@ import {
 } from './gates-review-cycle-fixtures';
 
 describe('cli/commands/gates – review-cycle restart suite', () => {
+    function copyWorkflowConfig(repoRoot: string, sourcePath: string, targetRelativePath: string): void {
+        const targetPath = path.join(repoRoot, ...targetRelativePath.split('/'));
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.copyFileSync(sourcePath, targetPath);
+    }
+
+    function setWorkflowConfigReviewExecutionMode(
+        repoRoot: string,
+        relativePath: string,
+        mode: 'parallel_all' | 'strict_sequential' | 'code_first_optional'
+    ): void {
+        const configPath = path.join(repoRoot, ...relativePath.split('/'));
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+            review_execution_policy?: { mode?: string };
+        };
+        config.review_execution_policy = {
+            ...(config.review_execution_policy || {}),
+            mode
+        };
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
+    }
+
+    async function prepareApprovedWorkflowConfigRestartFixture(options: {
+        taskId: string;
+        workflowConfigPath: string;
+        extraWorkflowConfigPaths?: string[];
+    }): Promise<{
+        repoRoot: string;
+        taskId: string;
+        taskModePath: string;
+        preflightPath: string;
+        commandsPath: string;
+        outputFiltersPath: string;
+        workflowConfigPath: string;
+        originalWorkflowConfigHash: string | null | undefined;
+        approvedWorkflowConfigHash: string | null | undefined;
+    }> {
+        const repoRoot = createTempRepo();
+        const taskSummary = 'Restart approved workflow-config policy changes after a closed cycle';
+        seedRemediationRepoBase(repoRoot);
+        markAsSourceCheckout(repoRoot);
+        const bundledWorkflowConfigPath = writeWorkflowConfig(repoRoot);
+        for (const relativePath of [
+            options.workflowConfigPath,
+            ...(options.extraWorkflowConfigPaths || [])
+        ]) {
+            if (relativePath !== 'garda-agent-orchestrator/live/config/workflow-config.json') {
+                copyWorkflowConfig(repoRoot, bundledWorkflowConfigPath, relativePath);
+            }
+        }
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '| ID | Status | Priority | Area | Title | Assignee | Updated | Profile | Notes |',
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+            `| ${options.taskId} | TODO | P1 | workflow | Update workflow-config policy changes | unassigned | 2026-03-28 | default | Owns workflow-config policy changes. |`
+        ].join('\n'), 'utf8');
+        seedInitAnswers(repoRoot);
+        initializeGitRepo(repoRoot);
+        writeProtectedControlPlaneManifest(repoRoot);
+        const { commandsPath, outputFiltersPath } = writeSimpleCompileCommandsFile(
+            repoRoot,
+            `${options.taskId}-workflow-config`
+        );
+
+        const taskModeResult = runEnterTaskMode({
+            repoRoot,
+            taskId: options.taskId,
+            taskSummary,
+            orchestratorWork: true,
+            workflowConfigWork: true,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            plannedChangedFiles: [options.workflowConfigPath]
+        });
+        assert.equal(taskModeResult.exitCode, 0, taskModeResult.outputLines.join('\n'));
+        const taskModePath = path.join(getReviewsRoot(repoRoot), `${options.taskId}-task-mode.json`);
+        const initialTaskModeArtifact = JSON.parse(fs.readFileSync(taskModePath, 'utf8')) as {
+            workflow_config_file_hashes?: Record<string, string | null>;
+        };
+        const originalWorkflowConfigHash = initialTaskModeArtifact.workflow_config_file_hashes?.[options.workflowConfigPath];
+
+        loadTaskEntryRulePack(repoRoot, options.taskId);
+        runHandshakeForTask(repoRoot, options.taskId);
+        runShellSmokeForTask(repoRoot, options.taskId);
+
+        setWorkflowConfigReviewExecutionMode(repoRoot, options.workflowConfigPath, 'strict_sequential');
+        const approvedWorkflowConfigHash = getCurrentWorkflowConfigFileHashes(repoRoot)[options.workflowConfigPath];
+        assert.notEqual(approvedWorkflowConfigHash, originalWorkflowConfigHash);
+
+        const preflightPath = runExplicitPreflight(
+            repoRoot,
+            options.taskId,
+            taskSummary,
+            [options.workflowConfigPath],
+            `${options.taskId}-preflight.json`,
+            taskModePath
+        );
+        loadPostPreflightRulePack(repoRoot, options.taskId, preflightPath, true, '', taskModePath);
+        const initialCompileResult = await runCompileGateCommand({
+            repoRoot,
+            taskId: options.taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            emitMetrics: false
+        });
+        assert.equal(initialCompileResult.exitCode, 0, initialCompileResult.outputLines.join('\n'));
+        appendTaskEvent(
+            getOrchestratorRoot(repoRoot),
+            options.taskId,
+            'REVIEW_GATE_PASSED',
+            'PASS',
+            'Review gate passed before coherent restart.',
+            {}
+        );
+
+        return {
+            repoRoot,
+            taskId: options.taskId,
+            taskModePath,
+            preflightPath,
+            commandsPath,
+            outputFiltersPath,
+            workflowConfigPath: options.workflowConfigPath,
+            originalWorkflowConfigHash,
+            approvedWorkflowConfigHash
+        };
+    }
+
     it('restarts the latest coherent cycle on a dirty tree while reusing the previous explicit preflight scope', async () => {
         const repoRoot = createTempRepo();
         const taskId = 'T-903a-restart-coherent-cycle';
@@ -346,6 +475,98 @@ describe('cli/commands/gates – review-cycle restart suite', () => {
         assert.deepEqual(refreshedPreflight.triggers?.changed_workflow_config_files, [workflowConfigPath]);
 
         fs.rmSync(repoRoot, { recursive: true, force: true });
+    });
+
+    it('restarts source template workflow-config work only when the previous preflight hash still matches', async () => {
+        const workflowConfigPath = 'template/config/workflow-config.json';
+        const fixture = await prepareApprovedWorkflowConfigRestartFixture({
+            taskId: 'T-903a-restart-coherent-cycle-source-template-config',
+            workflowConfigPath
+        });
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot: fixture.repoRoot,
+            taskId: fixture.taskId,
+            taskModePath: fixture.taskModePath,
+            preflightPath: fixture.preflightPath,
+            commandsPath: fixture.commandsPath,
+            outputFiltersPath: fixture.outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+        assert.equal(restartResult.exitCode, 0, restartResult.outputLines.join('\n'));
+        assert.match(restartResult.outputLines.join('\n'), /COHERENT_CYCLE_RESTARTED/);
+
+        const refreshedTaskModeArtifact = JSON.parse(fs.readFileSync(fixture.taskModePath, 'utf8')) as {
+            workflow_config_file_hashes?: Record<string, string | null>;
+        };
+        assert.equal(refreshedTaskModeArtifact.workflow_config_file_hashes?.[workflowConfigPath], fixture.originalWorkflowConfigHash);
+        const refreshedPreflight = JSON.parse(fs.readFileSync(fixture.preflightPath, 'utf8')) as {
+            triggers?: { changed_workflow_config_files?: string[] };
+        };
+        assert.deepEqual(refreshedPreflight.triggers?.changed_workflow_config_files, [workflowConfigPath]);
+
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects restart when same-task workflow-config content changed after the previous preflight binding', async () => {
+        const workflowConfigPath = 'template/config/workflow-config.json';
+        const fixture = await prepareApprovedWorkflowConfigRestartFixture({
+            taskId: 'T-903a-restart-coherent-cycle-stale-template-config',
+            workflowConfigPath
+        });
+        setWorkflowConfigReviewExecutionMode(fixture.repoRoot, workflowConfigPath, 'parallel_all');
+        assert.notEqual(getCurrentWorkflowConfigFileHashes(fixture.repoRoot)[workflowConfigPath], fixture.approvedWorkflowConfigHash);
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot: fixture.repoRoot,
+            taskId: fixture.taskId,
+            taskModePath: fixture.taskModePath,
+            preflightPath: fixture.preflightPath,
+            commandsPath: fixture.commandsPath,
+            outputFiltersPath: fixture.outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+        const output = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE, output);
+        assert.match(output, /COHERENT_CYCLE_RESTART_FAILED/);
+        assert.match(output, /Workspace already contains workflow config changes before task-mode entry/);
+        assert.match(output, /template\/config\/workflow-config\.json/);
+
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
+    });
+
+    it('rejects restart when a foreign workflow-config file drifts outside the previous preflight binding', async () => {
+        const workflowConfigPath = 'template/config/workflow-config.json';
+        const foreignWorkflowConfigPath = 'garda-agent-orchestrator/template/config/workflow-config.json';
+        const fixture = await prepareApprovedWorkflowConfigRestartFixture({
+            taskId: 'T-903a-restart-coherent-cycle-foreign-template-config',
+            workflowConfigPath,
+            extraWorkflowConfigPaths: [foreignWorkflowConfigPath]
+        });
+        setWorkflowConfigReviewExecutionMode(fixture.repoRoot, foreignWorkflowConfigPath, 'parallel_all');
+
+        const restartResult = await runRestartCoherentCycleCommand({
+            repoRoot: fixture.repoRoot,
+            taskId: fixture.taskId,
+            taskModePath: fixture.taskModePath,
+            preflightPath: fixture.preflightPath,
+            commandsPath: fixture.commandsPath,
+            outputFiltersPath: fixture.outputFiltersPath,
+            operatorConfirmed: 'yes',
+            operatorConfirmedAtUtc: new Date().toISOString(),
+            emitMetrics: false
+        });
+        const output = restartResult.outputLines.join('\n');
+        assert.equal(restartResult.exitCode, EXIT_GATE_FAILURE, output);
+        assert.match(output, /COHERENT_CYCLE_RESTART_FAILED/);
+        assert.match(output, /Workspace already contains workflow config changes before task-mode entry/);
+        assert.match(output, /garda-agent-orchestrator\/template\/config\/workflow-config\.json/);
+
+        fs.rmSync(fixture.repoRoot, { recursive: true, force: true });
     });
 
     it('restarts a coherent cycle from a false-DONE legacy task-mode artifact without forcing a new start banner', async () => {

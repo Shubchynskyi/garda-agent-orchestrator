@@ -10,6 +10,10 @@ import { type TokenEconomyConfig } from '../../../../gates/review-context/review
 import { getClassificationConfig } from '../../../../gates/preflight/classify-change';
 import { buildScopedDiff, resolveMetadataPath as resolveScopedDiffMetadataPath, resolveOutputPath as resolveScopedDiffOutputPath } from '../../../../gates/preflight/build-scoped-diff';
 import { getPreflightContext } from '../../../../gates/compile/compile-gate';
+import {
+    getCurrentWorkflowConfigFileHashes,
+    getWorkflowConfigChangedFiles
+} from '../../../../gates/workflow-config/workflow-config-work';
 import { buildReviewContextPreflightDiffExpectations } from '../../../../gates/review-context/review-context-contract';
 import { getTaskModeEvidence, getTaskModeEvidenceViolations } from '../../../../gates/task-mode/task-mode';
 import * as gateHelpers from '../../../../gates/shared/helpers';
@@ -93,6 +97,66 @@ function getTaskManualValidationBoundaryFiles(taskId: string, currentChangedFile
     ));
 }
 
+function toPlainRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function getWorkflowConfigPathList(value: unknown): string[] {
+    return Array.isArray(value)
+        ? getWorkflowConfigChangedFiles(value.map((entry) => String(entry || '')))
+        : [];
+}
+
+function getWorkflowConfigHashEvidence(value: unknown): Record<string, string | null> {
+    const record = toPlainRecord(value);
+    if (!record) {
+        return {};
+    }
+    const hashes: Record<string, string | null> = {};
+    for (const [rawPath, rawHash] of Object.entries(record)) {
+        const [normalizedPath] = getWorkflowConfigChangedFiles([rawPath]);
+        if (!normalizedPath) {
+            continue;
+        }
+        if (rawHash === null) {
+            hashes[normalizedPath] = null;
+            continue;
+        }
+        const hashText = String(rawHash || '').trim().toLowerCase();
+        if (/^[a-f0-9]{64}$/.test(hashText)) {
+            hashes[normalizedPath] = hashText;
+        }
+    }
+    return hashes;
+}
+
+function resolveRestartAllowedDirtyWorkflowConfigFiles(
+    repoRoot: string,
+    previousPreflight: ReturnType<typeof getPreflightContext>,
+    plannedChangedFiles: readonly string[]
+): string[] {
+    const preflightRecord = toPlainRecord(previousPreflight.preflight);
+    const triggers = toPlainRecord(preflightRecord?.triggers);
+    const preflightWorkflowConfigFiles = new Set([
+        ...getWorkflowConfigChangedFiles(previousPreflight.changed_files.map((entry) => String(entry || ''))),
+        ...getWorkflowConfigPathList(triggers?.changed_workflow_config_files)
+    ]);
+    const previousHashEvidence = getWorkflowConfigHashEvidence(triggers?.workflow_config_file_hashes);
+    if (preflightWorkflowConfigFiles.size === 0 || Object.keys(previousHashEvidence).length === 0) {
+        return [];
+    }
+    const currentHashes = getCurrentWorkflowConfigFileHashes(repoRoot);
+    return getWorkflowConfigChangedFiles(plannedChangedFiles)
+        .filter((relativePath) => (
+            preflightWorkflowConfigFiles.has(relativePath)
+            && Object.prototype.hasOwnProperty.call(previousHashEvidence, relativePath)
+            && (currentHashes[relativePath] ?? null) === previousHashEvidence[relativePath]
+        ))
+        .sort();
+}
+
 export async function runRestartCoherentCycleCommand(
     options: RestartCoherentCycleCommandOptions
 ): Promise<{ outputLines: string[]; exitCode: number }> {
@@ -115,6 +179,10 @@ export async function runRestartCoherentCycleCommand(
     if (!taskSummary) {
         throw new Error('Task intent could not be resolved for coherent-cycle restart.');
     }
+    const allowedDirtyWorkflowConfigFiles = previousTaskMode.orchestrator_work === true
+        && previousTaskMode.workflow_config_work === true
+        ? resolveRestartAllowedDirtyWorkflowConfigFiles(repoRoot, previousPreflight, replayScope.plannedChangedFiles)
+        : [];
 
     try {
         ensureStepPassed('enter-task-mode', runEnterTaskModeCommand({
@@ -131,10 +199,7 @@ export async function runRestartCoherentCycleCommand(
             workflowConfigWork: previousTaskMode.workflow_config_work === true,
             operatorConfirmed: options.operatorConfirmed,
             operatorConfirmedAtUtc: options.operatorConfirmedAtUtc,
-            allowedDirtyWorkflowConfigFiles: previousTaskMode.orchestrator_work === true
-                && previousTaskMode.workflow_config_work === true
-                ? replayScope.plannedChangedFiles
-                : [],
+            allowedDirtyWorkflowConfigFiles,
             workflowConfigFileHashesOverride: previousTaskMode.workflow_config_file_hashes,
             workflowConfigCompatibilityBaselineFilesOverride: previousTaskMode.workflow_config_compatibility_baseline_files,
             provider: previousTaskMode.provider || undefined,
