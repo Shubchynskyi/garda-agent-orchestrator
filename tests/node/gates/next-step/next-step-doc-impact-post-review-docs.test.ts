@@ -15,6 +15,7 @@ import {
     reviewsRoot,
     writeJson,
     appendEvent,
+    fileSha256,
     seedStartedTask,
     seedPostPreflightRulePack,
     writePreflight,
@@ -132,7 +133,61 @@ describe('gates/next-step', () => {
         assert.ok(!result.commands[0].command.includes('--docs-updated "TASK.md"'));
     });
 
-    it('keeps project-memory closeout out of docs-updated while accepting the closeout delta', () => {
+    it('does not refresh preflight when explicit task closeout evidence becomes no-diff after reviews', () => {
+        const repoRoot = makeTempRepo();
+        const taskPath = path.join(repoRoot, 'TASK.md');
+        const originalTaskMarkdown = fs.readFileSync(taskPath, 'utf8');
+        initGitRepo(repoRoot);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const reviewed = 2;\n', 'utf8');
+        fs.appendFileSync(taskPath, '\nTransient closeout sync note.\n', 'utf8');
+        seedStartedTask(repoRoot, TASK_ID);
+        const changedFiles = ['src/app.ts', 'TASK.md'];
+        const preflightPath = writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS, code: true }, {
+            changedFiles,
+            includeDomainScopeFingerprints: true
+        });
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'PASSED',
+            outcome: 'PASS',
+            preflight_path: preflightPath.replace(/\\/g, '/'),
+            preflight_hash_sha256: fileSha256(preflightPath),
+            scope_detection_source: snapshot.detection_source,
+            scope_include_untracked: snapshot.include_untracked,
+            scope_changed_files: snapshot.changed_files,
+            scope_changed_files_count: snapshot.changed_files_count,
+            scope_changed_lines_total: snapshot.changed_lines_total,
+            scope_changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256,
+            domain_scope_fingerprints: buildDomainScopeFingerprints({
+                repoRoot,
+                detectionSource: snapshot.detection_source,
+                includeUntracked: snapshot.include_untracked,
+                changedFiles: snapshot.changed_files
+            })
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_PASSED');
+        writeReviewEvidence(repoRoot, TASK_ID, 'code');
+        seedReviewGatePass(repoRoot, TASK_ID);
+        fs.writeFileSync(taskPath, originalTaskMarkdown, 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.next_gate, 'classify-change', result.reason);
+        assert.notEqual(result.next_gate, 'restart-coherent-cycle', result.reason);
+        assert.ok(!result.commands[0].command.includes('gate classify-change'));
+        assert.ok(['bind-rule-pack-to-preflight', 'doc-impact-gate'].includes(String(result.next_gate)), result.reason);
+        if (result.next_gate === 'doc-impact-gate') {
+            assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
+        }
+        assert.ok(!result.commands[0].command.includes('--docs-updated "TASK.md"'));
+    });
+
+    it('refreshes preflight when project-memory instruction docs change after reviews', () => {
         const repoRoot = makeTempRepo();
         const projectMemoryRoot = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory');
         fs.mkdirSync(projectMemoryRoot, { recursive: true });
@@ -148,10 +203,9 @@ describe('gates/next-step', () => {
 
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
 
-        assert.equal(result.next_gate, 'doc-impact-gate');
-        assert.ok(!result.commands[0].command.includes('gate classify-change'));
-        assert.ok(result.commands[0].command.includes('--decision "NO_DOC_UPDATES"'));
-        assert.ok(!result.commands[0].command.includes('--docs-updated "garda-agent-orchestrator/live/docs/project-memory/commands.md"'));
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.commands[0].command.includes('gate classify-change'));
+        assert.ok(result.reason.includes('garda-agent-orchestrator/live/docs/project-memory/commands.md'));
     });
 
     it('keeps changelog in docs domain while project-memory and task metadata stay closeout domain', () => {

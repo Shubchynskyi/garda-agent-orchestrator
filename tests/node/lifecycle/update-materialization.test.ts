@@ -82,6 +82,14 @@ function seedWorkflowConfigCompileGateCommand(bundleRoot: string, command: strin
     }, null, 2), 'utf8');
 }
 
+function seedSourceCheckoutMarkers(repoRoot: string, projectRoot: string) {
+    fs.copyFileSync(path.join(repoRoot, 'package.json'), path.join(projectRoot, 'package.json'));
+    fs.mkdirSync(path.join(projectRoot, 'bin'), { recursive: true });
+    fs.copyFileSync(path.join(repoRoot, 'bin', 'garda.js'), path.join(projectRoot, 'bin', 'garda.js'));
+    fs.mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'src', 'index.ts'), 'export {};\n', 'utf8');
+}
+
 function readTemplateOptionalQualityCheckRuleIds(repoRoot: string): string[] {
     const templateConfigPath = path.join(repoRoot, 'template', 'config', 'workflow-config.json');
     const templateConfig = JSON.parse(fs.readFileSync(templateConfigPath, 'utf8'));
@@ -472,6 +480,12 @@ describe('runUpdate', () => {
                 prompt: 'Check the old shipped task queue parser rule.',
                 enabled: true
             };
+            const movedProjectLocalRule = {
+                id: 'artifact_evidence_binding',
+                title: 'Artifact evidence binding',
+                prompt: 'Check the old shipped artifact evidence rule.',
+                enabled: true
+            };
             fs.writeFileSync(
                 workflowConfigPath,
                 JSON.stringify({
@@ -495,6 +509,7 @@ describe('runUpdate', () => {
                         rules: [
                             editedShippedRule,
                             deprecatedProjectRule,
+                            movedProjectLocalRule,
                             customRule
                         ]
                     }
@@ -541,6 +556,10 @@ describe('runUpdate', () => {
                 firstMergeConfig.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === deprecatedProjectRule.id),
                 false
             );
+            assert.equal(
+                firstMergeConfig.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === movedProjectLocalRule.id),
+                false
+            );
 
             runUpdate({
                 targetRoot: projectRoot,
@@ -555,6 +574,128 @@ describe('runUpdate', () => {
                 secondMergeConfig.optional_quality_checks,
                 firstMergeConfig.optional_quality_checks
             );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('migrates moved Garda baseline rules to self-host custom rules during source-checkout update', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            seedSourceCheckoutMarkers(repoRoot, projectRoot);
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            const movedRules = [
+                {
+                    id: 'classifier_intent_edge_cases',
+                    title: 'Classifier intent edge cases',
+                    prompt: 'Check old classifier rule.',
+                    enabled: false
+                },
+                {
+                    id: 'config_materialization_parity',
+                    title: 'Config materialization parity',
+                    prompt: 'Check old config rule.',
+                    enabled: true
+                },
+                {
+                    id: 'control_plane_action_safety',
+                    title: 'Control-plane action safety',
+                    prompt: 'Check old action rule.',
+                    enabled: true
+                },
+                {
+                    id: 'artifact_evidence_binding',
+                    title: 'Artifact evidence binding',
+                    prompt: 'Check old artifact rule.',
+                    enabled: true
+                },
+                {
+                    id: 'gate_routing_self_regression',
+                    title: 'Gate routing self-regression',
+                    prompt: 'Check old routing rule.',
+                    enabled: true
+                }
+            ];
+            fs.writeFileSync(
+                workflowConfigPath,
+                JSON.stringify({
+                    optional_quality_checks: {
+                        enabled: true,
+                        baseline_version: '2026-06-26.t843',
+                        rules: movedRules
+                    }
+                }, null, 2),
+                'utf8'
+            );
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            const ruleIds = workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id);
+            assert.deepEqual(
+                movedRules.filter((rule) => ruleIds.includes(rule.id)),
+                []
+            );
+            assert.ok(ruleIds.includes('custom_garda_classifier_intent_edge_cases'));
+            assert.ok(ruleIds.includes('custom_garda_config_materialization_parity'));
+            assert.ok(ruleIds.includes('custom_garda_control_plane_action_safety'));
+            assert.ok(ruleIds.includes('custom_garda_artifact_evidence_binding'));
+            assert.ok(ruleIds.includes('custom_garda_gate_routing_self_regression'));
+            const disabledCustomRule = workflowConfig.optional_quality_checks.rules.find(
+                (rule: { id: string }) => rule.id === 'custom_garda_classifier_intent_edge_cases'
+            );
+            assert.equal(disabledCustomRule.enabled, false);
+
+            runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+            const secondWorkflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            assert.deepEqual(
+                secondWorkflowConfig.optional_quality_checks,
+                workflowConfig.optional_quality_checks
+            );
+        } finally {
+            removePathRecursive(projectRoot);
+        }
+    });
+
+    it('materializes moved Garda custom rules for fresh source-checkout workflow config', () => {
+        const { projectRoot, bundleRoot, answersPath } = setupUpdateWorkspace(repoRoot);
+        try {
+            seedSourceCheckoutMarkers(repoRoot, projectRoot);
+            const workflowConfigPath = path.join(bundleRoot, 'live', 'config', 'workflow-config.json');
+            fs.rmSync(workflowConfigPath, { force: true });
+
+            const result = runUpdate({
+                targetRoot: projectRoot,
+                bundleRoot,
+                initAnswersPath: answersPath,
+                skipVerify: true,
+                skipManifestValidation: true
+            });
+
+            assert.equal(result.materializationStatus, 'PASS');
+            const workflowConfig = JSON.parse(fs.readFileSync(workflowConfigPath, 'utf8'));
+            const ruleIds = workflowConfig.optional_quality_checks.rules.map((rule: { id: string }) => rule.id);
+            assert.deepEqual(ruleIds.slice(0, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length), [
+                ...DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => rule.id)
+            ]);
+            assert.ok(ruleIds.includes('custom_garda_classifier_intent_edge_cases'));
+            assert.ok(ruleIds.includes('custom_garda_config_materialization_parity'));
+            assert.ok(ruleIds.includes('custom_garda_control_plane_action_safety'));
+            assert.ok(ruleIds.includes('custom_garda_artifact_evidence_binding'));
+            assert.ok(ruleIds.includes('custom_garda_gate_routing_self_regression'));
         } finally {
             removePathRecursive(projectRoot);
         }

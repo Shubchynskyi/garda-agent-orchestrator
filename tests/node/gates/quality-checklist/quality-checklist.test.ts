@@ -18,32 +18,50 @@ import {
     writeGateFixturePreflight
 } from '../../gate-fixtures';
 
-const GENERIC_QUALITY_RULE_EXPECTATIONS = Object.freeze([
+const UNIVERSAL_QUALITY_RULE_EXPECTATIONS = Object.freeze([
     Object.freeze({
-        id: 'classifier_intent_edge_cases',
-        promptPatterns: [/keyword or regex/i, /hyphen and space/i, /OAuth2/i],
-        action: 'Cover classifier acceptance wording, separator variants, standalone forms, and protocol suffixes.'
+        id: 'code_simplification',
+        promptPatterns: [/simplified/i, /behavior/i, /diagnostics/i],
+        action: 'Simplify the changed code without weakening behavior, validation, or diagnostics.'
     }),
     Object.freeze({
-        id: 'config_materialization_parity',
-        promptPatterns: [/config, default, template, materialization, schema, install, and update/i, /preserving explicit local user choices/i],
-        action: 'Align config defaults, templates, schema validation, install, update, and local-choice preservation.'
+        id: 'project_style_fit',
+        promptPatterns: [/project style/i, /module boundaries/i, /helper patterns/i],
+        action: 'Align the change with local project style, naming, boundaries, and helper patterns.'
     }),
     Object.freeze({
-        id: 'control_plane_action_safety',
-        promptPatterns: [/UI, CLI, or other control-plane mutations/i, /audited and validated action paths/i, /compact success output/i],
-        action: 'Route control-plane mutations through audited confirmation paths with compact success and failure diagnostics.'
+        id: 'unnecessary_abstraction',
+        promptPatterns: [/abstractions/i, /duplication/i, /complexity/i],
+        action: 'Remove abstractions that do not reduce real duplication, risk, or complexity.'
     }),
     Object.freeze({
-        id: 'artifact_evidence_binding',
-        promptPatterns: [/artifact, history, cache, or telemetry evidence/i, /identity, freshness, scope or worktree binding/i, /stale or forged negative cases/i],
-        action: 'Add identity, freshness, scope binding, path ownership, and forged or stale negative coverage.'
+        id: 'size_growth',
+        promptPatterns: [/classes, functions, or files/i, /grew/i, /ownership/i],
+        action: 'Extract or clarify touched code that grew enough to blur ownership.'
     }),
     Object.freeze({
-        id: 'gate_routing_self_regression',
-        promptPatterns: [/gate, guard, or routing changes/i, /blocking states preempt expensive work/i, /warning-only states do not block/i],
-        action: 'Add routing fixtures for blocking, pass-through, and warning-only gate states.'
+        id: 'hardcoded_values_contracts',
+        promptPatterns: [/literals, paths, statuses, or messages/i, /constants/i, /contracts/i],
+        action: 'Move new literals, paths, statuses, or messages into shared contracts where appropriate.'
+    }),
+    Object.freeze({
+        id: 'duplicated_logic_contracts',
+        promptPatterns: [/duplicates logic/i, /validation/i, /one place/i],
+        action: 'Remove duplicated logic, validation, or contract strings.'
+    }),
+    Object.freeze({
+        id: 'test_verification_scope',
+        promptPatterns: [/focused tests/i, /behavioral risk/i, /slow coverage/i],
+        action: 'Adjust verification scope so behavioral risk is covered without unrelated slow tests.'
     })
+]);
+
+const MOVED_PROJECT_LOCAL_RULE_IDS = Object.freeze([
+    'classifier_intent_edge_cases',
+    'config_materialization_parity',
+    'control_plane_action_safety',
+    'artifact_evidence_binding',
+    'gate_routing_self_regression'
 ]);
 
 function buildPassAnswers(): Array<Record<string, unknown>> {
@@ -58,7 +76,7 @@ function buildPassAnswers(): Array<Record<string, unknown>> {
 
 function buildGenericActionRequiredAnswers(): Array<Record<string, unknown>> {
     const actionByRuleId = new Map<string, string>(
-        GENERIC_QUALITY_RULE_EXPECTATIONS.map((rule) => [rule.id, rule.action])
+        UNIVERSAL_QUALITY_RULE_EXPECTATIONS.map((rule) => [rule.id, rule.action])
     );
     return buildPassAnswers().map((answer) => {
         const action = actionByRuleId.get(String(answer.rule_id));
@@ -80,10 +98,10 @@ function buildGenericActionRequiredAnswers(): Array<Record<string, unknown>> {
 }
 
 describe('quality-checklist gate', () => {
-    it('ships enabled generic baseline prompts that cover review-saving regression classes', () => {
+    it('ships enabled universal baseline prompts and excludes project-local rule classes', () => {
         const rulesById = new Map(DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.map((rule) => [rule.id, rule]));
 
-        for (const expectation of GENERIC_QUALITY_RULE_EXPECTATIONS) {
+        for (const expectation of UNIVERSAL_QUALITY_RULE_EXPECTATIONS) {
             const rule = rulesById.get(expectation.id);
             assert.ok(rule, `Expected shipped optional quality rule '${expectation.id}'.`);
             assert.equal(rule.enabled, true);
@@ -91,6 +109,10 @@ describe('quality-checklist gate', () => {
             for (const pattern of expectation.promptPatterns) {
                 assert.match(searchableText, pattern, `Rule '${expectation.id}' should mention ${pattern}.`);
             }
+        }
+
+        for (const ruleId of MOVED_PROJECT_LOCAL_RULE_IDS) {
+            assert.equal(rulesById.has(ruleId), false, `Expected '${ruleId}' to be project-local, not shipped baseline.`);
         }
     });
 
@@ -129,7 +151,7 @@ describe('quality-checklist gate', () => {
         }
     });
 
-    it('records ACTION_REQUIRED for every generic regression class before review setup', () => {
+    it('records ACTION_REQUIRED for every universal baseline rule before review setup', () => {
         const fixture = createGateFixture({ taskId: 'T-quality-derived-actions' });
         try {
             const preflightPath = writeGateFixturePreflight(fixture, {
@@ -158,7 +180,7 @@ describe('quality-checklist gate', () => {
 
             assert.notEqual(result.exitCode, 0);
             assert.ok(result.outputLines.includes('QUALITY_CHECKLIST_ACTION_REQUIRED'));
-            assert.ok(result.outputLines.includes(`ActionsRequiredCount: ${GENERIC_QUALITY_RULE_EXPECTATIONS.length}`));
+            assert.ok(result.outputLines.includes(`ActionsRequiredCount: ${UNIVERSAL_QUALITY_RULE_EXPECTATIONS.length}`));
             const artifactPathLine = result.outputLines.find((line) => line.startsWith('QualityChecklistArtifactPath: '));
             assert.ok(artifactPathLine);
             const artifact = JSON.parse(fs.readFileSync(artifactPathLine.replace('QualityChecklistArtifactPath: ', ''), 'utf8'));
@@ -170,9 +192,9 @@ describe('quality-checklist gate', () => {
             assert.equal(artifact.status, 'ACTION_REQUIRED');
             assert.deepEqual(
                 requiredRuleIds,
-                GENERIC_QUALITY_RULE_EXPECTATIONS.map((rule) => rule.id).sort()
+                UNIVERSAL_QUALITY_RULE_EXPECTATIONS.map((rule) => rule.id).sort()
             );
-            assert.equal(artifact.actions_required.length, GENERIC_QUALITY_RULE_EXPECTATIONS.length);
+            assert.equal(artifact.actions_required.length, UNIVERSAL_QUALITY_RULE_EXPECTATIONS.length);
             assert.ok(artifact.changed_file_evidence.changed_files.some((filePath: string) => filePath.startsWith('tests/')));
         } finally {
             fixture.cleanup();

@@ -631,7 +631,7 @@ test('buildReportDataContract exposes quality gate baseline and custom rule stat
     writeWorkflowConfig(repoRoot);
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
-    const removedBaselineRule = config.optional_quality_checks.rules.find((rule) => rule.id === 'gate_routing_self_regression');
+    const removedBaselineRule = config.optional_quality_checks.rules.find((rule) => rule.id === 'duplicated_logic_contracts');
     assert.ok(removedBaselineRule);
     config.optional_quality_checks.rules = config.optional_quality_checks.rules
         .filter((rule) => rule.id !== removedBaselineRule.id)
@@ -673,7 +673,7 @@ test('buildReportDataContract exposes quality gate baseline and custom rule stat
     assert.equal(report.system_state.quality_baseline.status, 'attention');
     assert.deepEqual(
         (report.system_state.quality_baseline.value as { missing_shipped_rule_ids: string[] }).missing_shipped_rule_ids,
-        ['gate_routing_self_regression']
+        ['duplicated_logic_contracts']
     );
     assert.equal(report.system_state.quality_baseline.summary, '1 shipped quality rule(s) are missing from the installed workflow config.');
 });
@@ -707,7 +707,7 @@ test('buildSystemStateReport diagnoses missing shipped quality baseline ids with
     const configPath = path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json');
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8')) as ReturnType<typeof buildDefaultWorkflowConfig>;
     config.optional_quality_checks.rules = [
-        ...config.optional_quality_checks.rules.filter((rule) => rule.id !== 'artifact_evidence_binding'),
+        ...config.optional_quality_checks.rules.filter((rule) => rule.id !== 'duplicated_logic_contracts'),
         {
             id: 'custom_focus',
             title: 'Custom focus',
@@ -727,7 +727,7 @@ test('buildSystemStateReport diagnoses missing shipped quality baseline ids with
         custom_rule_count: number;
     };
     assert.equal(report.system_state.quality_baseline.status, 'attention');
-    assert.deepEqual(value.missing_shipped_rule_ids, ['artifact_evidence_binding']);
+    assert.deepEqual(value.missing_shipped_rule_ids, ['duplicated_logic_contracts']);
     assert.equal(value.custom_rule_count, 1);
 });
 

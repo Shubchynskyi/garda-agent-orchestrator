@@ -8,8 +8,14 @@ import {
     formatCompileInfraRecoveryHintLine
 } from '../compile/compile-infra-recovery-hints';
 import {
+    buildDomainScopeFingerprints,
+    type DomainScopeFingerprintEntry,
+    type DomainScopeFingerprints,
     normalizeDomainScopeFingerprints
 } from '../scope/domain-scope-fingerprints';
+import {
+    isReviewReuseNeutralCloseoutEvidencePath
+} from '../scope/closeout-evidence-paths';
 import {
     fileSha256,
     normalizePath
@@ -67,6 +73,53 @@ export interface PreflightWorkspaceReadinessOptions {
     plannedChangedFiles?: string[];
     dirtyWorkspaceBaselineChangedFiles?: string[];
     dirtyWorkspaceBaselineFileHashes?: Record<string, string>;
+}
+
+const COMPILE_RELEVANT_DOMAIN_NAMES = ['implementation', 'test', 'docs', 'config'] as const;
+
+function domainFingerprintEntryMatches(
+    expected: DomainScopeFingerprintEntry,
+    current: DomainScopeFingerprintEntry
+): boolean {
+    return expected.changed_files_sha256 === current.changed_files_sha256
+        && expected.scope_content_sha256 === current.scope_content_sha256
+        && expected.scope_sha256 === current.scope_sha256;
+}
+
+function onlyNeutralCloseoutDomainChanged(
+    expected: DomainScopeFingerprints | null,
+    current: DomainScopeFingerprints | null
+): boolean {
+    if (!expected || !current) {
+        return false;
+    }
+    for (const domainName of COMPILE_RELEVANT_DOMAIN_NAMES) {
+        if (!domainFingerprintEntryMatches(expected.domains[domainName], current.domains[domainName])) {
+            return false;
+        }
+    }
+    const closeoutFiles = new Set([
+        ...expected.domains.closeout.changed_files,
+        ...current.domains.closeout.changed_files
+    ]);
+    if ([...closeoutFiles].some((filePath) => !isReviewReuseNeutralCloseoutEvidencePath(filePath))) {
+        return false;
+    }
+    return !domainFingerprintEntryMatches(expected.domains.closeout, current.domains.closeout);
+}
+
+function buildCurrentDomainScopeFingerprints(params: {
+    repoRoot: string;
+    detectionSource: string;
+    includeUntracked: boolean;
+    changedFiles: readonly string[];
+}): DomainScopeFingerprints {
+    return buildDomainScopeFingerprints({
+        repoRoot: params.repoRoot,
+        detectionSource: params.detectionSource,
+        includeUntracked: params.includeUntracked,
+        changedFiles: params.changedFiles.map((entry) => normalizePath(entry)).filter(Boolean)
+    });
 }
 
 function isRelatedToPlannedScope(changedFile: string, plannedChangedFiles: readonly string[]): boolean {
@@ -217,6 +270,20 @@ export function readCompileReadiness(
         || currentScope.changed_files_sha256 !== changedFilesSha256
         || currentScope.changed_lines_total !== changedLinesTotal
     ) {
+        const currentDomainScopeFingerprints = expectedDomainScopeFingerprints
+            ? buildCurrentDomainScopeFingerprints({
+                repoRoot,
+                detectionSource,
+                includeUntracked: evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked,
+                changedFiles: currentScope.changed_files
+            })
+            : null;
+        if (onlyNeutralCloseoutDomainChanged(expectedDomainScopeFingerprints, currentDomainScopeFingerprints)) {
+            return {
+                ready: true,
+                reason: 'Compile gate evidence is current for implementation, test, docs, and config scope; only neutral closeout evidence changed.'
+            };
+        }
         const includeUntracked = evidence.scope_include_untracked == null ? true : !!evidence.scope_include_untracked;
         const currentGitSnapshot = readCurrentGitWorkspaceSnapshot(repoRoot, includeUntracked);
         const docsOnlyDeltaReadiness = currentGitSnapshot
@@ -473,6 +540,28 @@ export function readPreflightWorkspaceReadiness(
         );
         if (docsOnlyDeltaReadiness) {
             return docsOnlyDeltaReadiness;
+        }
+    }
+
+    if (violations.length > 0 && expectedDomainScopeFingerprints) {
+        const currentDomainScopeFingerprints = buildCurrentDomainScopeFingerprints({
+            repoRoot,
+            detectionSource,
+            includeUntracked,
+            changedFiles: currentScope.changed_files
+        });
+        if (onlyNeutralCloseoutDomainChanged(expectedDomainScopeFingerprints, currentDomainScopeFingerprints)) {
+            return {
+                ready: true,
+                reason: 'Preflight scope is current for implementation, test, docs, and config; only neutral closeout evidence changed.',
+                currentChangedFiles,
+                acceptedCloseoutOnlyDeltaFiles: [
+                    ...new Set([
+                        ...expectedDomainScopeFingerprints.domains.closeout.changed_files,
+                        ...currentDomainScopeFingerprints.domains.closeout.changed_files
+                    ])
+                ].sort()
+            };
         }
     }
 

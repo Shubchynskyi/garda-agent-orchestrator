@@ -15,8 +15,12 @@ export interface OptionalQualityChecksConfig {
     [key: string]: unknown;
 }
 
+export interface OptionalQualityChecksMergeOptions {
+    preserveMovedProjectRulesAsCustom?: boolean;
+}
+
 export const OPTIONAL_QUALITY_CHECKS_ENABLED_NOTICE = 'режим опциональных проверок включен, проверь в garda ui перед стартом';
-export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-06-26.t843';
+export const OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION = '2026-06-27.t846';
 
 export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
     Object.freeze({
@@ -64,37 +68,7 @@ export const LEGACY_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckR
 ]);
 
 export const DEFAULT_OPTIONAL_QUALITY_CHECK_RULES: readonly OptionalQualityCheckRule[] = Object.freeze([
-    ...LEGACY_OPTIONAL_QUALITY_CHECK_RULES,
-    Object.freeze({
-        id: 'classifier_intent_edge_cases',
-        title: 'Classifier intent edge cases',
-        prompt: 'Check classifier keyword or regex changes against acceptance wording, hyphen and space variants, standalone forms, and protocol or numeric suffixes such as OAuth2.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'config_materialization_parity',
-        title: 'Config materialization parity',
-        prompt: 'Check config, default, template, materialization, schema, install, and update changes for parity while preserving explicit local user choices.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'control_plane_action_safety',
-        title: 'Control-plane action safety',
-        prompt: 'Check UI, CLI, or other control-plane mutations use audited and validated action paths with confirmation, boundary checks, compact success output, and preserved failure diagnostics.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'artifact_evidence_binding',
-        title: 'Artifact evidence binding',
-        prompt: 'Check artifact, history, cache, or telemetry evidence validates identity, freshness, scope or worktree binding, path ownership, and stale or forged negative cases before trust.',
-        enabled: true
-    }),
-    Object.freeze({
-        id: 'gate_routing_self_regression',
-        title: 'Gate routing self-regression',
-        prompt: 'Check gate, guard, or routing changes with self-regression fixtures where blocking states preempt expensive work, pass states continue, and warning-only states do not block.',
-        enabled: true
-    })
+    ...LEGACY_OPTIONAL_QUALITY_CHECK_RULES
 ]);
 
 const DEFAULT_OPTIONAL_QUALITY_CHECK_RULE_BY_ID = new Map(
@@ -107,8 +81,81 @@ const DEPRECATED_OPTIONAL_QUALITY_CHECK_BASELINE_RULE_IDS = new Set([
     'doc_impact_closeout_parity',
     'task_queue_parser_state',
     'review_cycle_scope_freshness',
-    'zero_diff_noop_preemption'
+    'zero_diff_noop_preemption',
+    'classifier_intent_edge_cases',
+    'config_materialization_parity',
+    'control_plane_action_safety',
+    'artifact_evidence_binding',
+    'gate_routing_self_regression'
 ]);
+
+const MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULES: readonly Readonly<{
+    movedRuleId: string;
+    customRule: OptionalQualityCheckRule;
+}>[] = Object.freeze([
+    Object.freeze({
+        movedRuleId: 'classifier_intent_edge_cases',
+        customRule: Object.freeze({
+            id: 'custom_garda_classifier_intent_edge_cases',
+            title: 'Garda classifier intent edge cases',
+            prompt: 'For Garda classifier keyword or regex changes, check acceptance wording, hyphen and space variants, standalone forms, and protocol or numeric suffixes such as OAuth2.',
+            enabled: true
+        })
+    }),
+    Object.freeze({
+        movedRuleId: 'config_materialization_parity',
+        customRule: Object.freeze({
+            id: 'custom_garda_config_materialization_parity',
+            title: 'Garda config materialization parity',
+            prompt: 'For Garda config, default, template, materialization, schema, install, and update changes, check parity while preserving explicit local user choices.',
+            enabled: true
+        })
+    }),
+    Object.freeze({
+        movedRuleId: 'control_plane_action_safety',
+        customRule: Object.freeze({
+            id: 'custom_garda_control_plane_action_safety',
+            title: 'Garda control-plane action safety',
+            prompt: 'For Garda UI, CLI, or control-plane mutations, check audited and validated action paths with confirmation, boundary checks, compact success output, and preserved failure diagnostics.',
+            enabled: true
+        })
+    }),
+    Object.freeze({
+        movedRuleId: 'artifact_evidence_binding',
+        customRule: Object.freeze({
+            id: 'custom_garda_artifact_evidence_binding',
+            title: 'Garda artifact evidence binding',
+            prompt: 'For Garda artifact, history, cache, or telemetry evidence, check identity, freshness, scope or worktree binding, path ownership, and stale or forged negative cases before trust.',
+            enabled: true
+        })
+    }),
+    Object.freeze({
+        movedRuleId: 'gate_routing_self_regression',
+        customRule: Object.freeze({
+            id: 'custom_garda_gate_routing_self_regression',
+            title: 'Garda gate routing self-regression',
+            prompt: 'For Garda gate, guard, or routing changes, check self-regression fixtures where blocking states preempt expensive work, pass states continue, and warning-only states do not block.',
+            enabled: true
+        })
+    })
+]);
+
+const MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULE_BY_OLD_ID = new Map(
+    MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULES.map((entry) => [entry.movedRuleId, entry.customRule])
+);
+
+function appendMissingMovedProjectCustomRules(
+    mergedRules: OptionalQualityCheckRule[],
+    mergedRuleIds: Set<string>
+): void {
+    for (const { customRule } of MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULES) {
+        if (mergedRuleIds.has(customRule.id)) {
+            continue;
+        }
+        mergedRules.push(cloneJsonValue(customRule) as OptionalQualityCheckRule);
+        mergedRuleIds.add(customRule.id);
+    }
+}
 
 function getOptionalQualityCheckBaselineRuleById(ruleId: string): OptionalQualityCheckRule | null {
     return DEFAULT_OPTIONAL_QUALITY_CHECK_RULE_BY_ID.get(ruleId.trim().toLowerCase()) || null;
@@ -169,14 +216,26 @@ function normalizeOptionalQualityCheckRules(input: unknown): OptionalQualityChec
 function mergeOptionalQualityCheckRulesWithBaseline(
     existingRules: readonly OptionalQualityCheckRule[],
     baselineRules: readonly OptionalQualityCheckRule[],
-    staleBaselineVersion: boolean
+    staleBaselineVersion: boolean,
+    options: OptionalQualityChecksMergeOptions = {}
 ): OptionalQualityCheckRule[] {
     const baselineRuleById = new Map(baselineRules.map((rule) => [rule.id, rule]));
+    const existingRuleIds = new Set(existingRules.map((rule) => rule.id));
     const mergedRuleIds = new Set<string>();
     const mergedRules: OptionalQualityCheckRule[] = [];
 
     for (const existingRule of existingRules) {
         if (staleBaselineVersion && DEPRECATED_OPTIONAL_QUALITY_CHECK_BASELINE_RULE_IDS.has(existingRule.id)) {
+            const movedCustomRule = options.preserveMovedProjectRulesAsCustom
+                ? MOVED_GARDA_OPTIONAL_QUALITY_CHECK_CUSTOM_RULE_BY_OLD_ID.get(existingRule.id)
+                : null;
+            if (movedCustomRule && !existingRuleIds.has(movedCustomRule.id) && !mergedRuleIds.has(movedCustomRule.id)) {
+                mergedRules.push({
+                    ...cloneJsonValue(movedCustomRule),
+                    enabled: existingRule.enabled !== false
+                });
+                mergedRuleIds.add(movedCustomRule.id);
+            }
             continue;
         }
         const baselineRule = baselineRuleById.get(existingRule.id);
@@ -202,6 +261,10 @@ function mergeOptionalQualityCheckRulesWithBaseline(
             mergedRules.push(cloneJsonValue(baselineRule) as OptionalQualityCheckRule);
             mergedRuleIds.add(baselineRule.id);
         }
+    }
+
+    if (options.preserveMovedProjectRulesAsCustom) {
+        appendMissingMovedProjectCustomRules(mergedRules, mergedRuleIds);
     }
 
     return mergedRules;
@@ -268,11 +331,22 @@ export function normalizeOptionalQualityChecksConfig(input: unknown): OptionalQu
 
 export function mergeOptionalQualityChecksWithBaseline(
     templateInput: unknown,
-    existingInput: unknown
+    existingInput: unknown,
+    options: OptionalQualityChecksMergeOptions = {}
 ): OptionalQualityChecksConfig {
     const templateConfig = normalizeOptionalQualityChecksConfig(templateInput);
     if (!isPlainObject(existingInput)) {
-        return cloneJsonValue(templateConfig);
+        const templateClone = cloneJsonValue(templateConfig);
+        const mergedRules = mergeOptionalQualityCheckRulesWithBaseline(
+            [],
+            templateClone.rules,
+            false,
+            options
+        );
+        return {
+            ...templateClone,
+            rules: mergedRules
+        };
     }
 
     const existingConfig = cloneJsonValue(existingInput);
@@ -282,7 +356,8 @@ export function mergeOptionalQualityChecksWithBaseline(
     const mergedRules = mergeOptionalQualityCheckRulesWithBaseline(
         existingRules,
         baselineRules,
-        staleBaselineVersion
+        staleBaselineVersion,
+        options
     );
 
     return {

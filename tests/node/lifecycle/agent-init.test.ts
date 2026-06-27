@@ -65,6 +65,15 @@ function seedReadyProjectMemory(bundleRoot: string) {
     }
 }
 
+function seedSourceCheckoutMarkers(workspaceRoot: string) {
+    writeJson(path.join(workspaceRoot, 'package.json'), {
+        name: 'garda-agent-orchestrator-source-fixture',
+        version: '0.0.0'
+    });
+    writeText(path.join(workspaceRoot, 'bin', 'garda.js'), '#!/usr/bin/env node\n');
+    writeText(path.join(workspaceRoot, 'src', 'index.ts'), 'export {};\n');
+}
+
 function makeCompliantEntrypoint(name: string): string {
     return [
         MANAGED_START,
@@ -1240,6 +1249,119 @@ test('runAgentInit preserves existing workflow-config toggles while seeding only
             fs.readFileSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'utf8'),
             /### Compile Gate \(Mandatory\)\r?\n```bash\r?\nnode -e "console\.log\('build ok'\)"\r?\n```/
         );
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit migrates moved Garda baseline rules to self-host custom rules in source checkouts', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-source-rules-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        seedSourceCheckoutMarkers(workspaceRoot);
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
+        writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
+            optional_quality_checks: {
+                enabled: true,
+                baseline_version: '2026-06-26.t843',
+                rules: [
+                    {
+                        id: 'artifact_evidence_binding',
+                        title: 'Artifact evidence binding',
+                        prompt: 'Check old artifact rule.',
+                        enabled: false
+                    }
+                ]
+            }
+        });
+
+        runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const optionalQualityChecks = workflowConfig.optional_quality_checks as Record<string, unknown>;
+        const ruleIds = (optionalQualityChecks.rules as Array<{ id: string }>).map((rule) => rule.id);
+        assert.equal(ruleIds.includes('artifact_evidence_binding'), false);
+        assert.ok(ruleIds.includes('custom_garda_artifact_evidence_binding'));
+        const movedCustomRule = (optionalQualityChecks.rules as Array<{ id: string; enabled: boolean }>).find(
+            (rule) => rule.id === 'custom_garda_artifact_evidence_binding'
+        );
+        assert.equal(movedCustomRule?.enabled, false);
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
+test('runAgentInit materializes moved Garda custom rules for fresh source-checkout workflow config', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-source-rules-fresh-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        seedSourceCheckoutMarkers(workspaceRoot);
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
+
+        runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const optionalQualityChecks = workflowConfig.optional_quality_checks as Record<string, unknown>;
+        const ruleIds = (optionalQualityChecks.rules as Array<{ id: string }>).map((rule) => rule.id);
+        assert.ok(ruleIds.includes('custom_garda_classifier_intent_edge_cases'));
+        assert.ok(ruleIds.includes('custom_garda_config_materialization_parity'));
+        assert.ok(ruleIds.includes('custom_garda_control_plane_action_safety'));
+        assert.ok(ruleIds.includes('custom_garda_artifact_evidence_binding'));
+        assert.ok(ruleIds.includes('custom_garda_gate_routing_self_regression'));
     } finally {
         fs.rmSync(workspaceRoot, { recursive: true, force: true });
     }

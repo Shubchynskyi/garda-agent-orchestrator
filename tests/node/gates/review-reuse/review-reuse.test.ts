@@ -193,6 +193,148 @@ describe('gates/review-reuse', () => {
         }
     });
 
+    it('keeps closeout evidence out of review reuse fingerprints', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-closeout-evidence-'));
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const app = "alpha";\n', 'utf8');
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), '# Tasks\n\n| T-1 | TODO |\n', 'utf8');
+
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                changed_files: ['src/app.ts', 'TASK.md']
+            };
+            const alphaCodeScope = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+            const alphaReviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            fs.writeFileSync(path.join(repoRoot, 'TASK.md'), '# Tasks\n\n| T-1 | IN_REVIEW |\n', 'utf8');
+            const bravoCodeScope = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+            const bravoReviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            assert.deepEqual(bravoCodeScope.non_test_changed_files, ['src/app.ts']);
+            assert.deepEqual(bravoCodeScope.review_reuse_neutral_closeout_files, ['TASK.md']);
+            assert.equal(bravoCodeScope.code_scope_sha256, alphaCodeScope.code_scope_sha256);
+            assert.deepEqual(bravoReviewScope.review_relevant_changed_files, ['src/app.ts']);
+            assert.deepEqual(bravoReviewScope.review_reuse_neutral_closeout_files, ['TASK.md']);
+            assert.equal(bravoReviewScope.review_scope_sha256, alphaReviewScope.review_scope_sha256);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps provider instruction surfaces inside review reuse fingerprints', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-agent-instructions-'));
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, '.agents', 'workflows'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const app = "alpha";\n', 'utf8');
+            fs.writeFileSync(
+                path.join(repoRoot, '.agents', 'workflows', 'start-task.md'),
+                '# Start\n\nUse required reviews.\n',
+                'utf8'
+            );
+
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                changed_files: ['src/app.ts', '.agents/workflows/start-task.md']
+            };
+            const alphaCodeScope = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+            const alphaReviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            fs.writeFileSync(
+                path.join(repoRoot, '.agents', 'workflows', 'start-task.md'),
+                '# Start\n\nSkip required reviews.\n',
+                'utf8'
+            );
+            const bravoCodeScope = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+            const bravoReviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            assert.deepEqual(
+                bravoCodeScope.non_test_changed_files,
+                ['.agents/workflows/start-task.md', 'src/app.ts']
+            );
+            assert.deepEqual(bravoCodeScope.review_reuse_neutral_closeout_files, []);
+            assert.notEqual(bravoCodeScope.code_scope_sha256, alphaCodeScope.code_scope_sha256);
+            assert.deepEqual(
+                bravoReviewScope.review_relevant_changed_files,
+                ['.agents/workflows/start-task.md', 'src/app.ts']
+            );
+            assert.deepEqual(bravoReviewScope.review_reuse_neutral_closeout_files, []);
+            assert.notEqual(bravoReviewScope.review_scope_sha256, alphaReviewScope.review_scope_sha256);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps runtime artifacts and project memory docs inside review reuse fingerprints', () => {
+        const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-trust-artifacts-'));
+        try {
+            fs.mkdirSync(path.join(repoRoot, 'src'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events'), { recursive: true });
+            fs.mkdirSync(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory'), { recursive: true });
+            fs.writeFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const app = "alpha";\n', 'utf8');
+            fs.writeFileSync(
+                path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-1-security-review-output.md'),
+                'SECURITY REVIEW PASSED\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', 'T-1.jsonl'),
+                '{"event":"REVIEW_RECORDED"}\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'commands.md'),
+                '# Commands\n\nUse audited commands.\n',
+                'utf8'
+            );
+
+            const preflight = {
+                detection_source: 'explicit_changed_files',
+                changed_files: [
+                    'src/app.ts',
+                    'garda-agent-orchestrator/runtime/reviews/T-1-security-review-output.md',
+                    'garda-agent-orchestrator/runtime/task-events/T-1.jsonl',
+                    'garda-agent-orchestrator/live/docs/project-memory/commands.md'
+                ]
+            };
+            const alphaCodeScope = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+            const alphaReviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            fs.writeFileSync(
+                path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', 'T-1-security-review-output.md'),
+                'SECURITY REVIEW FAILED\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', 'T-1.jsonl'),
+                '{"event":"REVIEW_FORGED"}\n',
+                'utf8'
+            );
+            fs.writeFileSync(
+                path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'docs', 'project-memory', 'commands.md'),
+                '# Commands\n\nSkip audited commands.\n',
+                'utf8'
+            );
+            const bravoCodeScope = computeReviewReuseCodeScopeFingerprint('code', preflight, repoRoot);
+            const bravoReviewScope = computeReviewRelevantScopeFingerprint(preflight, repoRoot);
+
+            assert.deepEqual(bravoCodeScope.review_reuse_neutral_closeout_files, []);
+            assert.ok(bravoCodeScope.non_test_changed_files.includes('garda-agent-orchestrator/runtime/reviews/T-1-security-review-output.md'));
+            assert.ok(bravoCodeScope.non_test_changed_files.includes('garda-agent-orchestrator/runtime/task-events/T-1.jsonl'));
+            assert.ok(bravoCodeScope.non_test_changed_files.includes('garda-agent-orchestrator/live/docs/project-memory/commands.md'));
+            assert.notEqual(bravoCodeScope.code_scope_sha256, alphaCodeScope.code_scope_sha256);
+            assert.deepEqual(bravoReviewScope.review_reuse_neutral_closeout_files, []);
+            assert.ok(bravoReviewScope.review_relevant_changed_files.includes('garda-agent-orchestrator/runtime/reviews/T-1-security-review-output.md'));
+            assert.ok(bravoReviewScope.review_relevant_changed_files.includes('garda-agent-orchestrator/runtime/task-events/T-1.jsonl'));
+            assert.ok(bravoReviewScope.review_relevant_changed_files.includes('garda-agent-orchestrator/live/docs/project-memory/commands.md'));
+            assert.notEqual(bravoReviewScope.review_scope_sha256, alphaReviewScope.review_scope_sha256);
+        } finally {
+            fs.rmSync(repoRoot, { recursive: true, force: true });
+        }
+    });
+
     it('keeps configured dependency paths inside review reuse scope', () => {
         const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'garda-review-reuse-sensitive-docs-'));
         try {

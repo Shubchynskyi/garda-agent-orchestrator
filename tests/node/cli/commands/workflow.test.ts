@@ -121,7 +121,7 @@ test('workflow show prints repo-local full-suite settings', () => {
         assert.ok(output.includes(`OptionalQualityChecksBaselineVersion: ${OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION}`));
         assert.ok(output.includes(`OptionalQualityChecksRuleIds: ${defaultOptionalQualityCheckRuleIds()}`));
         assert.ok(output.includes('OptionalQualityCheckRule: code_simplification enabled=true title=Code simplification'));
-        assert.ok(output.includes('OptionalQualityCheckRule: gate_routing_self_regression enabled=true title=Gate routing self-regression'));
+        assert.ok(output.includes('OptionalQualityCheckRule: test_verification_scope enabled=true title=Test and verification scope'));
     } finally {
         fs.rmSync(bundleRoot, { recursive: true, force: true });
     }
@@ -1055,7 +1055,8 @@ test('workflow show --json returns valid JSON with compact full-suite line', () 
         assert.equal(parsed.optional_quality_checks.baseline_version, OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION);
         assert.equal(parsed.optional_quality_checks.rules.length, DEFAULT_OPTIONAL_QUALITY_CHECK_RULES.length);
         assert.equal(parsed.optional_quality_checks.rules[0].id, 'code_simplification');
-        assert.ok(parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'artifact_evidence_binding'));
+        assert.ok(parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'test_verification_scope'));
+        assert.ok(!parsed.optional_quality_checks.rules.some((rule: { id: string }) => rule.id === 'artifact_evidence_binding'));
         assert.equal(parsed.visible_summary_line, 'Mandatory full-suite: true placement=before_test_review mode=standard');
         assert.equal(parsed.review_execution_policy_summary_line, 'Review execution policy: code_first_optional');
         assert.equal(parsed.review_cycle_guard_summary_line, 'Review cycle guard: BLOCK_FOR_OPERATOR_DECISION max_failed_non_test_reviews=15 max_total_non_test_reviews=30 excluded=test auto_split_enabled=false');

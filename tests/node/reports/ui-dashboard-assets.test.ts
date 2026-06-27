@@ -437,8 +437,8 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                 config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
                 status: 'present',
                 enabled: true,
-                baseline_version: '2026-06-26.t843',
-                shipped_baseline_version: '2026-06-26.t843',
+                baseline_version: '2026-06-27.t846',
+                shipped_baseline_version: '2026-06-27.t846',
                 baseline_rule_count: 1,
                 custom_rule_count: 1,
                 deleted_baseline_rule_count: 1,
@@ -507,9 +507,9 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                         statuses: ['disabled']
                     },
                     {
-                        id: 'gate_routing_self_regression',
-                        title: 'Gate routing self-regression',
-                        prompt: 'Check gate routing.',
+                        id: 'duplicated_logic_contracts',
+                        title: 'Duplicated logic and contracts',
+                        prompt: 'Check duplicated logic.',
                         enabled: false,
                         present: false,
                         source: 'baseline',
@@ -665,10 +665,10 @@ test('system state renders quality baseline diagnostics with localized labels', 
                 remediation: 'Run update or workflow validation.',
                 value: {
                     installed_baseline_version: '2026-06-25.t842',
-                    shipped_baseline_version: '2026-06-26.t843',
+                    shipped_baseline_version: '2026-06-27.t846',
                     installed_baseline_rule_count: 9,
                     shipped_baseline_rule_count: 12,
-                    missing_shipped_rule_ids: ['artifact_evidence_binding']
+                    missing_shipped_rule_ids: ['duplicated_logic_contracts']
                 },
                 source_path: 'garda-agent-orchestrator/live/config/workflow-config.json'
             },
@@ -684,7 +684,7 @@ test('system state renders quality baseline diagnostics with localized labels', 
     assert.match(systemStateNode.innerHTML, /Установленный набор правил/u);
     assert.match(systemStateNode.innerHTML, /Поставляемый набор правил/u);
     assert.match(systemStateNode.innerHTML, /Отсутствующие поставляемые правила/u);
-    assert.match(systemStateNode.innerHTML, /artifact_evidence_binding/u);
+    assert.match(systemStateNode.innerHTML, /duplicated_logic_contracts/u);
 });
 
 test('quality gate tab keeps baseline rule content immutable while enabled state remains editable', () => {
@@ -692,8 +692,8 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
         config_path: 'garda-agent-orchestrator/live/config/workflow-config.json',
         status: 'present',
         enabled: true,
-        baseline_version: '2026-06-26.t843',
-        shipped_baseline_version: '2026-06-26.t843',
+        baseline_version: '2026-06-27.t846',
+        shipped_baseline_version: '2026-06-27.t846',
         baseline_rule_count: 1,
         custom_rule_count: 1,
         deleted_baseline_rule_count: 0,

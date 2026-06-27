@@ -11,6 +11,9 @@ import {
     normalizeDomainScopeFingerprints
 } from './domain-scope-fingerprints';
 import {
+    isReviewReuseNeutralCloseoutEvidencePath
+} from './closeout-evidence-paths';
+import {
     normalizePath
 } from '../shared/helpers';
 import {
@@ -165,7 +168,8 @@ export function buildDocsOnlyDeltaReadiness(
     });
     const acceptedCloseoutDeltaFiles = docsOnlyDeltaFiles.filter((filePath) => {
         const normalizedPath = normalizePath(filePath);
-        return currentDomainScopeFingerprints.domains.closeout.changed_files.includes(normalizedPath);
+        return currentDomainScopeFingerprints.domains.closeout.changed_files.includes(normalizedPath)
+            && isReviewReuseNeutralCloseoutEvidencePath(normalizedPath);
     });
     const acceptedDeltaFiles = [...acceptedDocsDeltaFiles, ...acceptedCloseoutDeltaFiles].sort();
     if (acceptedDeltaFiles.length !== docsOnlyDeltaFiles.length) {

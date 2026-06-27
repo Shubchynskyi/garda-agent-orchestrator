@@ -59,7 +59,7 @@
   },
   "optional_quality_checks": {
     "enabled": true,
-    "baseline_version": "2026-06-26.t843",
+    "baseline_version": "2026-06-27.t846",
     "rules": [
       {
         "id": "code_simplification",
@@ -101,36 +101,6 @@
         "id": "test_verification_scope",
         "title": "Test and verification scope",
         "prompt": "Check whether the focused tests and mandatory gates cover the behavioral risk without adding unrelated slow coverage.",
-        "enabled": true
-      },
-      {
-        "id": "classifier_intent_edge_cases",
-        "title": "Classifier intent edge cases",
-        "prompt": "Check classifier keyword or regex changes against acceptance wording, hyphen and space variants, standalone forms, and protocol or numeric suffixes such as OAuth2.",
-        "enabled": true
-      },
-      {
-        "id": "config_materialization_parity",
-        "title": "Config materialization parity",
-        "prompt": "Check config, default, template, materialization, schema, install, and update changes for parity while preserving explicit local user choices.",
-        "enabled": true
-      },
-      {
-        "id": "control_plane_action_safety",
-        "title": "Control-plane action safety",
-        "prompt": "Check UI, CLI, or other control-plane mutations use audited and validated action paths with confirmation, boundary checks, compact success output, and preserved failure diagnostics.",
-        "enabled": true
-      },
-      {
-        "id": "artifact_evidence_binding",
-        "title": "Artifact evidence binding",
-        "prompt": "Check artifact, history, cache, or telemetry evidence validates identity, freshness, scope or worktree binding, path ownership, and stale or forged negative cases before trust.",
-        "enabled": true
-      },
-      {
-        "id": "gate_routing_self_regression",
-        "title": "Gate routing self-regression",
-        "prompt": "Check gate, guard, or routing changes with self-regression fixtures where blocking states preempt expensive work, pass states continue, and warning-only states do not block.",
         "enabled": true
       }
     ]

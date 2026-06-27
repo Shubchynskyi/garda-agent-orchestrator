@@ -11,6 +11,7 @@ import {
     computeReviewRelevantScopeFingerprint,
     computeReviewReuseCodeScopeFingerprint
 } from '../review-reuse/review-reuse';
+import { isCloseoutEvidencePath } from './closeout-evidence-paths';
 
 export const DOMAIN_SCOPE_NAMES = ['implementation', 'test', 'docs', 'config', 'closeout'] as const;
 
@@ -38,10 +39,6 @@ export interface DomainScopeFingerprints {
     };
 }
 
-const CLOSEOUT_DOC_PATH_PATTERNS = [
-    '^garda-agent-orchestrator/live/docs/project-memory/'
-] as const;
-
 function normalizeDomainScopeHash(value: unknown): string | null {
     const normalized = String(value || '').trim().toLowerCase();
     return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
@@ -52,27 +49,6 @@ function normalizeDomainScopeFiles(value: unknown): string[] {
         return [];
     }
     return [...new Set(value.map((entry) => normalizePath(entry)).filter(Boolean))].sort();
-}
-
-function isCloseoutDocumentationPath(filePath: string): boolean {
-    return CLOSEOUT_DOC_PATH_PATTERNS.some((pattern) => new RegExp(pattern, 'i').test(filePath));
-}
-
-function isCloseoutEvidencePath(filePath: string): boolean {
-    const normalizedPath = normalizePath(filePath);
-    if (!normalizedPath) {
-        return false;
-    }
-    if (normalizedPath === 'TASK.md') {
-        return true;
-    }
-    if (normalizedPath.startsWith('.agents/')) {
-        return true;
-    }
-    if (normalizedPath.startsWith('garda-agent-orchestrator/runtime/')) {
-        return true;
-    }
-    return isCloseoutDocumentationPath(normalizedPath);
 }
 
 function classifyDomainFile(repoRoot: string, filePath: string): DomainScopeName {

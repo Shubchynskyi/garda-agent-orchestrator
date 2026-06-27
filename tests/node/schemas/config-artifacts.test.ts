@@ -320,7 +320,7 @@ test('validateWorkflowConfig validates custom optional quality checks and duplic
             'control_plane_action_safety',
             'artifact_evidence_binding',
             'gate_routing_self_regression'
-        ].filter((id) => !defaultedRules.some((rule) => rule.id === id)),
+        ].filter((id) => defaultedRules.some((rule) => rule.id === id)),
         []
     );
 

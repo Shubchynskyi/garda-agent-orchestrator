@@ -34,6 +34,7 @@ import {
 } from '../core/constants';
 import { buildSetupStartBannerSentence } from '../core/orchestrator-start-banner';
 import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
+import { isSourceCheckoutRoot } from '../validators/workspace-layout/source-runtime';
 import { syncReviewCapabilities, writeSkillsIndex } from '../runtime/skills';
 import {
     getActiveAgentEntrypointFiles,
@@ -572,7 +573,8 @@ export function runInit(options: RunInitOptions) {
                 ? cloneJsonValue(templateConfig)
                 : configName === 'workflow-config'
                     ? applyDiscoveredCompileGateCommand(mergeWorkflowConfigWithTemplate(templateConfig as WorkflowConfigData, existingConfig, {
-                        preserveLegacyReviewExecutionPolicyOmission: preserveLegacyWorkflowConfigOmission
+                        preserveLegacyReviewExecutionPolicyOmission: preserveLegacyWorkflowConfigOmission,
+                        preserveMovedProjectQualityRulesAsCustom: isSourceCheckoutRoot(targetRoot)
                     }), discovery, preservedCompileGateCommand)
                     : mergeConfig(templateConfig, existingConfig);
 

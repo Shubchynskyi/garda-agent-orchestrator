@@ -9,6 +9,11 @@
 - Preserved existing `TASK.md` task rows and user-owned notes when install/update refreshes the managed template, including overwrite-style setup paths.
 - Removed public custom deployed-bundle selection through `--bundle-name` and `GARDA_BUNDLE_NAME`; install/update now use the fixed `garda-agent-orchestrator` bundle directory.
 
+### Task Workflow And Quality Gates
+- Reduced the shipped optional quality-check baseline to broadly applicable rules and moved Garda implementation-specific checks out of the universal default rule set.
+- Preserved Garda-specific quality checks as source-checkout custom rules during both stale-config migration and fresh workflow-config materialization.
+- Kept mutable closeout evidence such as `TASK.md` out of review-reuse fingerprints so post-review task-status sync does not force redundant reviewer cycles, while preserving provider instruction surfaces in review scope.
+
 ## 1.1.0
 
 ### Operator Highlights

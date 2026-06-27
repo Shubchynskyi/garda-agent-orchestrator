@@ -8,6 +8,10 @@ import {
     normalizePath,
     stringSha256
 } from '../shared/helpers';
+import {
+    isCloseoutEvidencePath,
+    isReviewReuseNeutralCloseoutEvidencePath
+} from '../scope/closeout-evidence-paths';
 import { getSafeWorktreePathState } from '../workspace/worktree-path-state';
 
 export interface CodeReviewScopeFingerprint {
@@ -17,6 +21,7 @@ export interface CodeReviewScopeFingerprint {
     performance_support_changed_files: string[];
     review_reuse_neutral_config_files: string[];
     review_reuse_neutral_evidence_files: string[];
+    review_reuse_neutral_closeout_files: string[];
     missing_non_test_files: string[];
     code_scope_sha256: string | null;
     test_only: boolean;
@@ -29,6 +34,7 @@ export interface ReviewRelevantScopeFingerprint {
     docs_only_changed_files: string[];
     review_reuse_neutral_config_files: string[];
     review_reuse_neutral_evidence_files: string[];
+    review_reuse_neutral_closeout_files: string[];
     missing_review_relevant_files: string[];
     review_scope_sha256: string | null;
     docs_only: boolean;
@@ -370,6 +376,12 @@ function collectReviewReuseNeutralEvidenceFiles(
         .sort();
 }
 
+function collectReviewReuseNeutralCloseoutFiles(allChangedFiles: readonly string[]): string[] {
+    return allChangedFiles
+        .filter((filePath) => isReviewReuseNeutralCloseoutEvidencePath(filePath))
+        .sort();
+}
+
 function getStagedBlobFingerprint(repoRoot: string, relativePath: string): string | null {
     try {
         const result = childProcess.spawnSync('git', ['ls-files', '-s', '--', `:(literal)${relativePath}`], {
@@ -471,6 +483,7 @@ function computeCodeReviewScopeFingerprintInternal(
     }));
     const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
         isSafeOrdinaryDocumentationPath(filePath, classificationConfig)
+        && !isCloseoutEvidencePath(filePath)
     ));
     const performanceSupportChangedFiles = allChangedFiles.filter((filePath) => (
         isNonRuntimePerformanceSupportPath(filePath, classificationConfig)
@@ -482,12 +495,15 @@ function computeCodeReviewScopeFingerprintInternal(
     const reviewReuseNeutralConfigSet = new Set(reviewReuseNeutralConfigFiles);
     const reviewReuseNeutralEvidenceFiles = collectReviewReuseNeutralEvidenceFiles(preflight, repoRoot, allChangedFiles);
     const reviewReuseNeutralEvidenceSet = new Set(reviewReuseNeutralEvidenceFiles);
+    const reviewReuseNeutralCloseoutFiles = collectReviewReuseNeutralCloseoutFiles(allChangedFiles);
+    const reviewReuseNeutralCloseoutSet = new Set(reviewReuseNeutralCloseoutFiles);
     const nonTestChangedFiles = allChangedFiles.filter((filePath) => (
         !testChangedFiles.includes(filePath)
         && !docsOnlyChangedFiles.includes(filePath)
         && !performanceSupportSet.has(filePath)
         && !reviewReuseNeutralConfigSet.has(filePath)
         && !reviewReuseNeutralEvidenceSet.has(filePath)
+        && !reviewReuseNeutralCloseoutSet.has(filePath)
     ));
     const sortedNonTestFiles = [...nonTestChangedFiles].sort();
     const missingNonTestFiles: string[] = [];
@@ -506,6 +522,7 @@ function computeCodeReviewScopeFingerprintInternal(
         performance_support_changed_files: [...performanceSupportChangedFiles].sort(),
         review_reuse_neutral_config_files: reviewReuseNeutralConfigFiles,
         review_reuse_neutral_evidence_files: reviewReuseNeutralEvidenceFiles,
+        review_reuse_neutral_closeout_files: reviewReuseNeutralCloseoutFiles,
         missing_non_test_files: missingNonTestFiles,
         code_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         test_only: sortedNonTestFiles.length === 0 && testChangedFiles.length === allChangedFiles.length,
@@ -541,13 +558,17 @@ export function computeReviewRelevantScopeFingerprint(
         : [];
     const docsOnlyChangedFiles = allChangedFiles.filter((filePath) => (
         isSafeOrdinaryDocumentationPath(filePath, classificationConfig)
+        && !isCloseoutEvidencePath(filePath)
     ));
     const docsOnlySet = new Set(docsOnlyChangedFiles);
     const reviewReuseNeutralConfigFiles = collectReviewReuseNeutralConfigFiles(preflight, repoRoot, allChangedFiles);
     const reviewReuseNeutralConfigSet = new Set(reviewReuseNeutralConfigFiles);
+    const reviewReuseNeutralCloseoutFiles = collectReviewReuseNeutralCloseoutFiles(allChangedFiles);
+    const reviewReuseNeutralCloseoutSet = new Set(reviewReuseNeutralCloseoutFiles);
     const reviewRelevantFiles = allChangedFiles.filter((filePath) => (
         !docsOnlySet.has(filePath)
         && !reviewReuseNeutralConfigSet.has(filePath)
+        && !reviewReuseNeutralCloseoutSet.has(filePath)
     ));
     const sortedReviewRelevantFiles = [...reviewRelevantFiles].sort();
     const missingReviewRelevantFiles: string[] = [];
@@ -565,6 +586,7 @@ export function computeReviewRelevantScopeFingerprint(
         docs_only_changed_files: [...docsOnlyChangedFiles].sort(),
         review_reuse_neutral_config_files: reviewReuseNeutralConfigFiles,
         review_reuse_neutral_evidence_files: [],
+        review_reuse_neutral_closeout_files: reviewReuseNeutralCloseoutFiles,
         missing_review_relevant_files: missingReviewRelevantFiles,
         review_scope_sha256: stringSha256(fingerprintEntries.join('\n')),
         docs_only: sortedReviewRelevantFiles.length === 0 && docsOnlyChangedFiles.length === allChangedFiles.length

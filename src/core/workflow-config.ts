@@ -157,6 +157,7 @@ export interface WorkflowConfigData {
 
 export interface WorkflowConfigMergeOptions {
     preserveLegacyReviewExecutionPolicyOmission?: boolean;
+    preserveMovedProjectQualityRulesAsCustom?: boolean;
 }
 
 export type WorkflowConfigReadStatus = 'present' | 'missing' | 'invalid_json' | 'non_object';
@@ -564,7 +565,10 @@ export function mergeWorkflowConfigWithTemplate(
     }
     nextConfig.optional_quality_checks = mergeOptionalQualityChecksWithBaseline(
         templateConfig.optional_quality_checks,
-        resolveOptionalQualityChecksForMerge(existingConfigForMerge)
+        resolveOptionalQualityChecksForMerge(existingConfigForMerge),
+        {
+            preserveMovedProjectRulesAsCustom: options.preserveMovedProjectQualityRulesAsCustom === true
+        }
     );
     return nextConfig;
 }

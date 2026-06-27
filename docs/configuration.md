@@ -243,7 +243,7 @@ Controls the advisory self-checklist gate that runs after implementation changes
 {
   "optional_quality_checks": {
     "enabled": true,
-    "baseline_version": "2026-06-26.t843",
+    "baseline_version": "2026-06-27.t846",
     "rules": [
       {
         "id": "code_simplification",
@@ -260,7 +260,6 @@ Contract:
 - the mode is default-enabled when the setting is absent;
 - the shipped baseline version records which default rule set was materialized;
 - default rules cover simplification, project style fit, unnecessary abstraction, class/function/file growth, hardcoded values or contracts, duplicated logic or contracts, and test/verification scope;
-- the current shipped baseline also includes generic checks for classifier intent edge cases, config materialization parity, control-plane action safety, artifact evidence binding, and gate-routing self-regression;
 - `next-step` routes the gate after implementation and before compile, delegated review, or full-suite work when a current changed-file preflight needs checklist evidence;
 - `PASS` continues the normal lifecycle, while `ACTION_REQUIRED` sends the agent back to implementation before the expensive gates run;
 - disabled mode skips only the quality-checklist gate and does not replace or weaken compile-gate, full-suite validation, or independent review;

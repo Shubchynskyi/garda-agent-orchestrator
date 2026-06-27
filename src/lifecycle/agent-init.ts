@@ -25,6 +25,7 @@ import { createAgentInitState, readAgentInitStateSafe, writeAgentInitState } fro
 import { writeProtectedControlPlaneManifest } from '../gates/shared/helpers';
 import { validateCompileGateCommand } from '../gates/compile/compile-gate';
 import { readPreservableCompileGateCommandFromFile } from './agent-init/contract-migrations';
+import { isSourceCheckoutRoot } from '../validators/workspace-layout/source-runtime';
 import {
     PROJECT_MEMORY_READ_FIRST_FILE_NAMES,
     PROJECT_MEMORY_SUMMARY_RULE_RELATIVE_PATH,
@@ -166,11 +167,16 @@ function syncCompileGateCommandGuidance(bundleRoot: string, command: string): vo
     }
 }
 
+function buildAgentInitWorkflowConfigMergeOptions(targetRoot: string) {
+    return {
+        preserveLegacyReviewExecutionPolicyOmission: true,
+        preserveMovedProjectQualityRulesAsCustom: isSourceCheckoutRoot(targetRoot)
+    };
+}
+
 function seedWorkflowConfigCompileGateCommand(targetRoot: string, bundleRoot: string): void {
     const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
-    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot, {
-        preserveLegacyReviewExecutionPolicyOmission: true
-    });
+    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot, buildAgentInitWorkflowConfigMergeOptions(targetRoot));
     const existingSection = isPlainObject(rawConfig.compile_gate)
         ? rawConfig.compile_gate as Record<string, unknown>
         : {};
@@ -209,9 +215,7 @@ function seedWorkflowConfigFullSuiteCommand(
     const detectedCommand = resolveSuggestedFullSuiteValidationCommand(targetRoot)
         || UNCONFIGURED_FULL_SUITE_VALIDATION_COMMAND;
     const workflowConfigPath = getWorkflowConfigPath(bundleRoot);
-    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot, {
-        preserveLegacyReviewExecutionPolicyOmission: true
-    });
+    const rawConfig = syncWorkflowConfigWithTemplate(bundleRoot, buildAgentInitWorkflowConfigMergeOptions(targetRoot));
 
     const existingSection = isPlainObject(rawConfig.full_suite_validation)
         ? rawConfig.full_suite_validation as Record<string, unknown>
