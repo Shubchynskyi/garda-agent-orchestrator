@@ -19,7 +19,7 @@ export function resolveGardaCliPath(repoRoot: string): string {
     if (fs.existsSync(sourceCliPath)) {
         return sourceCliPath;
     }
-    return path.join(repoRoot, 'garda-agent-orchestrator', 'bin', 'garda.js');
+    return path.join(resolveBundleRoot(repoRoot), 'bin', 'garda.js');
 }
 
 export function resolveBundleRoot(repoRoot: string): string {
@@ -218,7 +218,7 @@ export async function runUiActionCommand(action: UiActionDefinition, repoRoot: s
 }
 
 function getUiActionAuditPath(repoRoot: string): string {
-    return path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'ui-actions', 'audit.jsonl');
+    return path.join(resolveBundleRoot(repoRoot), 'runtime', 'ui-actions', 'audit.jsonl');
 }
 
 export function appendUiActionAudit(repoRoot: string, record: UiActionAuditRecord): string {

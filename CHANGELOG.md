@@ -8,6 +8,7 @@
 ### Install, Update, And Package Safety
 - Preserved existing `TASK.md` task rows and user-owned notes when install/update refreshes the managed template, including overwrite-style setup paths.
 - Removed public custom deployed-bundle selection through `--bundle-name` and `GARDA_BUNDLE_NAME`; install/update now use the fixed `garda-agent-orchestrator` bundle directory.
+- Centralized behavior-bearing deployed-bundle path construction through shared bundle helpers for gates, reports, preprompt context, and guarded local UI actions.
 
 ### Task Workflow And Quality Gates
 - Reduced the shipped optional quality-check baseline to broadly applicable rules and moved Garda implementation-specific checks out of the universal default rule set.

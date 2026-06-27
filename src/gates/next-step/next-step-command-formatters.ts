@@ -5,6 +5,7 @@ import {
     resolvePathInsideRepo
 } from '../shared/helpers';
 import {
+    buildBundleRelativePath as buildCoreBundleRelativePath,
     resolveBundleNameForTarget
 } from '../../core/constants';
 import { quoteCommandValue as quoteShellCommandValue } from '../../core/command-quoting';
@@ -67,7 +68,7 @@ export function quoteCommandValue(value: string): string {
 }
 
 export function buildBundleRelativePath(repoRoot: string, relativePath: string): string {
-    return normalizePath(path.join(resolveBundleNameForTarget(repoRoot), relativePath));
+    return normalizePath(buildCoreBundleRelativePath(relativePath, resolveBundleNameForTarget(repoRoot)));
 }
 
 export function toRepoDisplayPath(repoRoot: string, filePath: string): string {

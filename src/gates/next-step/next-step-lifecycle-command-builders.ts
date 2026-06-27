@@ -24,6 +24,9 @@ import {
 import {
     resolveTaskProfileSelection
 } from '../../policy/task-profile-selection';
+import {
+    resolveBundleRootForTarget
+} from '../../core/constants';
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -32,7 +35,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function resolveDefaultDepthFromTaskQueue(repoRoot: string, taskEntry: TaskQueueEntry | null): string {
     try {
         const resolvedProfile = resolveTaskProfileSelection(
-            path.join(repoRoot, 'garda-agent-orchestrator'),
+            resolveBundleRootForTarget(repoRoot),
             taskEntry?.profile || null
         );
         const depth = resolvedProfile.effective_policy.depth;

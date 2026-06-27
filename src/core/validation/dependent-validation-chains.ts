@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { buildTargetBundleRelativePath } from '../constants';
 
 const LOCK_METADATA_GRACE_MS = 30_000;
 const LOCK_STALE_MS = 15 * 60 * 1000;
@@ -315,16 +316,17 @@ export function getGateChainEdgeById(edgeId: string): GateChainEdge | null {
 }
 
 function renderGateChainCommand(template: string, context: GateChainCommandContext): string {
+    const repoRoot = String(context.repoRoot || DEFAULT_REPO_ROOT_ARGUMENT);
     const values: Record<string, string> = {
         cli: String(context.cliPrefix || DEFAULT_GATE_CLI_PREFIX),
         taskId: context.taskId,
         reviewType: String(context.reviewType || '<review-type>'),
-        preflightPath: String(context.preflightPath || `garda-agent-orchestrator/runtime/reviews/${context.taskId}-preflight.json`),
+        preflightPath: String(context.preflightPath || buildTargetBundleRelativePath(repoRoot, `runtime/reviews/${context.taskId}-preflight.json`)),
         reviewContextPath: String(
             context.reviewContextPath
-            || `garda-agent-orchestrator/runtime/reviews/${context.taskId}-${context.reviewType || '<review-type>'}-review-context.json`
+            || buildTargetBundleRelativePath(repoRoot, `runtime/reviews/${context.taskId}-${context.reviewType || '<review-type>'}-review-context.json`)
         ),
-        repoRoot: String(context.repoRoot || DEFAULT_REPO_ROOT_ARGUMENT),
+        repoRoot,
         depth: String(context.depth || '2')
     };
     return template.replace(/\{([A-Za-z]+)\}/g, (match, key: string) => values[key] ?? match);

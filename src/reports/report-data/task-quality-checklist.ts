@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { resolveBundleRootForTarget } from '../../core/constants';
 import { isPathInsideRoot } from '../../core/paths';
 import { buildScopeContentFingerprint } from '../../gates/compile/compile-gate';
 import {
@@ -351,7 +352,7 @@ function taskQualityChecklistFreshnessReasons(
         String(payload.workflow_config_path || '').trim()
             ? resolveRepoPath(repoRoot, payload.workflow_config_path, 'Workflow config path')
             : {
-                filePath: path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'),
+                filePath: path.join(resolveBundleRootForTarget(repoRoot), 'live', 'config', 'workflow-config.json'),
                 staleReason: null
             },
         normalizeHash(payload.workflow_config_sha256)
@@ -623,7 +624,7 @@ function readTaskQualityChecklistActionHistory(
                     ? event.details as Record<string, unknown>
                     : {};
                 const artifactPath = normalizePathText(details.artifact_path)
-                    || toPosix(path.join(repoRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-quality-checklist.json`));
+                    || toPosix(path.join(resolveBundleRootForTarget(repoRoot), 'runtime', 'reviews', `${taskId}-quality-checklist.json`));
                 return {
                     task_id: taskId,
                     timestamp_utc: String(event.timestamp_utc || '').trim() || null,

@@ -4,6 +4,10 @@ import { createHash } from 'node:crypto';
 
 import { parseTaskMdTableRow } from '../../../core/task-md-table';
 import {
+    buildTargetBundleRelativePath,
+    resolveBundleRootForTarget
+} from '../../../core/constants';
+import {
     PROJECT_MEMORY_FOCUSED_FILE_NAMES,
     PROJECT_MEMORY_MAP_READ_GUIDANCE,
     PROJECT_MEMORY_MAP_WRITE_CONTRACT,
@@ -350,8 +354,9 @@ export function buildProjectMemoryBrief(
 }
 
 export function listTaskArtifacts(targetRoot: string, taskId: string): ExistingTaskArtifacts {
-    const reviewsRoot = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'reviews');
-    const timelinePath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    const bundleRoot = resolveBundleRootForTarget(targetRoot);
+    const reviewsRoot = path.join(bundleRoot, 'runtime', 'reviews');
+    const timelinePath = path.join(bundleRoot, 'runtime', 'task-events', `${taskId}.jsonl`);
     const reviewArtifacts = fs.existsSync(reviewsRoot) && fs.statSync(reviewsRoot).isDirectory()
         ? fs.readdirSync(reviewsRoot)
             .filter((entry) => entry.startsWith(`${taskId}-`))
@@ -364,7 +369,7 @@ export function listTaskArtifacts(targetRoot: string, taskId: string): ExistingT
                     modifiedTimeMs = 0;
                 }
                 return {
-                    path: path.join('garda-agent-orchestrator', 'runtime', 'reviews', entry).replace(/\\/g, '/'),
+                    path: buildTargetBundleRelativePath(targetRoot, `runtime/reviews/${entry}`),
                     modified_time_ms: modifiedTimeMs
                 };
             })
@@ -381,12 +386,12 @@ export function listTaskArtifacts(targetRoot: string, taskId: string): ExistingT
         review_artifacts_truncated: boundedArtifacts.truncated,
         review_artifacts_omitted_count: boundedArtifacts.omitted_count,
         timeline_exists: fs.existsSync(timelinePath) && fs.statSync(timelinePath).isFile(),
-        timeline_path: path.join('garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`).replace(/\\/g, '/')
+        timeline_path: buildTargetBundleRelativePath(targetRoot, `runtime/task-events/${taskId}.jsonl`)
     };
 }
 
 export function readTaskTimelineEvents(targetRoot: string, taskId: string): string[] {
-    const timelinePath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'task-events', `${taskId}.jsonl`);
+    const timelinePath = path.join(resolveBundleRootForTarget(targetRoot), 'runtime', 'task-events', `${taskId}.jsonl`);
     if (!fs.existsSync(timelinePath) || !fs.statSync(timelinePath).isFile()) {
         return [];
     }
@@ -692,7 +697,7 @@ export function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPa
         throw new Error(`Task '${taskId}' was not found in TASK.md.`);
     }
 
-    const bundleRoot = path.join(targetRoot, 'garda-agent-orchestrator');
+    const bundleRoot = resolveBundleRootForTarget(targetRoot);
     const statusSnapshot = getStatusSnapshot(targetRoot, initAnswersPath);
     const workspaceSnapshot = (() => {
         try {
@@ -809,7 +814,7 @@ export function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPa
         },
         workspace: {
             target_root: targetRoot.replace(/\\/g, '/'),
-            bundle_root: path.join(targetRoot, 'garda-agent-orchestrator').replace(/\\/g, '/'),
+            bundle_root: bundleRoot.replace(/\\/g, '/'),
             status_compact: formatStatusSnapshotCompact(statusSnapshot),
             ready_for_tasks: statusSnapshot.readyForTasks,
             active_profile: statusSnapshot.activeProfile,
@@ -819,8 +824,8 @@ export function buildTaskBrief(targetRoot: string, taskId: string, initAnswersPa
             ...taskArtifacts,
             has_task_mode: taskModePayload !== null,
             has_preflight: preflightPayload !== null,
-            task_mode_path: path.join('garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-task-mode.json`).replace(/\\/g, '/'),
-            preflight_path: path.join('garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-preflight.json`).replace(/\\/g, '/')
+            task_mode_path: buildTargetBundleRelativePath(targetRoot, `runtime/reviews/${taskId}-task-mode.json`),
+            preflight_path: buildTargetBundleRelativePath(targetRoot, `runtime/reviews/${taskId}-preflight.json`)
         },
         diagnostics: {
             why_blocked: currentTaskBlockers,

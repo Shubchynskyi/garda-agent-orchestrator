@@ -103,6 +103,26 @@ export function getBundleCliCommand(bundleName?: string): string {
     return `node ${resolveBundleName(bundleName)}/${PRIMARY_CLI_ENTRYPOINT}`;
 }
 
+export function buildBundleRelativePath(relativePath: string, bundleName = resolveBundleName()): string {
+    const normalizedBundleName = String(bundleName || resolveBundleName()).trim() || resolveBundleName();
+    const normalizedRelativePath = String(relativePath || '')
+        .replace(/\\/g, '/')
+        .replace(/^\.\/+/u, '')
+        .replace(/^\/+/u, '');
+    return normalizedRelativePath
+        ? `${normalizedBundleName}/${normalizedRelativePath}`
+        : normalizedBundleName;
+}
+
+export function buildTargetBundleRelativePath(targetRoot: string, relativePath: string): string {
+    return buildBundleRelativePath(relativePath, resolveBundleNameForTarget(targetRoot));
+}
+
+export function resolveBundleRootForTarget(targetRoot: string, bundleName?: string): string {
+    const explicitBundleName = bundleName ? String(bundleName).trim() : '';
+    return path.join(path.resolve(targetRoot), explicitBundleName || resolveBundleNameForTarget(targetRoot));
+}
+
 export function getLegacySourceCliCommand(): string {
     return getSourceCliCommand();
 }

@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 
+import { resolveBundleRootForTarget } from '../../../core/constants';
 import { getGateHelpEntry } from '../gate-command-help';
 
 function toPortableRepoPath(targetRoot: string, filePath: string): string {
@@ -98,7 +99,7 @@ export function buildLoadRulePackCommand(
     const usageIndex = stage === 'TASK_ENTRY' ? 0 : 1;
     let command = gateHelp.usage[usageIndex].split('<task-id>').join(taskId);
     if (stage === 'POST_PREFLIGHT') {
-        const defaultPreflightPath = path.join(targetRoot, 'garda-agent-orchestrator', 'runtime', 'reviews', `${taskId}-preflight.json`);
+        const defaultPreflightPath = path.join(resolveBundleRootForTarget(targetRoot), 'runtime', 'reviews', `${taskId}-preflight.json`);
         command = command.replace(
             /--preflight-path "[^"]+"/,
             `--preflight-path "${toPortableRepoPath(targetRoot, defaultPreflightPath)}"`

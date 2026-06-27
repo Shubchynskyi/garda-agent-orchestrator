@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { buildBundleRelativePath } from '../../core/constants';
 import { assertValidTaskId } from '../../gate-runtime/task-events';
 import { fileSha256, normalizePath, parseBool, toStringArray } from '../shared/helpers';
 
@@ -91,8 +92,8 @@ function normalizeDocImpactInputPath(input: string, repoRoot?: string): string {
 function isInternalCloseoutEvidencePath(input: string, repoRoot?: string): boolean {
     const normalized = normalizeDocImpactInputPath(input, repoRoot).toLowerCase();
     return normalized === 'task.md'
-        || normalized === 'garda-agent-orchestrator/live/docs/changes/changelog.md'
-        || normalized.startsWith('garda-agent-orchestrator/live/docs/project-memory/');
+        || normalized === INTERNAL_CHANGELOG_PATH.toLowerCase()
+        || normalized.startsWith(`${PROJECT_MEMORY_ROOT.toLowerCase()}/`);
 }
 
 function describeInternalCloseoutEvidencePath(input: string, repoRoot?: string): string {
@@ -100,17 +101,17 @@ function describeInternalCloseoutEvidencePath(input: string, repoRoot?: string):
     if (normalized === 'TASK.md') {
         return `${normalized} (task queue closeout evidence)`;
     }
-    if (normalized.toLowerCase() === 'garda-agent-orchestrator/live/docs/changes/changelog.md') {
+    if (normalized.toLowerCase() === INTERNAL_CHANGELOG_PATH.toLowerCase()) {
         return `${normalized} (use --internal-changelog-updated true)`;
     }
-    if (normalized.toLowerCase().startsWith('garda-agent-orchestrator/live/docs/project-memory/')) {
+    if (normalized.toLowerCase().startsWith(`${PROJECT_MEMORY_ROOT.toLowerCase()}/`)) {
         return `${normalized} (use --project-memory-updated true)`;
     }
     return normalized;
 }
 
-const INTERNAL_CHANGELOG_PATH = 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
-const PROJECT_MEMORY_ROOT = 'garda-agent-orchestrator/live/docs/project-memory';
+const INTERNAL_CHANGELOG_PATH = buildBundleRelativePath('live/docs/changes/CHANGELOG.md');
+const PROJECT_MEMORY_ROOT = buildBundleRelativePath('live/docs/project-memory');
 
 function readTaskScopedFileEvidence(filePath: string, taskId: string): { path: string; sha256: string | null } | null {
     if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {

@@ -65,6 +65,7 @@ import {
     type KnownNonBlockingSignal
 } from '../shared/known-nonblocking-signals';
 import {
+    resolveBundleRootForTarget,
     resolveBundleNameForTarget
 } from '../../core/constants';
 import {
@@ -957,7 +958,7 @@ function buildNextStepProfileSummary(
     let resolvedSelection: ReturnType<typeof resolveTaskProfileSelection>['selection'] | null;
     try {
         resolvedSelection = resolveTaskProfileSelection(
-            path.join(repoRoot, 'garda-agent-orchestrator'),
+            resolveBundleRootForTarget(repoRoot),
             rawTaskProfile,
             typeof preflight?.scope_category === 'string' ? preflight.scope_category : null
         ).selection;

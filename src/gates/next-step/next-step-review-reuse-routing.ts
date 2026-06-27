@@ -1,3 +1,5 @@
+import { buildBundleRelativePath } from '../../core/constants';
+
 export interface ReviewReuseRoutingCommand {
     label: string;
     command: string;
@@ -114,7 +116,7 @@ export function resolveFailedReviewRemediationRoute(
     }
 
     if (options.failureKind === 'missing-validation-evidence' && options.currentReviewRecordedEvidenceCurrent) {
-        const selectorPath = `garda-agent-orchestrator/runtime/manual-validation/${options.taskId}/review-evidence.json`;
+        const selectorPath = buildBundleRelativePath(`runtime/manual-validation/${options.taskId}/review-evidence.json`);
         return {
             status: 'BLOCKED',
             nextGate: 'review-evidence-refresh',

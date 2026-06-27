@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import {
+    buildBundleRelativePath as buildCoreBundleRelativePath,
     getBundleCliCommand,
     getSourceCliCommand,
     isBundleRootLike,
@@ -99,7 +100,7 @@ function resolveGateHelpRepoRoot(startDir: string): string {
 }
 
 function buildBundleRelativePath(bundleName: string, relativePath: string): string {
-    return `${bundleName}/${relativePath}`;
+    return buildCoreBundleRelativePath(relativePath, bundleName);
 }
 
 function buildGateHelpCatalogContext(repoRoot: string): GateHelpCatalogContext {

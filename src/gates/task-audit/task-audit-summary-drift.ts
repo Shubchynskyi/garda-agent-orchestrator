@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { buildBundleRelativePath } from '../../core/constants';
 import { getClassificationConfig, isSafeOrdinaryDocumentationPath } from '../preflight/classify-change';
 import { getWorkspaceSnapshotCached } from '../workspace/workspace-snapshot-cache';
 import { toPosix } from '../shared/helpers';
@@ -8,6 +9,11 @@ import {
     type FinalCloseoutDocsSummary,
     safeReadJson
 } from './task-audit-summary-collectors';
+
+const INTERNAL_CHANGELOG_PATH = buildBundleRelativePath('live/docs/changes/CHANGELOG.md');
+const PROJECT_MEMORY_ROOT = buildBundleRelativePath('live/docs/project-memory/');
+const BUNDLE_RUNTIME_ROOT = buildBundleRelativePath('runtime/');
+const BUNDLE_LIVE_ROOT = buildBundleRelativePath('live/');
 
 export function buildAuditedChangedFiles(
     repoRoot: string,
@@ -57,8 +63,8 @@ export function buildAuditedChangedFiles(
 }
 
 function isInternalCloseoutEvidencePath(normalizedPath: string): boolean {
-    return normalizedPath === 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md'
-        || normalizedPath.startsWith('garda-agent-orchestrator/live/docs/project-memory/');
+    return normalizedPath === INTERNAL_CHANGELOG_PATH
+        || normalizedPath.startsWith(PROJECT_MEMORY_ROOT);
 }
 
 export function buildPostDoneWorkspaceDriftBlocker(
@@ -263,9 +269,9 @@ export function isLocalControlPlaneCommitPath(filePath: string): boolean {
         return false;
     }
     return normalized === 'TASK.md'
-        || normalized.startsWith('garda-agent-orchestrator/runtime/')
-        || normalized.startsWith('garda-agent-orchestrator/live/')
-        || normalized === 'garda-agent-orchestrator/live/docs/changes/CHANGELOG.md';
+        || normalized.startsWith(BUNDLE_RUNTIME_ROOT)
+        || normalized.startsWith(BUNDLE_LIVE_ROOT)
+        || normalized === INTERNAL_CHANGELOG_PATH;
 }
 
 export function resolveCommittableChangedFiles(repoRoot: string): string[] | null {

@@ -1,4 +1,4 @@
-import { resolveBundleName } from '../../core/constants';
+import { buildBundleRelativePath, resolveBundleName } from '../../core/constants';
 import {
     getProviderEnvironmentDetectionMarkers,
     getProviderEntrypointFiles,
@@ -42,9 +42,7 @@ function getSourceGateCommandPrefix(): string {
     return 'node bin/garda.js gate';
 }
 
-export function buildBundleRelativePath(relativePath: string, bundleName = resolveBundleName()): string {
-    return `${bundleName}/${relativePath}`;
-}
+export { buildBundleRelativePath };
 
 export function isAntigravityEntrypointPath(relativePath: string): boolean {
     return relativePath.replace(/\\/g, '/') === ANTIGRAVITY_ENTRYPOINT_FILE;
