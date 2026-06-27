@@ -83,6 +83,7 @@ export interface ClassifyChangeOptions {
     changedLinesTotal?: number;
     additionsTotal?: number;
     deletionsTotal?: number;
+    changedFileStats?: Record<string, { additions: number; deletions: number; changed_lines: number }>;
     renameCount?: number;
     detectionSource?: string;
     classificationConfig: ResolvedClassificationConfig;

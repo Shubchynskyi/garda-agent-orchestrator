@@ -510,6 +510,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
     const explicitSplit = splitGeneratedRuntimeControlPlaneArtifacts(allNormalizedExplicit);
     const normalizedExplicit = explicitSplit.reviewableFiles;
     const ignoredGeneratedRuntimeFiles = explicitSplit.ignoredGeneratedRuntimeFiles;
+    const changedFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
 
     if (source === 'explicit_changed_files') {
         const numstatRows: Record<string, { additions: string; deletions: string }> = {};
@@ -518,7 +519,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
                 for (const line of gitLines(['diff', '--numstat', '--diff-filter=ACDMRTUXB', 'HEAD', '--', ...normalizedExplicit], 'Failed numstat')) {
                     const parts = line.split('\t');
                     if (parts.length >= 3) {
-                        const key = normalizePath(parts[2]);
+                        const key = normalizePath(extractNewPathFromNumstat(parts.slice(2).join('\t')));
                         if (key) numstatRows[key] = { additions: parts[0], deletions: parts[1] };
                     }
                 }
@@ -529,11 +530,24 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         for (const item of normalizedExplicit) {
             if (numstatRows[item]) {
                 const row = numstatRows[item];
-                if (/^\d+$/.test(row.additions)) additionsTotal += parseInt(row.additions, 10);
-                if (/^\d+$/.test(row.deletions)) deletionsTotal += parseInt(row.deletions, 10);
+                const additions = /^\d+$/.test(row.additions) ? parseInt(row.additions, 10) : 0;
+                const deletions = /^\d+$/.test(row.deletions) ? parseInt(row.deletions, 10) : 0;
+                additionsTotal += additions;
+                deletionsTotal += deletions;
+                changedFileStats[item] = {
+                    additions,
+                    deletions,
+                    changed_lines: additions + deletions
+                };
                 continue;
             }
-            additionsTotal += countWorktreeFileLines(repoRoot, item);
+            const additions = countWorktreeFileLines(repoRoot, item);
+            additionsTotal += additions;
+            changedFileStats[item] = {
+                additions,
+                deletions: 0,
+                changed_lines: additions
+            };
         }
         const changedLinesTotal = additionsTotal + deletionsTotal;
         const filesFingerprint = stringSha256(normalizedExplicit.join('\n'));
@@ -549,6 +563,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
             ignored_generated_runtime_files_count: ignoredGeneratedRuntimeFiles.length,
             additions_total: additionsTotal, deletions_total: deletionsTotal,
             changed_lines_total: changedLinesTotal,
+            changed_file_stats: changedFileStats,
             changed_files_sha256: filesFingerprint,
             scope_content_sha256: contentFingerprint,
             scope_sha256: scopeFingerprint
@@ -561,6 +576,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     // Extract both file names and line counts from the single numstat call
     const changedFromDiff: string[] = [];
+    const diffFileStats: Record<string, { additions: number; deletions: number; changed_lines: number }> = {};
     let additionsTotal = 0, deletionsTotal = 0;
     for (const row of numstatOutput) {
         const parts = row.split('\t');
@@ -573,8 +589,15 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
             continue;
         }
         changedFromDiff.push(normalizedFilePath);
-        if (/^\d+$/.test(parts[0])) additionsTotal += parseInt(parts[0], 10);
-        if (/^\d+$/.test(parts[1])) deletionsTotal += parseInt(parts[1], 10);
+        const additions = /^\d+$/.test(parts[0]) ? parseInt(parts[0], 10) : 0;
+        const deletions = /^\d+$/.test(parts[1]) ? parseInt(parts[1], 10) : 0;
+        additionsTotal += additions;
+        deletionsTotal += deletions;
+        diffFileStats[normalizedFilePath] = {
+            additions,
+            deletions,
+            changed_lines: additions + deletions
+        };
     }
 
     let untracked: string[] = [];
@@ -595,7 +618,13 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
 
     if (includeUntracked) {
         for (const item of untracked) {
-            additionsTotal += countWorktreeFileLines(repoRoot, item);
+            const additions = countWorktreeFileLines(repoRoot, item);
+            additionsTotal += additions;
+            diffFileStats[item] = {
+                additions,
+                deletions: 0,
+                changed_lines: additions
+            };
         }
     }
 
@@ -613,6 +642,7 @@ export function getWorkspaceSnapshot(repoRoot: string, detectionSource: string, 
         ignored_generated_runtime_files_count: new Set(ignoredGeneratedRuntimeFiles).size,
         additions_total: additionsTotal, deletions_total: deletionsTotal,
         changed_lines_total: changedLinesTotal,
+        changed_file_stats: diffFileStats,
         changed_files_sha256: filesFingerprint,
         scope_content_sha256: contentFingerprint,
         scope_sha256: scopeFingerprint

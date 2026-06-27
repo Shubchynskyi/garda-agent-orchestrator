@@ -167,8 +167,23 @@ function getPreflightMetricNumber(
     return parseOptionalNumberField(metrics[field]);
 }
 
+function getCompanionScopeEffectivePreflightMetricNumber(
+    preflight: Record<string, unknown> | null,
+    field: 'changed_files_count' | 'changed_lines_total'
+): number | null {
+    const triggers = getPreflightTriggers(preflight);
+    if (triggers.ui_i18n_companion_scope !== true) {
+        return null;
+    }
+    const effectiveField = field === 'changed_files_count'
+        ? 'companion_scope_effective_changed_files_count'
+        : 'companion_scope_effective_changed_lines_total';
+    return getPreflightMetricNumber(preflight, effectiveField);
+}
+
 function getPreflightChangedFilesCount(preflight: Record<string, unknown> | null): number {
-    return getPreflightMetricNumber(preflight, 'changed_files_count')
+    return getCompanionScopeEffectivePreflightMetricNumber(preflight, 'changed_files_count')
+        ?? getPreflightMetricNumber(preflight, 'changed_files_count')
         ?? getPreflightChangedFiles(preflight).length;
 }
 
@@ -216,7 +231,9 @@ function collectStrictDecompositionPreflightRiskSignals(
 
     const signals: string[] = [];
     const changedFilesCount = getPreflightChangedFilesCount(preflight);
-    const changedLinesTotal = getPreflightMetricNumber(preflight, 'changed_lines_total') ?? 0;
+    const changedLinesTotal = getCompanionScopeEffectivePreflightMetricNumber(preflight, 'changed_lines_total')
+        ?? getPreflightMetricNumber(preflight, 'changed_lines_total')
+        ?? 0;
     if (changedFilesCount >= STRICT_DECOMPOSITION_CHANGED_FILE_THRESHOLD) {
         signals.push(`changed_files_count=${changedFilesCount}`);
     }
@@ -268,7 +285,11 @@ function hasTinyStrictDecompositionExemption(
         return true;
     }
     return getPreflightChangedFilesCount(preflight) <= 1
-        && (getPreflightMetricNumber(preflight, 'changed_lines_total') ?? 0) <= 20
+        && (
+            getCompanionScopeEffectivePreflightMetricNumber(preflight, 'changed_lines_total')
+            ?? getPreflightMetricNumber(preflight, 'changed_lines_total')
+            ?? 0
+        ) <= 20
         && requiredReviewTypes.length <= 1;
 }
 

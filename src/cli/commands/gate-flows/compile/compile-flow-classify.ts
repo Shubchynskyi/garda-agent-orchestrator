@@ -174,6 +174,9 @@ export function runClassifyChangeCommand(options: ClassifyChangeCommandOptions):
         changedLinesTotal: workspaceSnapshot.changed_lines_total,
         additionsTotal: workspaceSnapshot.additions_total,
         deletionsTotal: workspaceSnapshot.deletions_total,
+        changedFileStats: (workspaceSnapshot as Record<string, unknown>).changed_file_stats as
+            | Record<string, { additions: number; deletions: number; changed_lines: number }>
+            | undefined,
         renameCount,
         detectionSource: workspaceSnapshot.detection_source,
         classificationConfig,

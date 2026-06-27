@@ -193,7 +193,7 @@ describe('gates/next-step split-required latch status', () => {
         const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
         const text = formatNextStepText(result);
 
-        assert.equal(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
         assert.equal(result.next_gate, 'split-required-latch');
         assert.equal(result.commands.length, 0);
         assert.ok(result.reason.includes('configured budget exceeded: changed_files_count'));
@@ -209,6 +209,219 @@ describe('gates/next-step split-required latch status', () => {
         const events = fs.readFileSync(path.join(eventsRoot(repoRoot), `${TASK_ID}.jsonl`), 'utf8');
         assert.ok(events.includes('"event_type":"SPLIT_REQUIRED_LATCHED"'));
         assert.ok(events.includes('"new_status":"SPLIT_REQUIRED"'));
+    });
+
+    it('does not latch companion UI i18n scopes by raw language-pack file count', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | ui/i18n-companion | Update UI labels with generated language packs | gpt-5.4 | 2026-05-03 | strict | Small UI driver plus generated lang packs. |`,
+            ''
+        ].join('\n'), 'utf8');
+        const changedFiles = [
+            'src/reports/ui/dashboard-client-quality-gate.ts',
+            'src/reports/ui/lang-packs/garda-ui-de.json',
+            'src/reports/ui/lang-packs/garda-ui-en.json',
+            'src/reports/ui/lang-packs/garda-ui-es.json',
+            'src/reports/ui/lang-packs/garda-ui-fr.json',
+            'src/reports/ui/lang-packs/garda-ui-ru.json'
+        ];
+        for (const filePath of changedFiles) {
+            fs.mkdirSync(path.dirname(path.join(repoRoot, filePath)), { recursive: true });
+            const lineCount = filePath.endsWith('.ts') ? 12 : 24;
+            fs.writeFileSync(
+                path.join(repoRoot, filePath),
+                Array.from({ length: lineCount }, (_, index) => `line_${index + 1}`).join('\n') + '\n',
+                'utf8'
+            );
+        }
+        seedStartedTask(repoRoot, TASK_ID);
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FAST_PATH',
+            scope_category: 'code',
+            metrics: {
+                changed_files_count: changedFiles.length,
+                changed_lines_total: 132,
+                companion_scope_kind: 'ui-i18n',
+                companion_scope_effective_changed_files_count: 1,
+                companion_scope_effective_changed_lines_total: 12,
+                companion_scope_exempted_files_count: 5,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            triggers: {
+                ui_i18n_companion_scope: true,
+                ui_i18n_companion_reason: 'ui_i18n_companion_scope',
+                ui_i18n_companion_driver_files: [changedFiles[0]],
+                ui_i18n_companion_files: changedFiles.slice(1)
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS },
+            changed_files: changedFiles,
+            review_execution_policy: {
+                mode: 'code_first_optional',
+                visible_summary_line: 'Review execution policy: code_first_optional'
+            },
+            profile_selection: {
+                task_profile: 'strict',
+                profile_selection_source: 'task_queue',
+                effective_profile: 'strict',
+                effective_profile_source: 'built_in',
+                runtime_active_profile: 'balanced',
+                runtime_profile_source: 'built_in'
+            },
+            budget_forecast: {
+                total_estimated_review_tokens: 3000
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'single-cycle',
+            taskSummary: 'Seeded next-step task',
+            expectedReviewTypes: ['none']
+        });
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.notEqual(result.status, 'SPLIT_REQUIRED');
+        assert.equal(result.next_gate, 'compile-gate', result.reason);
+        assert.ok(result.commands[0].command.includes('gate compile-gate'));
+        assert.equal(fs.existsSync(path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`)), false);
+        assert.equal(fs.readFileSync(path.join(repoRoot, 'TASK.md'), 'utf8').includes(`| ${TASK_ID} | SPLIT_REQUIRED |`), false);
+    });
+
+    it('falls back to raw line budget when companion UI i18n effective line metric is missing', () => {
+        const repoRoot = makeTempRepo();
+        fs.writeFileSync(path.join(repoRoot, 'TASK.md'), [
+            '# TASK.md',
+            '',
+            '| ID | Status | Priority | Area | Title | Owner | Updated | Profile | Notes |',
+            '|---|---|---|---|---|---|---|---|---|',
+            `| ${TASK_ID} | TODO | P1 | ui/i18n-companion | Update UI labels with generated language packs | gpt-5.4 | 2026-05-03 | strict | Small UI driver plus generated lang packs. |`,
+            ''
+        ].join('\n'), 'utf8');
+        const changedFiles = [
+            'src/reports/ui/dashboard-client-quality-gate.ts',
+            'src/reports/ui/lang-packs/garda-ui-de.json',
+            'src/reports/ui/lang-packs/garda-ui-en.json',
+            'src/reports/ui/lang-packs/garda-ui-es.json',
+            'src/reports/ui/lang-packs/garda-ui-fr.json',
+            'src/reports/ui/lang-packs/garda-ui-ru.json'
+        ];
+        for (const filePath of changedFiles) {
+            fs.mkdirSync(path.dirname(path.join(repoRoot, filePath)), { recursive: true });
+            const lineCount = filePath.endsWith('.ts') ? 12 : 24;
+            fs.writeFileSync(
+                path.join(repoRoot, filePath),
+                Array.from({ length: lineCount }, (_, index) => `line_${index + 1}`).join('\n') + '\n',
+                'utf8'
+            );
+        }
+        seedStartedTask(repoRoot, TASK_ID);
+        const config = buildDefaultWorkflowConfig();
+        config.full_suite_validation.enabled = false;
+        config.review_execution_policy = { mode: 'code_first_optional' };
+        config.scope_budget_guard.max_files = 999999;
+        config.scope_budget_guard.max_changed_lines = 120;
+        config.scope_budget_guard.max_required_reviews = 999999;
+        config.scope_budget_guard.max_review_tokens = 999999;
+        writeJson(path.join(repoRoot, 'garda-agent-orchestrator', 'live', 'config', 'workflow-config.json'), config);
+        const snapshot = getWorkspaceSnapshot(repoRoot, 'explicit_changed_files', true, changedFiles);
+        const preflightPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-preflight.json`);
+        writeJson(preflightPath, {
+            task_id: TASK_ID,
+            detection_source: snapshot.detection_source,
+            mode: 'FAST_PATH',
+            scope_category: 'code',
+            metrics: {
+                changed_files_count: changedFiles.length,
+                changed_lines_total: 132,
+                companion_scope_kind: 'ui-i18n',
+                companion_scope_effective_changed_files_count: 1,
+                companion_scope_effective_changed_lines_total: null,
+                companion_scope_exempted_files_count: 5,
+                changed_files_sha256: snapshot.changed_files_sha256,
+                scope_content_sha256: snapshot.scope_content_sha256,
+                scope_sha256: snapshot.scope_sha256
+            },
+            triggers: {
+                ui_i18n_companion_scope: true,
+                ui_i18n_companion_reason: 'ui_i18n_companion_scope',
+                ui_i18n_companion_driver_files: [changedFiles[0]],
+                ui_i18n_companion_files: changedFiles.slice(1)
+            },
+            required_reviews: { ...ALL_REVIEW_FLAGS },
+            changed_files: changedFiles,
+            review_execution_policy: {
+                mode: 'code_first_optional',
+                visible_summary_line: 'Review execution policy: code_first_optional'
+            },
+            profile_selection: {
+                task_profile: 'strict',
+                profile_selection_source: 'task_queue',
+                effective_profile: 'strict',
+                effective_profile_source: 'built_in',
+                runtime_active_profile: 'balanced',
+                runtime_profile_source: 'built_in'
+            },
+            budget_forecast: {
+                total_estimated_review_tokens: 3000
+            }
+        });
+        appendEvent(repoRoot, TASK_ID, 'PREFLIGHT_CLASSIFIED', 'INFO', {
+            output_path: normalizeForTimeline(preflightPath)
+        });
+        seedPostPreflightRulePack(repoRoot, TASK_ID, preflightPath);
+        writeStrictDecompositionDecision(repoRoot, TASK_ID, {
+            decision: 'single-cycle',
+            taskSummary: 'Seeded next-step task',
+            expectedReviewTypes: ['none']
+        });
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-compile-gate.json`), {
+            timestamp_utc: new Date().toISOString(),
+            task_id: TASK_ID,
+            event_source: 'compile-gate',
+            status: 'PASSED',
+            outcome: 'PASS',
+            preflight_path: normalizeForTimeline(preflightPath),
+            preflight_hash_sha256: fileSha256(preflightPath),
+            scope_detection_source: snapshot.detection_source,
+            scope_include_untracked: snapshot.include_untracked,
+            scope_changed_files: snapshot.changed_files,
+            scope_changed_files_count: snapshot.changed_files_count,
+            scope_changed_lines_total: snapshot.changed_lines_total,
+            scope_changed_files_sha256: snapshot.changed_files_sha256,
+            scope_content_sha256: snapshot.scope_content_sha256,
+            scope_sha256: snapshot.scope_sha256
+        });
+        appendEvent(repoRoot, TASK_ID, 'COMPILE_GATE_PASSED', 'PASS', {});
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+
+        assert.equal(result.status, 'SPLIT_REQUIRED', result.reason);
+        assert.equal(result.next_gate, 'split-required-latch');
+        assert.ok(result.reason.includes('configured budget exceeded: changed_lines_total'), result.reason);
+        const latchPath = path.join(reviewsRoot(repoRoot), `${TASK_ID}-split-required.json`);
+        assert.equal(fs.existsSync(latchPath), true);
+        const latch = JSON.parse(fs.readFileSync(latchPath, 'utf8')) as {
+            raw_guard_summary?: unknown;
+            guard_details?: { violations?: Array<{ metric?: unknown; actual?: unknown; limit?: unknown }> };
+        };
+        const violation = latch.guard_details?.violations?.[0];
+        assert.equal(latch.raw_guard_summary, 'Scope budget guard: BLOCK_FOR_SPLIT (changed_lines_total=132>120)');
+        assert.equal(violation?.metric, 'changed_lines_total');
+        assert.equal(violation?.actual, 132);
+        assert.equal(violation?.limit, 120);
     });
 
     it('keeps split-required latch ahead of ordinary recovery after the diff shrinks', () => {
@@ -597,4 +810,3 @@ describe('gates/next-step split-required latch status', () => {
     });
 
 });
-

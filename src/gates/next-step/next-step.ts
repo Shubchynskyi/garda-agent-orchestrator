@@ -833,8 +833,30 @@ function parseOptionalNumberField(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return value;
     }
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            return null;
+        }
+        const parsed = Number(trimmed);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function getCompanionScopeEffectiveMetric(
+    preflight: Record<string, unknown> | null,
+    field: 'changed_files_count' | 'changed_lines_total'
+): number | null {
+    const triggers = isPlainRecord(preflight?.triggers) ? preflight.triggers : {};
+    if (triggers.ui_i18n_companion_scope !== true) {
+        return null;
+    }
+    const metrics = isPlainRecord(preflight?.metrics) ? preflight.metrics : {};
+    const effectiveField = field === 'changed_files_count'
+        ? 'companion_scope_effective_changed_files_count'
+        : 'companion_scope_effective_changed_lines_total';
+    return parseOptionalNumberField(metrics[effectiveField]);
 }
 
 function readWorkflowConfigRecordForNextStep(repoRoot: string): Record<string, unknown> | null {
@@ -894,10 +916,12 @@ function readScopeBudgetGuardEvaluation(
     }
 
     const changedFilesCount =
-        parseOptionalNumberField(metrics.changed_files_count)
+        getCompanionScopeEffectiveMetric(preflight, 'changed_files_count')
+        ?? parseOptionalNumberField(metrics.changed_files_count)
         ?? (Array.isArray(preflight.changed_files) ? preflight.changed_files.length : 0);
     const changedLinesTotal =
-        parseOptionalNumberField(metrics.changed_lines_total)
+        getCompanionScopeEffectiveMetric(preflight, 'changed_lines_total')
+        ?? parseOptionalNumberField(metrics.changed_lines_total)
         ?? parseOptionalNumberField(budgetForecast.changed_lines_total)
         ?? 0;
     const totalEstimatedReviewTokens =

@@ -76,6 +76,95 @@ describe('gates/classify-change', () => {
             assert.equal(result.required_reviews.code, false);
         });
 
+        it('keeps mechanical UI language-pack companion changes on the fast path', () => {
+            const driverFile = 'src/reports/ui/dashboard-client-quality-gate.ts';
+            const langPackFiles = [
+                'src/reports/ui/lang-packs/garda-ui-de.json',
+                'src/reports/ui/lang-packs/garda-ui-en.json',
+                'src/reports/ui/lang-packs/garda-ui-es.json',
+                'src/reports/ui/lang-packs/garda-ui-fr.json',
+                'src/reports/ui/lang-packs/garda-ui-ru.json'
+            ];
+            const changedFileStats = Object.fromEntries([
+                [driverFile, { additions: 8, deletions: 4, changed_lines: 12 }],
+                ...langPackFiles.map((filePath) => [filePath, { additions: 20, deletions: 4, changed_lines: 24 }])
+            ]);
+
+            const result = classifyChange({
+                normalizedFiles: [driverFile, ...langPackFiles],
+                taskIntent: 'Update Quality Gate UI labels and generated language packs',
+                changedLinesTotal: 132,
+                additionsTotal: 108,
+                deletionsTotal: 24,
+                changedFileStats,
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: { ...defaultCapabilities, performance: true, test: true }
+            });
+
+            assert.equal(result.mode, 'FAST_PATH');
+            assert.equal(result.scope_category, 'code');
+            assert.equal(result.triggers.fast_path_eligible, true);
+            assert.equal(result.triggers.ui_i18n_companion_scope, true);
+            assert.equal(result.triggers.ui_i18n_companion_reason, 'ui_i18n_companion_scope');
+            assert.deepEqual(result.triggers.ui_i18n_companion_driver_files, [driverFile]);
+            assert.deepEqual(result.triggers.ui_i18n_companion_files, langPackFiles);
+            assert.equal(result.metrics.companion_scope_kind, 'ui-i18n');
+            assert.equal(result.metrics.companion_scope_effective_changed_files_count, 1);
+            assert.equal(result.metrics.companion_scope_effective_changed_lines_total, 12);
+            assert.equal(result.metrics.companion_scope_exempted_files_count, langPackFiles.length);
+            assert.equal(result.required_reviews.code, false);
+            assert.equal(result.required_reviews.performance, false);
+        });
+
+        it('does not treat standalone UI language-pack edits as companion scope', () => {
+            const langPackFile = 'src/reports/ui/lang-packs/garda-ui-ru.json';
+            const result = classifyChange({
+                normalizedFiles: [langPackFile],
+                taskIntent: 'Update Russian UI translation',
+                changedLinesTotal: 24,
+                additionsTotal: 20,
+                deletionsTotal: 4,
+                changedFileStats: {
+                    [langPackFile]: { additions: 20, deletions: 4, changed_lines: 24 }
+                },
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.mode, 'FULL_PATH');
+            assert.equal(result.triggers.ui_i18n_companion_scope, false);
+            assert.equal(result.triggers.ui_i18n_companion_reason, 'standalone_i18n_scope');
+            assert.equal(result.metrics.companion_scope_kind, undefined);
+        });
+
+        it('does not exempt non-UI config changes paired with language packs', () => {
+            const configFile = 'garda-agent-orchestrator/live/config/workflow-config.json';
+            const langPackFile = 'src/reports/ui/lang-packs/garda-ui-ru.json';
+            const result = classifyChange({
+                normalizedFiles: [configFile, langPackFile],
+                taskIntent: 'Update workflow configuration and UI translation',
+                changedLinesTotal: 36,
+                additionsTotal: 30,
+                deletionsTotal: 6,
+                changedFileStats: {
+                    [configFile]: { additions: 10, deletions: 2, changed_lines: 12 },
+                    [langPackFile]: { additions: 20, deletions: 4, changed_lines: 24 }
+                },
+                renameCount: 0,
+                detectionSource: 'explicit_changed_files',
+                classificationConfig: makeConfig(),
+                reviewCapabilities: defaultCapabilities
+            });
+
+            assert.equal(result.triggers.ui_i18n_companion_scope, false);
+            assert.equal(result.triggers.ui_i18n_companion_reason, 'driver_not_ui_surface');
+            assert.equal(result.triggers.fast_path_eligible, false);
+        });
+
         it('keeps default CHANGELOG.md as an ordinary doc path with auditable match evidence', () => {
             const result = classifyChange({
                 normalizedFiles: ['CHANGELOG.md'],

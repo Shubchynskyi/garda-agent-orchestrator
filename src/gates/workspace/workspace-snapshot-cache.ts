@@ -6,7 +6,7 @@ import { getWorkspaceSnapshot } from '../compile/compile-gate';
 import { DEFAULT_GIT_TIMEOUT_MS, spawnSyncWithTimeout } from '../../core/subprocess';
 import { getSafeWorktreePathState } from './worktree-path-state';
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const CACHE_RELATIVE_PATH = path.join('runtime', 'cache', 'workspace-snapshot.json');
 
 export type WorkspaceSnapshot = ReturnType<typeof getWorkspaceSnapshot>;
@@ -426,6 +426,8 @@ export function readSnapshotCache(cachePath: string): WorkspaceSnapshotCacheEntr
         if (parsed.cache_version !== CACHE_VERSION) return null;
         if (typeof parsed.fingerprint !== 'string' || !parsed.fingerprint) return null;
         if (!parsed.snapshot || typeof parsed.snapshot !== 'object') return null;
+        const snapshot = parsed.snapshot as Record<string, unknown>;
+        if (!snapshot.changed_file_stats || typeof snapshot.changed_file_stats !== 'object') return null;
         if (!parsed.params || typeof parsed.params !== 'object') return null;
         if (!parsed.git_state || typeof parsed.git_state !== 'object') return null;
         return parsed as unknown as WorkspaceSnapshotCacheEntry;

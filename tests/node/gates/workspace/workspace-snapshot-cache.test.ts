@@ -209,7 +209,7 @@ describe('gates/workspace-snapshot-cache', () => {
         it('round-trips a valid cache entry', () => {
             const cachePath = path.join(tempDir, 'cache.json');
             const entry: WorkspaceSnapshotCacheEntry = {
-                cache_version: 1,
+                cache_version: 2,
                 fingerprint: 'abc123',
                 snapshot: {
                     detection_source: 'git_auto',
@@ -222,6 +222,9 @@ describe('gates/workspace-snapshot-cache', () => {
                     additions_total: 1,
                     deletions_total: 0,
                     changed_lines_total: 1,
+                    changed_file_stats: {
+                        'file.ts': { additions: 1, deletions: 0, changed_lines: 1 }
+                    },
                     changed_files_sha256: 'deadbeef',
                     scope_content_sha256: 'feedface',
                     scope_sha256: 'cafebabe'
@@ -259,7 +262,42 @@ describe('gates/workspace-snapshot-cache', () => {
 
         it('returns null for wrong cache version', () => {
             const cachePath = path.join(tempDir, 'old.json');
-            fs.writeFileSync(cachePath, JSON.stringify({ cache_version: 99, fingerprint: 'x', snapshot: {} }), 'utf8');
+            fs.writeFileSync(cachePath, JSON.stringify({ cache_version: 1, fingerprint: 'x', snapshot: {} }), 'utf8');
+            assert.equal(readSnapshotCache(cachePath), null);
+        });
+
+        it('returns null for current-version snapshots without changed file stats', () => {
+            const cachePath = path.join(tempDir, 'missing-stats.json');
+            fs.writeFileSync(cachePath, JSON.stringify({
+                cache_version: 2,
+                fingerprint: 'abc123',
+                snapshot: {
+                    detection_source: 'git_auto',
+                    use_staged: false,
+                    include_untracked: true,
+                    changed_files: ['file.ts'],
+                    changed_files_count: 1,
+                    ignored_generated_runtime_files: [],
+                    ignored_generated_runtime_files_count: 0,
+                    additions_total: 1,
+                    deletions_total: 0,
+                    changed_lines_total: 1,
+                    changed_files_sha256: 'deadbeef',
+                    scope_content_sha256: 'feedface',
+                    scope_sha256: 'cafebabe'
+                },
+                params: {
+                    repo_root: '/repo',
+                    detection_source: 'git_auto',
+                    include_untracked: true,
+                    explicit_changed_files_hash: null
+                },
+                git_state: {
+                    head_sha: 'abc',
+                    index_mtime_ms: 12345,
+                    index_size: 678
+                }
+            }), 'utf8');
             assert.equal(readSnapshotCache(cachePath), null);
         });
     });
