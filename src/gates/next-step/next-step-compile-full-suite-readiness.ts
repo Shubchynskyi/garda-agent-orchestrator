@@ -24,6 +24,9 @@ import {
     getWorkspaceSnapshotCached,
 } from '../workspace/workspace-snapshot-cache';
 import {
+    mergeTaskOwnedMetadataRefreshFiles
+} from './next-step-task-owned-metadata';
+import {
     buildCompileEvidenceDocsOnlyExtensionReadiness,
     buildDocsOnlyDeltaReadiness,
     describePathList,
@@ -360,10 +363,6 @@ export function readPreflightWorkspaceReadiness(
                 && changedFiles.every((entry) => (
                     plannedSet.has(entry) || isRelatedToPlannedScope(entry, plannedChangedFiles)
                 ));
-            const currentGitChangedFilesWithoutProtectedBaseline = currentGitSnapshotFiles.filter((entry) => (
-                !unchangedProtectedFiles.has(entry)
-            ));
-            const currentPlannedScopeGitFiles = currentGitChangedFilesWithoutProtectedBaseline.filter((entry) => plannedSet.has(entry));
             const dirtyBaselineSet = new Set([
                 ...dirtyWorkspaceBaselineChangedFiles,
                 ...getTriggerPathList(preflight, 'dirty_workspace_baseline_changed_files')
@@ -373,6 +372,17 @@ export function readPreflightWorkspaceReadiness(
                     dirtyBaselineFileMatchesCurrent(repoRoot, entry, dirtyWorkspaceBaselineFileHashes)
                 ))
             );
+            const currentGitSnapshotFilesWithMetadata = mergeTaskOwnedMetadataRefreshFiles(
+                currentGitSnapshotFiles,
+                [
+                    ...currentScope.changed_files,
+                    ...[...dirtyBaselineSet].filter((entry) => !unchangedDirtyBaselineSet.has(entry))
+                ]
+            );
+            const currentGitChangedFilesWithoutProtectedBaseline = currentGitSnapshotFilesWithMetadata.filter((entry) => (
+                !unchangedProtectedFiles.has(entry)
+            ));
+            const currentPlannedScopeGitFiles = currentGitChangedFilesWithoutProtectedBaseline.filter((entry) => plannedSet.has(entry));
             const currentRelatedPlannedScopeGitFiles = currentGitChangedFilesWithoutProtectedBaseline.filter((entry) => (
                 !plannedSet.has(entry)
                     && !dirtyBaselineSet.has(entry)
@@ -380,7 +390,7 @@ export function readPreflightWorkspaceReadiness(
             ));
             const compareOnlyPlannedScope = preflightUsesOnlyPlannedScope
                 && (currentPlannedScopeGitFiles.length > 0 || currentRelatedPlannedScopeGitFiles.length > 0);
-            const currentGitChangedFiles = currentGitSnapshotFiles.filter((entry) => (
+            const currentGitChangedFiles = currentGitSnapshotFilesWithMetadata.filter((entry) => (
                 !unchangedProtectedFiles.has(entry)
                     && (!compareOnlyPlannedScope
                         || plannedSet.has(entry)

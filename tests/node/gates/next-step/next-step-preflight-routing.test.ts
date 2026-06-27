@@ -1030,6 +1030,56 @@ describe('gates/next-step preflight routing', () => {
         assert.ok(command.includes('--changed-file "src/extra/unplanned.ts"'));
     });
 
+    it('keeps ignored task-owned TASK.md metadata in stale preflight refresh commands', () => {
+        const repoRoot = makeTempRepo();
+        initGitRepo(repoRoot, {
+            gitignoreContent: 'TASK.md\ngarda-agent-orchestrator/runtime/\n'
+        });
+        const taskMdPath = path.join(repoRoot, 'TASK.md');
+        const taskMdBaselineHash = fileSha256(taskMdPath);
+        const dirtyWorkspaceBaseline = {
+            detection_source: 'git_auto',
+            include_untracked: true,
+            changed_files: ['TASK.md'],
+            changed_files_sha256: sha256Text('TASK.md'),
+            scope_sha256: null,
+            file_hashes: {
+                'TASK.md': taskMdBaselineHash
+            }
+        };
+        writeJson(path.join(reviewsRoot(repoRoot), `${TASK_ID}-task-mode.json`), buildTaskModeArtifact({
+            taskId: TASK_ID,
+            entryMode: 'EXPLICIT_TASK_EXECUTION',
+            requestedDepth: 2,
+            effectiveDepth: 2,
+            taskSummary: 'Refresh planned source after task queue metadata changes',
+            startBanner: 'Garda captures my mind',
+            provider: 'Codex',
+            canonicalSourceOfTruth: 'Codex',
+            executionProviderSource: 'explicit_provider',
+            runtimeIdentityStatus: 'resolved',
+            orchestratorWork: true,
+            plannedChangedFiles: ['src/app.ts'],
+            dirtyWorkspaceBaseline
+        }));
+        appendEvent(repoRoot, TASK_ID, 'TASK_MODE_ENTERED');
+        seedRulePack(repoRoot, TASK_ID, 'TASK_ENTRY');
+        seedHandshake(repoRoot, TASK_ID);
+        seedShellSmoke(repoRoot, TASK_ID);
+        fs.appendFileSync(path.join(repoRoot, 'src', 'app.ts'), 'export const plannedRefresh = true;\n', 'utf8');
+        writePreflight(repoRoot, TASK_ID, { ...ALL_REVIEW_FLAGS }, { changedFiles: ['src/app.ts'] });
+        fs.appendFileSync(taskMdPath, '\nOperator note after preflight.\n', 'utf8');
+
+        const result = resolveNextStep({ taskId: TASK_ID, repoRoot });
+        const command = result.commands[0].command;
+
+        assert.equal(result.next_gate, 'classify-change');
+        assert.ok(result.reason.includes('missing from preflight: [TASK.md]'), result.reason);
+        assert.ok(command.includes('--changed-file "src/app.ts"'));
+        assert.ok(command.includes('--changed-file "TASK.md"'));
+        assert.ok(!command.includes('--changed-file "<path>"'));
+    });
+
     it('uses current git-auto workspace files when refreshing stale unscoped preflight', () => {
         const repoRoot = makeTempRepo();
         initGitRepo(repoRoot);

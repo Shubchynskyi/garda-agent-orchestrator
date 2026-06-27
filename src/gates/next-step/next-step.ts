@@ -196,6 +196,9 @@ import {
     type NextStepQualityChecklistSummary
 } from './next-step-quality-checklist-readiness';
 import {
+    mergeTaskOwnedMetadataRefreshFiles
+} from './next-step-task-owned-metadata';
+import {
     readPostDoneWorkspaceDriftDecision,
     readReadyFinalReportSummary,
     type NextStepFinalReportSummary
@@ -1444,9 +1447,10 @@ function getCurrentWorkspaceRefreshChangedFiles(
     if (!currentSnapshot) {
         return fallbackChangedFiles;
     }
-    return [...new Set(
+    const snapshotChangedFiles = [...new Set(
         currentSnapshot.changed_files.map((entry: string) => normalizePath(entry)).filter(Boolean)
     )].sort();
+    return mergeTaskOwnedMetadataRefreshFiles(snapshotChangedFiles, fallbackChangedFiles);
 }
 
 function getPreflightRefreshCommandChangedFiles(params: {
@@ -1463,7 +1467,7 @@ function getPreflightRefreshCommandChangedFiles(params: {
         const currentChangedFiles = getCurrentWorkspaceRefreshChangedFiles(
             params.repoRoot,
             params.preflight,
-            undefined
+            params.fallbackChangedFiles
         );
         if (!currentChangedFiles) {
             return taskScopedChangedFiles;
