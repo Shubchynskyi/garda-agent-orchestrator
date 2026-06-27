@@ -18,6 +18,9 @@ function qualityGateStatusBadges(rule) {
   const statuses = Array.isArray(rule.statuses) && rule.statuses.length > 0 ? rule.statuses : ['active'];
   return statuses.map(status => badge(qualityGateStatusLabel(status), 'quality-gate-rule', 'quality-gate-rule-' + classToken(status))).join(' ');
 }
+function qualityGateRulePackLabel(tab, labelField, rawField) {
+  return tab && tab[labelField] ? tab[labelField] : formatQualityRulePackVersion(tab && tab[rawField]);
+}
 function renderQualityGateResult(result) {
   currentQualityGateSettingResult = result;
   if (!qualityGateStatusNode) {
@@ -96,7 +99,7 @@ function readQualityGateRuleForm(ruleId) {
 }
 function renderQualityGate(report) {
   const tab = qualityGatePayload() || (report ? report.quality_gate_tab : null);
-  setPanelConfigPath(qualityGateConfigPathNode, tab && tab.config_path ? tab.config_path : '');
+  setPanelConfigPath(qualityGateConfigPathNode, '');
   if (!qualityGateNode) {
     return;
   }
@@ -118,6 +121,8 @@ function renderQualityGate(report) {
     + disabledNotice
     + '<section class="quality-gate-summary">'
     + metric(t('gardaSwitchState'), tab.enabled ? t('gardaSwitchStateOn') : t('gardaSwitchStateOff'))
+    + metric(t('qualityGateBaselineVersion'), qualityGateRulePackLabel(tab, 'baseline_version_label', 'baseline_version'))
+    + metric(t('qualityGateShippedBaselineVersion'), qualityGateRulePackLabel(tab, 'shipped_baseline_version_label', 'shipped_baseline_version'))
     + metric(t('qualityGateBaselineRules'), tab.baseline_rule_count)
     + metric(t('qualityGateCustomRules'), tab.custom_rule_count)
     + '</section>'

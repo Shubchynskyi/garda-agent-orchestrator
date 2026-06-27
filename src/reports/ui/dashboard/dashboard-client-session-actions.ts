@@ -319,8 +319,8 @@ function systemSignalDetailsHtml(signal) {
       ? value.missing_shipped_rule_ids.join(', ')
       : '-';
     return '<div class="system-inline-details">'
-      + '<span>' + safe(t('qualityBaselineInstalled')) + ': <strong>' + safe(value.installed_baseline_version || '-') + '</strong></span>'
-      + '<span>' + safe(t('qualityBaselineShipped')) + ': <strong>' + safe(value.shipped_baseline_version || '-') + '</strong></span>'
+      + '<span>' + safe(t('qualityBaselineInstalled')) + ': <strong>' + safe(value.installed_baseline_label || formatQualityRulePackVersion(value.installed_baseline_version)) + '</strong></span>'
+      + '<span>' + safe(t('qualityBaselineShipped')) + ': <strong>' + safe(value.shipped_baseline_label || formatQualityRulePackVersion(value.shipped_baseline_version)) + '</strong></span>'
       + '<span>' + safe(t('qualityBaselineRulePackRules')) + ': <strong>' + safe(String(value.installed_baseline_rule_count || 0)) + '/' + safe(String(value.shipped_baseline_rule_count || 0)) + '</strong></span>'
       + '<span>' + safe(t('qualityBaselineMissingRules')) + ': <strong>' + safe(missing) + '</strong></span>'
       + '</div>';

@@ -12,6 +12,7 @@ import type {
     ReportWorkflowConfigTab
 } from './types';
 import { buildQualityGateEvidence } from './quality-gate-evidence';
+import { formatQualityRulePackVersion } from './quality-baseline-labels';
 
 interface BuildQualityGateTabOptions {
     repoRoot: string;
@@ -108,6 +109,8 @@ export function buildQualityGateTab(input: ReportWorkflowConfigTab | BuildQualit
         enabled: optionalQualityChecks.enabled,
         baseline_version: optionalQualityChecks.baseline_version,
         shipped_baseline_version: OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+        baseline_version_label: formatQualityRulePackVersion(optionalQualityChecks.baseline_version),
+        shipped_baseline_version_label: formatQualityRulePackVersion(OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION),
         baseline_rule_count: rules.filter((rule) => rule.source === 'baseline' && rule.present).length,
         custom_rule_count: rules.filter((rule) => rule.source === 'custom').length,
         deleted_baseline_rule_count: deletedBaselineRules.length,

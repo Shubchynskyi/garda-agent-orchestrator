@@ -439,6 +439,8 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
                 enabled: true,
                 baseline_version: '2026-06-27.t846',
                 shipped_baseline_version: '2026-06-27.t846',
+                baseline_version_label: '2026-06-27 (T-846)',
+                shipped_baseline_version_label: '2026-06-27 (T-846)',
                 baseline_rule_count: 1,
                 custom_rule_count: 1,
                 deleted_baseline_rule_count: 1,
@@ -527,6 +529,11 @@ test('quality gate tab renders baseline custom deleted and edited rule status', 
     assert.doesNotMatch(qualityGateNode.innerHTML, /Поставляемый baseline/u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Текущий baseline/u);
     assert.doesNotMatch(qualityGateNode.innerHTML, /Удалённые baseline-правила/u);
+    assert.doesNotMatch(qualityGateNode.innerHTML, /2026-06-27\.t846/u);
+    assert.equal(context.qualityGateConfigPathNode.textContent, '');
+    assert.match(qualityGateNode.innerHTML, /Установленный набор правил/u);
+    assert.match(qualityGateNode.innerHTML, /Поставляемый набор правил/u);
+    assert.match(qualityGateNode.innerHTML, /2026-06-27 \(T-846\)/u);
     assert.match(qualityGateNode.innerHTML, /Изменено локально/u);
     assert.match(qualityGateNode.innerHTML, /Пользовательское/u);
     assert.match(qualityGateNode.innerHTML, /Отключено/u);
@@ -683,6 +690,9 @@ test('system state renders quality baseline diagnostics with localized labels', 
     assert.match(systemStateNode.innerHTML, /Установленные правила качества/u);
     assert.match(systemStateNode.innerHTML, /Установленный набор правил/u);
     assert.match(systemStateNode.innerHTML, /Поставляемый набор правил/u);
+    assert.match(systemStateNode.innerHTML, /2026-06-25 \(T-842\)/u);
+    assert.match(systemStateNode.innerHTML, /2026-06-27 \(T-846\)/u);
+    assert.doesNotMatch(systemStateNode.innerHTML, /2026-06-25\.t842/u);
     assert.match(systemStateNode.innerHTML, /Отсутствующие поставляемые правила/u);
     assert.match(systemStateNode.innerHTML, /duplicated_logic_contracts/u);
 });
@@ -694,6 +704,8 @@ test('quality gate tab keeps baseline rule content immutable while enabled state
         enabled: true,
         baseline_version: '2026-06-27.t846',
         shipped_baseline_version: '2026-06-27.t846',
+        baseline_version_label: '2026-06-27 (T-846)',
+        shipped_baseline_version_label: '2026-06-27 (T-846)',
         baseline_rule_count: 1,
         custom_rule_count: 1,
         deleted_baseline_rule_count: 0,

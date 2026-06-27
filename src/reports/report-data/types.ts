@@ -267,6 +267,8 @@ export interface ReportQualityGateTab {
     enabled: boolean;
     baseline_version: string;
     shipped_baseline_version: string;
+    baseline_version_label: string;
+    shipped_baseline_version_label: string;
     baseline_rule_count: number;
     custom_rule_count: number;
     deleted_baseline_rule_count: number;

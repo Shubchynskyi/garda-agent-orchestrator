@@ -367,6 +367,10 @@ test('renderStaticHtmlReport includes tabs, escaped task rows, and embedded data
     assert.ok(!html.includes('Shipped baseline'));
     const visibleHtml = stripEmbeddedReportData(html);
     const visibleQualityGatePanelHtml = extractStaticPanelHtml(visibleHtml, 'tab-quality-gate');
+    assert.ok(!visibleQualityGatePanelHtml.includes('Path:'));
+    assert.ok(!/\d{4}-\d{2}-\d{2}\.t\d+/u.test(visibleQualityGatePanelHtml));
+    assert.ok(visibleQualityGatePanelHtml.includes('Installed rule pack'));
+    assert.ok(visibleQualityGatePanelHtml.includes('Shipped rule pack'));
     assert.ok(visibleHtml.includes(longQualityRuleId));
     assert.ok(visibleHtml.includes(longQualityRuleTitle));
     assert.ok(visibleHtml.includes(longQualityRulePrompt));

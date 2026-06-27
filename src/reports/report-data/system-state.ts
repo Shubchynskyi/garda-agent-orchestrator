@@ -26,6 +26,7 @@ import type {
     ReportTaskRow,
     ReportWorkflowConfigTab
 } from './types';
+import { formatQualityRulePackVersion } from './quality-baseline-labels';
 
 const MAX_RUNTIME_SIGNAL_SCAN_ENTRIES = 512;
 const MAX_TIMELINE_WARNING_DETAILS = 10;
@@ -362,6 +363,8 @@ function buildQualityBaselineSignal(workflowTab: ReportWorkflowConfigTab): Repor
         {
             installed_baseline_version: installedVersion || null,
             shipped_baseline_version: OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION,
+            installed_baseline_label: formatQualityRulePackVersion(installedVersion),
+            shipped_baseline_label: formatQualityRulePackVersion(OPTIONAL_QUALITY_CHECKS_BASELINE_VERSION),
             installed_baseline_rule_count: installedRules.length,
             shipped_baseline_rule_count: shippedRuleIds.length,
             missing_shipped_rule_ids: missingRuleIds,

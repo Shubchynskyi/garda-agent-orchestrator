@@ -3,6 +3,7 @@ import type {
     ReportQualityGateRule,
     ReportQualityGateTab
 } from '../report-data-contract';
+import { formatQualityRulePackVersion } from '../report-data/quality-baseline-labels';
 
 function renderStatuses(rule: ReportQualityGateRule): string {
     return rule.statuses.map((status) => `<code>${escapeHtml(status)}</code>`).join(' ');
@@ -22,13 +23,17 @@ function renderRule(rule: ReportQualityGateRule): string {
 }
 
 export function renderQualityGatePanel(tab: ReportQualityGateTab): string {
+    const installedRulePack = tab.baseline_version_label || formatQualityRulePackVersion(tab.baseline_version);
+    const shippedRulePack = tab.shipped_baseline_version_label || formatQualityRulePackVersion(tab.shipped_baseline_version);
     return [
         '<section class="panel" id="tab-quality-gate" role="tabpanel" hidden>',
         '<div class="card">',
         '<h2>Quality Gate</h2>',
-        `<p class="meta">Path: ${escapeHtml(tab.config_path)} | Status: ${escapeHtml(tab.status)}</p>`,
+        `<p class="meta">Status: ${escapeHtml(tab.status)}</p>`,
         '<div class="metrics">',
         `<div><strong>${escapeHtml(String(tab.enabled))}</strong><span>Enabled</span></div>`,
+        `<div><strong>${escapeHtml(installedRulePack)}</strong><span>Installed rule pack</span></div>`,
+        `<div><strong>${escapeHtml(shippedRulePack)}</strong><span>Shipped rule pack</span></div>`,
         `<div><strong>${tab.baseline_rule_count}</strong><span>Baseline rules</span></div>`,
         `<div><strong>${tab.custom_rule_count}</strong><span>Custom rules</span></div>`,
         '</div>',

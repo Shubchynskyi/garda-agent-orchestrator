@@ -96,6 +96,17 @@ function badge(value, prefix, extraClass) {
 function metric(label, value) {
   return '<div class="metric"><span>' + safe(label) + '</span><strong>' + safe(value ?? '-') + '</strong></div>';
 }
+function formatQualityRulePackVersion(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '-';
+  }
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})(?:\\.t(\\d+))?$/iu.exec(text);
+  if (!match) {
+    return text;
+  }
+  return match[1] + '-' + match[2] + '-' + match[3] + (match[4] ? ' (T-' + match[4] + ')' : '');
+}
 function formatUiTimestamp(value) {
   const text = String(value || '').trim();
   if (!text) {
