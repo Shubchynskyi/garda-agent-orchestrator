@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { resolveBundleName } from '../../core/constants';
+import { UNCONFIGURED_COMPILE_GATE_COMMAND, resolveBundleName } from '../../core/constants';
 import { pathExists, readTextFile } from '../../core/filesystem';
 import { isPlainObject } from '../../core/config-merge';
 import { writeJsonFile } from '../../core/json';
@@ -114,14 +114,14 @@ function extractFirstFenceCommand(sectionContent: string): string | null {
     return null;
 }
 
-function isTemplateCompileGateCommand(command: string): boolean {
+function isReplaceableCompileGatePlaceholder(command: string): boolean {
     const normalized = command.trim();
-    return normalized === 'npm run build' || /^<[^>]+>$/.test(normalized);
+    return normalized === UNCONFIGURED_COMPILE_GATE_COMMAND || /^<[^>]+>$/.test(normalized);
 }
 
 function normalizePreservableCompileGateCommand(command: string | null | undefined, sourcePath: string): string | null {
     const normalized = String(command || '').trim();
-    if (!normalized || isTemplateCompileGateCommand(normalized)) {
+    if (!normalized || isReplaceableCompileGatePlaceholder(normalized)) {
         return null;
     }
 

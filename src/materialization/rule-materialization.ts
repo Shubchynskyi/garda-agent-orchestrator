@@ -305,10 +305,9 @@ export function applyContextDefaults(content: string, ruleFile: string, discover
     return updated + '\r\n\r\n' + discoveryOverlay + '\r\n';
 }
 
-function isTemplateCompileGateCommand(command: string): boolean {
+function isReplaceableCompileGatePlaceholder(command: string): boolean {
     const normalized = command.trim();
-    return normalized === 'npm run build'
-        || normalized === UNCONFIGURED_COMPILE_GATE_COMMAND
+    return normalized === UNCONFIGURED_COMPILE_GATE_COMMAND
         || /^<[^>]+>$/.test(normalized);
 }
 
@@ -330,7 +329,7 @@ export function applyCompileGateCommandDefaults(content: string, ruleFile: strin
 
     const bodyLines = match[2].split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     const firstCommand = bodyLines.find((line) => !line.startsWith('#')) || '';
-    if (firstCommand && !isTemplateCompileGateCommand(firstCommand)) {
+    if (firstCommand && !isReplaceableCompileGatePlaceholder(firstCommand)) {
         return content;
     }
 

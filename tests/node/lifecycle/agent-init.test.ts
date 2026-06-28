@@ -965,6 +965,79 @@ test('runAgentInit seeds workflow-config full-suite command from project stack w
     }
 });
 
+test('runAgentInit preserves npm run build from existing compile-gate guidance', () => {
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-preserve-npm-build-'));
+    const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
+    const initAnswersPath = path.join(bundleRoot, 'runtime', 'init-answers.json');
+
+    try {
+        writeJson(initAnswersPath, {
+            AssistantLanguage: 'English',
+            AssistantBrevity: 'concise',
+            SourceOfTruth: 'Codex',
+            EnforceNoAutoCommit: 'false',
+            ClaudeOrchestratorFullAccess: 'false',
+            TokenEconomyEnabled: 'true',
+            CollectedVia: 'CLI_NONINTERACTIVE',
+            ActiveAgentFiles: 'AGENTS.md'
+        });
+        writeText(path.join(bundleRoot, 'VERSION'), '9.9.9-test\n');
+        writeText(path.join(bundleRoot, 'MANIFEST.md'), '# Manifest\n');
+        seedReadyProjectMemory(bundleRoot);
+        writeJson(path.join(bundleRoot, 'live', 'config', 'workflow-config.json'), {
+            compile_gate: {
+                command: '__COMPILE_GATE_COMMAND_UNCONFIGURED__'
+            },
+            full_suite_validation: {
+                enabled: false,
+                command: '__FULL_SUITE_COMMAND_UNCONFIGURED__',
+                timeout_ms: 600000,
+                green_summary_max_lines: 5,
+                red_failure_chunk_lines: 50,
+                out_of_scope_failure_policy: 'AUDIT_AND_BLOCK'
+            }
+        });
+        writeText(
+            path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'),
+            [
+                '# Commands',
+                '',
+                '### Compile Gate (Mandatory)',
+                '```bash',
+                'npm run build',
+                '```',
+                ''
+            ].join('\n')
+        );
+        writeText(path.join(workspaceRoot, 'pyproject.toml'), '[tool.pytest.ini_options]\n');
+
+        runAgentInit({
+            targetRoot: workspaceRoot,
+            activeAgentFiles: 'AGENTS.md',
+            projectRulesUpdated: 'yes',
+            skillsPrompted: 'yes',
+            ordinaryDocPaths: 'CHANGELOG.md',
+            installRunner: function () {},
+            verifyRunner: function () {
+                return { passed: true };
+            },
+            manifestRunner: function () {
+                return { passed: true };
+            }
+        });
+
+        const workflowConfig = readWorkflowConfig(bundleRoot);
+        const compileGate = workflowConfig.compile_gate as Record<string, unknown>;
+        assert.equal(compileGate.command, 'npm run build');
+        assert.match(
+            fs.readFileSync(path.join(bundleRoot, 'live', 'docs', 'agent-rules', '40-commands.md'), 'utf8'),
+            /### Compile Gate \(Mandatory\)\r?\n```bash\r?\nnpm run build\r?\n```/
+        );
+    } finally {
+        fs.rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+});
+
 test('runAgentInit preserves legacy-compatible workflow-config omission when the file is missing on an existing bundle', () => {
     const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gao-agent-init-missing-workflow-config-'));
     const bundleRoot = path.join(workspaceRoot, 'garda-agent-orchestrator');
